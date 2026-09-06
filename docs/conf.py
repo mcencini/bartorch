@@ -46,20 +46,14 @@ intersphinx_mapping = (
     else {}
 )
 
-# Notebooks live in the top-level examples/ directory (symlinked as docs/examples/).
-# Always execute notebooks so the rendered docs show cell outputs (including error
-# tracebacks from stub cells while the C++ extension is not yet wired up).
+# Notebooks live in the top-level examples/ directory (symlinked as docs/examples/)
+# and are executed at build time so the rendered pages carry their outputs.
 nbsphinx_execute = "always"
-# Allow cells that raise errors (e.g. stub RuntimeError from run()) without
-# failing the Sphinx build.  Tracebacks are rendered inline in the docs.
-# TODO: remove once _bartorch_ext.run() is fully implemented (Phase 1 roadmap).
+# A cell that raises renders its traceback instead of failing the build.
 nbsphinx_allow_errors = True
 
-# Suppress Pygments highlight-failure warnings from raw-markdown cells that
-# contain fenced code blocks (the backtick syntax confuses the IPython lexer).
-# Also suppress image.not_readable: when stub cells raise mid-way through
-# a matplotlib figure creation, inline images are captured but their backing
-# files may not be materialised at the expected nbsphinx doctrees path.
+# Raw-markdown cells with fenced code confuse the IPython lexer, and a figure
+# whose cell raised mid-way has no file behind it.
 suppress_warnings = [
     "misc.highlighting_failure",
     "image.not_readable",

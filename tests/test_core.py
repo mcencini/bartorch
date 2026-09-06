@@ -1,0 +1,124 @@
+"""The compiled core: tools run in-process on tensors, against references
+that are not BART.
+"""
+
+import numpy as np
+import pytest
+import torch
+
+import bartorch
+import bartorch.tools as bt
+from bartorch.core.graph import build_argv, dispatch
+
+
+def test_library_reports_the_pinned_bart_version():
+    assert bartorch.bart_version().startswith("v1.0")
+
+
+def test_build_info_names_the_nested_function_mode():
+    info = bartorch.build_info()
+    assert "nested=clang-blocks" in info
+
+
+def test_argv_flags_positionals_inputs_output_in_that_order():
+    argv = build_argv(
+        "fft", ["a.mem"], "o.mem", [3], {"u": True, "i": False, "x": (1, 2), "long_name": 4}
+    )
+    assert argv == ["fft", "-u", "-x", "1:2", "--long-name", "4", "3", "a.mem", "o.mem"]
+
+
+def test_list_flags_repeat():
+    argv = build_argv("pics", [], None, [], {"R": ["W:7:0:0.01", "T:7:0:0.02"]})
+    assert argv == ["pics", "-R", "W:7:0:0.01", "-R", "T:7:0:0.02"]
+
+
+def test_fft_matches_numpy_on_the_last_axis():
+    x = torch.randn(4, 32, dtype=torch.complex64)
+    y = bt.fft(x, axes=-1)
+    ref = np.fft.fftshift(np.fft.fft(np.fft.ifftshift(x.numpy(), axes=-1), axis=-1), axes=-1)
+    np.testing.assert_allclose(y.numpy(), ref, rtol=1e-4, atol=1e-4)
+
+
+def test_fft_matches_numpy_on_two_axes():
+    x = torch.randn(3, 16, 24, dtype=torch.complex64)
+    y = bt.fft(x, axes=(-1, -2))
+    ref = np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(x.numpy(), axes=(-1, -2))), axes=(-1, -2))
+    np.testing.assert_allclose(y.numpy(), ref, rtol=1e-4, atol=1e-4)
+
+
+def test_inverse_fft_round_trips():
+    x = torch.randn(8, 8, dtype=torch.complex64)
+    y = bt.ifft(bt.fft(x, axes=(-1, -2), unitary=True), axes=(-1, -2), unitary=True)
+    torch.testing.assert_close(y, x, rtol=1e-4, atol=1e-4)
+
+
+def test_output_is_a_tensor_that_was_never_copied():
+    x = torch.randn(8, 8, dtype=torch.complex64)
+    y = bt.fft(x, axes=-1)
+    assert isinstance(y, torch.Tensor)
+    assert y.dtype == torch.complex64
+    assert y.is_contiguous()
+
+
+def test_phantom_shape_follows_c_order():
+    p = bt.phantom([64, 64])
+    assert p.shape[-2:] == (64, 64)
+
+
+def test_scalar_tool_returns_its_text():
+    x = torch.ones(4, dtype=torch.complex64)
+    text = dispatch("nrmse", [x, x], False)
+    assert float(text) == pytest.approx(0.0)
+
+
+def test_a_failing_tool_raises_with_barts_message():
+    x = torch.ones(4, dtype=torch.complex64)
+    with pytest.raises(bartorch.BartError):
+        dispatch("fft", [x], None, _pos=["notanumber"])
+
+
+def test_registry_is_empty_after_a_failure():
+    from bartorch._lib import library
+
+    x = torch.ones(4, dtype=torch.complex64)
+    with pytest.raises(bartorch.BartError):
+        dispatch("fft", [x], None, _pos=["notanumber"])
+    assert library().bartorch_unlink_all() == 0
+
+
+def test_rss_matches_numpy():
+    x = torch.randn(8, 16, 16, dtype=torch.complex64)
+    y = bt.rss(x, axes=0)
+    ref = np.sqrt((np.abs(x.numpy()) ** 2).sum(0))
+    np.testing.assert_allclose(y.numpy(), ref, rtol=1e-4, atol=1e-4)
+
+
+def test_svd_through_the_lapack_backend():
+    a = torch.randn(6, 4, dtype=torch.complex64)
+    a0 = a.clone()
+    u, s, vh = bt.svd(a)
+    # BART sees the C-order (6, 4) tensor as the Fortran matrix A^T (4 x 6),
+    # so in C order the factors read A = vh[:, :4] @ diag(s) @ u.
+    np.testing.assert_allclose(
+        np.sort(s.real.numpy())[::-1], np.linalg.svd(a0.numpy(), compute_uv=False), rtol=1e-4
+    )
+    recon = vh.numpy()[:, :4] @ np.diag(s.numpy().ravel()) @ u.numpy()
+    np.testing.assert_allclose(recon, a0.numpy(), rtol=1e-3, atol=1e-4)
+
+
+def test_inputs_are_left_untouched_by_a_tool_that_writes_into_them():
+    a = torch.randn(6, 4, dtype=torch.complex64)
+    a0 = a.clone()
+    bt.svd(a)
+    torch.testing.assert_close(a, a0)
+
+
+def test_scratch_inputs_skip_the_copy():
+    a = torch.randn(6, 4, dtype=torch.complex64)
+    a0 = a.clone()
+    bartorch.set_copy_inputs(False)
+    try:
+        bt.svd(a)
+    finally:
+        bartorch.set_copy_inputs(True)
+    assert not torch.allclose(a, a0)

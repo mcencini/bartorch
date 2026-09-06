@@ -307,16 +307,18 @@ def _parse_tool_source(tool_name: str, src_path: Path) -> dict:
     )
     tensor_inputs: list[tuple[str]] = []
     value_args: list[tuple[str, str, str]] = []
-    has_cfl_output: bool = False
+    n_outputs: int = 0
     if args_m:
         for m in re.finditer(
-            r"ARG_(\w+)\s*\(\s*(?:true|false)\s*,\s*[^,]+,\s*\"([^\"]+)\"",
+            r"ARG_(\w+)\s*\(\s*(true|false)\s*,\s*[^,]+,\s*\"([^\"]+)\"",
             args_m.group(1),
         ):
-            kind, argname = m.group(1), m.group(2)
+            kind, required, argname = m.group(1), m.group(2), m.group(3)
             if kind == "OUTFILE":
-                # ARG_OUTFILE drives output allocation; it is not a Python input arg
-                has_cfl_output = True
+                # Every required output array is returned; an optional one
+                # needs a flag the caller passes explicitly.
+                if required == "true":
+                    n_outputs += 1
             elif kind in _TENSOR_ARG_TYPES:
                 tensor_inputs.append((argname,))
             elif kind in _VALUE_ARG_TYPE_MAP:
@@ -398,7 +400,7 @@ def _parse_tool_source(tool_name: str, src_path: Path) -> dict:
         "tensor_inputs": tensor_inputs,
         "value_args": value_args,
         "opts": opts,
-        "has_cfl_output": has_cfl_output,
+        "n_outputs": n_outputs,
     }
 
 
@@ -542,9 +544,13 @@ def _generate_func(info: dict) -> str:
 
     kw_str = ", ".join(kw_parts)
     pos_arg = f"_pos={pos_expr}, " if value_args else ""
-    # For scalar-output tools (no ARG_OUTFILE), pass False as the output_dims
-    # sentinel so that run() knows not to append a CFL output filename to argv.
-    output_dims_val = "output_dims" if info.get("has_cfl_output", True) else "False"
+    # A tool without an output array returns its printed text: output_dims
+    # is passed as False so no output name is appended to argv.  A tool with
+    # several output arrays returns a tuple.
+    n_outputs = info.get("n_outputs", 1)
+    output_dims_val = "output_dims" if n_outputs > 0 else "False"
+    if n_outputs > 1:
+        pos_arg = f"_n_out={n_outputs}, " + pos_arg
     if kw_str:
         body = (
             f"    return dispatch({name!r}, {inputs_expr}, {output_dims_val},\n"
@@ -802,7 +808,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--out",
-        default=str(repo_root / "bartorch" / "tools" / "_generated.py"),
+        default=str(repo_root / "src" / "bartorch" / "tools" / "_generated.py"),
         help="Output path for _generated.py",
     )
     args = parser.parse_args(argv)

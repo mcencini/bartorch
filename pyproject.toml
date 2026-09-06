@@ -1,45 +1,32 @@
 [build-system]
-requires = [
-    "scikit-build-core>=0.9",
-    "torch",        # provides libtorch + cmake config at build time
-    "mkl",          # MKL runtime (libmkl_rt) — needed at cmake configure time
-    "mkl-include",  # MKL compile-time headers (mkl_cblas.h, fftw/fftw3.h)
-]
+requires = ["scikit-build-core>=0.10"]
 build-backend = "scikit_build_core.build"
 
 [project]
 name = "bartorch"
-version = "0.1.0.dev0"
-description = "PyTorch-native interface to the Berkeley Advanced Reconstruction Toolbox (BART)"
+version = "0.2.0.dev0"
+description = "BART, the Berkeley Advanced Reconstruction Toolbox, embedded in PyTorch"
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
-    "torch>=2.0",
-    "numpy>=1.21",
-    "mkl",          # MKL runtime (libmkl_rt) — BLAS + FFTW3 backend for BART
+    "numpy>=1.24",
+    "torch>=2.1",
 ]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: C++",
+    "Programming Language :: C",
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7",
-    "pytest-cov",
+    "scipy",
     "ruff",
-    "mypy",
-    "pre-commit",
-    "nbstripout",
-    "codespell",
-]
-deepinv = [
-    "deepinv>=0.2",
 ]
 docs = [
     "sphinx>=7.0",
@@ -49,39 +36,18 @@ docs = [
     "nbconvert",
     "ipykernel",
     "matplotlib",
-    "nbstripout",
 ]
 
-# ---------------------------------------------------------------------------
-# scikit-build-core — CMake extension build configuration
-# ---------------------------------------------------------------------------
-# scikit-build-core calls CMake directly; all metadata lives here in
-# pyproject.toml.  setup.py is kept only as the two-line legacy shim.
-#
-# Build variants:
-#   pip install -e .                          # CPU (default)
-#   CMAKE_ARGS="-DUSE_CUDA=ON" pip install .  # CUDA
+# The compiled library is pure C reached through ctypes, so one wheel per
+# platform serves every interpreter and every torch version.
 [tool.scikit-build]
-cmake.source-dir = "src/bartorch/csrc"
+cmake.source-dir = "."
 cmake.build-type = "Release"
-# Wheel build: the package lives under src/ (modern src layout).
-# scikit-build-core strips the "src/" prefix when installing into the wheel.
+build-dir = "build/{wheel_tag}"
 wheel.packages = ["src/bartorch"]
-# Install the compiled extension into the bartorch package directory inside the wheel.
-wheel.install-dir = "bartorch"
-
-[tool.scikit-build.cmake.define]
-# Forward USE_CUDA so `CMAKE_ARGS="-DUSE_CUDA=ON"` still works, but the
-# cmake.define table also accepts the env var directly.
-USE_CUDA = {env = "BARTORCH_USE_CUDA", default = "OFF"}
-
-[tool.setuptools.packages.find]
-where = ["src"]
-include = ["bartorch*"]
-
-[tool.black]
-line-length = 100
-target-version = ["py39"]
+wheel.py-api = "py3"
+editable.mode = "inplace"
+sdist.exclude = ["attic/", "build/"]
 
 [tool.ruff]
 line-length = 100
@@ -91,13 +57,7 @@ select = ["E", "F", "W", "I"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["F401"]
-# Auto-generated file: BART uses single-letter flags (E741) and long dispatch
-# lines (E501) that are inherent to wrapping the BART CLI API.
 "src/bartorch/tools/_generated.py" = ["E501", "E741"]
-
-[tool.mypy]
-python_version = "3.9"
-ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

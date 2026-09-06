@@ -1,36 +1,20 @@
 Getting Started
 ===============
 
-Introduction
-------------
-
-**bartorch** is a PyTorch-native Python interface to the
-`Berkeley Advanced Reconstruction Toolbox (BART) <https://mrirecon.github.io/bart/>`_.
-
-It provides:
-
-- **Zero-copy** tensor ↔ BART data exchange via shared memory (no serialisation)
-- **Plain** ``torch.Tensor`` API — no user-visible wrapper subclass
-- **DSL hot path** — pure-bartorch call chains execute entirely in C
-- **Full PyTorch citizen** — ops integrate with ``torch.autograd``, ``torch.compile``,
-  CUDA streams, and DDP
-
-Axis convention
----------------
-
-bartorch uses **C-order** (last index varies fastest), matching NumPy and PyTorch:
-
-.. code-block:: text
-
-    bartorch shape: (coils, phase2, phase1, read)   ← C-order
-    BART internal:  (read,  phase1, phase2, coils)  ← Fortran-order
-
-The axis reversal is handled transparently at the C++ boundary — no data copy.
+**bartorch** runs the `Berkeley Advanced Reconstruction Toolbox (BART)
+<https://mrirecon.github.io/bart/>`_ inside a Python process on
+``torch.Tensor`` objects.  Every BART tool is a function, every BART operator
+is an object that applies to tensors, and an operator written in Python can
+be handed to BART's solvers.
 
 Installation
 ------------
 
-**From source** (requires a C++ compiler, CMake):
+.. code-block:: bash
+
+   pip install bartorch
+
+From source, with clang and CMake:
 
 .. code-block:: bash
 
@@ -38,57 +22,55 @@ Installation
    cd bartpy
    pip install -e .
 
-**Prebuilt wheel** (CPU or CUDA):
+The wheel carries one C library with all of BART and depends on nothing but
+``numpy`` and ``torch``.  BLAS and LAPACK come from the library torch already
+loaded; the FFT is pocketfft.
 
-.. code-block:: bash
+Axis convention
+---------------
 
-   pip install bartorch
+Shapes are C order, so the last axis is the one BART calls the first:
 
-The C++ extension embeds BART and links to the BLAS and FFT libraries bundled
-with PyTorch — no external ``bart`` binary is required.
+.. code-block:: text
 
-Quickstart
-----------
+   bartorch shape: (coils, phase2, phase1, read)
+   BART dims:      [read, phase1, phase2, coils]
+
+Wherever a BART tool takes a bitmask of dimensions, the Python function takes
+axis indices, negative ones included: ``bt.fft(x, axes=(-1, -2))``.
+
+Tools
+-----
 
 .. code-block:: python
 
    import bartorch.tools as bt
-   import torch
 
-   # Generate a 256×256 Shepp-Logan phantom (returns a plain torch.Tensor)
-   ph = bt.phantom([256, 256])
-   print("Phantom type: ", type(ph))    # torch.Tensor
-   print("Phantom dtype:", ph.dtype)    # torch.complex64
-   print("Phantom shape:", ph.shape)    # (1, 256, 256) — coils first
+   kspace = bt.phantom([256, 256], kspace=True, ncoils=8)
+   maps = bt.ecalib(kspace, calib_size=24, maps=1)
+   image = bt.pics(kspace, maps, R="W:7:0:0.005")
 
-   # 2-D FFT using C-order axis indices (no raw bitmask needed)
-   kspace = bt.fft(ph, axes=(-1, -2))
+A tool receives a private copy of each input, because BART tools may write
+into their inputs; :func:`bartorch.set_copy_inputs` turns that off for
+callers who accept scratch inputs.
 
-   # Linear operator algebra
-   # import bartorch.lib as bl
-   # E = bl.encoding_op(sens)              # SENSE encoding operator
-   # EH = E.adjoint(ksp)                   # adjoint application
-   # x = E.solve(ksp, maxiter=30)          # CG reconstruction
+Operators
+---------
 
-How It Works
-------------
+.. code-block:: python
 
-All ops are decorated with :func:`~bartorch.core.tensor.bart_op`, which
-normalises every tensor argument automatically:
+   from bartorch.ops import LinearOperator, NonlinearOperator
 
-- ``torch.Tensor`` of any dtype → cast to ``complex64`` (zero-copy if already correct)
-- ``numpy.ndarray`` → converted to ``complex64`` ``torch.Tensor``
-- Non-array arguments (ints, strings, …) pass through unchanged
+   S = LinearOperator.multiply_sum(maps, (1, 256, 256), (8, 256, 256))
+   F = LinearOperator.fft((8, 256, 256), axes=(-1, -2))
+   A = F @ S                          # apply S, then F
+   x = A.lstsq(kspace, lambda_=1e-3)  # BART's conjugate gradients
 
-The :func:`~bartorch.core.graph.dispatch` function routes each call through
-the embedded C++ extension (``_bartorch_ext``):
+An operator defined in Python enters BART the same way.  A torch function
+becomes a nonlinear operator whose derivative and adjoint come from autograd,
+which is how a signal model is fitted by BART's Gauss-Newton solver:
 
-1. Each tensor's ``data_ptr()`` is registered in BART's in-memory CFL registry.
-2. ``bart_command()`` runs the BART tool in-process — no subprocess, no disk I/O.
-3. Output is returned as a plain ``complex64`` ``torch.Tensor`` in C-order.
+.. code-block:: python
 
-.. note::
-
-   There is no subprocess fallback.  bartorch requires the compiled C++
-   extension.  Install from source (``pip install -e .``) or via a prebuilt
-   wheel (``pip install bartorch``).
+   M = NonlinearOperator.from_torch(signal_model, params_shape, images_shape)
+   x = (F @ M).irgnm(kspace, x0, iterations=10)

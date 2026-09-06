@@ -12,26 +12,23 @@ on:
 jobs:
   copilot-setup-steps:
     runs-on: ubuntu-latest
-
     permissions:
       contents: read
-
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: false
+          submodules: recursive
 
-      - name: Initialize submodules
-        run: git submodule update --init --recursive
+      - name: Install compiler and CMake
+        run: sudo apt-get install -y cmake clang
 
-      - name: Install system dependencies
-        run: sudo apt-get install -y cmake
-
-      - name: Install Python build dependencies
+      - name: Install torch (CPU) and the build backend
         run: |
-          pip install scikit-build-core pybind11 numpy pytest ruff
+          pip install scikit-build-core numpy pytest scipy ruff
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install mkl mkl-include
 
-      - name: Build and install bartorch (compiles C++ extension with BART)
+      - name: Build and install bartorch
+        env:
+          CC: clang
+          CXX: clang++
         run: pip install -e . --no-build-isolation

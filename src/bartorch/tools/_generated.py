@@ -502,7 +502,7 @@ def bloch(
     torch.Tensor
         Result array in C-order ``complex64``.
     """
-    return dispatch("bloch", [], output_dims, **extra_flags)
+    return dispatch("bloch", [], output_dims, _n_out=2, **extra_flags)
 
 
 @bart_op
@@ -1891,7 +1891,7 @@ def estdelay(
     return dispatch(
         "estdelay",
         [trajectory, data],
-        output_dims,
+        False,
         R=R or None,
         B=B or None,
         p=p,
@@ -2089,7 +2089,7 @@ def estshift(
     torch.Tensor
         Result array in C-order ``complex64``.
     """
-    return dispatch("estshift", [arg1, arg2], output_dims, _pos=[flags], f=f or None, **extra_flags)
+    return dispatch("estshift", [arg1, arg2], False, _pos=[flags], f=f or None, **extra_flags)
 
 
 @bart_op
@@ -3165,7 +3165,7 @@ def ismrmrd(
     torch.Tensor
         Result array in C-order ``complex64``.
     """
-    return dispatch("ismrmrd", [input_], output_dims, _0=_0 or None, m=m, o=o, **extra_flags)
+    return dispatch("ismrmrd", [input_], False, _0=_0 or None, m=m, o=o, **extra_flags)
 
 
 @bart_op
@@ -3488,7 +3488,7 @@ def measure(
     torch.Tensor
         Result array in C-order ``complex64``.
     """
-    return dispatch("measure", [reference, input_], output_dims, **extra_flags)
+    return dispatch("measure", [reference, input_], False, **extra_flags)
 
 
 @bart_op
@@ -3910,7 +3910,7 @@ def mobafit(
     return dispatch(
         "mobafit",
         [enc, echo_per_contrast_images],
-        output_dims,
+        False,
         a=a or None,
         g=g or None,
         m=m,
@@ -4006,7 +4006,7 @@ def morphop(
     torch.Tensor
         Result array in C-order ``complex64``.
     """
-    return dispatch("morphop", [binary_input], output_dims, _pos=[mask_size], **extra_flags)
+    return dispatch("morphop", [binary_input], False, _pos=[mask_size], **extra_flags)
 
 
 @bart_op
@@ -4558,7 +4558,7 @@ def nlinvnet(
     return dispatch(
         "nlinvnet",
         [kspace, weights, output_per_reference],
-        output_dims,
+        False,
         i=i,
         s=s,
         L=L,
@@ -6437,7 +6437,7 @@ def roistat(
     torch.Tensor
         Result array in C-order ``complex64``.
     """
-    return dispatch("roistat", [roi, input_], output_dims, b=b or None, **extra_flags)
+    return dispatch("roistat", [roi, input_], False, b=b or None, **extra_flags)
 
 
 @bart_op
@@ -6770,7 +6770,7 @@ def sample(
     return dispatch(
         "sample",
         [samples],
-        output_dims,
+        False,
         g=g or None,
         s=s,
         N=N,
@@ -7041,7 +7041,7 @@ def seq(
     return dispatch(
         "seq",
         [],
-        output_dims,
+        False,
         d=d,
         N=N,
         R=R,
@@ -7754,7 +7754,7 @@ def svd(
     torch.Tensor
         Result array in C-order ``complex64``.
     """
-    return dispatch("svd", [input_], output_dims, e=e or None, **extra_flags)
+    return dispatch("svd", [input_], output_dims, _n_out=3, e=e or None, **extra_flags)
 
 
 @bart_op

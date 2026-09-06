@@ -7,6 +7,3 @@
 	#   git config submodule.bart.url https://codeberg.org/mrirecon/bart.git
 	#   git submodule update --remote
 	url = https://github.com/mrirecon/bart.git
-[submodule "finufft"]
-	path = finufft
-	url = https://github.com/flatironinstitute/finufft.git

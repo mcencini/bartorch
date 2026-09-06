@@ -10,56 +10,51 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
-  # -------------------------------------------------------------------------
-  # Full test suite — builds the C++ extension (BART embedded) and runs all
-  # tests.  MKL (from mkl/mkl-include Python packages) provides BLAS and FFT.
-  # MKL is detected automatically from torch's install location — no system
-  # BLAS or FFTW3 packages required.
-  #
-  # macOS uses macos-13 (Intel) because MKL has no ARM64 (Apple Silicon)
-  # wheels on PyPI.  macos-latest is ARM64 and would fail at `pip install mkl`.
-  # -------------------------------------------------------------------------
+  # libbartorch is a clang build: BART's nested functions become Blocks.
   tests:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
-        python-version: ["3.10", "3.11", "3.12"]
+        include:
+          - os: ubuntu-latest
+            python-version: "3.10"
+            cc: clang
+          - os: ubuntu-latest
+            python-version: "3.12"
+            cc: clang
+          - os: macos-latest
+            python-version: "3.12"
+            cc: clang
     runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: false
-
-      - name: Initialize submodules
-        run: git submodule update --init --recursive
+          submodules: recursive
 
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      - name: Install system dependencies (Linux)
+      - name: Install compiler and CMake (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get install -y cmake
+        run: sudo apt-get install -y cmake ${{ matrix.cc }}
 
-      - name: Install system dependencies (macOS)
+      - name: Install CMake (macOS)
         if: runner.os == 'macOS'
         run: brew install cmake
 
-      - name: Install Python build dependencies
-        # Using --no-build-isolation means pip will NOT auto-install
-        # [build-system].requires, so we install them explicitly here.
-        # mkl + mkl-include are declared in pyproject.toml [build-system].requires;
-        # torch CPU wheel from the WHL index does not bundle MKL.
+      - name: Install torch (CPU) and the build backend
         run: |
-          pip install scikit-build-core pybind11 numpy pytest
+          pip install scikit-build-core numpy pytest scipy
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install mkl mkl-include
 
-      - name: Build and install bartorch (compiles C++ extension with BART)
-        run: pip install -e . --no-build-isolation
+      - name: Build and install bartorch
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: clang++
+        run: pip install -e . --no-build-isolation -v
 
-      - name: Run full test suite
+      - name: Run the test suite
         run: pytest tests/ -v

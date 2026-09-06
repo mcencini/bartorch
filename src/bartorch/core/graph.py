@@ -1,122 +1,323 @@
-"""bartorch.core.graph — Operation dispatch via the C++ extension.
+"""Running a BART tool on tensors.
 
-``dispatch(op_name, inputs, output_dims, **kwargs)`` is the single entry point
-used by every op in ``bartorch.tools``.
+:func:`dispatch` is the single entry point every wrapper in
+:mod:`bartorch.tools` calls.  It registers each input tensor's memory in the
+compiled library's in-memory registry under a ``.mem`` name, assembles the
+tool's argv, runs the tool in-process and hands back the tensor the tool
+wrote, which was allocated by torch through the allocator callback and so was
+never copied.
 
-bartorch requires the compiled C++ extension ``_bartorch_ext``.  The extension
-embeds BART and links to the BLAS and FFT libraries bundled with PyTorch — no
-external ``bart`` binary is needed, and no data is ever written to ``/dev/shm``
-or disk.
-
-If the extension is not available a clear :exc:`ImportError` is raised with
-installation instructions.
-
-Normalisation (complex64 cast, numpy → tensor) is performed upstream by the
-:func:`~bartorch.core.tensor.bart_op` decorator applied to every op function.
-By the time ``dispatch`` is called all array inputs are guaranteed to be
-``torch.complex64`` tensors.
+Axis convention: a C-order tensor of shape ``(a, b, c)`` and a BART array of
+dims ``[c, b, a]`` are the same bytes, so a shape is reversed at this boundary
+and nothing else happens to the data.
 """
 
 from __future__ import annotations
 
+import ctypes
+import logging
+import threading
 from typing import Any
 
+import numpy as np
 import torch
 
-__all__ = ["dispatch"]
+from bartorch import _backend
+from bartorch._lib import ALLOC_FN, DIMS, FREE_FN, LOG_FN, library
 
-_ext = None
-_ext_error: ImportError | None = None
-_ext_loaded = False
+__all__ = [
+    "dispatch",
+    "BartError",
+    "set_debug_level",
+    "get_debug_level",
+    "set_num_threads",
+    "set_copy_inputs",
+]
+
+_log = logging.getLogger("bartorch.bart")
+
+_LEVELS = {
+    0: logging.ERROR,
+    1: logging.WARNING,
+    2: logging.INFO,
+}
 
 
-def _get_ext():
-    """Return the compiled C++ extension, raising ``ImportError`` if absent."""
-    global _ext, _ext_error, _ext_loaded
-    if not _ext_loaded:
-        _ext_loaded = True
+class BartError(RuntimeError):
+    """A BART tool exited with an error."""
+
+
+class _Allocator:
+    """Serves BART's output allocations with torch tensors and keeps them alive."""
+
+    def __init__(self) -> None:
+        self.device = torch.device("cpu")
+        self.live: dict[int, torch.Tensor] = {}
+        self._alloc_cb = ALLOC_FN(self._alloc)
+        self._free_cb = FREE_FN(self._free)
+
+    def _alloc(self, _ctx, D, dims):
+        shape = [dims[i] for i in range(D)][::-1]
         try:
-            from bartorch import _bartorch_ext as ext  # noqa: F401
+            t = torch.empty(shape, dtype=torch.complex64, device=self.device)
+        except Exception:
+            _log.exception("bartorch: allocation of %s failed", shape)
+            return None
+        ptr = t.data_ptr()
+        self.live[ptr] = t
+        return ptr
 
-            _ext = ext
-        except ImportError as exc:
-            _ext_error = ImportError(
-                "bartorch requires the compiled C++ extension '_bartorch_ext'.\n"
-                "  • Build from source:            pip install -e .\n"
-                "  • Install a prebuilt wheel:     pip install bartorch\n"
-                "The extension embeds BART and does not require an external 'bart' "
-                "binary on $PATH."
-            )
-            _ext_error.__cause__ = exc
-    if _ext is None:
-        raise _ext_error
-    return _ext
+    def _free(self, _ctx, ptr):
+        self.live.pop(ptr, None)
+
+    def take(self, ptr: int) -> torch.Tensor:
+        return self.live.pop(ptr)
+
+    def install(self) -> None:
+        library().bartorch_set_allocator(self._alloc_cb, self._free_cb, None)
 
 
-def _expand_list_flags(kwargs: dict[str, Any]) -> dict[str, Any]:
-    """Expand list-valued flags into numbered variants for the C++ layer.
+def _on_log(_ctx, level, func, file, line, msg):
+    text = msg.decode(errors="replace").rstrip("\n")
+    _log.log(_LEVELS.get(level, logging.DEBUG), "%s", text)
 
-    When a flag value is a list (e.g. ``R=["W:7:0:0.005", "T:7:0:0.002"]``),
-    BART needs repeated ``-R`` invocations.  The C++ layer receives them as
-    ``R_0``, ``R_1``, … which it reassembles into separate ``-R`` arguments.
 
-    A single-element list is unwrapped to a plain value (no suffix).
-    ``None``, ``False``, and non-list values are passed through unchanged.
+_log_cb = LOG_FN(_on_log)
+_allocator = _Allocator()
+_lock = threading.RLock()
+_ready = False
+_call_id = 0
+_copy_inputs = True
+
+
+def _ensure_ready() -> None:
+    global _ready
+    if _ready:
+        return
+    with _lock:
+        if _ready:
+            return
+        lib = library()
+        _allocator.install()
+        lib.bartorch_set_log_handler(_log_cb, None)
+        lib.bartorch_set_debug_level(1)
+        _backend.install()
+        _ready = True
+
+
+def set_debug_level(level: int) -> None:
+    """Set BART's verbosity: 0 errors, 1 warnings, 2 info, 3 and up debug."""
+    _ensure_ready()
+    library().bartorch_set_debug_level(int(level))
+
+
+def get_debug_level() -> int:
+    _ensure_ready()
+    return int(library().bartorch_get_debug_level())
+
+
+def set_copy_inputs(copy: bool) -> None:
+    """Choose whether a tool works on a private copy of each input.
+
+    BART maps input files copy-on-write and some tools write into them, so
+    by default every input tensor is copied before a tool runs.  Passing
+    ``False`` hands the tool the tensor's own memory: no copy is made, and a
+    tool that writes into its input changes the caller's tensor.
     """
-    result: dict[str, Any] = {}
+    global _copy_inputs
+    _copy_inputs = bool(copy)
+
+
+def set_num_threads(n: int) -> None:
+    """Set the number of threads BART and its FFT use."""
+    _ensure_ready()
+    library().bartorch_set_num_threads(int(n))
+
+
+# --- argv -------------------------------------------------------------------
+
+
+def _value_str(val: Any) -> str:
+    if isinstance(val, bool):
+        return "1" if val else "0"
+    if isinstance(val, (tuple, list)):
+        return ":".join(_value_str(v) for v in val)
+    if isinstance(val, float):
+        return repr(val)
+    return str(val)
+
+
+def _expand_list_flags(kwargs: dict[str, Any]) -> list[tuple[str, Any]]:
+    """Flatten ``R=[a, b]`` into repeated ``R`` entries, keeping order."""
+    out: list[tuple[str, Any]] = []
     for key, val in kwargs.items():
-        if isinstance(val, list) and len(val) > 1:
-            for i, item in enumerate(val):
-                result[f"{key}_{i}"] = item
-        elif isinstance(val, list) and len(val) == 1:
-            result[key] = val[0]
+        if isinstance(val, list):
+            out.extend((key, v) for v in val)
         else:
-            result[key] = val
-    return result
+            out.append((key, val))
+    return out
+
+
+def _flag_string(key: str) -> str:
+    base = key
+    stem, _, suffix = key.rpartition("_")
+    if stem and suffix.isdigit():
+        base = stem
+    if len(base) == 1:
+        return "-" + base
+    if base.startswith("flag_") and len(base) > 5:
+        return "-" + base[5:]
+    return "--" + base.replace("_", "-")
+
+
+def build_argv(
+    op_name: str,
+    input_names: list[str],
+    output_names: list[str] | str | None,
+    positional: list[Any],
+    kwargs: dict[str, Any],
+) -> list[str]:
+    """Assemble ``[tool, flags..., positionals..., inputs..., outputs...]``."""
+    argv = [op_name]
+    for key, val in _expand_list_flags(kwargs):
+        if val is None or val is False:
+            continue
+        argv.append(_flag_string(key))
+        if val is not True:
+            argv.append(_value_str(val))
+    for val in positional:
+        if val is not None:
+            argv.append(_value_str(val))
+    argv.extend(input_names)
+    if isinstance(output_names, str):
+        output_names = [output_names]
+    argv.extend(output_names or [])
+    return argv
+
+
+# --- tensors ----------------------------------------------------------------
+
+
+def _bart_dims(shape: tuple[int, ...]) -> tuple[int, ctypes.Array]:
+    """BART rank and dimension vector of a C-order shape: reversed, at least one axis."""
+    rev = list(shape)[::-1] or [1]
+    if len(rev) > DIMS:
+        raise ValueError(f"BART supports at most {DIMS} dimensions, got {len(rev)}")
+    return len(rev), (ctypes.c_long * len(rev))(*rev)
+
+
+def _as_input(x: Any) -> torch.Tensor:
+    if isinstance(x, np.ndarray):
+        x = torch.from_numpy(np.ascontiguousarray(x, dtype=np.complex64))
+    if not isinstance(x, torch.Tensor):
+        raise TypeError(f"bartorch tools take tensors, got {type(x).__name__}")
+    if x.dtype != torch.complex64:
+        x = x.to(torch.complex64)
+    return x.contiguous()
+
+
+def _output_shape(dims: ctypes.Array, min_ndim: int) -> list[int]:
+    rev = [int(dims[i]) for i in range(DIMS)][::-1]
+    while len(rev) > max(1, min_ndim) and rev[0] == 1:
+        rev.pop(0)
+    return rev
+
+
+def run_command(argv: list[str]) -> tuple[int, str, str]:
+    """Run one tool with a fully formed argv; return (code, stdout, error text)."""
+    _ensure_ready()
+    lib = library()
+    c_argv = (ctypes.c_char_p * len(argv))(*[a.encode() for a in argv])
+    out = ctypes.create_string_buffer(1 << 16)
+    err = ctypes.create_string_buffer(4096)
+    code = lib.bartorch_command(len(argv), c_argv, out, len(out), err, len(err))
+    return code, out.value.decode(errors="replace"), err.value.decode(errors="replace")
 
 
 def dispatch(
     op_name: str,
     inputs: list[Any],
-    output_dims: list[int] | None,
+    output_dims: list[int] | bool | None,
     _pos: list[Any] | None = None,
-    **kwargs,
-) -> torch.Tensor | tuple[torch.Tensor, ...]:
-    """Route *op_name* through the C++ extension.
+    _n_out: int = 1,
+    **kwargs: Any,
+) -> torch.Tensor | tuple[torch.Tensor, ...] | str | None:
+    """Run BART tool *op_name* on *inputs* and return its output.
 
     Parameters
     ----------
-    op_name:
-        BART tool name (e.g. ``"fft"``).
-    inputs:
-        Positional array inputs.  Must be ``torch.complex64`` tensors —
-        normalisation is performed upstream by
-        :func:`~bartorch.core.tensor.bart_op`.
-    output_dims:
-        Expected output shape, or ``None`` to infer at runtime.
-    _pos:
-        Ordered list of positional scalar arguments (e.g. ``[bitmask]``
-        for ``fft``).  These are inserted in argv between the flags and
-        the input CFL filenames.  ``None`` values in the list are ignored.
-        Not intended to be used by callers directly — populated automatically
-        by the generated op wrappers.
-    **kwargs:
-        Flag / scalar arguments forwarded to the BART command string.
-        Boolean ``True`` values produce bare flags; numeric or string values
-        produce flag-value pairs.  ``None`` and ``False`` are ignored.
-        **List values** produce multiple repeated flags (e.g.
-        ``R=["W:7:0:0.005", "T:7:0:0.002"]`` → ``-R W:7:0:0.005 -R T:7:0:0.002``).
+    op_name : str
+        BART tool name, as on the command line.
+    inputs : list of tensors
+        Input arrays in the order the tool expects them.
+    output_dims : list of int, None or False
+        A hint for the number of leading singleton axes to keep on the
+        result, or ``False`` for a tool that writes no array and whose
+        printed text is returned instead.
+    _pos : list, optional
+        Scalar positional arguments placed between the flags and the
+        input names.
+    _n_out : int
+        Number of output arrays the tool writes; more than one gives a tuple.
+
+    Inputs are copied before the tool runs unless :func:`set_copy_inputs`
+    turned that off, because a BART tool may write into its inputs.
+    **kwargs
+        Flags.  ``True`` gives a bare flag, ``None`` and ``False`` are
+        skipped, a list repeats the flag, and a tuple joins its values with
+        colons.
 
     Returns
     -------
-    torch.Tensor or tuple of torch.Tensor
-        Operation result(s) as plain ``complex64`` tensors in C-order.
+    torch.Tensor, tuple of torch.Tensor, str or None
+        The output arrays, on the device of the inputs, or the tool's text.
 
     Raises
     ------
-    ImportError
-        If the ``_bartorch_ext`` C++ extension has not been built.
+    BartError
+        When the tool exits with an error; the message carries BART's own.
     """
-    ext = _get_ext()
-    expanded = _expand_list_flags(kwargs)
-    return ext.run(op_name, inputs, output_dims, _pos or [], expanded)
+    global _call_id
+    _ensure_ready()
+    lib = library()
+    tensors = [_as_input(x) for x in inputs]
+    if _copy_inputs:
+        tensors = [t.clone() for t in tensors]
+    devices = {t.device for t in tensors}
+    if len(devices) > 1:
+        raise ValueError("all inputs must live on the same device")
+    device = devices.pop() if devices else torch.device("cpu")
+    if device.type != "cpu":
+        raise ValueError("this build of bartorch runs BART on the host; pass CPU tensors")
+    want_output = output_dims is not False
+    min_ndim = len(output_dims) if isinstance(output_dims, (list, tuple)) else 1
+
+    with _lock:
+        _call_id += 1
+        call = _call_id
+        names = [f"_bt_{call}_in{i}.mem" for i in range(len(tensors))]
+        out_names = [f"_bt_{call}_out{i}.mem" for i in range(_n_out)] if want_output else []
+        _allocator.device = device
+        for name, t in zip(names, tensors):
+            rank, dims = _bart_dims(tuple(t.shape))
+            lib.bartorch_register(name.encode(), rank, dims, t.data_ptr())
+        argv = build_argv(op_name, names, out_names, list(_pos or []), kwargs)
+        try:
+            code, text, err = run_command(argv)
+            if code != 0:
+                raise BartError(
+                    f"bart {op_name} failed (code {code}): {err or text or 'no message'}"
+                )
+            if not want_output:
+                return text.strip() if text else None
+            results = []
+            for out_name in out_names:
+                dims = (ctypes.c_long * DIMS)()
+                ptr = ctypes.c_void_p()
+                if lib.bartorch_lookup(out_name.encode(), DIMS, dims, ctypes.byref(ptr)) != 0:
+                    raise BartError(f"bart {op_name} did not write {out_name}")
+                results.append(_allocator.take(ptr.value).reshape(_output_shape(dims, min_ndim)))
+            return results[0] if len(results) == 1 else tuple(results)
+        finally:
+            for name in names + out_names:
+                lib.bartorch_unlink(name.encode())

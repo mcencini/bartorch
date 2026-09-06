@@ -26,9 +26,7 @@ The following commands are overridden:
 * :func:`caldir` — maps ``calib_size`` → positional ``cal_size`` argument,
   then calls :func:`_generated.caldir`.
 * :func:`pics` — ``R`` accepts ``list[str]`` for stacked regularisers; all
-  solver parameters use full Python names; ``torch_prior`` injects a Python
-  denoiser via BART's TF-prior interface (``-R TF:{bartorch://…}:lambda``);
-  delegates to :func:`_generated.pics`.
+  solver parameters use full Python names; delegates to :func:`_generated.pics`.
 * :func:`nlinv` — maps ``iter_`` → ``-i`` and ``nmaps`` → ``-m`` to avoid
   cryptic single-letter kwargs; delegates to :func:`_generated.nlinv`.
 * :func:`moba` — maps ``model``, ``iter_``, ``inner_iter``, ``gpu`` to BART
@@ -43,8 +41,6 @@ The ``__init__.py`` imports from this module to build the public API.
 
 from __future__ import annotations
 
-import uuid
-from collections.abc import Callable
 from typing import Any
 
 import torch
@@ -483,34 +479,6 @@ _BART_DIMS = 16  # BART's DIMS constant
 _COIL_DIM = 3  # BART's COIL_DIM (Fortran index of the coil dimension)
 
 
-def _bart_img_dims_from_kspace(kspace: torch.Tensor) -> list[int]:
-    """Compute BART's Fortran-order ``img_dims`` (length 16) from a kspace tensor.
-
-    bartorch kspace C-order convention:
-      2-D: ``(nc, 1,  ny, nx)``
-      3-D: ``(nc, nz, ny, nx)``
-
-    This is reversed to Fortran order ``[nx, ny, (1|nz), nc, 1, …]`` and the
-    coil entry (Fortran dim 3) is zeroed to obtain the image-space dims.
-
-    Parameters
-    ----------
-    kspace : torch.Tensor
-        k-space tensor following bartorch axis convention.
-
-    Returns
-    -------
-    list[int]
-        ``img_dims`` as a length-16 list suitable for ``register_torch_prior``.
-    """
-    shape = list(kspace.shape)  # C-order, e.g. [nc, nz, ny, nx]
-    fortran = list(reversed(shape))  # Fortran: [nx, ny, nz, nc]
-    ksp_dims = fortran + [1] * (_BART_DIMS - len(fortran))
-    img_dims = list(ksp_dims)
-    img_dims[_COIL_DIM] = 1  # zero out coil dimension
-    return img_dims
-
-
 # ---------------------------------------------------------------------------
 # PICS reconstruction
 # ---------------------------------------------------------------------------
@@ -523,9 +491,6 @@ def pics(
     # Regularisation
     lambda_: float | None = None,
     R: list[str] | str | None = None,
-    # PyTorch denoiser prior (plug-and-play via BART's TF-prior interface)
-    torch_prior: Callable[[torch.Tensor], torch.Tensor] | None = None,
-    torch_prior_lambda: float = 1.0,
     # Solver
     iter_: int | None = None,
     step: float | None = None,
@@ -547,24 +512,8 @@ def pics(
     sensitivity encoding and compressed-sensing regularisation.
 
     .. note::
-        **CUDA:** GPU-capable when compiled with ``USE_CUDA=ON`` (``gpu=True``).
-        When ``gpu=False`` (default), CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
-    .. note::
-        **Torch prior (plug-and-play):** When ``torch_prior`` is supplied the
-        denoiser is registered in the C++ extension's global prior registry
-        under a unique name and BART is invoked with the flag
-        ``-R TF:{bartorch://<name>}:<torch_prior_lambda>``.  BART's
-        ``--wrap nlop_tf_create`` intercept (``torch_prior.cpp``) creates a
-        custom BART ``nlop_s*`` that calls back into Python through the GIL on
-        every iteration.  BART's own ADMM / IST / FISTA loop runs unmodified;
-        only the proximal step delegates to the Python denoiser.
-
-        Requires the compiled C++ extension.  The denoiser callable receives a
-        **flat** ``complex64`` ``torch.Tensor`` of length ``prod(spatial_dims)``
-        and must return a tensor of the same shape and dtype.  No ``sigma``
-        argument is passed.
+        This build runs BART on the host: CUDA tensors are moved to CPU before
+        dispatch and the result is returned to the original device.
 
     Parameters
     ----------
@@ -581,20 +530,6 @@ def pics(
         Regularisation strength λ (``-r``).
     R : str or list of str, optional
         BART regularisation specification(s) (``-R``).
-
-    Torch prior
-    -----------
-    torch_prior : callable, optional
-        Python denoiser ``fn(x: torch.Tensor) -> torch.Tensor`` (no sigma).
-        When set, BART's ``-R TF:{bartorch://…}:lambda`` path is used so
-        BART's own iterative solver calls ``fn`` as the proximal operator.
-        Compatible with any ``torch.nn.Module`` and deepinverse denoisers.
-    torch_prior_lambda : float, optional
-        Regularisation strength for the torch prior (``lambda`` in
-        ``-R TF:{…}:lambda``).  Controls the denoiser strength per iteration:
-        ``prox(z, mu) = z − mu·lambda·(z − D(z))``.  With ``mu = 1`` and
-        ``torch_prior_lambda = 1`` the proximal step is exactly ``D(z)``.
-        Default ``1.0``.
 
 """
         + _R_GUIDE
@@ -656,67 +591,8 @@ def pics(
 
     >>> reco = bt.pics(kspace, sens, R="T:7:0:0.01", admm_rho=0.01)
 
-    Plug-and-play with a PyTorch denoiser (runs BART's own ADMM):
-
-    >>> import torch
-    >>> def my_denoiser(x: torch.Tensor) -> torch.Tensor:
-    ...     return x  # replace with a real network
-    >>> reco = bt.pics(kspace, sens,
-    ...                torch_prior=my_denoiser, torch_prior_lambda=1.0,
-    ...                admm_rho=1.0)
     """
     )
-    if torch_prior is not None:
-        # ------------------------------------------------------------------
-        # Torch-prior path: inject the Python denoiser into BART via the
-        # TF-prior interface (--wrap nlop_tf_create in torch_prior.cpp).
-        # ------------------------------------------------------------------
-        # Import the C++ extension — raises ImportError when ext not built.
-        from bartorch.core.graph import _get_ext
-
-        ext = _get_ext()
-
-        # Unique name for this call (supports concurrent calls safely).
-        name = f"_btprior_{uuid.uuid4().hex[:8]}"
-
-        # BART img_dims (Fortran order, 16 elements) for the nlop domain.
-        bart_img_dims = _bart_img_dims_from_kspace(kspace)
-
-        # Build the BART TF-reg string.  The double braces {{ }} produce
-        # literal { } in the f-string output, giving:
-        #   TF:{bartorch://<name>}:<lambda>
-        # which matches BART's sscanf format: "%*[^:]:{%m[^}]}:%f"
-        tf_reg = f"TF:{{bartorch://{name}}}:{torch_prior_lambda}"
-
-        # Merge with any user-supplied R flags.
-        if R is None:
-            merged_R: list[str] | str = tf_reg
-        elif isinstance(R, list):
-            merged_R = R + [tf_reg]
-        else:
-            merged_R = [R, tf_reg]
-
-        ext.register_torch_prior(name, torch_prior, bart_img_dims)
-        try:
-            return _generated.pics(
-                kspace,
-                sens,
-                r=lambda_,
-                R=merged_R,
-                i=iter_,
-                s=step,
-                u=admm_rho,
-                C=cg_iter,
-                c=real or None,
-                g=gpu or None,
-                B=subspace_basis,
-                W=init,
-                e=fast_est or None,
-                **extra_flags,
-            )
-        finally:
-            ext.unregister_torch_prior(name)
-
     return _generated.pics(
         kspace,
         sens,
