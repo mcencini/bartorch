@@ -7,8 +7,8 @@ Each function wraps one BART command.  All functions:
 * Accept named keyword arguments matching each BART flag (with type hints).
 * Are decorated with ``@bart_op`` for automatic ``complex64`` normalisation.
 * Accept ``**extra_flags`` for flags not listed as named parameters.
-* Return a plain ``complex64 torch.Tensor`` (or tuple) in C-order.
-* Carry a CUDA compatibility note in their docstring.
+* Return a plain ``complex64 torch.Tensor`` (or tuple) in C-order, on
+  the device the inputs were on.
 
 Source-based generation: yes (bart/src/ parsed)
 
@@ -256,10 +256,6 @@ def affinereg(
     Equivalent to calling ``bart affinereg`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** GPU-capable when BART is compiled with
-        ``USE_CUDA=ON`` (pass ``g=True`` to enable).
-
     Parameters
     ----------
     reference : torch.Tensor
@@ -310,10 +306,6 @@ def avg(
     Equivalent to calling ``bart avg`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -361,10 +353,6 @@ def bin(
 
     Equivalent to calling ``bart bin`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -452,10 +440,6 @@ def bitmask(
     Equivalent to calling ``bart bitmask`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     output_dims : list[int], optional
@@ -486,10 +470,6 @@ def bloch(
     Equivalent to calling ``bart bloch`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     output_dims : list[int], optional
@@ -517,10 +497,6 @@ def cabs(
 
     Equivalent to calling ``bart cabs`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -552,10 +528,6 @@ def calc(
 
     Equivalent to calling ``bart calc`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -589,10 +561,6 @@ def caldir(
 
     Equivalent to calling ``bart caldir`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -630,10 +598,6 @@ def calmat(
 
     Equivalent to calling ``bart calmat`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -676,10 +640,6 @@ def carg(
     Equivalent to calling ``bart carg`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -710,10 +670,6 @@ def casorati(
 
     Equivalent to calling ``bart casorati`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -749,10 +705,6 @@ def cc(
 
     Equivalent to calling ``bart cc`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -802,10 +754,6 @@ def ccapply(
 
     Equivalent to calling ``bart ccapply`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -860,10 +808,6 @@ def cdf97(
     Equivalent to calling ``bart cdf97`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -899,10 +843,6 @@ def circshift(
 
     Equivalent to calling ``bart circshift`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -941,10 +881,6 @@ def coils(
 
     Equivalent to calling ``bart coils`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -991,10 +927,6 @@ def compress(
     Equivalent to calling ``bart compress`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -1029,10 +961,6 @@ def conj(
     Equivalent to calling ``bart conj`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -1064,10 +992,6 @@ def conv(
 
     Equivalent to calling ``bart conv`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -1105,10 +1029,6 @@ def conway(
     Equivalent to calling ``bart conway`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -1145,10 +1065,6 @@ def copy(
     Equivalent to calling ``bart copy`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -1181,10 +1097,6 @@ def cpyphs(
     Equivalent to calling ``bart cpyphs`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -1214,10 +1126,6 @@ def creal(
 
     Equivalent to calling ``bart creal`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -1251,10 +1159,6 @@ def crop(
 
     Equivalent to calling ``bart crop`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -1294,10 +1198,6 @@ def cunet(
 
     Equivalent to calling ``bart cunet`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** GPU-capable when BART is compiled with
-        ``USE_CUDA=ON`` (pass ``g=True`` to enable).
 
     Parameters
     ----------
@@ -1351,10 +1251,6 @@ def delta(
 
     Equivalent to calling ``bart delta`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -1415,10 +1311,6 @@ def denoise(
 
     Equivalent to calling ``bart denoise`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** GPU-capable when BART is compiled with
-        ``USE_CUDA=ON`` (pass ``g=True`` to enable).
 
     Parameters
     ----------
@@ -1569,10 +1461,6 @@ def ecalib(
     Equivalent to calling ``bart ecalib`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** GPU-capable when BART is compiled with
-        ``USE_CUDA=ON`` (pass ``g=True`` to enable).
-
     Parameters
     ----------
     kspace : torch.Tensor
@@ -1704,10 +1592,6 @@ def ecaltwo(
     Equivalent to calling ``bart ecaltwo`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** GPU-capable when BART is compiled with
-        ``USE_CUDA=ON`` (pass ``g=True`` to enable).
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -1776,10 +1660,6 @@ def epg(
 
     Equivalent to calling ``bart epg`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -1857,10 +1737,6 @@ def estdelay(
     Equivalent to calling ``bart estdelay`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     trajectory : torch.Tensor
@@ -1914,10 +1790,6 @@ def estdims(
     Equivalent to calling ``bart estdims`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     traj : torch.Tensor
@@ -1954,10 +1826,6 @@ def estmotion(
 
     Equivalent to calling ``bart estmotion`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** GPU-capable when BART is compiled with
-        ``USE_CUDA=ON`` (pass ``g=True`` to enable).
 
     Parameters
     ----------
@@ -2021,10 +1889,6 @@ def estscaling(
     Equivalent to calling ``bart estscaling`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     k_space : torch.Tensor
@@ -2064,10 +1928,6 @@ def estshift(
 
     Equivalent to calling ``bart estshift`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -2109,10 +1969,6 @@ def estvar(
     Equivalent to calling ``bart estvar`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     kspace : torch.Tensor
@@ -2152,10 +2008,6 @@ def extract(
     Equivalent to calling ``bart extract`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -2188,10 +2040,6 @@ def fakeksp(
 
     Equivalent to calling ``bart fakeksp`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -2233,10 +2081,6 @@ def fft(
 
     Equivalent to calling ``bart fft`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -2288,10 +2132,6 @@ def fftmod(
     Equivalent to calling ``bart fftmod`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -2333,10 +2173,6 @@ def fftrot(
     Equivalent to calling ``bart fftrot`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -2374,10 +2210,6 @@ def fftshift(
 
     Equivalent to calling ``bart fftshift`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -2420,10 +2252,6 @@ def filter(
 
     Equivalent to calling ``bart filter`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -2490,10 +2318,6 @@ def flatten(
     Equivalent to calling ``bart flatten`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -2524,10 +2348,6 @@ def flip(
 
     Equivalent to calling ``bart flip`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -2564,10 +2384,6 @@ def fmac(
 
     Equivalent to calling ``bart fmac`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -2615,10 +2431,6 @@ def fovshift(
     Equivalent to calling ``bart fovshift`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -2661,10 +2473,6 @@ def gmm(
 
     Equivalent to calling ``bart gmm`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -2716,10 +2524,6 @@ def grid(
     Equivalent to calling ``bart grid`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     output_dims : list[int], optional
@@ -2768,10 +2572,6 @@ def grog(
     Equivalent to calling ``bart grog`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     radial_trajectory : torch.Tensor
@@ -2818,10 +2618,6 @@ def hist(
     Equivalent to calling ``bart hist`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -2864,10 +2660,6 @@ def homodyne(
 
     Equivalent to calling ``bart homodyne`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -2931,10 +2723,6 @@ def ictv(
     Equivalent to calling ``bart ictv`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -2982,10 +2770,6 @@ def index(
 
     Equivalent to calling ``bart index`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -3044,10 +2828,6 @@ def interpolate(
     Equivalent to calling ``bart interpolate`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -3101,10 +2881,6 @@ def invert(
     Equivalent to calling ``bart invert`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -3139,10 +2915,6 @@ def ismrmrd(
 
     Equivalent to calling ``bart ismrmrd`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -3183,10 +2955,6 @@ def itsense(
 
     Equivalent to calling ``bart itsense`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** GPU-capable when BART is compiled with
-        ``USE_CUDA=ON`` (pass ``g=True`` to enable).
 
     Parameters
     ----------
@@ -3230,10 +2998,6 @@ def join(
     Equivalent to calling ``bart join`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     output : torch.Tensor
@@ -3273,10 +3037,6 @@ def looklocker(
 
     Equivalent to calling ``bart looklocker`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -3326,10 +3086,6 @@ def lrmatrix(
 
     Equivalent to calling ``bart lrmatrix`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -3419,10 +3175,6 @@ def mandelbrot(
     Equivalent to calling ``bart mandelbrot`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     output_dims : list[int], optional
@@ -3468,10 +3220,6 @@ def measure(
     Equivalent to calling ``bart measure`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     reference : torch.Tensor
@@ -3507,10 +3255,6 @@ def mip(
 
     Equivalent to calling ``bart mip`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -3555,10 +3299,6 @@ def mnist(
 
     Equivalent to calling ``bart mnist`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** GPU-capable when BART is compiled with
-        ``USE_CUDA=ON`` (pass ``g=True`` to enable).
 
     Parameters
     ----------
@@ -3648,10 +3388,6 @@ def moba(
 
     Equivalent to calling ``bart moba`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** GPU-capable when BART is compiled with
-        ``USE_CUDA=ON`` (pass ``g=True`` to enable).
 
     Parameters
     ----------
@@ -3849,10 +3585,6 @@ def mobafit(
     Equivalent to calling ``bart mobafit`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** GPU-capable when BART is compiled with
-        ``USE_CUDA=ON`` (pass ``g=True`` to enable).
-
     Parameters
     ----------
     enc : torch.Tensor
@@ -3944,10 +3676,6 @@ def mobasig(
     Equivalent to calling ``bart mobasig`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     parameters_per_coefficients : torch.Tensor
@@ -3986,10 +3714,6 @@ def morphop(
     Equivalent to calling ``bart morphop`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     binary_input : torch.Tensor
@@ -4021,10 +3745,6 @@ def multicfl(
 
     Equivalent to calling ``bart multicfl`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -4078,10 +3798,6 @@ def ncalib(
 
     Equivalent to calling ``bart ncalib`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** GPU-capable when BART is compiled with
-        ``USE_CUDA=ON`` (pass ``g=True`` to enable).
 
     Parameters
     ----------
@@ -4232,10 +3948,6 @@ def nlinv(
 
     Equivalent to calling ``bart nlinv`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** GPU-capable when BART is compiled with
-        ``USE_CUDA=ON`` (pass ``g=True`` to enable).
 
     Parameters
     ----------
@@ -4438,10 +4150,6 @@ def nlinvnet(
     Equivalent to calling ``bart nlinvnet`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** GPU-capable when BART is compiled with
-        ``USE_CUDA=ON`` (pass ``g=True`` to enable).
-
     Parameters
     ----------
     kspace : torch.Tensor
@@ -4616,10 +4324,6 @@ def nlmeans(
     Equivalent to calling ``bart nlmeans`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -4672,10 +4376,6 @@ def nnet(
 
     Equivalent to calling ``bart nnet`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** GPU-capable when BART is compiled with
-        ``USE_CUDA=ON`` (pass ``g=True`` to enable).
 
     Parameters
     ----------
@@ -4747,10 +4447,6 @@ def noise(
     Equivalent to calling ``bart noise`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -4805,10 +4501,6 @@ def normalize(
     Equivalent to calling ``bart normalize`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -4846,10 +4538,6 @@ def nrmse(
 
     Equivalent to calling ``bart nrmse`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -4914,10 +4602,6 @@ def nufft(
 
     Equivalent to calling ``bart nufft`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** GPU-capable when BART is compiled with
-        ``USE_CUDA=ON`` (pass ``g=True`` to enable).
 
     Parameters
     ----------
@@ -5034,10 +4718,6 @@ def nufftbase(
     Equivalent to calling ``bart nufftbase`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** GPU-capable when BART is compiled with
-        ``USE_CUDA=ON`` (pass ``g=True`` to enable).
-
     Parameters
     ----------
     trajectory : torch.Tensor
@@ -5071,10 +4751,6 @@ def onehotenc(
 
     Equivalent to calling ``bart onehotenc`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -5111,10 +4787,6 @@ def ones(
     Equivalent to calling ``bart ones`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     dims : int
@@ -5145,10 +4817,6 @@ def pattern(
 
     Equivalent to calling ``bart pattern`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -5198,10 +4866,6 @@ def phantom(
 
     Equivalent to calling ``bart phantom`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** GPU-capable when BART is compiled with
-        ``USE_CUDA=ON`` (pass ``g=True`` to enable).
 
     Parameters
     ----------
@@ -5304,10 +4968,6 @@ def phasepole(
 
     Equivalent to calling ``bart phasepole`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -5430,10 +5090,6 @@ def pics(
 
     Equivalent to calling ``bart pics`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** GPU-capable when BART is compiled with
-        ``USE_CUDA=ON`` (pass ``g=True`` to enable).
 
     Parameters
     ----------
@@ -5647,10 +5303,6 @@ def pocsense(
     Equivalent to calling ``bart pocsense`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** GPU-capable when BART is compiled with
-        ``USE_CUDA=ON`` (pass ``g=True`` to enable).
-
     Parameters
     ----------
     kspace : torch.Tensor
@@ -5718,10 +5370,6 @@ def poisson(
 
     Equivalent to calling ``bart poisson`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -5798,10 +5446,6 @@ def pol2mask(
     Equivalent to calling ``bart pol2mask`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     poly : torch.Tensor
@@ -5838,10 +5482,6 @@ def poly(
     Equivalent to calling ``bart poly`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     L : int
@@ -5875,10 +5515,6 @@ def psf(
 
     Equivalent to calling ``bart psf`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -5928,10 +5564,6 @@ def pulse(
 
     Equivalent to calling ``bart pulse`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -5997,10 +5629,6 @@ def raga(
 
     Equivalent to calling ``bart raga`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -6090,10 +5718,6 @@ def reconet(
 
     Equivalent to calling ``bart reconet`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** GPU-capable when BART is compiled with
-        ``USE_CUDA=ON`` (pass ``g=True`` to enable).
 
     Parameters
     ----------
@@ -6216,10 +5840,6 @@ def repmat(
     Equivalent to calling ``bart repmat`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -6256,10 +5876,6 @@ def reshape(
     Equivalent to calling ``bart reshape`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -6295,10 +5911,6 @@ def resize(
     Equivalent to calling ``bart resize`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -6331,10 +5943,6 @@ def rmfreq(
 
     Equivalent to calling ``bart rmfreq`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -6374,10 +5982,6 @@ def rof(
     Equivalent to calling ``bart rof`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -6413,10 +6017,6 @@ def roistat(
 
     Equivalent to calling ``bart roistat`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -6454,10 +6054,6 @@ def rovir(
     Equivalent to calling ``bart rovir`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     positive_signal : torch.Tensor
@@ -6490,10 +6086,6 @@ def rss(
 
     Equivalent to calling ``bart rss`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -6548,10 +6140,6 @@ def rtnlinv(
 
     Equivalent to calling ``bart rtnlinv`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** GPU-capable when BART is compiled with
-        ``USE_CUDA=ON`` (pass ``g=True`` to enable).
 
     Parameters
     ----------
@@ -6665,10 +6253,6 @@ def sake(
     Equivalent to calling ``bart sake`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     kspace : torch.Tensor
@@ -6718,10 +6302,6 @@ def sample(
 
     Equivalent to calling ``bart sample`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** GPU-capable when BART is compiled with
-        ``USE_CUDA=ON`` (pass ``g=True`` to enable).
 
     Parameters
     ----------
@@ -6802,10 +6382,6 @@ def saxpy(
     Equivalent to calling ``bart saxpy`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     scale : torch.Tensor
@@ -6841,10 +6417,6 @@ def scale(
     Equivalent to calling ``bart scale`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     factor : torch.Tensor
@@ -6877,10 +6449,6 @@ def sdot(
 
     Equivalent to calling ``bart sdot`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -6943,10 +6511,6 @@ def seq(
 
     Equivalent to calling ``bart seq`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -7096,10 +6660,6 @@ def show(
     Equivalent to calling ``bart show`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -7169,10 +6729,6 @@ def signal(
 
     Equivalent to calling ``bart signal`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -7302,10 +6858,6 @@ def sim(
     Equivalent to calling ``bart sim`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     output_dims : list[int], optional
@@ -7349,10 +6901,6 @@ def slice(
     Equivalent to calling ``bart slice`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -7384,10 +6932,6 @@ def spow(
 
     Equivalent to calling ``bart spow`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -7440,10 +6984,6 @@ def sqpics(
 
     Equivalent to calling ``bart sqpics`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** GPU-capable when BART is compiled with
-        ``USE_CUDA=ON`` (pass ``g=True`` to enable).
 
     Parameters
     ----------
@@ -7542,10 +7082,6 @@ def squeeze(
     Equivalent to calling ``bart squeeze`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -7582,10 +7118,6 @@ def ssa(
 
     Equivalent to calling ``bart ssa`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** GPU-capable when BART is compiled with
-        ``USE_CUDA=ON`` (pass ``g=True`` to enable).
 
     Parameters
     ----------
@@ -7633,10 +7165,6 @@ def std(
     Equivalent to calling ``bart std`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -7673,10 +7201,6 @@ def stl(
 
     Equivalent to calling ``bart stl`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -7734,10 +7258,6 @@ def svd(
     Equivalent to calling ``bart svd`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -7769,10 +7289,6 @@ def tee(
     Equivalent to calling ``bart tee`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     output_dims : list[int], optional
@@ -7803,10 +7319,6 @@ def tensorflow(
 
     Equivalent to calling ``bart tensorflow`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** GPU-capable when BART is compiled with
-        ``USE_CUDA=ON`` (pass ``g=True`` to enable).
 
     Parameters
     ----------
@@ -7856,10 +7368,6 @@ def tgv(
     Equivalent to calling ``bart tgv`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -7899,10 +7407,6 @@ def threshold(
 
     Equivalent to calling ``bart threshold`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -7947,10 +7451,6 @@ def toimg(
 
     Equivalent to calling ``bart toimg`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** GPU-capable when BART is compiled with
-        ``USE_CUDA=ON`` (pass ``g=True`` to enable).
 
     Parameters
     ----------
@@ -8012,10 +7512,6 @@ def toraw(
 
     Equivalent to calling ``bart toraw`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -8082,10 +7578,6 @@ def traj(
 
     Equivalent to calling ``bart traj`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** GPU-capable when BART is compiled with
-        ``USE_CUDA=ON`` (pass ``g=True`` to enable).
 
     Parameters
     ----------
@@ -8222,10 +7714,6 @@ def trajcor(
     Equivalent to calling ``bart trajcor`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     traj : torch.Tensor
@@ -8265,10 +7753,6 @@ def transpose(
     Equivalent to calling ``bart transpose`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -8303,10 +7787,6 @@ def twixread(
     Equivalent to calling ``bart twixread`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     dat_file : torch.Tensor
@@ -8338,10 +7818,6 @@ def unwrap(
 
     Equivalent to calling ``bart unwrap`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -8380,10 +7856,6 @@ def upat(
 
     Equivalent to calling ``bart upat`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -8424,10 +7896,6 @@ def var(
     Equivalent to calling ``bart var`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -8458,10 +7926,6 @@ def vec(
 
     Equivalent to calling ``bart vec`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -8494,10 +7958,6 @@ def walsh(
 
     Equivalent to calling ``bart walsh`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -8552,10 +8012,6 @@ def wave(
 
     Equivalent to calling ``bart wave`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** GPU-capable when BART is compiled with
-        ``USE_CUDA=ON`` (pass ``g=True`` to enable).
 
     Parameters
     ----------
@@ -8647,10 +8103,6 @@ def wavelet(
     Equivalent to calling ``bart wavelet`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -8692,10 +8144,6 @@ def wavepsf(
 
     Equivalent to calling ``bart wavepsf`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** GPU-capable when BART is compiled with
-        ``USE_CUDA=ON`` (pass ``g=True`` to enable).
 
     Parameters
     ----------
@@ -8767,10 +8215,6 @@ def whiten(
     Equivalent to calling ``bart whiten`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -8813,10 +8257,6 @@ def window(
 
     Equivalent to calling ``bart window`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -8867,10 +8307,6 @@ def wshfl(
 
     Equivalent to calling ``bart wshfl`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** GPU-capable when BART is compiled with
-        ``USE_CUDA=ON`` (pass ``g=True`` to enable).
 
     Parameters
     ----------
@@ -8960,10 +8396,6 @@ def zeros(
     Equivalent to calling ``bart zeros`` with the given arguments.
     See the BART documentation for full details.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
-
     Parameters
     ----------
     dims : int
@@ -8994,10 +8426,6 @@ def zexp(
 
     Equivalent to calling ``bart zexp`` with the given arguments.
     See the BART documentation for full details.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------

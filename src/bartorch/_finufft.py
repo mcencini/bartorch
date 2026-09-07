@@ -45,7 +45,7 @@ def cuda_available() -> bool:
 
 
 def used_on_device() -> bool:
-    """Whether a transform on a CUDA tensor would be computed by cuFINUFFT."""
+    """Whether a transform BART runs on a device would be computed by cuFINUFFT."""
     from bartorch._lib import library
 
     return bool(library().bartorch_finufft_usable_on(1))
@@ -70,7 +70,7 @@ def _load_symbols() -> bool:
 
     The host's library is required; the device's is loaded when the
     ``cufinufft`` wheel is installed, and its absence only means that a
-    trajectory on a card stays with BART's own operator.
+    transform BART would run on a card stays with BART's own operator.
 
     A layout is read from the package that will interpret the struct, so a
     release that moves a field cannot be misread here.
@@ -169,7 +169,7 @@ _DECLINED = {
     0: "",
     1: "FINUFFT is not in use",
     2: "the trajectory is missing",
-    3: "cuFINUFFT is not in use and the trajectory is on a device",
+    3: "cuFINUFFT is not in use and BART is on a device",
     4: "the trajectory does not carry three components",
     5: "k-space is not a single line of samples per readout",
     6: "the transform is over axes other than the spatial three",

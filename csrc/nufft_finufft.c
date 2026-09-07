@@ -26,6 +26,7 @@
 #include "linops/linop.h"
 
 #include "num/flpmath.h"
+#include "num/init.h"
 #include "num/multind.h"
 
 #include "noncart/nufft.h"
@@ -67,37 +68,150 @@ void bartorch_toeplitz_reset_counters(void)
 	toeplitz_counters[TP_PAIR] = 0;
 }
 
-struct nufft_fi_s {
-
-	linop_data_t super;
+/* One side of the bus: the pair of plans FINUFFT holds there, the coordinates
+ * they were given, and the weights the transform is multiplied by.
+ *
+ * A solve applies the same operator to whichever memory the iteration hands
+ * it -- `pics` takes its first adjoint from the k-space it mapped and then
+ * iterates on device vectors -- and a plan belongs to the library that made
+ * it, so a side is built the first time one is asked for. */
+struct fi_side {
 
 	void* forward_plan;
 	void* adjoint_plan;
 	/* A plan holds the points by pointer, so they outlive setpts. */
 	float* coord[3];
+	complex float* weights;
+};
+
+struct nufft_fi_s {
+
+	linop_data_t super;
+
+	struct fi_side side[2];		/* [0] the host, [1] a device */
 	pthread_mutex_t lock;
+
+	/* What a side is built from, on the host: the trajectory in radians,
+	 * one array per transformed axis, and the weights. */
+	float* radians[3];
+	complex float* host_weights;
 
 	/* BART's own operator over the same trajectory, held for the point
 	 * spread function its normal applies.  NULL when the caller asked for
 	 * no Toeplitz embedding, and the pair answers the normal instead. */
 	const struct linop_s* toeplitz;
 
+	int dim;
+	int64_t n_modes[3];
+	double eps;
+
 	long samples;
 	long batch;
 	long image_elements;
 	float scale;
 
-	/* The weights BART would multiply the transform by, NULL when there are
-	 * none; ksp_dims and their strides say how they broadcast onto k-space. */
+	/* ksp_dims and the strides say how the weights broadcast onto k-space. */
 	int N;
-	complex float* weights;
 	long* cim_dims;
 	long* ksp_dims;
 	long* ksp_strs;
+	long* wgh_dims;
 	long* wgh_strs;
 };
 
 static DEF_TYPEID(nufft_fi_s);
+
+/* Memory on one side of the bus.  A device only exists in a CUDA build, and
+ * `device` is never set without one: `bartorch_on_device` says no, and
+ * `bart_use_gpu` stays false. */
+static void* alloc_on(int device, int N, const long dims[N], size_t size)
+{
+#ifdef USE_CUDA
+	if (device)
+		return md_alloc_gpu(N, dims, size);
+#else
+	(void)device;
+#endif
+	return md_alloc(N, dims, size);
+}
+
+static void side_free(struct nufft_fi_s* d, struct fi_side* s)
+{
+	bartorch_finufft_free(s->forward_plan);
+	bartorch_finufft_free(s->adjoint_plan);
+
+	s->forward_plan = NULL;
+	s->adjoint_plan = NULL;
+
+	for (int i = 0; i < d->dim; i++) {
+
+		md_free(s->coord[i]);
+		s->coord[i] = NULL;
+	}
+
+	md_free(s->weights);
+	s->weights = NULL;
+}
+
+/* Plans on `which`, over a copy of the coordinates and the weights there. */
+static int side_build(struct nufft_fi_s* d, int which)
+{
+	struct fi_side* s = &d->side[which];
+
+	if (0 != bartorch_finufft_plan(which, 2, d->dim, d->n_modes, (int)d->batch, -1, d->eps, &s->forward_plan))
+		return 11;
+
+	if (0 != bartorch_finufft_plan(which, 1, d->dim, d->n_modes, (int)d->batch, +1, d->eps, &s->adjoint_plan)) {
+
+		side_free(d, s);
+		return 12;
+	}
+
+	long one[1] = { d->samples };
+
+	for (int i = 0; i < d->dim; i++) {
+
+		s->coord[i] = alloc_on(which, 1, one, FL_SIZE);
+		md_copy(1, one, s->coord[i], d->radians[i], FL_SIZE);
+	}
+
+	if (NULL != d->host_weights) {
+
+		s->weights = alloc_on(which, d->N, d->wgh_dims, CFL_SIZE);
+		md_copy(d->N, d->wgh_dims, s->weights, d->host_weights, CFL_SIZE);
+	}
+
+	if (   (0 != bartorch_finufft_setpts(s->forward_plan, d->samples, s->coord[0], s->coord[1], s->coord[2]))
+	    || (0 != bartorch_finufft_setpts(s->adjoint_plan, d->samples, s->coord[0], s->coord[1], s->coord[2]))) {
+
+		side_free(d, s);
+		return 13;
+	}
+
+	return 0;
+}
+
+/* The side `ptr` is on, built if this is the first transform there.
+ *
+ * A side is built once and never rebuilt, so what this returns stays good
+ * after the lock is dropped.  error() leaves by a longjmp, which is why it is
+ * called with the lock released. */
+static const struct fi_side* side_for(struct nufft_fi_s* d, const void* ptr)
+{
+	int which = bartorch_on_device(ptr) ? 1 : 0;
+
+	pthread_mutex_lock(&d->lock);
+
+	int ret = (NULL == d->side[which].forward_plan) ? side_build(d, which) : 0;
+
+	pthread_mutex_unlock(&d->lock);
+
+	if (0 != ret)
+		error("bartorch: FINUFFT would not plan the transform on the %s\n",
+				which ? "device" : "host");
+
+	return &d->side[which];
+}
 
 /* Whether an operator is one of these, so the entry points that read BART's
  * internals can tell one from one of BART's. */
@@ -110,8 +224,10 @@ static void nufft_fi_forward(const linop_data_t* _d, complex float* dst, const c
 {
 	struct nufft_fi_s* d = CAST_DOWN(nufft_fi_s, _d);
 
+	const struct fi_side* s = side_for(d, dst);
+
 	pthread_mutex_lock(&d->lock);
-	int ret = bartorch_finufft_exec(d->forward_plan, dst, (complex float*)src);
+	int ret = bartorch_finufft_exec(s->forward_plan, dst, (complex float*)src);
 	pthread_mutex_unlock(&d->lock);
 
 	if (0 != ret)
@@ -119,25 +235,27 @@ static void nufft_fi_forward(const linop_data_t* _d, complex float* dst, const c
 
 	md_zsmul(d->N, d->ksp_dims, dst, dst, d->scale);
 
-	if (NULL != d->weights)
-		md_zmul2(d->N, d->ksp_dims, d->ksp_strs, dst, d->ksp_strs, dst, d->wgh_strs, d->weights);
+	if (NULL != s->weights)
+		md_zmul2(d->N, d->ksp_dims, d->ksp_strs, dst, d->ksp_strs, dst, d->wgh_strs, s->weights);
 }
 
 static void nufft_fi_adjoint(const linop_data_t* _d, complex float* dst, const complex float* src)
 {
 	struct nufft_fi_s* d = CAST_DOWN(nufft_fi_s, _d);
 
+	const struct fi_side* s = side_for(d, dst);
+
 	complex float* weighted = NULL;
 
-	if (NULL != d->weights) {
+	if (NULL != s->weights) {
 
 		weighted = md_alloc_sameplace(d->N, d->ksp_dims, CFL_SIZE, dst);
-		md_zmulc2(d->N, d->ksp_dims, d->ksp_strs, weighted, d->ksp_strs, src, d->wgh_strs, d->weights);
+		md_zmulc2(d->N, d->ksp_dims, d->ksp_strs, weighted, d->ksp_strs, src, d->wgh_strs, s->weights);
 		src = weighted;
 	}
 
 	pthread_mutex_lock(&d->lock);
-	int ret = bartorch_finufft_exec(d->adjoint_plan, (complex float*)src, dst);
+	int ret = bartorch_finufft_exec(s->adjoint_plan, (complex float*)src, dst);
 	pthread_mutex_unlock(&d->lock);
 
 	md_free(weighted);
@@ -159,19 +277,20 @@ static void nufft_fi_del(const linop_data_t* _d)
 {
 	struct nufft_fi_s* d = CAST_DOWN(nufft_fi_s, _d);
 
-	bartorch_finufft_free(d->forward_plan);
-	bartorch_finufft_free(d->adjoint_plan);
+	side_free(d, &d->side[0]);
+	side_free(d, &d->side[1]);
 
 	if (NULL != d->toeplitz)
 		linop_free(d->toeplitz);
 
 	for (int i = 0; i < 3; i++)
-		md_free(d->coord[i]);
+		md_free(d->radians[i]);
 
-	md_free(d->weights);
+	md_free(d->host_weights);
 	xfree(d->cim_dims);
 	xfree(d->ksp_dims);
 	xfree(d->ksp_strs);
+	xfree(d->wgh_dims);
 	xfree(d->wgh_strs);
 
 	pthread_mutex_destroy(&d->lock);
@@ -248,10 +367,18 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 		const long wgh_dims[N], const complex float* weights,
 		const complex float* basis, struct nufft_conf_s conf)
 {
-	int device = bartorch_on_device(traj) ? 1 : 0;
+	/* Which sides the operator may be applied on.  BART on a card applies
+	 * one to either: `pics` takes its first adjoint from the k-space it
+	 * mapped and iterates on device vectors, and `nufft -g` wraps the
+	 * operator so that its arguments arrive on the device.  Both sides have
+	 * to be servable before the substitution takes the operator at all. */
+	int device = (bart_use_gpu || bartorch_on_device(traj)) ? 1 : 0;
 
-	if (!bartorch_finufft_usable_on(device))
-		DECLINE(device ? 3 : 1);
+	if (!bartorch_finufft_usable_on(0))
+		DECLINE(1);
+
+	if (device && !bartorch_finufft_usable_on(1))
+		DECLINE(3);
 
 	if (NULL != basis)
 		DECLINE(14);
@@ -313,22 +440,12 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 				DECLINE(15);
 
 	double eps = bartorch_finufft_tolerance();
-	void* forward_plan = NULL;
-	void* adjoint_plan = NULL;
-
-	if (0 != bartorch_finufft_plan(device, 2, dim, n_modes, (int)batch, -1, eps, &forward_plan))
-		DECLINE(11);
-
-	if (0 != bartorch_finufft_plan(device, 1, dim, n_modes, (int)batch, +1, eps, &adjoint_plan)) {
-
-		bartorch_finufft_free(forward_plan);
-		DECLINE(12);
-	}
 
 	/* BART's trajectory counts samples of the image grid and FINUFFT takes
-	 * the same position in radians.  Taking one component and rescaling it
-	 * with BART's own operations is what makes this the same code on a card:
-	 * the arrays come out where the trajectory is. */
+	 * the same position in radians.  One component is taken and rescaled
+	 * with BART's own operations, on the host, and a side copies it to
+	 * wherever its plans are; md_copy2 crosses the bus if the trajectory is
+	 * on the other side. */
 	long one_dims[N];
 	long one_strs[N];
 	long trj_strs[N];
@@ -337,35 +454,19 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 	md_calc_strides(N, one_strs, one_dims, CFL_SIZE);
 	md_calc_strides(N, trj_strs, traj_dims, CFL_SIZE);
 
-	complex float* component = md_alloc_sameplace(N, one_dims, CFL_SIZE, traj);
-	float* coord[3] = { NULL, NULL, NULL };
+	complex float* component = md_alloc(N, one_dims, CFL_SIZE);
+	float* radians[3] = { NULL, NULL, NULL };
 
 	for (int i = 0; i < dim; i++) {
 
 		md_copy2(N, one_dims, one_strs, component, trj_strs, traj + axis[i], CFL_SIZE);
 
-		coord[i] = md_alloc_sameplace(N, one_dims, FL_SIZE, traj);
-		md_real(N, one_dims, coord[i], component);
-		md_smul(N, one_dims, coord[i], coord[i], (float)(2. * M_PI / (double)cim_dims[axis[i]]));
+		radians[i] = md_alloc(N, one_dims, FL_SIZE);
+		md_real(N, one_dims, radians[i], component);
+		md_smul(N, one_dims, radians[i], radians[i], (float)(2. * M_PI / (double)cim_dims[axis[i]]));
 	}
 
 	md_free(component);
-
-	int ret = bartorch_finufft_setpts(forward_plan, samples, coord[0], coord[1], coord[2]);
-
-	if (0 == ret)
-		ret = bartorch_finufft_setpts(adjoint_plan, samples, coord[0], coord[1], coord[2]);
-
-	if (0 != ret) {
-
-		bartorch_finufft_free(forward_plan);
-		bartorch_finufft_free(adjoint_plan);
-
-		for (int i = 0; i < 3; i++)
-			md_free(coord[i]);
-
-		DECLINE(13);
-	}
 
 	long image_elements = 1;
 
@@ -375,34 +476,55 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 	PTR_ALLOC(struct nufft_fi_s, d);
 	SET_TYPEID(nufft_fi_s, d);
 
-	d->forward_plan = forward_plan;
-	d->adjoint_plan = adjoint_plan;
+	memset(&d->side, 0, sizeof d->side);
+	d->toeplitz = NULL;
 
 	for (int i = 0; i < 3; i++)
-		d->coord[i] = coord[i];
+		d->radians[i] = radians[i];
 
 	pthread_mutex_init(&d->lock, NULL);
+	d->dim = dim;
+
+	for (int i = 0; i < 3; i++)
+		d->n_modes[i] = n_modes[i];
+
+	d->eps = eps;
 	d->samples = samples;
 	d->batch = batch;
 	d->image_elements = image_elements;
 	d->scale = (float)(1. / sqrt((double)image_elements));
 
 	d->N = N;
-	d->weights = NULL;
+	d->host_weights = NULL;
 	d->cim_dims = xmalloc((size_t)N * sizeof(long));
 	d->ksp_dims = xmalloc((size_t)N * sizeof(long));
 	d->ksp_strs = xmalloc((size_t)N * sizeof(long));
+	d->wgh_dims = xmalloc((size_t)N * sizeof(long));
 	d->wgh_strs = xmalloc((size_t)N * sizeof(long));
 
 	md_copy_dims(N, d->cim_dims, cim_dims);
 	md_copy_dims(N, d->ksp_dims, ksp_dims);
 	md_calc_strides(N, d->ksp_strs, ksp_dims, CFL_SIZE);
+	md_singleton_dims(N, d->wgh_dims);
+	md_singleton_strides(N, d->wgh_strs);
 
 	if (NULL != weights) {
 
-		d->weights = md_alloc_sameplace(N, wgh_dims, CFL_SIZE, weights);
-		md_copy(N, wgh_dims, d->weights, weights, CFL_SIZE);
+		md_copy_dims(N, d->wgh_dims, wgh_dims);
+		d->host_weights = md_alloc(N, wgh_dims, CFL_SIZE);
+		md_copy(N, wgh_dims, d->host_weights, weights, CFL_SIZE);
 		md_calc_strides(N, d->wgh_strs, wgh_dims, CFL_SIZE);
+	}
+
+	/* The side the operator is most likely to be asked for first, so that a
+	 * plan FINUFFT will not make is a decline here rather than an error in
+	 * the middle of a solve. */
+	int ret = side_build(d, device);
+
+	if (0 != ret) {
+
+		nufft_fi_del(CAST_UP(PTR_PASS(d)));
+		DECLINE(ret);
 	}
 
 	d->toeplitz = toeplitz_for(N, ksp_dims, cim_dims, traj_dims, traj, wgh_dims, weights, conf);

@@ -73,13 +73,18 @@ and cuFFT on a device.
 **CUDA is the same ABI.** `-DBARTORCH_CUDA=ON` compiles BART's thirteen `.cu`
 files with nvcc and links cudart, cuFFT and cuBLAS dynamically, which are the
 three BART uses, so the wheel carries device code and nothing else: about 2 MB
-of fatbinary for five architectures on top of the host library. `CUDA_GET_CUDA_DEVICE_NUM`
-switches BART to asking the driver whether a pointer is on a device, which is
-what lets a torch CUDA tensor be passed in without being registered, and the
-allocator callback returns tensors on whichever device the caller selected.
-Ordering is two events per call rather than a synchronise:
-`bartorch_cuda_wait_for_stream` holds BART's streams until torch's queued work
-has run and `bartorch_cuda_signal_stream` does the reverse.
+of fatbinary for five architectures on top of the host library.
+`CUDA_GET_CUDA_DEVICE_NUM` switches BART to asking the driver whether a
+pointer is on a device, which is what lets a torch CUDA tensor be passed to an
+operator without being registered anywhere. Ordering is two events per call
+rather than a synchronise: `bartorch_cuda_wait_for_stream` holds BART's
+streams until torch's queued work has run and `bartorch_cuda_signal_stream`
+does the reverse.
+
+A tensor on a card selects that card for the length of the call, which is what
+`bartorch.cuda.ordered` does, and that is also what turns BART's own device
+path on: `bart_use_gpu` is what `-g` sets on the command line, so passing `-g`
+to a tool as well changes nothing.
 
 **FINUFFT arrives the same way MKL does.** The `finufft` and `cufinufft`
 wheels each carry a compiled shared library with a plain C plan API, so they
@@ -113,8 +118,10 @@ The entry points that read the operator's internals -- `nufft_get_psf*`,
 read the wrong struct. `pics` only reaches them for `--psf_export` and
 `--psf_import`.
 
-A plan holds the trajectory by pointer rather than copying it, so the
-coordinate arrays live in the operator's data and are freed with it.
+A plan holds the coordinates by pointer rather than copying them, so each side
+owns its own arrays and they are freed with the operator; the trajectory in
+radians is kept once on the host, and a side copies it to wherever its plans
+are.
 
 **The normal operator stays BART's.** A^H A is a convolution, so a solve
 applies it as one multiply against a point spread function rather than a
@@ -144,15 +151,26 @@ and `pics` over the same data, agreeing with BART's own reconstruction to
 | FINUFFT | 1.06 s | 2.33 s |
 
 **cuFINUFFT is the same table.** `csrc/finufft.c` holds two of them, filled
-from the `finufft` and `cufinufft` wheels, and a transform is served by
-whichever matches where the trajectory is; without the `cufinufft` wheel a
-trajectory on a card stays with BART's own operator rather than quietly
-running on the host. Everything the operator does around the transform --
+from the `finufft` and `cufinufft` wheels; without the `cufinufft` wheel a
+transform BART would run on a card stays with BART's own operator rather than
+quietly running on the host.
+
+Which table serves a transform is decided by where its arguments are, not by
+where the trajectory is, because BART hands one operator memory on either
+side: `pics` takes its first adjoint from the k-space it mapped and then
+iterates on device vectors. So the operator holds a side per place -- a pair
+of plans, the coordinates they point at, and the weights -- and builds one the
+first time a transform is asked for there. Everything around the transform --
 taking a trajectory component, rescaling it into radians, the scaling, the
 weights -- goes through BART's own `md_` operations, which is what makes one
-piece of code serve both: the arrays come out where the trajectory is. A
-callback reaches a device buffer through the CUDA array interface
-(`src/bartorch/_buffer.py`), which is how a Python operator sees one.
+piece of code serve both. A callback reaches a device buffer through the CUDA
+array interface (`src/bartorch/_buffer.py`), which is how a Python operator
+sees one.
+
+The cuFINUFFT wheel is taken through the C API it exports from 2.3 on: an
+int64 sample count in `cufinufftf_setpts`, and defaults filled from the
+options struct alone, spelled `cufinufft_default_opts` without the precision
+suffix FINUFFT uses.
 
 `LinearOperator.finufft` is the same transform reached without BART's tools,
 for chaining and solving in Python. It makes a plan once and reuses it, matches
@@ -161,10 +179,19 @@ trajectory always carries three components, so whether a transform is two- or
 three-dimensional is decided by whether kz is used, not by the trajectory's
 shape.
 
-**Tools copy their inputs; operators do not.** BART maps input files
-copy-on-write and some tools write into them, so a tool gets a clone unless
-the caller turns that off. An operator never writes its input, so the
-operator path is zero-copy in both directions.
+**Tools take host memory; operators take the memory as it is.** BART's tools
+are command mains that map their inputs the way the command line does, and
+several read them there: `estimate_im_dims` in `nufft`, the sort in `pics`'s
+scaling estimate, `gram_matrix` in `ecalib`. A device pointer in those is a
+segmentation fault, not an error, so `dispatch` copies a tensor on a card to
+the host and copies the result back; what happens in between is BART's own
+device path, on the card the tensors came from. BART also maps input files
+copy-on-write and some tools write into them, so a host tensor is cloned
+unless the caller turns that off.
+
+An operator reaches its arguments through BART's `md_` operations, which
+dispatch on where a pointer is, so it takes a device tensor as it stands and
+never writes its input: that path is zero-copy in both directions.
 
 **Compilers.** BART is GNU C, and the difficulty is its nested functions.
 Under clang they become Blocks, resolved by the vendored runtime on Linux and
@@ -204,6 +231,32 @@ A numerical test pins BART against something outside BART: numpy's FFT, an
 explicit discrete Fourier sum, a closed-form signal, an adjoint identity. A
 test that compares BART to BART proves nothing.
 
+## On a card
+
+`scripts/check_device.py` walks the device path in dependency order, each
+check independent and naming its own reason, so the first failure is the thing
+to fix. On an RTX 4060 Laptop, CUDA 12.8, all nine pass: `fft` against numpy
+to 9e-08, BART's own NUFFT against an explicit discrete Fourier sum to 1.4e-03
+and cuFINUFFT's to 5.7e-07, the device and host transforms agreeing to
+3.4e-06, and `-g` changing nothing that the device pointers had not already
+decided.
+
+On a 256x256 eight-coil radial dataset of 401 spokes, best of five, `pics`
+takes 0.46 to 0.57 s on the card with the point spread function and 0.46 to
+0.53 s with the transform pair -- each inside the other's scatter -- against
+1.9 to 2.6 s and 5.0 to 5.9 s on the same machine's host. The pair is cheap
+enough on a card that halving the number of transforms stops being worth
+measuring; on the host the point spread function is still worth 2.5x. This is
+a 45 W laptop card, so a run measured cold and one measured after the clocks
+have dropped differ by more than the two normals do.
+
+More than one BART stream makes no difference that measurement can resolve:
+one, two and four streams reconstruct in the same half second, and the spread
+between them is smaller than the spread between repetitions of any one of
+them. What BART holds on the card is what `bartorch.cuda.use_memcache` decides
+for an operator -- 57 MB against nothing on that dataset -- and nothing at all
+for a tool, because BART's `main` clears the cache when a command ends.
+
 ## Conventions
 
 Shapes are C order; a BART dimension vector is the reversed shape. Wherever
@@ -224,6 +277,12 @@ Returns, Raises.
 Windows, tools with optional extra outputs, and the wider solver surface
 (ADMM, FISTA, proximal operators) through the operator layer.
 
+A tool that takes device memory as it stands. BART guards the host reads that
+would break -- `estimate_im_dims` copies to the host when it is handed one --
+for its own virtual pointers, not for a raw device pointer, so the route in is
+`csrc/memcfl.c` handing BART a `vptr_wrap_cfl` rather than the pointer itself,
+and then finding out which of BART's guards are complete.
+
 Two of mrtoeplitz's ideas have no route in from here: a transfer that stays on
 the host and is streamed across in chunks, and bfloat16 transfers, which halve
 what crosses the bus. Both are decisions about how the point spread function
@@ -235,18 +294,6 @@ mrtoeplitz kernel behind a host callback would go there. What BART does have
 is `compress_psf`, `decomposed_psf` and `lowmem`, and its own overlap:
 `bartorch.cuda.set_streams` sets `cuda_num_streams`, which is what puts BART's
 transfers and its arithmetic on different streams.
-
-The CUDA path is verified only as far as a machine without a card allows: it
-compiles, links, loads, reports no device, and runs the whole host suite. The
-tests that need a card are written and skip. `scripts/check_device.py` walks
-what is left in dependency order -- a tool answering on the device, a NUFFT
-against an explicit discrete Fourier sum, cuFINUFFT serving the card, the
-device and host transforms agreeing, `pics` with and without the Toeplitz
-normal, whether more than one BART stream overlaps anything, whether BART's
-allocations and torch's caching allocator coexist
-(`bartorch.cuda.use_memcache(False)` gives BART's memory straight back), and
-whether a tool needs `-g` beyond the device pointers. Each check is
-independent and names its own reason, so the first failure is the thing to fix.
 
 Routing BART's device allocations through torch's allocator is a further step:
 `mem_device_malloc` takes the allocator as a parameter, so replacing

@@ -7,9 +7,10 @@
  * packages, so a release that moves a field cannot be misread here and
  * nothing is built or vendored.
  *
- * The two libraries have the same shape and different types -- cuFINUFFT
- * takes the sample count as an int and carries a device number in its options
- * -- so they are held as two tables and picked by where the data is.
+ * The two libraries have the same entry points and answer different memory --
+ * cuFINUFFT spells its defaults without the precision suffix, and carries a
+ * device number in its options where FINUFFT carries a thread count -- so
+ * they are held as two tables, picked by where the data is.
  *
  * What is done with a plan belongs to nufft_finufft.c, which builds BART's
  * NUFFT operator out of a pair of them.
@@ -31,14 +32,10 @@ typedef int (*fi_execute_t)(finufft_plan_t plan, complex float* c, complex float
 typedef int (*fi_destroy_t)(finufft_plan_t plan);
 typedef void (*fi_default_opts_t)(void* opts);
 
-/* cuFINUFFT counts samples in an int and answers a device plan. */
-typedef int (*cufi_setpts_t)(finufft_plan_t plan, int M, float* x, float* y, float* z, int N, float* s, float* t, float* u);
-
 struct fi_table {
 
 	fi_makeplan_t makeplan;
 	fi_setpts_t setpts;
-	cufi_setpts_t setpts_int;
 	fi_execute_t execute;
 	fi_destroy_t destroy;
 	fi_default_opts_t default_opts;
@@ -68,7 +65,7 @@ int bartorch_finufft_set(const char* symbol, void* fn)
 	const char* name = symbol + (cuda ? 2 : 0);
 
 	if (0 == strcmp(name, "finufftf_makeplan")) t->makeplan = (fi_makeplan_t)fn;
-	else if (0 == strcmp(name, "finufftf_setpts")) { t->setpts = cuda ? NULL : (fi_setpts_t)fn; t->setpts_int = cuda ? (cufi_setpts_t)fn : NULL; }
+	else if (0 == strcmp(name, "finufftf_setpts")) t->setpts = (fi_setpts_t)fn;
 	else if (0 == strcmp(name, "finufftf_execute")) t->execute = (fi_execute_t)fn;
 	else if (0 == strcmp(name, "finufftf_destroy")) t->destroy = (fi_destroy_t)fn;
 	else if ((0 == strcmp(name, "finufftf_default_opts")) || (0 == strcmp(name, "finufft_default_opts"))) t->default_opts = (fi_default_opts_t)fn;
@@ -105,13 +102,17 @@ double bartorch_finufft_tolerance(void)
 /* The entry points are there and the options layout is known. */
 static bool table_ready(const struct fi_table* t)
 {
-	return (NULL != t->makeplan) && ((NULL != t->setpts) || (NULL != t->setpts_int))
-		&& (NULL != t->execute) && (NULL != t->destroy) && (NULL != t->default_opts)
-		&& (0 != t->opts_size);
+	return (NULL != t->makeplan) && (NULL != t->setpts) && (NULL != t->execute)
+		&& (NULL != t->destroy) && (NULL != t->default_opts) && (0 != t->opts_size);
 }
 
+/* The cufinufft wheel can be installed beside a library built without CUDA,
+ * and then nothing can ever be on a device for it to serve. */
 int bartorch_finufft_usable_on(int device)
 {
+	if (device && !bartorch_cuda_built())
+		return 0;
+
 	const struct fi_table* t = device ? &fi.device : &fi.host;
 	return (table_ready(t) && fi.use_in_tools) ? 1 : 0;
 }
@@ -178,13 +179,7 @@ int bartorch_finufft_setpts(void* plan, long M, float* x, float* y, float* z)
 {
 	const struct bartorch_fi_plan* p = plan;
 
-	if (NULL != p->table->setpts)
-		return p->table->setpts(p->plan, M, x, y, z, 0, NULL, NULL, NULL);
-
-	if (M > INT32_MAX)
-		return -1;
-
-	return p->table->setpts_int(p->plan, (int)M, x, y, z, 0, NULL, NULL, NULL);
+	return p->table->setpts(p->plan, M, x, y, z, 0, NULL, NULL, NULL);
 }
 
 int bartorch_finufft_exec(void* plan, complex float* c, complex float* f)

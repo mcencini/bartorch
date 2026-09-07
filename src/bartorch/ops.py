@@ -25,9 +25,9 @@ from typing import Any
 
 import torch
 
-from bartorch import _buffer
+from bartorch import _buffer, _cuda
 from bartorch._lib import APPLY_FN, DIMS, library
-from bartorch.core.graph import BartError, _ensure_ready, _lock
+from bartorch.core.graph import BartError, _ensure_ready, _lock, _on_device
 
 __all__ = ["LinearOperator", "NonlinearOperator"]
 
@@ -80,8 +80,13 @@ def _view(ptr: int, shape: Shape) -> torch.Tensor:
 def _as_operand(x: Any, shape: Shape, what: str) -> torch.Tensor:
     if not isinstance(x, torch.Tensor):
         x = torch.as_tensor(x)
-    if x.device.type != "cpu":
-        raise ValueError(f"{what} must be a CPU tensor for this build")
+    if x.device.type == "cuda" and not _cuda.available():
+        raise ValueError(
+            f"{what} is on a CUDA device, and this library has no CUDA support built in "
+            "or no device is present; move it to the host with .cpu()"
+        )
+    if x.device.type not in ("cpu", "cuda"):
+        raise ValueError(f"{what} is on {x.device}; BART reaches the host and CUDA devices")
     if tuple(x.shape) != tuple(shape):
         try:
             x = x.reshape(shape)
@@ -206,7 +211,7 @@ class LinearOperator:
         shape = tuple(shape)
         d = _as_operand(diag, tuple(diag.shape), "diag")
         flags = _flags(tuple(d.shape), shape)
-        with _lock:
+        with _lock, _on_device(d.device):
             ptr = library().bartorch_linop_cdiag(DIMS, _dims(shape), flags, d.data_ptr())
         return cls._create(ptr, shape, shape, (d,))
 
@@ -222,7 +227,7 @@ class LinearOperator:
         _ensure_ready()
         t = _as_operand(tensor, tuple(tensor.shape), "tensor")
         ishape, oshape = tuple(ishape), tuple(oshape)
-        with _lock:
+        with _lock, _on_device(t.device):
             ptr = library().bartorch_linop_fmac(
                 DIMS, _dims(oshape), _dims(ishape), _dims(tuple(t.shape)), t.data_ptr()
             )
@@ -234,7 +239,7 @@ class LinearOperator:
         _ensure_ready()
         shape = tuple(shape)
         p = _as_operand(pattern, tuple(pattern.shape), "pattern")
-        with _lock:
+        with _lock, _on_device(p.device):
             ptr = library().bartorch_linop_sampling(
                 _dims(shape), _dims(tuple(p.shape)), p.data_ptr()
             )
@@ -272,7 +277,7 @@ class LinearOperator:
         image_shape = tuple(image_shape)
         if kspace_shape is None:
             kspace_shape = _default_kspace_shape(tuple(t.shape), image_shape)
-        with _lock:
+        with _lock, _on_device(t.device):
             ptr = library().bartorch_linop_nufft(
                 DIMS,
                 _dims(tuple(kspace_shape)),
@@ -340,8 +345,8 @@ class LinearOperator:
 
     def _apply(self, fn, x: torch.Tensor, ishape: Shape, oshape: Shape) -> torch.Tensor:
         x = _as_operand(x, ishape, "input")
-        y = torch.empty(oshape, dtype=torch.complex64)
-        with _lock:
+        y = torch.empty(oshape, dtype=torch.complex64, device=x.device)
+        with _lock, _on_device(x.device):
             if fn(self._h.ptr, y.data_ptr(), x.data_ptr()) != 0:
                 raise BartError("operator application failed; see the log for BART's message")
         return y
@@ -370,10 +375,10 @@ class LinearOperator:
         """Solve ``min ||A x - y||^2 + lambda ||x||^2`` by BART's conjugate gradients."""
         y = _as_operand(y, self.oshape, "y")
         if x0 is None:
-            x = torch.zeros(self.ishape, dtype=torch.complex64)
+            x = torch.zeros(self.ishape, dtype=torch.complex64, device=y.device)
         else:
             x = _as_operand(x0, self.ishape, "x0").clone()
-        with _lock:
+        with _lock, _on_device(y.device):
             code = library().bartorch_lsqr(
                 self._h.ptr,
                 int(maxiter),
@@ -499,8 +504,8 @@ class NonlinearOperator:
 
     def _apply(self, fn, x: torch.Tensor, ishape: Shape, oshape: Shape) -> torch.Tensor:
         x = _as_operand(x, ishape, "input")
-        y = torch.empty(oshape, dtype=torch.complex64)
-        with _lock:
+        y = torch.empty(oshape, dtype=torch.complex64, device=x.device)
+        with _lock, _on_device(x.device):
             if fn(self._h.ptr, y.data_ptr(), x.data_ptr()) != 0:
                 raise BartError("operator application failed; see the log for BART's message")
         return y
@@ -548,7 +553,7 @@ class NonlinearOperator:
         y = _as_operand(y, self.oshape, "y")
         x = _as_operand(x0, self.ishape, "x0").clone()
         ref = _as_operand(xref, self.ishape, "xref") if xref is not None else None
-        with _lock:
+        with _lock, _on_device(y.device):
             code = library().bartorch_irgnm(
                 self._h.ptr,
                 int(iterations),

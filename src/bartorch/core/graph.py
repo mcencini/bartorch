@@ -4,8 +4,16 @@
 :mod:`bartorch.tools` calls.  It registers each input tensor's memory in the
 compiled library's in-memory registry under a ``.mem`` name, assembles the
 tool's argv, runs the tool in-process and hands back the tensor the tool
-wrote, which was allocated by torch through the allocator callback and so was
-never copied.
+wrote, allocated by torch through the allocator callback.
+
+A tool sees host memory.  BART's tools are command mains that map their
+inputs the way the command line does and some read them there --
+``estimate_im_dims`` in ``nufft``, the sort in ``pics``'s scaling estimate,
+``gram_matrix`` in ``ecalib`` -- so a tensor on a card crosses to the host
+first.  What puts the work back on the card is BART's own device path:
+tensors on a device select it, and BART allocates there and runs its kernels
+there for as long as the tool does.  The operator layer in
+:mod:`bartorch.ops` is the one that takes device memory as it stands.
 
 Axis convention: a C-order tensor of shape ``(a, b, c)`` and a BART array of
 dims ``[c, b, a]`` are the same bytes, so a shape is reversed at this boundary
@@ -49,10 +57,9 @@ class BartError(RuntimeError):
 
 
 class _Allocator:
-    """Serves BART's output allocations with torch tensors and keeps them alive."""
+    """Serves BART's output allocations with host tensors and keeps them alive."""
 
     def __init__(self) -> None:
-        self.device = torch.device("cpu")
         self.live: dict[int, torch.Tensor] = {}
         self._alloc_cb = ALLOC_FN(self._alloc)
         self._free_cb = FREE_FN(self._free)
@@ -60,7 +67,7 @@ class _Allocator:
     def _alloc(self, _ctx, D, dims):
         shape = [dims[i] for i in range(D)][::-1]
         try:
-            t = torch.empty(shape, dtype=torch.complex64, device=self.device)
+            t = torch.empty(shape, dtype=torch.complex64)
         except Exception:
             _log.exception("bartorch: allocation of %s failed", shape)
             return None
@@ -123,7 +130,9 @@ def set_copy_inputs(copy: bool) -> None:
     BART maps input files copy-on-write and some tools write into them, so
     by default every input tensor is copied before a tool runs.  Passing
     ``False`` hands the tool the tensor's own memory: no copy is made, and a
-    tool that writes into its input changes the caller's tensor.
+    tool that writes into its input changes the caller's tensor.  A tensor on
+    a card crosses to the host either way, so this only decides what happens
+    to a host tensor.
     """
     global _copy_inputs
     _copy_inputs = bool(copy)
@@ -232,6 +241,18 @@ def _bart_dims(shape: tuple[int, ...]) -> tuple[int, ctypes.Array]:
     return len(rev), (ctypes.c_long * len(rev))(*rev)
 
 
+def _for_bart(x: torch.Tensor) -> torch.Tensor:
+    """The host tensor a tool is given: the caller's own, or a private copy.
+
+    A tensor on a card is copied to the host, which is a private copy already;
+    a host tensor is cloned unless :func:`set_copy_inputs` turned that off,
+    because a BART tool may write into what it was given.
+    """
+    if x.device.type != "cpu":
+        return x.cpu()
+    return x.clone() if _copy_inputs else x
+
+
 def _as_input(x: Any) -> torch.Tensor:
     if isinstance(x, np.ndarray):
         x = torch.from_numpy(np.ascontiguousarray(x, dtype=np.complex64))
@@ -316,9 +337,6 @@ def dispatch(
         if isinstance(value, (torch.Tensor, np.ndarray)):
             flag_arrays[index] = _as_input(value)
 
-    if _copy_inputs:
-        tensors = [t.clone() for t in tensors]
-        flag_arrays = {i: t.clone() for i, t in flag_arrays.items()}
     devices = {t.device for t in list(tensors) + list(flag_arrays.values())}
     if len(devices) > 1:
         raise ValueError("all inputs must live on the same device")
@@ -328,6 +346,8 @@ def dispatch(
             "this library has no CUDA support built in, or no device is present; "
             "move the tensors to the host with .cpu()"
         )
+    tensors = [_for_bart(t) for t in tensors]
+    flag_arrays = {i: _for_bart(t) for i, t in flag_arrays.items()}
     want_output = output_dims is not False
     min_ndim = len(output_dims) if isinstance(output_dims, (list, tuple)) else 1
 
@@ -336,7 +356,6 @@ def dispatch(
         call = _call_id
         names = [f"_bt_{call}_in{i}.mem" for i in range(len(tensors))]
         out_names = [f"_bt_{call}_out{i}.mem" for i in range(_n_out)] if want_output else []
-        _allocator.device = device
         flag_names = {i: f"_bt_{call}_flag{i}.mem" for i in flag_arrays}
         for name, t in list(zip(names, tensors)) + [
             (flag_names[i], flag_arrays[i]) for i in flag_arrays
@@ -358,7 +377,8 @@ def dispatch(
                 ptr = ctypes.c_void_p()
                 if lib.bartorch_lookup(out_name.encode(), DIMS, dims, ctypes.byref(ptr)) != 0:
                     raise BartError(f"bart {op_name} did not write {out_name}")
-                results.append(_allocator.take(ptr.value).reshape(_output_shape(dims, min_ndim)))
+                out = _allocator.take(ptr.value).reshape(_output_shape(dims, min_ndim))
+                results.append(out.to(device) if device.type != "cpu" else out)
             return results[0] if len(results) == 1 else tuple(results)
         finally:
             for name in names + out_names + list(flag_names.values()):

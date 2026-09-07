@@ -16,7 +16,15 @@ import torch
 
 from bartorch._lib import library
 
-__all__ = ["available", "device_count", "free_memory", "ordered", "set_streams", "use_memcache"]
+__all__ = [
+    "available",
+    "device",
+    "device_count",
+    "free_memory",
+    "ordered",
+    "set_streams",
+    "use_memcache",
+]
 
 
 def built() -> bool:
@@ -31,6 +39,15 @@ def available() -> bool:
 
 def device_count() -> int:
     return int(library().bartorch_cuda_device_count())
+
+
+def device() -> int:
+    """The device BART is running on, or -1 when it is on the host.
+
+    BART is pointed at a card only for the duration of a call, so this is -1
+    everywhere except inside :func:`ordered`.
+    """
+    return int(library().bartorch_cuda_device())
 
 
 def free_memory() -> int:

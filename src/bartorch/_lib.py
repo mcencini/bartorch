@@ -39,15 +39,31 @@ def _library_names() -> list[str]:
     return ["libbartorch.so"]
 
 
+def _package_dirs() -> list[Path]:
+    """Every directory the package's files are in.
+
+    A wheel puts the library beside the Python sources.  An editable install
+    leaves the sources where they are and adds the directory it built into to
+    the package's ``__path__``, so that is where the library is then.
+    """
+    roots = [Path(__file__).resolve().parent]
+    package = sys.modules.get(__package__ or "bartorch")
+    for entry in getattr(package, "__path__", ()):
+        root = Path(entry).resolve()
+        if root not in roots:
+            roots.append(root)
+    return roots
+
+
 def _find_library() -> Path:
     override = os.environ.get("BARTORCH_LIBRARY")
     if override:
         return Path(override)
-    here = Path(__file__).resolve().parent
-    for name in _library_names():
-        candidate = here / name
-        if candidate.exists():
-            return candidate
+    for root in _package_dirs():
+        for name in _library_names():
+            candidate = root / name
+            if candidate.exists():
+                return candidate
     raise ImportError(
         "bartorch: compiled library not found next to the package. "
         "Build it with `pip install .` or point BARTORCH_LIBRARY at libbartorch."

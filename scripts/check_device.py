@@ -22,6 +22,7 @@ import torch
 
 import bartorch
 import bartorch.tools as bt
+from bartorch.ops import LinearOperator
 
 CHECKS: list = []
 
@@ -80,7 +81,7 @@ def _built():
     if 0 == count:
         return False, "built with CUDA but no device is visible"
     free = bartorch.cuda.free_memory()
-    return True, f"{count} device(s), {free / 1e9:.1f} GB free, device {bartorch.cuda.device()}"
+    return True, f"{count} device(s), {torch.cuda.get_device_name(0)}, {free / 1e9:.1f} GB free"
 
 
 @check("a tool on device tensors answers on the device, with the right numbers")
@@ -89,8 +90,10 @@ def _tool_on_device():
     y = bt.fft(x, axes=-1)
     if y.device.type != "cuda":
         return False, f"the output came back on {y.device}"
-    ref = np.fft.fft(x.cpu().numpy(), axis=-1)
-    return True, f"fft rel {_relative(y.cpu().numpy(), ref):.2e} against numpy"
+    host = x.cpu().numpy()
+    ref = np.fft.fftshift(np.fft.fft(np.fft.ifftshift(host, axes=-1), axis=-1), axes=-1)
+    rel = _relative(y.cpu().numpy(), ref)
+    return rel < 1e-4, f"fft rel {rel:.2e} against numpy"
 
 
 @check("a NUFFT on device tensors matches an explicit discrete Fourier sum")
@@ -103,8 +106,9 @@ def _nufft_on_device():
         return False, f"the output came back on {y.device}"
     ref = _explicit_dft(traj, image, n)
     got = y.cpu().numpy().reshape(32, n)[:1]
+    rel = _relative(got, ref)
     built = bartorch.finufft.operators_built()
-    return True, f"rel {_relative(got, ref):.2e}, operators {built} (finufft, bart)"
+    return rel < 5e-3, f"rel {rel:.2e}, operators {built} (finufft, bart)"
 
 
 @check("cuFINUFFT is what serves a trajectory on the card")
@@ -125,7 +129,8 @@ def _cufinufft():
 
     ref = _explicit_dft(traj, image, n)
     got = fast.cpu().numpy().reshape(64, n)[:1]
-    return True, f"rel {_relative(got, ref):.2e} against the explicit sum"
+    rel = _relative(got, ref)
+    return rel < 1e-4, f"rel {rel:.2e} against the explicit sum"
 
 
 @check("the device transform and the host transform agree")
@@ -169,33 +174,57 @@ def _streams():
 
     timings = {}
     for streams in (1, 2, 4):
-        if 0 != bartorch.cuda.set_streams(streams):
+        try:
+            bartorch.cuda.set_streams(streams)
+        except ValueError:
             continue
         timings[streams] = _time(lambda: bt.pics(kspace, maps, t=traj), reps=2)
     bartorch.cuda.set_streams(1)
     if not timings:
-        return False, "set_streams was refused"
+        return False, "set_streams was refused for every count"
     return True, ", ".join(f"{k} stream(s) {v:.2f} s" for k, v in timings.items())
 
 
 @check("BART's allocations and torch's caching allocator coexist")
 def _memcache():
+    """What BART holds on the card while torch holds the rest of it.
+
+    A tool ends by clearing BART's memory cache, so what it took is back
+    before the call returns whatever the cache is set to; an operator outlives
+    the call, and there ``use_memcache`` is what decides.
+    """
     n, spokes, coils = 256, 401, 8
     traj = bt.traj(x=n, y=spokes, r=True).cuda()
     image = bt.phantom([n, n], ncoils=coils).cuda()
     maps = (torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5).cuda()
     kspace = bt.nufft(traj, image)
 
-    out = []
-    for enabled in (True, False):
-        bartorch.cuda.use_memcache(enabled)
+    torch.cuda.empty_cache()
+    idle = bartorch.cuda.free_memory()
+    ballast = torch.empty(1 << 27, dtype=torch.complex64, device="cuda")
+    with_torch = bartorch.cuda.free_memory()
+    out = bt.pics(kspace, maps, t=traj)
+    del ballast, out
+    torch.cuda.empty_cache()
+    after_tool = bartorch.cuda.free_memory()
+
+    held = {}
+    for cache in (True, False):
+        bartorch.cuda.use_memcache(cache)
         torch.cuda.empty_cache()
         before = bartorch.cuda.free_memory()
-        bt.pics(kspace, maps, t=traj)
-        after = bartorch.cuda.free_memory()
-        out.append(f"memcache {'on' if enabled else 'off'}: {(before - after) / 1e9:+.2f} GB held")
+        op = LinearOperator.nufft(traj, (1, n, n))
+        del op
+        torch.cuda.empty_cache()
+        held[cache] = before - bartorch.cuda.free_memory()
     bartorch.cuda.use_memcache(True)
-    return True, ", ".join(out)
+
+    detail = (
+        f"pics ran with {(idle - with_torch) / 1e6:.0f} MB in torch's hands and left "
+        f"{(idle - after_tool) / 1e6:+.0f} MB behind; an operator holds "
+        f"{held[True] / 1e6:.0f} MB with the cache on, {held[False] / 1e6:.0f} MB with it off"
+    )
+    return (after_tool >= with_torch) and (held[False] <= held[True]), detail
 
 
 @check("a tool needs no -g beyond the device pointers")
@@ -203,7 +232,7 @@ def _needs_g():
     n = 128
     traj, image = _radial(n, 64, "cuda")
     plain = bt.nufft(traj, image)
-    flagged = bt.nufft(traj, image, g=True)
+    flagged = bt.nufft(traj, image, gpu=True)
     rel = float((plain - flagged).abs().max().item() / flagged.abs().max().item())
     return rel < 1e-5, f"with and without -g differ by {rel:.2e}"
 

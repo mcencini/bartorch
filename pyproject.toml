@@ -37,7 +37,10 @@ mkl = [
 # is the device counterpart.  Both wheels carry a compiled library, so nothing
 # is built here.
 finufft = ["finufft>=2.2"]
-cufinufft = ["cufinufft>=2.2"]
+# cuFINUFFT is taken through the C API its wheel exports: a sample count of
+# int64 in `cufinufftf_setpts` and defaults filled from the options struct
+# alone.  That is the API from 2.3 on.
+cufinufft = ["cufinufft>=2.3"]
 dev = [
     "pytest>=7",
     "ruff",
@@ -60,7 +63,6 @@ cmake.build-type = "Release"
 build-dir = "build/{wheel_tag}"
 wheel.packages = ["src/bartorch"]
 wheel.py-api = "py3"
-editable.mode = "inplace"
 sdist.exclude = ["attic/", "build/"]
 
 [tool.ruff]

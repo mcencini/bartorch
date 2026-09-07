@@ -101,7 +101,8 @@ the seam: with FINUFFT in place, `nufft`, `pics`, `nlinv` and `moba` compute
 their forward and adjoint transforms with FINUFFT's type 2 and type 1 instead
 of BART's Kaiser-Bessel gridder and oversampled FFT. Nothing about kernels or
 deapodisation has to agree, because FINUFFT does the whole transform. A
-trajectory on a CUDA tensor is served by cuFINUFFT, one on the host by FINUFFT.
+transform BART runs on a card is served by cuFINUFFT, one on the host by
+FINUFFT; an operator that is asked for both holds a plan on each side.
 
 The normal operator stays BART's: `A^H A` is a convolution, and `pics` applies
 it as one multiply against the point spread function BART already knows how to
@@ -151,17 +152,24 @@ nothing more.
 pip install -e . --config-settings=cmake.define.BARTORCH_CUDA=ON
 ```
 
-A tool or operator given CUDA tensors runs on that device. BART recognises the
-pointers, writes its output into a tensor torch allocated on the same device,
-and its streams are ordered against torch's current stream by an event in each
-direction, so nothing crosses the host and neither side synchronises the card.
+A tensor on a card selects that card, and BART's streams are ordered against
+torch's current stream by an event in each direction, so neither side
+synchronises it.
+
+An operator takes the memory as it is: BART's linops reach their arguments
+through `md_` operations, which dispatch on where a pointer is, so a device
+tensor is transformed where it lies. A tool is given host memory, because
+BART's tools are command mains that map their inputs the way the command line
+does and several read them there; the tensors cross to the host and the result
+crosses back, and the work in between is BART's own device path — the one `-g`
+selects on the command line — on the card the tensors came from.
 
 ```python
 import bartorch
 
 bartorch.cuda.available()        # built with CUDA, and a device present
 bartorch.cuda.set_streams(2)     # overlap BART's transfers with its kernels
-bartorch.cuda.use_memcache(False)  # give freed memory back for torch to use
+bartorch.cuda.use_memcache(False)  # an operator gives its device memory straight back
 ```
 
 The CUDA runtime libraries are linked dynamically from the `nvidia` wheels
@@ -170,10 +178,10 @@ rather than hundreds of megabytes of vendored libraries.
 
 ## Status
 
-Linux and macOS on the host, and a CUDA build that compiles, links and runs
-the host suite — the device path itself, cuFINUFFT included, is written but
-has not been run on a card. Windows and the remaining solver entry points are
-next; see `AGENTS.md`.
+Linux and macOS on the host, and a CUDA build walked through on an RTX 4060 by
+`scripts/check_device.py`: tools and operators on the card, cuFINUFFT serving
+its transforms, `pics` with and without the Toeplitz normal. Windows and the
+remaining solver entry points are next; see `AGENTS.md`.
 
 ## License
 

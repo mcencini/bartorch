@@ -298,3 +298,33 @@ def test_a_trajectory_on_a_card_is_transformed_by_cufinufft(in_tools):
     assert _finufft.operators_built() == (1, 0), _finufft.decline_reason()
     ref = _dft(traj.cpu(), image.cpu(), n)
     assert np.linalg.norm(y.cpu().numpy().reshape(ref.shape) - ref) / np.linalg.norm(ref) < 1e-4
+
+
+@requires_finufft
+@pytest.mark.skipif(
+    not (bartorch.cuda.available() and _finufft.cuda_available()),
+    reason="this needs a CUDA device and the cufinufft package",
+)
+def test_one_operator_serves_both_sides_of_the_bus(in_tools):
+    """BART applies one operator to memory on either side, so it plans on both.
+
+    ``pics`` takes its first adjoint from the k-space it mapped and then
+    iterates on device vectors; a plan belongs to the library that made it, so
+    the operator has to answer both with the same numbers.
+    """
+    n = 32
+    traj = bt.traj(x=n, y=16, r=True).cuda()
+    image = bt.phantom([n, n]).reshape(1, n, n)
+
+    _finufft.reset_counters()
+    A = LinearOperator.nufft(traj, (1, n, n), toeplitz=False)
+    assert _finufft.operators_built() == (1, 0), _finufft.decline_reason()
+
+    on_card = A(image.cuda())
+    on_host = A(image)
+    assert on_card.device.type == "cuda" and on_host.device.type == "cpu"
+
+    ref = _dft(traj.cpu(), image, n)
+    got = on_card.cpu().numpy().reshape(ref.shape)
+    assert np.linalg.norm(got - ref) / np.linalg.norm(ref) < 1e-4
+    torch.testing.assert_close(on_card.cpu(), on_host, rtol=1e-4, atol=1e-4)

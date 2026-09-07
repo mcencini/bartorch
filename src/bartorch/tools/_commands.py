@@ -75,10 +75,6 @@ def phantom(
 ) -> torch.Tensor:
     """Generate a numerical Shepp-Logan phantom or coil-sensitivity phantom.
 
-    .. note::
-        **CUDA:** GPU-capable when BART is compiled with ``USE_CUDA=ON``
-        (pass ``g=True`` via ``**extra_flags`` to enable).
-
     Parameters
     ----------
     dims : list of int
@@ -138,10 +134,6 @@ def fft(
     BART Fortran-order bitmask required by ``bart fft``, then delegates to
     :func:`_generated.fft`.
 
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to CPU before
-        dispatch and returned to the original device.
-
     Parameters
     ----------
     input_ : torch.Tensor
@@ -195,10 +187,6 @@ def ifft(
     """Inverse multidimensional FFT.
 
     Convenience alias for :func:`fft` with ``inverse=True``.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to CPU before
-        dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -303,10 +291,6 @@ def ecalib(
     ESPIRiT computes sensitivity maps directly from the auto-calibration signal
     (ACS) region of k-space by eigen-decomposition of a calibration matrix.
 
-    .. note::
-        **CUDA:** GPU-capable when BART is compiled with ``USE_CUDA=ON``
-        (pass ``g=True`` via ``**extra_flags`` to enable).
-
     Parameters
     ----------
     kspace : torch.Tensor
@@ -394,10 +378,6 @@ def caldir(
 
     A simpler, faster alternative to :func:`ecalib` that computes sensitivity
     maps by direct Fourier-space operations on the ACS region.
-
-    .. note::
-        **CUDA:** CPU only.  CUDA tensors are automatically moved to CPU before
-        dispatch and returned to the original device.
 
     Parameters
     ----------
@@ -510,10 +490,6 @@ def pics(
 
     Iteratively reconstructs an image from under-sampled k-space data using
     sensitivity encoding and compressed-sensing regularisation.
-
-    .. note::
-        This build runs BART on the host: CUDA tensors are moved to CPU before
-        dispatch and the result is returned to the original device.
 
     Parameters
     ----------
@@ -630,9 +606,6 @@ def nlinv(
     Iteratively solves the nonlinear inverse problem of joint image and
     sensitivity estimation (Newton-CG / IRGNM).
 
-    .. note::
-        **CUDA:** GPU-capable when compiled with ``USE_CUDA=ON`` (``gpu=True``).
-
     Parameters
     ----------
     kspace : torch.Tensor
@@ -694,9 +667,6 @@ def moba(
     Reconstructs quantitative parameter maps (e.g. T1, T2, fat/water) directly
     from multi-contrast k-space data by fitting a forward signal model via
     Gauss-Newton iteration.
-
-    .. note::
-        **CUDA:** GPU-capable when compiled with ``USE_CUDA=ON`` (``gpu=True``).
 
     Parameters
     ----------
@@ -785,11 +755,6 @@ def nufft(
 
     Performs forward, adjoint, or iterative-inverse NUFFT using BART's
     ``nufft`` command.
-
-    .. note::
-        **CUDA:** GPU-capable when compiled with ``USE_CUDA=ON`` (``gpu=True``).
-        When ``gpu=False`` (default), CUDA tensors are automatically moved to
-        CPU before dispatch and returned to the original device.
 
     Parameters
     ----------
