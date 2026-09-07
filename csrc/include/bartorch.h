@@ -172,6 +172,32 @@ BARTORCH_API int bartorch_cuda_wait_for_stream(void* stream);
 BARTORCH_API int bartorch_cuda_signal_stream(void* stream);
 BARTORCH_API long bartorch_cuda_free_memory(void);
 
+/*
+ * FINUFFT under BART's own gridder.
+ *
+ * BART grids, transforms and deapodises; swapping the gridding kernel means
+ * swapping the deapodisation with it, so the two are replaced together or not
+ * at all.  Give this the entry points from an installed FINUFFT and the byte
+ * layout of its options struct, which the host reads from the same package,
+ * and every BART tool that grids -- pics, nlinv, moba, nufft -- uses it.
+ * Anything it cannot serve, such as a strided array or an oversampling
+ * FINUFFT has no kernel for, falls back to BART's Kaiser-Bessel gridder.
+ */
+BARTORCH_API int bartorch_finufft_set(const char* symbol, void* fn);
+BARTORCH_API int bartorch_finufft_layout(int opts_size, int modeord, int spreadinterponly,
+		int upsampfac, int nthreads);
+BARTORCH_API void bartorch_finufft_enable(int enable);
+BARTORCH_API int bartorch_finufft_active(void);
+BARTORCH_API void bartorch_finufft_set_tolerance(double eps);
+BARTORCH_API double bartorch_finufft_tolerance(void);
+/* 0 gridded by FINUFFT, 1 by BART, 2 deapodised by FINUFFT, 3 by BART. */
+BARTORCH_API long bartorch_finufft_counter(int which);
+BARTORCH_API void bartorch_finufft_reset_counters(void);
+BARTORCH_API int bartorch_finufft_last_reject(void);
+
+/* Whether a pointer is device memory; always false without CUDA. */
+BARTORCH_API int bartorch_on_device(const void* ptr);
+
 #ifdef __cplusplus
 }
 #endif

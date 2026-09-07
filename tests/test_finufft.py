@@ -90,3 +90,46 @@ def test_bart_solves_against_a_finufft_operator():
     x = A.lstsq(y, lambda_=1e-3, maxiter=30)
     assert x.shape == img.shape
     assert (x - img).norm().item() / img.norm().item() < 0.5
+
+
+@requires_finufft
+def test_the_gridder_substitution_never_enables_itself_unverified():
+    # Swapping the kernel underneath BART means swapping the deapodisation
+    # with it, and a mismatch there is quiet: the transform still returns
+    # something of the right shape and magnitude.  install_gridder proves
+    # itself against BART's own gridder and reports False rather than leave a
+    # gridder in place that computes something else.
+    from bartorch._lib import library
+
+    installed = _finufft.install_gridder()
+    assert installed == _finufft.gridder_active()
+
+    if installed:
+        n = 32
+        traj = bt.traj(x=n, y=16, r=True)
+        img = bt.phantom([n, n]).reshape(1, n, n)
+        fast = bt.nufft(traj, img)
+        library().bartorch_finufft_enable(0)
+        try:
+            reference = bt.nufft(traj, img)
+        finally:
+            library().bartorch_finufft_enable(1)
+        rel = ((fast - reference).abs().max() / reference.abs().max()).item()
+        assert rel < 5e-3, f"the substituted gridder disagrees with BART by {rel:.2e}"
+
+    _finufft.install_gridder(False)
+
+
+@requires_finufft
+def test_the_operator_is_unaffected_by_whether_the_gridder_is_substituted():
+    n = 32
+    traj = bt.traj(x=n, y=16, r=True)
+    img = bt.phantom([n, n]).reshape(1, n, n)
+    A = LinearOperator.finufft(traj, (1, n, n))
+    _finufft.install_gridder(False)
+    y = A(img)
+    _finufft.install_gridder()
+    try:
+        torch.testing.assert_close(A(img), y, rtol=1e-5, atol=1e-5)
+    finally:
+        _finufft.install_gridder(False)

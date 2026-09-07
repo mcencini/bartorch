@@ -82,7 +82,11 @@ has run and `bartorch_cuda_signal_stream` does the reverse.
 
 **FINUFFT arrives the same way MKL does.** The `finufft` and `cufinufft`
 wheels each carry a compiled shared library with a plain C plan API, so they
-are a pip extra and nothing is built or vendored.
+are a pip extra and nothing is built or vendored. `_finufft.py` hands the
+library those entry points and the byte offsets of FINUFFT's options struct,
+read from the same package so a release that moves a field cannot silently
+corrupt it.
+
 `LinearOperator.finufft` makes a plan once and reuses it, matching BART's sign
 and its scaling of one over the square root of the voxel count, so it is
 interchangeable with `LinearOperator.nufft` and goes into BART's solvers
@@ -91,13 +95,39 @@ unchanged. On a 256 by 256 radial trajectory it takes 10.7 ms against BART's
 so whether a transform is two- or three-dimensional is decided by whether kz
 is used, not by the trajectory's shape.
 
-What this does not do is make BART's own tools use FINUFFT: `bart pics -t`
-still grids with BART's Kaiser-Bessel kernel. That needs `noncart/grid.c`
-left out and `grid2`, `grid2H` and the three `rolloff` functions supplied
-against FINUFFT's spread-only mode. The trap there is deapodisation: spreading
-with FINUFFT's exponential-of-semicircle kernel while deapodising with BART's
-Kaiser-Bessel is silently wrong, and the correction has to be the Fourier
-transform of the kernel actually used.
+**Underneath BART's own tools it is not finished.** `csrc/grid_finufft.c`
+takes over `grid2`, `grid2H` and the three rolloff functions -- `grid.c` is
+compiled with those five renamed, so the originals remain as `bart_kb_*` to
+fall back to -- and `install_gridder()` fills the table. The interception
+itself works: counters (`bartorch_finufft_counter`) show which gridder ran and
+`bartorch_finufft_last_reject` says why a call was refused.
+
+What does not work yet is the geometry. BART does not grid onto one
+oversampled array: with `decomp` it grids onto several arrays the size of the
+image, shifted by linear phases, and its kernel width is quoted in cells of
+the oversampled grid, so on the array actually being written the kernel spans
+half as many cells. FINUFFT sizes its kernel in cells of the array it is
+given, so spreading with it there is wrong by a factor of two in kernel
+extent, and the deapodisation -- which has to be the transform of the kernel
+that was really used -- does not line up either. Setting `decomp` false does
+not help: BART then asks for `os = 2` against an array still the size of the
+image.
+
+So `install_gridder()` proves itself before it is left in place: it grids a
+small phantom both ways and returns False, leaving BART's gridder alone, if
+they disagree. Today it returns False. That check is the point -- a mismatched
+kernel and deapodisation still return something of the right shape and
+magnitude, which is how the earlier prototype in `attic/` shipped a gridder
+that spread with one kernel and deapodised with another.
+
+The way to finish this is probably not to match BART's gridding geometry but
+to step above it: give `nufft_create` and `nufft_create2` the same treatment,
+returning a linop whose forward and adjoint are FINUFFT's own type 2 and type
+1. Then no kernel or deapodisation has to be matched, because FINUFFT does the
+whole transform, and every tool that builds a NUFFT gets it. The care needed
+there is `conf.toeplitz`, `nufft_get_psf*` and `nufft_precond_create`, which
+read the linop's internals; returning a configuration with Toeplitz off keeps
+`pics` on the plain forward-adjoint path.
 
 **Tools copy their inputs; operators do not.** BART maps input files
 copy-on-write and some tools write into them, so a tool gets a clone unless
@@ -154,9 +184,9 @@ Returns, Raises.
 
 ## What is not done
 
-Windows, FINUFFT underneath BART's own tools as opposed to beside them, tools
-with optional extra outputs, and the wider solver surface (ADMM, FISTA,
-proximal operators) through the operator layer.
+Windows, FINUFFT underneath BART's own tools (above), tools with optional
+extra outputs, and the wider solver surface (ADMM, FISTA, proximal operators)
+through the operator layer.
 
 The CUDA path is verified only as far as a machine without a card allows: it
 compiles, links, loads, reports no device, and runs the whole host suite. The

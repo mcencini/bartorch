@@ -179,6 +179,27 @@ def _bind(lib: ctypes.CDLL) -> ctypes.CDLL:
         fn.argtypes = [P]
     lib.bartorch_cuda_free_memory.restype = c.c_long
     lib.bartorch_cuda_free_memory.argtypes = []
+
+    lib.bartorch_finufft_set.restype = c.c_int
+    lib.bartorch_finufft_set.argtypes = [c.c_char_p, P]
+    lib.bartorch_finufft_layout.restype = c.c_int
+    lib.bartorch_finufft_layout.argtypes = [c.c_int] * 5
+    lib.bartorch_finufft_enable.restype = None
+    lib.bartorch_finufft_enable.argtypes = [c.c_int]
+    lib.bartorch_finufft_active.restype = c.c_int
+    lib.bartorch_finufft_active.argtypes = []
+    lib.bartorch_finufft_set_tolerance.restype = None
+    lib.bartorch_finufft_set_tolerance.argtypes = [c.c_double]
+    lib.bartorch_finufft_tolerance.restype = c.c_double
+    lib.bartorch_finufft_tolerance.argtypes = []
+    lib.bartorch_finufft_counter.restype = c.c_long
+    lib.bartorch_finufft_counter.argtypes = [c.c_int]
+    lib.bartorch_finufft_reset_counters.restype = None
+    lib.bartorch_finufft_reset_counters.argtypes = []
+    lib.bartorch_finufft_last_reject.restype = c.c_int
+    lib.bartorch_finufft_last_reject.argtypes = []
+    lib.bartorch_on_device.restype = c.c_int
+    lib.bartorch_on_device.argtypes = [P]
     return lib
 
 

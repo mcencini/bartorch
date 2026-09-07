@@ -144,6 +144,11 @@ int bartorch_cuda_signal_stream(void* stream)
 	return ret;
 }
 
+int bartorch_on_device(const void* ptr)
+{
+	return cuda_ondevice(ptr) ? 1 : 0;
+}
+
 long bartorch_cuda_free_memory(void)
 {
 	size_t free_bytes = 0;
@@ -160,6 +165,7 @@ long bartorch_cuda_free_memory(void)
 
 #else /* !USE_CUDA */
 
+int bartorch_on_device(const void* ptr) { (void)ptr; return 0; }
 int bartorch_cuda_built(void) { return 0; }
 int bartorch_cuda_device_count(void) { return 0; }
 int bartorch_cuda_enable(int device) { return (device < 0) ? 0 : -1; }

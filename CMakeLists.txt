@@ -201,12 +201,19 @@ set(BARTORCH_SOURCES
     csrc/cblas_shim.c
     csrc/lapacke_shim.c
     csrc/cuda.c
+    csrc/grid_finufft.c
     csrc/memcfl.c
     csrc/ops.c
     csrc/ref_blas.c
     csrc/fftw_pocketfft.cpp)
 
 add_library(bartorch SHARED ${BART_SOURCES} ${BARTORCH_SOURCES})
+
+# BART's gridder keeps its implementation under a different name, so
+# csrc/grid_finufft.c can take the original names and still fall back to it.
+# The rename applies to this one file, not to its callers.
+set_source_files_properties("${BART_SRC}/noncart/grid.c" PROPERTIES
+    COMPILE_DEFINITIONS "grid2=bart_kb_grid2;grid2H=bart_kb_grid2H;rolloff_correction=bart_kb_rolloff_correction;apply_rolloff_correction=bart_kb_apply_rolloff_correction;apply_rolloff_correction2=bart_kb_apply_rolloff_correction2")
 
 target_include_directories(bartorch PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/csrc"

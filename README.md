@@ -95,8 +95,15 @@ N = LinearOperator.finufft(traj, (8, 256, 256))
 It computes the same operator as `LinearOperator.nufft` and is interchangeable
 with it, so it chains and solves the same way — on a 256x256 radial trajectory
 it takes 10.7 ms against BART's 19.2 ms. Both wheels ship a compiled library,
-so this is a pip install and nothing more. BART's own tools still use BART's
-gridder; see `AGENTS.md`.
+so this is a pip install and nothing more.
+
+BART's own tools do not use FINUFFT yet. The machinery to put it underneath
+them is in place — `grid2`, `grid2H` and the deapodisation are interceptable,
+with BART's gridder kept as the fallback — but BART grids onto several
+image-sized arrays rather than one oversampled one, and FINUFFT's kernel is
+sized in cells of the array it is handed, so the two geometries do not yet
+agree. `install_gridder()` checks itself against BART's gridder and declines
+rather than leave a mismatched kernel in place; see `AGENTS.md`.
 
 ## How it is built
 

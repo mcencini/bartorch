@@ -15,9 +15,12 @@ of voxels.
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 import numpy as np
 import torch
+
+_keepalive: list[object] = []
 
 Shape = tuple[int, ...]
 
@@ -38,6 +41,119 @@ def cuda_available() -> bool:
     except ImportError:
         return False
     return True
+
+
+def _library_path() -> str | None:
+    """The compiled library inside the ``finufft`` wheel."""
+    try:
+        import finufft
+    except ImportError:
+        return None
+    for name in ("libfinufft.so", "libfinufft.dylib", "finufft.dll", "libfinufft.dll"):
+        candidate = Path(finufft.__file__).resolve().parent / name
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
+def install_gridder(enable: bool = True, tolerance: float = 1e-6) -> bool:
+    """Put FINUFFT underneath BART's own gridder, for every tool that grids.
+
+    BART's ``pics``, ``nlinv``, ``moba`` and ``nufft`` all grid through the
+    same two routines and deapodise with the transform of the kernel those
+    routines used.  Both are replaced together here, so the pair stays a
+    transform; anything the replacement cannot serve falls back to BART's
+    Kaiser-Bessel gridder.
+
+    Returns whether FINUFFT is in place.
+    """
+    from bartorch._lib import library
+
+    lib = library()
+    if not enable:
+        lib.bartorch_finufft_enable(0)
+        return False
+
+    path = _library_path()
+    if path is None:
+        return False
+
+    import ctypes as c
+
+    from finufft._finufft import FinufftOpts
+
+    handle = c.CDLL(path)
+    _keepalive.append(handle)
+    for symbol in (
+        "finufftf_makeplan",
+        "finufftf_setpts",
+        "finufftf_execute",
+        "finufftf_destroy",
+        "finufftf_default_opts",
+    ):
+        try:
+            fn = getattr(handle, symbol)
+        except AttributeError:
+            return False
+        if lib.bartorch_finufft_set(symbol.encode(), c.cast(fn, c.c_void_p)) != 0:
+            return False
+
+    # The options struct is version-dependent, so its layout is read from the
+    # package that will interpret it rather than assumed here.
+    if (
+        lib.bartorch_finufft_layout(
+            c.sizeof(FinufftOpts),
+            FinufftOpts.modeord.offset,
+            FinufftOpts.spreadinterponly.offset,
+            FinufftOpts.upsampfac.offset,
+            FinufftOpts.nthreads.offset,
+        )
+        != 0
+    ):
+        return False
+
+    lib.bartorch_finufft_set_tolerance(float(tolerance))
+    lib.bartorch_finufft_enable(1)
+
+    # BART grids, transforms and deapodises as one; a kernel swapped into the
+    # middle of that is only right if the deapodisation is the transform of
+    # the kernel that was actually used, and getting that wrong is quiet
+    # rather than loud.  So the substitution has to prove itself against
+    # BART's own gridder before it is left in place.
+    if not _agrees_with_bart():
+        lib.bartorch_finufft_enable(0)
+        return False
+
+    return bool(lib.bartorch_finufft_active())
+
+
+def _agrees_with_bart(tolerance: float = 5e-3) -> bool:
+    """Whether the substituted gridder computes what BART's gridder computes."""
+    import bartorch.tools as bt
+    from bartorch._lib import library
+
+    lib = library()
+    n = 32
+    traj = bt.traj(x=n, y=16, r=True)
+    image = bt.phantom([n, n]).reshape(1, n, n)
+
+    lib.bartorch_finufft_enable(1)
+    fast = bt.nufft(traj, image)
+    lib.bartorch_finufft_enable(0)
+    reference = bt.nufft(traj, image)
+    lib.bartorch_finufft_enable(1)
+
+    scale = reference.abs().max()
+    if scale == 0:
+        return False
+    return bool(((fast - reference).abs().max() / scale).item() < tolerance)
+
+
+def gridder_active() -> bool:
+    """Whether BART's tools are gridding with FINUFFT."""
+    from bartorch._lib import library
+
+    return bool(library().bartorch_finufft_active())
 
 
 def _coordinates(traj: torch.Tensor, spatial: Shape) -> list[np.ndarray]:
