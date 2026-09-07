@@ -1,14 +1,29 @@
 __pycache__
 */__pycache__
-build/
+.pytest_cache/
+.ruff_cache/
 dist/
 bartpy.egg-info/
 bartorch.egg-info/
 .vscode/
 
-# Compiled extensions
+# Build trees.  A named one -- build-cpu, build-cuda -- is how two
+# configurations are kept side by side; build_tools/ is source and is not one.
+build/
+build-*/
+_skbuild/
+.venv/
+
+# Compiled output
 *.so
+*.so.*
+*.dylib
+*.dll
 *.pyd
+*.o
+*.a
+*.obj
+*.lib
 
 # CFL data files
 *.cfl
