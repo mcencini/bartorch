@@ -535,14 +535,69 @@ def test_barts_oversampling_is_finuffts_upsampling(in_tools):
 
 
 @requires_finufft
-def test_a_kernel_width_asked_for_is_refused_rather_than_ignored(in_tools):
-    """FINUFFT sizes its kernel from the tolerance; ``-w`` is a different gridder.
+def test_a_kernel_width_asked_for_buys_the_accuracy_that_width_buys(in_tools):
+    """``-w`` is a count of grid points, and so is FINUFFT's ns.
 
-    BART's own operator cannot serve a second width in one process either --
-    its Kaiser-Bessel window is built once and refuses a different beta -- so
-    what a refusal here costs is nothing that was available anyway.
+    FINUFFT has no field to be told a width: it sizes ns from the tolerance by
+    ``ns = ceil(ln(tolfac/tol) / (pi sqrt(1 - 1/sigma)) + 1)``, so the width
+    asked for is carried across by inverting that.  A narrower kernel has to
+    come out less accurate than a wider one, which is the whole content of the
+    flag.
     """
-    n = 32
-    traj = bt.traj(x=n, y=16, r=True)
-    with pytest.raises(bartorch.BartError, match="width"):
-        LinearOperator.nufft(traj, (1, n, n), toeplitz=False, width=4.0)
+    n, spokes = 64, 48
+    traj = bt.traj(x=n, y=spokes, r=True)
+    img = bt.phantom([n, n]).reshape(1, n, n)
+    ref = _dft(traj, img, n)
+    nref = np.linalg.norm(ref)
+
+    # Past about seven grid points the kernel is no longer what limits a
+    # single-precision transform, so the widths that say anything are narrow.
+    errors = {}
+    for width in (2.0, 3.0, 4.0):
+        _finufft.reset_counters()
+        A = LinearOperator.nufft(traj, (1, n, n), toeplitz=False, width=width)
+        assert _finufft.operators_built() == (1, 0), _finufft.decline_reason()
+        got = A(img).numpy().reshape(ref.shape)
+        errors[width] = np.linalg.norm(got - ref) / nref
+
+    assert errors[2.0] > errors[3.0] > errors[4.0], errors
+    assert errors[4.0] < 1e-3, errors
+
+
+@requires_finufft
+def test_precision_can_be_traded_for_a_transform_that_fits():
+    """A large volume is only feasible at a tolerance somebody chose.
+
+    The default leaves the upsampling to FINUFFT at a tolerance that beats
+    BART's own gridder, which is the right thing not to have to think about.
+    It is not the right thing for a three-dimensional subspace problem on a
+    laptop, where a looser tolerance against a smaller grid is what makes the
+    transform fit at all, so both are the caller's to set.
+    """
+    n, spokes = 64, 48
+    traj = bt.traj(x=n, y=spokes, r=True)
+    img = bt.phantom([n, n]).reshape(1, n, n)
+    ref = _dft(traj, img, n)
+    nref = np.linalg.norm(ref)
+
+    def error():
+        _finufft.reset_counters()
+        A = LinearOperator.nufft(traj, (1, n, n), toeplitz=False)
+        assert _finufft.operators_built() == (1, 0), _finufft.decline_reason()
+        return np.linalg.norm(A(img).numpy().reshape(ref.shape) - ref) / nref
+
+    try:
+        _finufft.use_in_tools(True)
+        careful = error()
+        assert _finufft.upsampling() == 0.0, "the default leaves the grid to FINUFFT"
+
+        _finufft.use_in_tools(True, tolerance=1e-3, upsampling=1.25)
+        cheap = error()
+        assert _finufft.tolerance() == pytest.approx(1e-3)
+        assert _finufft.upsampling() == pytest.approx(1.25)
+
+        # What was asked for is what came back: looser, and loose by about the
+        # amount asked for rather than by an unbounded amount.
+        assert careful < cheap < 1e-2, (careful, cheap)
+    finally:
+        _finufft.use_in_tools(False)

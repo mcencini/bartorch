@@ -199,21 +199,35 @@ int64 sample count in `cufinufftf_setpts`, and defaults filled from the
 options struct alone, spelled `cufinufft_default_opts` without the precision
 suffix FINUFFT uses.
 
-**`-o` is `upsampfac`; `-w` is not anything.** How far past the image the
-transform is computed on is the one gridding parameter both sides spell the
-same way, so BART's `-o` is carried across wherever it is not BART's own
-default of two, and `enable(upsampling=...)` is what two itself means. The
-default is a quarter over rather than the textbook factor: the upsampled grid
-goes as the factor to the power of the dimensions, so in three dimensions it
-is a third of the memory rather than half, and on a 128 cube that is 82 MB
-against 188 and six times faster on the host. Accuracy pays for it -- against
-an explicit sum on a 256x256 radial dataset, 1.4e-05 rather than 3.0e-06 --
-which is still an order below BART's own 3.6e-05.
+**`-o` is `upsampfac`, and `-w` is the tolerance read backwards.** How far
+past the image the transform is computed on is the one gridding parameter both
+sides spell the same way, so BART's `-o` is carried across wherever it is not
+BART's own default of two, and `enable(upsampling=...)` is what two itself
+means. The default there is zero, which leaves the choice to FINUFFT: a
+smaller grid buys a wider spreading kernel, and which of the two costs more
+depends on how many samples fall on each mode. On a 160 cube with eight coils,
+four coefficients and 3.5 million samples, an adjoint takes 6.7 s either way
+but holds 1.29 GB rather than 1.45; at a quarter over it takes 13.2 s, because
+at that density spreading is what the transform spends its time in.
 
-A kernel width is refused. FINUFFT sizes its own from the tolerance and the
-upsampling, and there is no field to tell it otherwise; BART's own operator
-cannot serve a second width in one process either, because its Kaiser-Bessel
-window is built once and refuses a different beta.
+A width has no field of its own -- FINUFFT sizes its kernel from the tolerance,
+
+    ns = ceil( ln(tolfac / tol) / (pi sqrt(1 - 1/sigma)) + 1 )
+
+with `tolfac = 0.18 * 1.4^(dim-1)` for a type 1 or 2, from FINUFFT's
+`src/common/kernel.cpp` -- so `-w` is carried across by inverting it. Past
+about seven grid points the kernel is no longer what limits a single-precision
+transform and the tolerance it stands for falls below what one can reach, so
+it is clamped there. BART's own operator cannot serve a second width in one
+process at all: its Kaiser-Bessel window is built once and refuses a different
+beta.
+
+**Precision is the caller's to spend.** The default tolerance sits an order
+below BART's own gridder, which is the right thing not to have to think about
+and the wrong thing for a three-dimensional subspace problem on a laptop. That
+same 160 cube takes 2.1 s at `enable(tolerance=1e-3)` rather than 6.7 s, and
+that is what makes it fit at all. cuFINUFFT takes only two, a quarter over, or
+the heuristic; `-o 1.5` plans on the host and fails on a card.
 
 `LinearOperator.finufft` is the same transform reached without BART's tools,
 for chaining and solving in Python. It makes a plan once and reuses it, matches

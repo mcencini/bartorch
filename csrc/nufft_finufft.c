@@ -12,6 +12,7 @@
  * varies across frames, or no FINUFFT at all.
  */
 #include <complex.h>
+#include <float.h>
 #include <math.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -450,7 +451,7 @@ const char* bartorch_nufft_decline_text(void)
 	case 14: return "the subspace basis does not lie along frames and coefficients";
 	case 15: return "the weights do not lie along k-space";
 	case 16: return "the images vary across frames as well as the trajectory";
-	case 17: return "a gridding kernel width was asked for, and FINUFFT sizes its own from the tolerance";
+	case 17: return "the kernel width asked for has no tolerance that would give it";
 	}
 
 	return "of a reason this build does not name";
@@ -560,11 +561,6 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 	if ((0UL != conf.flags) && (7UL != conf.flags))
 		DECLINE(6);
 
-	/* FINUFFT sizes its kernel from the tolerance and the upsampling; a
-	 * width asked for is a different gridder, not a different setting. */
-	if (6 != conf.width)
-		DECLINE(17);
-
 	int dim = 0;
 	int axis[3];
 	int64_t n_modes[3];
@@ -671,6 +667,40 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 	 * quarter over costs a third of the memory for a wider kernel and that
 	 * is the cheaper half of the trade here. */
 	double upsampling = (2. == conf.os) ? bartorch_finufft_upsampling() : conf.os;
+
+	/* BART's `-w` and FINUFFT's ns are the same count of grid points, and
+	 * FINUFFT has no field to be told one: it sizes ns from the tolerance,
+	 *
+	 *     ns = ceil( ln(tolfac / tol) / (pi sqrt(1 - 1/sigma)) + 1 )
+	 *
+	 * with tolfac = 0.18 * 1.4^(dim-1) for a type 1 or 2, from FINUFFT's
+	 * src/common/kernel.cpp.  Inverting it for the width asked for is what
+	 * carries `-w` across.  BART's own default is six, which leaves the
+	 * tolerance as the caller set it. */
+	if (6.f != conf.width) {
+
+		/* A width is a count of grid points at a given upsampling, so it
+		 * says nothing until one is fixed; the textbook factor is what it
+		 * is read against. */
+		if (0. == upsampling)
+			upsampling = 2.;
+
+		double tolfac = 0.18;
+
+		for (int i = 1; i < dim; i++)
+			tolfac *= 1.4;
+
+		eps = tolfac * exp(-((double)conf.width - 1.) * M_PI * sqrt(1. - 1. / upsampling));
+
+		/* Past a certain width the tolerance it stands for is below what a
+		 * single-precision transform can reach, and FINUFFT refuses one it
+		 * cannot honour.  The widest kernel it will use is the answer. */
+		if (eps < FLT_EPSILON)
+			eps = FLT_EPSILON;
+
+		if (eps >= 1.)
+			DECLINE(17);
+	}
 
 	/* BART's trajectory counts samples of the image grid and FINUFFT takes
 	 * the same position in radians.  One component is taken and rescaled

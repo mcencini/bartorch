@@ -138,7 +138,7 @@ def use_in_tools(
     enable: bool = True,
     tolerance: float = 1e-6,
     fallback: bool = False,
-    upsampling: float = 1.25,
+    upsampling: float = 0.0,
 ) -> bool:
     """Have BART's own tools compute their NUFFT with FINUFFT.
 
@@ -149,11 +149,12 @@ def use_in_tools(
     tolerance : float
         The tolerance FINUFFT plans are made with.
     upsampling : float
-        How far past the image to spread before transforming.  A quarter over
-        costs a third of the memory of the textbook factor of two for a wider
-        kernel, which is the cheaper half of the trade on both sides of the
-        bus.  ``BART``'s ``-o`` takes precedence wherever it is not BART's own
-        default; zero leaves the choice to FINUFFT.
+        How far past the image to spread before transforming.  Two is the
+        textbook grid; a quarter over trades a smaller one for a wider kernel,
+        which pays only where the samples are sparse enough that spreading is
+        not what the transform spends its time in.  Zero, the default, lets
+        FINUFFT weigh that per problem.  BART's ``-o`` takes precedence
+        wherever it is not BART's own default of two.
     fallback : bool
         Whether BART's own operator may answer a transform FINUFFT cannot
         serve.  By default it may not: such a transform raises, naming the
