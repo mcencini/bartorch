@@ -1,4 +1,4 @@
-"""FINUFFT as a BART operator.
+"""FINUFFT, as an operator and underneath BART's own tools.
 
 The ``finufft`` and ``cufinufft`` wheels carry a compiled library and a thin
 Python wrapper over it, so a plan made here is the same object BART would
@@ -56,31 +56,25 @@ def _library_path() -> str | None:
     return None
 
 
-def install_gridder(enable: bool = True, tolerance: float = 1e-6) -> bool:
-    """Put FINUFFT underneath BART's own gridder, for every tool that grids.
+def _load_symbols() -> bool:
+    """Hand the library FINUFFT's entry points and its options layout.
 
-    BART's ``pics``, ``nlinv``, ``moba`` and ``nufft`` all grid through the
-    same two routines and deapodise with the transform of the kernel those
-    routines used.  Both are replaced together here, so the pair stays a
-    transform; anything the replacement cannot serve falls back to BART's
-    Kaiser-Bessel gridder.
-
-    Returns whether FINUFFT is in place.
+    The layout is read from the package that will interpret the struct, so a
+    release that moves a field cannot be misread here.
     """
+    import ctypes as c
+
     from bartorch._lib import library
 
     lib = library()
-    if not enable:
-        lib.bartorch_finufft_enable(0)
-        return False
-
     path = _library_path()
     if path is None:
         return False
 
-    import ctypes as c
-
-    from finufft._finufft import FinufftOpts
+    try:
+        from finufft._finufft import FinufftOpts
+    except ImportError:
+        return False
 
     handle = c.CDLL(path)
     _keepalive.append(handle)
@@ -98,62 +92,115 @@ def install_gridder(enable: bool = True, tolerance: float = 1e-6) -> bool:
         if lib.bartorch_finufft_set(symbol.encode(), c.cast(fn, c.c_void_p)) != 0:
             return False
 
-    # The options struct is version-dependent, so its layout is read from the
-    # package that will interpret it rather than assumed here.
-    if (
-        lib.bartorch_finufft_layout(
-            c.sizeof(FinufftOpts),
-            FinufftOpts.modeord.offset,
-            FinufftOpts.spreadinterponly.offset,
-            FinufftOpts.upsampfac.offset,
-            FinufftOpts.nthreads.offset,
-        )
-        != 0
-    ):
+    return 0 == lib.bartorch_finufft_layout(c.sizeof(FinufftOpts), FinufftOpts.nthreads.offset)
+
+
+def use_in_tools(enable: bool = True, tolerance: float = 1e-6) -> bool:
+    """Have BART's own tools compute their NUFFT with FINUFFT.
+
+    Returns whether the substitution is in place and agrees with BART.
+    """
+    from bartorch._lib import library
+
+    lib = library()
+    if not enable:
+        lib.bartorch_finufft_use_in_tools(0)
+        return False
+
+    if not _load_symbols():
         return False
 
     lib.bartorch_finufft_set_tolerance(float(tolerance))
-    lib.bartorch_finufft_enable(1)
+    lib.bartorch_finufft_use_in_tools(1)
 
-    # BART grids, transforms and deapodises as one; a kernel swapped into the
-    # middle of that is only right if the deapodisation is the transform of
-    # the kernel that was actually used, and getting that wrong is quiet
-    # rather than loud.  So the substitution has to prove itself against
-    # BART's own gridder before it is left in place.
-    if not _agrees_with_bart():
-        lib.bartorch_finufft_enable(0)
+    if not _tools_agree_with_bart():
+        lib.bartorch_finufft_use_in_tools(0)
         return False
 
-    return bool(lib.bartorch_finufft_active())
+    return bool(lib.bartorch_finufft_usable())
 
 
-def _agrees_with_bart(tolerance: float = 5e-3) -> bool:
-    """Whether the substituted gridder computes what BART's gridder computes."""
+def used_in_tools() -> bool:
+    """Whether BART's tools are computing their NUFFT with FINUFFT."""
+    from bartorch._lib import library
+
+    return bool(library().bartorch_finufft_usable())
+
+
+_DECLINED = {
+    0: "",
+    1: "FINUFFT is not in use",
+    2: "the trajectory is missing",
+    3: "the trajectory is on a device",
+    4: "the trajectory does not carry three components",
+    5: "k-space is not a single line of samples per readout",
+    6: "the transform is over axes other than the spatial three",
+    7: "the image has no spatial extent",
+    8: "the trajectory and k-space disagree on the number of samples",
+    9: "k-space and the coil images disagree beyond the spatial axes",
+    10: "there are too many frames for one plan",
+    11: "FINUFFT would not plan the forward transform",
+    12: "FINUFFT would not plan the adjoint transform",
+    13: "FINUFFT would not take the trajectory",
+    14: "a subspace basis is in use",
+    15: "the weights do not lie along k-space",
+}
+
+
+def decline_reason() -> str:
+    """Why the last operator was BART's rather than FINUFFT's; empty if it was FINUFFT's."""
+    from bartorch._lib import library
+
+    code = library().bartorch_nufft_decline_reason()
+    return _DECLINED.get(code, f"reason {code}")
+
+
+def operators_built() -> tuple[int, int]:
+    """NUFFT operators built since the last reset, by FINUFFT and by BART."""
+    from bartorch._lib import library
+
+    lib = library()
+    return int(lib.bartorch_nufft_counter(0)), int(lib.bartorch_nufft_counter(1))
+
+
+def reset_counters() -> None:
+    """Start counting operators again."""
+    from bartorch._lib import library
+
+    library().bartorch_nufft_reset_counters()
+
+
+def tolerance() -> float:
+    """The tolerance FINUFFT plans are made with."""
+    from bartorch._lib import library
+
+    return float(library().bartorch_finufft_tolerance())
+
+
+def _tools_agree_with_bart(tolerance: float = 1e-2) -> bool:
+    """Whether BART's NUFFT tool computes the same thing either way.
+
+    The two are held to each other rather than to a reference, so what the
+    tolerance has to allow for is BART's own gridding error, not FINUFFT's.
+    """
     import bartorch.tools as bt
     from bartorch._lib import library
 
     lib = library()
-    n = 32
-    traj = bt.traj(x=n, y=16, r=True)
+    n = 64
+    traj = bt.traj(x=n, y=32, r=True)
     image = bt.phantom([n, n]).reshape(1, n, n)
 
-    lib.bartorch_finufft_enable(1)
+    lib.bartorch_finufft_use_in_tools(1)
     fast = bt.nufft(traj, image)
-    lib.bartorch_finufft_enable(0)
+    lib.bartorch_finufft_use_in_tools(0)
     reference = bt.nufft(traj, image)
-    lib.bartorch_finufft_enable(1)
+    lib.bartorch_finufft_use_in_tools(1)
 
     scale = reference.abs().max()
     if scale == 0:
         return False
     return bool(((fast - reference).abs().max() / scale).item() < tolerance)
-
-
-def gridder_active() -> bool:
-    """Whether BART's tools are gridding with FINUFFT."""
-    from bartorch._lib import library
-
-    return bool(library().bartorch_finufft_active())
 
 
 def _coordinates(traj: torch.Tensor, spatial: Shape) -> list[np.ndarray]:

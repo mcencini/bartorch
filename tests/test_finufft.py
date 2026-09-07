@@ -1,5 +1,5 @@
-"""The FINUFFT-backed NUFFT, against an explicit discrete Fourier sum and
-against BART's own gridder.
+"""The FINUFFT-backed NUFFT, as an operator and underneath BART's own tools,
+against an explicit discrete Fourier sum and against BART's own gridder.
 """
 
 import numpy as np
@@ -92,44 +92,125 @@ def test_bart_solves_against_a_finufft_operator():
     assert (x - img).norm().item() / img.norm().item() < 0.5
 
 
-@requires_finufft
-def test_the_gridder_substitution_never_enables_itself_unverified():
-    # Swapping the kernel underneath BART means swapping the deapodisation
-    # with it, and a mismatch there is quiet: the transform still returns
-    # something of the right shape and magnitude.  install_gridder proves
-    # itself against BART's own gridder and reports False rather than leave a
-    # gridder in place that computes something else.
-    from bartorch._lib import library
+@pytest.fixture
+def in_tools():
+    """BART's tools computing their NUFFT with FINUFFT, for one test."""
+    if not _finufft.use_in_tools():
+        pytest.skip("the substitution declined to install itself")
+    yield
+    _finufft.use_in_tools(False)
 
-    installed = _finufft.install_gridder()
-    assert installed == _finufft.gridder_active()
 
-    if installed:
-        n = 32
-        traj = bt.traj(x=n, y=16, r=True)
-        img = bt.phantom([n, n]).reshape(1, n, n)
-        fast = bt.nufft(traj, img)
-        library().bartorch_finufft_enable(0)
-        try:
-            reference = bt.nufft(traj, img)
-        finally:
-            library().bartorch_finufft_enable(1)
-        rel = ((fast - reference).abs().max() / reference.abs().max()).item()
-        assert rel < 5e-3, f"the substituted gridder disagrees with BART by {rel:.2e}"
-
-    _finufft.install_gridder(False)
+def _dft(traj, image, n):
+    """The transform BART's NUFFT computes, summed out one sample at a time."""
+    trj = traj.numpy().real
+    im = image.numpy().reshape(n, n)
+    kx, ky = trj[..., 0], trj[..., 1]
+    x = np.arange(n) - n // 2
+    phase = np.exp(
+        -2j
+        * np.pi
+        * (
+            kx[..., None, None] * x[None, None, None, :] / n
+            + ky[..., None, None] * x[None, None, :, None] / n
+        )
+    )
+    return (phase * im[None, None]).sum(axis=(-1, -2)) / n
 
 
 @requires_finufft
-def test_the_operator_is_unaffected_by_whether_the_gridder_is_substituted():
+def test_barts_nufft_tool_matches_an_explicit_dft_with_finufft_underneath(in_tools):
+    n = 64
+    traj = bt.traj(x=n, y=32, r=True)
+    img = bt.phantom([n, n]).reshape(1, n, n)
+
+    _finufft.reset_counters()
+    y = bt.nufft(traj, img)
+
+    assert _finufft.operators_built() == (1, 0), _finufft.decline_reason()
+    ref = _dft(traj, img, n)
+    assert np.linalg.norm(y.numpy().reshape(ref.shape) - ref) / np.linalg.norm(ref) < 1e-4
+
+
+@requires_finufft
+def test_the_substituted_operator_is_its_own_adjoint_pair(in_tools):
+    n = 32
+    traj = bt.traj(x=n, y=16, r=True)
+    x = torch.randn(1, n, n, dtype=torch.complex64)
+    y = torch.randn(16, n, 1, dtype=torch.complex64)
+
+    ax = bt.nufft(traj, x)
+    ahy = bt.nufft(traj, y, adjoint=True, image_dims=(n, n, 1))
+
+    assert _inner(ax, y) == pytest.approx(_inner(x, ahy), rel=1e-4)
+
+
+@requires_finufft
+def test_weights_multiply_the_transform_and_their_conjugate_its_adjoint(in_tools):
+    n, spokes = 32, 16
+    traj = bt.traj(x=n, y=spokes, r=True)
+    img = bt.phantom([n, n]).reshape(1, n, n)
+    weights = torch.rand(spokes, n, 1).to(torch.complex64)
+
+    _finufft.reset_counters()
+    y = bt.nufft(traj, img, p=weights)
+
+    assert _finufft.operators_built() == (1, 0), _finufft.decline_reason()
+    ref = _dft(traj, img, n) * weights.numpy().reshape(spokes, n)
+    assert np.linalg.norm(y.numpy().reshape(ref.shape) - ref) / np.linalg.norm(ref) < 1e-4
+
+    x = torch.randn(1, n, n, dtype=torch.complex64)
+    k = torch.randn(spokes, n, 1, dtype=torch.complex64)
+    adjoint = bt.nufft(traj, k, adjoint=True, image_dims=(n, n, 1), p=weights)
+    assert _inner(bt.nufft(traj, x, p=weights), k) == pytest.approx(_inner(x, adjoint), rel=1e-4)
+
+
+@requires_finufft
+def test_pics_reconstructs_the_same_image_either_way(in_tools):
+    n = 64
+    traj = bt.traj(x=n, y=128, r=True)
+    img = bt.phantom([n, n]).reshape(1, n, n)
+    kspace = bt.nufft(traj, img)
+    maps = torch.ones(1, n, n, dtype=torch.complex64)
+
+    _finufft.reset_counters()
+    fast = bt.pics(kspace, maps, t=traj)
+    assert _finufft.operators_built() == (1, 0), _finufft.decline_reason()
+
+    _finufft.use_in_tools(False)
+    _finufft.reset_counters()
+    reference = bt.pics(kspace, maps, t=traj)
+    assert _finufft.operators_built() == (0, 1)
+
+    assert (fast - reference).norm().item() / reference.norm().item() < 0.05
+
+
+@requires_finufft
+def test_turning_it_off_gives_the_tools_barts_operator_back():
+    _finufft.use_in_tools(False)
+    n = 32
+    traj = bt.traj(x=n, y=16, r=True)
+    img = bt.phantom([n, n]).reshape(1, n, n)
+
+    _finufft.reset_counters()
+    bt.nufft(traj, img)
+
+    assert not _finufft.used_in_tools()
+    assert _finufft.operators_built() == (0, 1)
+    assert _finufft.decline_reason() == "FINUFFT is not in use"
+
+
+@requires_finufft
+def test_the_operator_is_unaffected_by_the_substitution():
     n = 32
     traj = bt.traj(x=n, y=16, r=True)
     img = bt.phantom([n, n]).reshape(1, n, n)
     A = LinearOperator.finufft(traj, (1, n, n))
-    _finufft.install_gridder(False)
+
+    _finufft.use_in_tools(False)
     y = A(img)
-    _finufft.install_gridder()
+    _finufft.use_in_tools()
     try:
         torch.testing.assert_close(A(img), y, rtol=1e-5, atol=1e-5)
     finally:
-        _finufft.install_gridder(False)
+        _finufft.use_in_tools(False)

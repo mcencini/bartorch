@@ -201,7 +201,8 @@ set(BARTORCH_SOURCES
     csrc/cblas_shim.c
     csrc/lapacke_shim.c
     csrc/cuda.c
-    csrc/grid_finufft.c
+    csrc/finufft.c
+    csrc/nufft_finufft.c
     csrc/memcfl.c
     csrc/ops.c
     csrc/ref_blas.c
@@ -209,11 +210,16 @@ set(BARTORCH_SOURCES
 
 add_library(bartorch SHARED ${BART_SOURCES} ${BARTORCH_SOURCES})
 
-# BART's gridder keeps its implementation under a different name, so
-# csrc/grid_finufft.c can take the original names and still fall back to it.
-# The rename applies to this one file, not to its callers.
-set_source_files_properties("${BART_SRC}/noncart/grid.c" PROPERTIES
-    COMPILE_DEFINITIONS "grid2=bart_kb_grid2;grid2H=bart_kb_grid2H;rolloff_correction=bart_kb_rolloff_correction;apply_rolloff_correction=bart_kb_apply_rolloff_correction;apply_rolloff_correction2=bart_kb_apply_rolloff_correction2")
+# BART's NUFFT operator keeps its implementation under another name, so
+# csrc/nufft_finufft.c can answer with FINUFFT's transform and still hand back
+# anything it does not serve.  The rename applies to these files, not to their
+# callers, so every tool that builds a NUFFT goes through the substitution and
+# nufft.c's own internal uses stay with BART's operator.
+set_source_files_properties("${BART_SRC}/noncart/nufft.c" PROPERTIES
+    COMPILE_DEFINITIONS "nufft_create=bart_nufft_create;nufft_create2=bart_nufft_create2;nufft_get_psf_dims=bart_nufft_get_psf_dims;nufft_get_psf=bart_nufft_get_psf;nufft_get_psf2=bart_nufft_get_psf2;nufft_update_psf=bart_nufft_update_psf;nufft_update_psf2=bart_nufft_update_psf2;nufft_update_traj=bart_nufft_update_traj")
+
+set_source_files_properties("${BART_SRC}/noncart/precond.c" PROPERTIES
+    COMPILE_DEFINITIONS "nufft_precond_create=bart_nufft_precond_create")
 
 target_include_directories(bartorch PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/csrc"

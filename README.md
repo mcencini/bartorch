@@ -89,21 +89,33 @@ pip install "bartorch[cufinufft]"    # device
 ```
 
 ```python
+import bartorch
+import bartorch.tools as bt
+
+bartorch.finufft.enable()
+image = bt.pics(kspace, maps, t=traj)
+```
+
+BART builds every non-Cartesian transform through `nufft_create`, and that is
+the seam: with FINUFFT in place, `nufft`, `pics`, `nlinv` and `moba` compute
+their forward and adjoint transforms with FINUFFT's type 2 and type 1 instead
+of BART's Kaiser-Bessel gridder and oversampled FFT. Nothing about kernels or
+deapodisation has to agree, because FINUFFT does the whole transform. On a
+256x256 eight-coil radial dataset the transform takes 26 ms against BART's 70 ms
+forward and 130 ms adjoint, and sits an order of magnitude closer to an explicit
+discrete Fourier sum. A subspace basis, weights that do not lie along k-space
+and a trajectory that varies across frames stay with BART's own operator;
+`bartorch.finufft.decline_reason()` says which, and
+`bartorch.finufft.operators_built()` counts how many operators each side built.
+
+```python
 N = LinearOperator.finufft(traj, (8, 256, 256))
 ```
 
-It computes the same operator as `LinearOperator.nufft` and is interchangeable
-with it, so it chains and solves the same way — on a 256x256 radial trajectory
-it takes 10.7 ms against BART's 19.2 ms. Both wheels ship a compiled library,
-so this is a pip install and nothing more.
-
-BART's own tools do not use FINUFFT yet. The machinery to put it underneath
-them is in place — `grid2`, `grid2H` and the deapodisation are interceptable,
-with BART's gridder kept as the fallback — but BART grids onto several
-image-sized arrays rather than one oversampled one, and FINUFFT's kernel is
-sized in cells of the array it is handed, so the two geometries do not yet
-agree. `install_gridder()` checks itself against BART's gridder and declines
-rather than leave a mismatched kernel in place; see `AGENTS.md`.
+is the same transform as an operator, for chaining and solving outside BART's
+tools. It computes what `LinearOperator.nufft` computes and is interchangeable
+with it. Both wheels ship a compiled library, so this is a pip install and
+nothing more.
 
 ## How it is built
 
@@ -148,8 +160,8 @@ rather than hundreds of megabytes of vendored libraries.
 
 Linux and macOS on the host, and a CUDA build that compiles, links and runs
 the host suite — the device path itself is written but has not been run on a
-card. Windows, FINUFFT underneath BART's own tools, and the remaining solver
-entry points are next; see `AGENTS.md`.
+card. Windows, cuFINUFFT on the device, and the remaining solver entry points
+are next; see `AGENTS.md`.
 
 ## License
 

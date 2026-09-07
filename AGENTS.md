@@ -16,9 +16,10 @@ C library with a small C ABI; Python reaches it through ctypes.
 | `csrc/backend.[ch]`, `ref_blas.c`, `cblas_shim.c`, `lapacke_shim.c` | CBLAS and LAPACKE as BART calls them, forwarded to a table of Fortran-ABI routines with reference BLAS as the fallback. |
 | `csrc/ops.c` | Operators: host callbacks as BART linops and nlops, BART's own operators as handles, least squares and Gauss-Newton. |
 | `csrc/cuda.c` | Device selection, stream ordering against the caller's stream, and BART's memory cache. Present in both builds; the CPU build reports that it has no CUDA. |
+| `csrc/finufft.c`, `nufft_finufft.c` | FINUFFT's entry points, and BART's NUFFT operator built out of a pair of its plans. |
 | `csrc/compat/` | The `cblas.h`, `lapacke.h` and `fftw3.h` BART includes. |
 | `third_party/` | pocketfft and BlocksRuntime, vendored with their licenses. |
-| `src/bartorch/` | The package: `_lib.py` (ctypes), `_backend.py` (which library serves BLAS and LAPACK), `core/graph.py` (tools on tensors), `ops.py` (operators), `tools/` (one function per BART command). |
+| `src/bartorch/` | The package: `_lib.py` (ctypes), `_backend.py` (which library serves BLAS and LAPACK), `core/graph.py` (tools on tensors), `ops.py` (operators), `finufft.py` (the substitution), `tools/` (one function per BART command). |
 | `build_tools/gen_tools.py` | Generates `tools/_generated.py` from the BART sources. |
 | `attic/prototype/` | An earlier pybind11 extension, kept for reference and not built. |
 
@@ -82,52 +83,59 @@ has run and `bartorch_cuda_signal_stream` does the reverse.
 
 **FINUFFT arrives the same way MKL does.** The `finufft` and `cufinufft`
 wheels each carry a compiled shared library with a plain C plan API, so they
-are a pip extra and nothing is built or vendored. `_finufft.py` hands the
-library those entry points and the byte offsets of FINUFFT's options struct,
-read from the same package so a release that moves a field cannot silently
-corrupt it.
+are a pip extra and nothing is built or vendored. `csrc/finufft.c` holds the
+entry points and `_finufft.py` hands them over along with the byte offset of
+FINUFFT's options struct, read from the same package so a release that moves a
+field cannot silently corrupt it.
 
-`LinearOperator.finufft` makes a plan once and reuses it, matching BART's sign
-and its scaling of one over the square root of the voxel count, so it is
-interchangeable with `LinearOperator.nufft` and goes into BART's solvers
-unchanged. On a 256 by 256 radial trajectory it takes 10.7 ms against BART's
-19.2 ms and agrees to 1e-4. A BART trajectory always carries three components,
-so whether a transform is two- or three-dimensional is decided by whether kz
-is used, not by the trajectory's shape.
+**Underneath BART's own tools the seam is `nufft_create`, not the gridder.**
+`nufft.c` is compiled with `nufft_create`, `nufft_create2`, `nufft_get_psf*`
+and `nufft_update_*` renamed, and `precond.c` with `nufft_precond_create`
+renamed, so BART's own operator survives as `bart_nufft_*` and
+`csrc/nufft_finufft.c` answers to the original names. What it returns is a
+`linop_create` whose forward is FINUFFT's type 2 with a negative exponent and
+whose adjoint is type 1 with a positive one, both scaled by one over the square
+root of the voxel count. Nothing about gridding kernels or deapodisation has to
+be matched, because FINUFFT does the whole transform, and every tool that
+builds a NUFFT gets it: `nufft`, `pics`, `nlinv`, `moba`.
 
-**Underneath BART's own tools it is not finished.** `csrc/grid_finufft.c`
-takes over `grid2`, `grid2H` and the three rolloff functions -- `grid.c` is
-compiled with those five renamed, so the originals remain as `bart_kb_*` to
-fall back to -- and `install_gridder()` fills the table. The interception
-itself works: counters (`bartorch_finufft_counter`) show which gridder ran and
-`bartorch_finufft_last_reject` says why a call was refused.
+Density weights are a diagonal in k-space, so they are chained on as a
+`linop_cdiag_create`, which is what lets `pics` take this path -- it always
+passes a sampling pattern. A subspace basis, weights that do not lie along
+k-space, and a trajectory that varies across frames are declined, and
+`bartorch_nufft_decline_reason` says which; the counters say whether an
+operator was built by FINUFFT or by BART, which is how a test asserts that a
+tool ran on it rather than that FINUFFT was merely available.
 
-What does not work yet is the geometry. BART does not grid onto one
-oversampled array: with `decomp` it grids onto several arrays the size of the
-image, shifted by linear phases, and its kernel width is quoted in cells of
-the oversampled grid, so on the array actually being written the kernel spans
-half as many cells. FINUFFT sizes its kernel in cells of the array it is
-given, so spreading with it there is wrong by a factor of two in kernel
-extent, and the deapodisation -- which has to be the transform of the kernel
-that was really used -- does not line up either. Setting `decomp` false does
-not help: BART then asks for `os = 2` against an array still the size of the
-image.
+The entry points that read the operator's internals -- `nufft_get_psf*`,
+`nufft_update_*`, `nufft_precond_create` -- refuse on one of these rather than
+read the wrong struct. `pics` only reaches them for `--psf_export` and
+`--psf_import`.
 
-So `install_gridder()` proves itself before it is left in place: it grids a
-small phantom both ways and returns False, leaving BART's gridder alone, if
-they disagree. Today it returns False. That check is the point -- a mismatched
-kernel and deapodisation still return something of the right shape and
-magnitude, which is how the earlier prototype in `attic/` shipped a gridder
-that spread with one kernel and deapodised with another.
+A plan holds the trajectory by pointer rather than copying it, so the
+coordinate arrays live in the operator's data and are freed with it.
 
-The way to finish this is probably not to match BART's gridding geometry but
-to step above it: give `nufft_create` and `nufft_create2` the same treatment,
-returning a linop whose forward and adjoint are FINUFFT's own type 2 and type
-1. Then no kernel or deapodisation has to be matched, because FINUFFT does the
-whole transform, and every tool that builds a NUFFT gets it. The care needed
-there is `conf.toeplitz`, `nufft_get_psf*` and `nufft_precond_create`, which
-read the linop's internals; returning a configuration with Toeplitz off keeps
-`pics` on the plain forward-adjoint path.
+On a 256x256 eight-coil radial dataset of 401 spokes, against an explicit
+discrete Fourier sum on one spoke:
+
+| | forward | adjoint | error |
+| --- | --- | --- | --- |
+| BART | 70 ms | 130 ms | 3.6e-05 |
+| FINUFFT, tolerance 1e-6 | 26 ms | 26 ms | 2.2e-06 |
+| FINUFFT, tolerance 1e-4 | 16 ms | 16 ms | 1.1e-05 |
+
+`pics` end to end comes out about the same either way, because BART's operator
+answers a normal-equations apply with one point-spread-function multiply and
+this one does not: it has no PSF, so conjugate gradients runs a forward and an
+adjoint per iteration. Giving it a Toeplitz normal operator is the obvious
+next thing.
+
+`LinearOperator.finufft` is the same transform reached without BART's tools,
+for chaining and solving in Python. It makes a plan once and reuses it, matches
+BART's sign and scaling, and goes into BART's solvers unchanged. A BART
+trajectory always carries three components, so whether a transform is two- or
+three-dimensional is decided by whether kz is used, not by the trajectory's
+shape.
 
 **Tools copy their inputs; operators do not.** BART maps input files
 copy-on-write and some tools write into them, so a tool gets a clone unless
@@ -173,7 +181,10 @@ test that compares BART to BART proves nothing.
 ## Conventions
 
 Shapes are C order; a BART dimension vector is the reversed shape. Wherever
-BART takes a bitmask, Python takes axis indices. BART's `fft` tool is
+BART takes a bitmask, Python takes axis indices. A flag's value can be an
+array rather than a number -- `pics(kspace, maps, t=traj)`, `-p` for a
+sampling pattern, `-B` for a basis -- and is registered and copied like any
+other input. BART's `fft` tool is
 unnormalised unless asked for the unitary form; the `LinearOperator.fft`
 operator is unitary. `nufft` output is scaled by one over the grid side per
 transformed axis pair, with a negative exponent.
@@ -184,9 +195,9 @@ Returns, Raises.
 
 ## What is not done
 
-Windows, FINUFFT underneath BART's own tools (above), tools with optional
-extra outputs, and the wider solver surface (ADMM, FISTA, proximal operators)
-through the operator layer.
+Windows, a Toeplitz normal operator for the FINUFFT NUFFT, cuFINUFFT on the
+device path, tools with optional extra outputs, and the wider solver surface
+(ADMM, FISTA, proximal operators) through the operator layer.
 
 The CUDA path is verified only as far as a machine without a card allows: it
 compiles, links, loads, reports no device, and runs the whole host suite. The

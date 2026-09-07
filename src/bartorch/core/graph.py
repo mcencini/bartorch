@@ -187,14 +187,23 @@ def build_argv(
     output_names: list[str] | str | None,
     positional: list[Any],
     kwargs: dict[str, Any],
+    flag_arrays: dict[int, str] | None = None,
 ) -> list[str]:
-    """Assemble ``[tool, flags..., positionals..., inputs..., outputs...]``."""
+    """Assemble ``[tool, flags..., positionals..., inputs..., outputs...]``.
+
+    A flag whose value is an array takes the name that array was registered
+    under, which is how a tool reads a trajectory, a sampling pattern or a
+    subspace basis.  ``flag_arrays`` maps the position of such a value in the
+    expanded flag list to its name.
+    """
     argv = [op_name]
-    for key, val in _expand_list_flags(kwargs):
+    for index, (key, val) in enumerate(_expand_list_flags(kwargs)):
         if val is None or val is False:
             continue
         argv.append(_flag_string(key))
-        if val is not True:
+        if flag_arrays is not None and index in flag_arrays:
+            argv.append(flag_arrays[index])
+        elif val is not True:
             argv.append(_value_str(val))
     for val in positional:
         if val is not None:
@@ -292,9 +301,19 @@ def dispatch(
     _ensure_ready()
     lib = library()
     tensors = [_as_input(x) for x in inputs]
+
+    # A flag can carry an array too: `pics -t` takes a trajectory, `-p` a
+    # sampling pattern, `-B` a basis.  Those are registered like any input and
+    # the flag is given the name they were registered under.
+    flag_arrays: dict[int, torch.Tensor] = {}
+    for index, (_, value) in enumerate(_expand_list_flags(kwargs)):
+        if isinstance(value, (torch.Tensor, np.ndarray)):
+            flag_arrays[index] = _as_input(value)
+
     if _copy_inputs:
         tensors = [t.clone() for t in tensors]
-    devices = {t.device for t in tensors}
+        flag_arrays = {i: t.clone() for i, t in flag_arrays.items()}
+    devices = {t.device for t in list(tensors) + list(flag_arrays.values())}
     if len(devices) > 1:
         raise ValueError("all inputs must live on the same device")
     device = devices.pop() if devices else torch.device("cpu")
@@ -312,10 +331,13 @@ def dispatch(
         names = [f"_bt_{call}_in{i}.mem" for i in range(len(tensors))]
         out_names = [f"_bt_{call}_out{i}.mem" for i in range(_n_out)] if want_output else []
         _allocator.device = device
-        for name, t in zip(names, tensors):
+        flag_names = {i: f"_bt_{call}_flag{i}.mem" for i in flag_arrays}
+        for name, t in list(zip(names, tensors)) + [
+            (flag_names[i], flag_arrays[i]) for i in flag_arrays
+        ]:
             rank, dims = _bart_dims(tuple(t.shape))
             lib.bartorch_register(name.encode(), rank, dims, t.data_ptr())
-        argv = build_argv(op_name, names, out_names, list(_pos or []), kwargs)
+        argv = build_argv(op_name, names, out_names, list(_pos or []), kwargs, flag_names)
         try:
             code, text, err = run_command(argv)
             if code != 0:
@@ -333,5 +355,5 @@ def dispatch(
                 results.append(_allocator.take(ptr.value).reshape(_output_shape(dims, min_ndim)))
             return results[0] if len(results) == 1 else tuple(results)
         finally:
-            for name in names + out_names:
+            for name in names + out_names + list(flag_names.values()):
                 lib.bartorch_unlink(name.encode())

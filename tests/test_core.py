@@ -117,6 +117,22 @@ def test_inputs_are_left_untouched_by_a_tool_that_writes_into_them():
     torch.testing.assert_close(a, a0)
 
 
+def test_an_array_passed_as_a_flag_reaches_the_tool_and_is_left_untouched():
+    # `pics -t` takes a trajectory, `-p` a pattern, `-B` a basis: a flag's
+    # value can be an array, registered like any other input.
+    n = 32
+    traj = bt.traj(x=n, y=16, r=True)
+    before = traj.clone()
+    image = bt.phantom([n, n]).reshape(1, n, n)
+    kspace = bt.nufft(traj, image)
+    maps = torch.ones(1, n, n, dtype=torch.complex64)
+
+    recon = bt.pics(kspace, maps, t=traj)
+
+    assert recon.shape == (n, n)
+    torch.testing.assert_close(traj, before)
+
+
 def test_scratch_inputs_skip_the_copy():
     a = torch.randn(6, 4, dtype=torch.complex64)
     a0 = a.clone()
