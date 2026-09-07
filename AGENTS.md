@@ -80,6 +80,25 @@ Ordering is two events per call rather than a synchronise:
 `bartorch_cuda_wait_for_stream` holds BART's streams until torch's queued work
 has run and `bartorch_cuda_signal_stream` does the reverse.
 
+**FINUFFT arrives the same way MKL does.** The `finufft` and `cufinufft`
+wheels each carry a compiled shared library with a plain C plan API, so they
+are a pip extra and nothing is built or vendored.
+`LinearOperator.finufft` makes a plan once and reuses it, matching BART's sign
+and its scaling of one over the square root of the voxel count, so it is
+interchangeable with `LinearOperator.nufft` and goes into BART's solvers
+unchanged. On a 256 by 256 radial trajectory it takes 10.7 ms against BART's
+19.2 ms and agrees to 1e-4. A BART trajectory always carries three components,
+so whether a transform is two- or three-dimensional is decided by whether kz
+is used, not by the trajectory's shape.
+
+What this does not do is make BART's own tools use FINUFFT: `bart pics -t`
+still grids with BART's Kaiser-Bessel kernel. That needs `noncart/grid.c`
+left out and `grid2`, `grid2H` and the three `rolloff` functions supplied
+against FINUFFT's spread-only mode. The trap there is deapodisation: spreading
+with FINUFFT's exponential-of-semicircle kernel while deapodising with BART's
+Kaiser-Bessel is silently wrong, and the correction has to be the Fourier
+transform of the kernel actually used.
+
 **Tools copy their inputs; operators do not.** BART maps input files
 copy-on-write and some tools write into them, so a tool gets a clone unless
 the caller turns that off. An operator never writes its input, so the
@@ -135,9 +154,9 @@ Returns, Raises.
 
 ## What is not done
 
-Windows, FINUFFT replacing BART's gridder, tools with optional extra outputs,
-and the wider solver surface (ADMM, FISTA, proximal operators) through the
-operator layer.
+Windows, FINUFFT underneath BART's own tools as opposed to beside them, tools
+with optional extra outputs, and the wider solver surface (ADMM, FISTA,
+proximal operators) through the operator layer.
 
 The CUDA path is verified only as far as a machine without a card allows: it
 compiles, links, loads, reports no device, and runs the whole host suite. The

@@ -33,6 +33,11 @@ mkl = [
     "mkl>=2024; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "mkl>=2024; sys_platform == 'win32' and platform_machine == 'AMD64'",
 ]
+# FINUFFT is about twice as fast as BART's gridder on the host, and cuFINUFFT
+# is the device counterpart.  Both wheels carry a compiled library, so nothing
+# is built here.
+finufft = ["finufft>=2.2"]
+cufinufft = ["cufinufft>=2.2"]
 dev = [
     "pytest>=7",
     "ruff",
