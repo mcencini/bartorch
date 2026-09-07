@@ -57,9 +57,16 @@ class BartError(RuntimeError):
 
 
 class _Allocator:
-    """Serves BART's output allocations with host tensors and keeps them alive."""
+    """Serves BART's own allocations with torch tensors and keeps them alive.
+
+    They come from wherever the tool is working, because BART's `md_`
+    operations take the host path unless every argument is on a device -- and
+    take it silently, reading device memory from the host.  An output on the
+    wrong side of the bus is a segmentation fault, not a slower answer.
+    """
 
     def __init__(self) -> None:
+        self.device = torch.device("cpu")
         self.live: dict[int, torch.Tensor] = {}
         self._alloc_cb = ALLOC_FN(self._alloc)
         self._free_cb = FREE_FN(self._free)
@@ -67,7 +74,7 @@ class _Allocator:
     def _alloc(self, _ctx, D, dims):
         shape = [dims[i] for i in range(D)][::-1]
         try:
-            t = torch.empty(shape, dtype=torch.complex64)
+            t = torch.empty(shape, dtype=torch.complex64, device=self.device)
         except Exception:
             _log.exception("bartorch: allocation of %s failed", shape)
             return None
@@ -241,14 +248,26 @@ def _bart_dims(shape: tuple[int, ...]) -> tuple[int, ctypes.Array]:
     return len(rev), (ctypes.c_long * len(rev))(*rev)
 
 
-def _for_bart(x: torch.Tensor) -> torch.Tensor:
-    """The host tensor a tool is given: the caller's own, or a private copy.
+# The tools that work on the memory they are handed.
+#
+# BART's `md_` operations take the host path unless *every* argument is on a
+# device, and take it silently -- so a tool that allocates a temporary with
+# `md_alloc` or `anon_cfl`, or that resets `bart_use_gpu` for itself, reads
+# device memory from the host and dies rather than answering slowly.  Whether
+# a tool does that is a property of its own code, not something to infer, so
+# this list holds only what has been run on a card and checked against the
+# same tool on the host.  Everything else is given host memory.
+_ON_DEVICE = frozenset({"estdims", "fft", "ifft", "nufft", "pics", "rss"})
 
-    A tensor on a card is copied to the host, which is a private copy already;
-    a host tensor is cloned unless :func:`set_copy_inputs` turned that off,
-    because a BART tool may write into what it was given.
+
+def _for_bart(x: torch.Tensor, op_name: str) -> torch.Tensor:
+    """The tensor a tool is given: the caller's own, or a private copy.
+
+    BART maps input files copy-on-write and some tools write into what they
+    were given, so it is cloned unless :func:`set_copy_inputs` turned that
+    off; a tensor moved off a card is a private copy already.
     """
-    if x.device.type != "cpu":
+    if (x.device.type != "cpu") and (op_name not in _ON_DEVICE):
         return x.cpu()
     return x.clone() if _copy_inputs else x
 
@@ -346,12 +365,16 @@ def dispatch(
             "this library has no CUDA support built in, or no device is present; "
             "move the tensors to the host with .cpu()"
         )
-    tensors = [_for_bart(t) for t in tensors]
-    flag_arrays = {i: _for_bart(t) for i, t in flag_arrays.items()}
+    tensors = [_for_bart(t, op_name) for t in tensors]
+    flag_arrays = {i: _for_bart(t, op_name) for i, t in flag_arrays.items()}
     want_output = output_dims is not False
     min_ndim = len(output_dims) if isinstance(output_dims, (list, tuple)) else 1
 
     with _lock, _on_device(device):
+        # What BART allocates for itself comes from torch, on the memory the
+        # tool was actually given: an output on the other side of the bus from
+        # its input is a segmentation fault, not a slower answer.
+        _allocator.device = tensors[0].device if tensors else device
         _call_id += 1
         call = _call_id
         names = [f"_bt_{call}_in{i}.mem" for i in range(len(tensors))]
@@ -381,5 +404,6 @@ def dispatch(
                 results.append(out.to(device) if device.type != "cpu" else out)
             return results[0] if len(results) == 1 else tuple(results)
         finally:
+            _allocator.device = torch.device("cpu")
             for name in names + out_names + list(flag_names.values()):
                 lib.bartorch_unlink(name.encode())

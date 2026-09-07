@@ -97,3 +97,63 @@ def test_work_is_ordered_against_torchs_stream_without_synchronising():
         x = x * 1.01
     y = bt.fft(x, axes=(-1, -2))
     torch.testing.assert_close(y.cpu(), bt.fft(x.cpu(), axes=(-1, -2)), rtol=1e-3, atol=1e-3)
+
+
+@requires_cuda
+def test_every_tool_kept_on_the_card_answers_there_and_agrees_with_the_host():
+    """The list is a claim about each tool's own code, so it is run, not read.
+
+    BART's ``md_`` operations take the host path unless every argument is on a
+    device, and take it silently, so a tool that mixes a host temporary with
+    the memory it was handed reads device memory from the host.  Whether one
+    does is not something to infer from the source; adding a name to
+    ``_ON_DEVICE`` without it passing here is how a segmentation fault gets in.
+    """
+    from bartorch.core.graph import _ON_DEVICE
+
+    n, coils, spokes = 32, 2, 24
+    torch.manual_seed(0)
+    img = bt.phantom([n, n], ncoils=coils)
+    ksp_cart = bt.fft(img, axes=(-2, -1))
+    traj = bt.traj(x=n, y=spokes, r=True)
+    ksp_rad = bt.nufft(traj, img)
+    maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
+
+    # BART's own gridder does not give the same answer on a card as on the
+    # host -- a `pics` over the same data differs by a few percent whatever
+    # the size -- so what a solve over it is held to is looser than what a
+    # transform is.  With FINUFFT underneath the same comparison is 5e-3.
+    cases = {
+        "fft": (lambda d: bt.fft(ksp_cart.to(d), axes=(-2, -1)), 1e-5),
+        "ifft": (lambda d: bt.ifft(ksp_cart.to(d), axes=(-2, -1)), 1e-5),
+        "rss": (lambda d: bt.rss(img.to(d), axes=0), 1e-5),
+        "nufft": (lambda d: bt.nufft(traj.to(d), img.to(d)), 1e-4),
+        "pics": (lambda d: bt.pics(ksp_rad.to(d), maps.to(d), t=traj.to(d)), 1e-1),
+        "estdims": (lambda d: bt.estdims(traj.to(d)), 0.0),
+    }
+    assert set(cases) == set(_ON_DEVICE), "every tool kept on the card needs a case here"
+
+    for name, (run, tol) in cases.items():
+        on_card, on_host = run("cuda"), run("cpu")
+        if not isinstance(on_card, torch.Tensor):
+            assert on_card == on_host, name
+            continue
+        assert on_card.device.type == "cuda", name
+        scale = max(float(on_host.abs().max()), 1e-30)
+        assert float((on_card.cpu() - on_host).abs().max()) / scale < tol, name
+
+
+@requires_cuda
+def test_a_tool_that_is_not_kept_on_the_card_still_answers_on_it():
+    """Crossing to the host is where a tool runs, not what the caller sees."""
+    from bartorch.core.graph import _ON_DEVICE
+
+    assert "pocsense" not in _ON_DEVICE
+    n, coils = 32, 2
+    img = bt.phantom([n, n], ncoils=coils)
+    ksp = bt.fft(img, axes=(-2, -1)).cuda()
+    maps = (torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5).cuda()
+
+    out = bt.pocsense(ksp, maps)
+    assert out.device.type == "cuda"
+    torch.testing.assert_close(out.cpu(), bt.pocsense(ksp.cpu(), maps.cpu()), rtol=1e-4, atol=1e-5)

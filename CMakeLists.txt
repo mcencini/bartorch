@@ -212,6 +212,7 @@ set(BARTORCH_SOURCES
     csrc/lapacke_shim.c
     csrc/cuda.c
     csrc/finufft.c
+    csrc/host_reads.c
     csrc/nufft_finufft.c
     csrc/memcfl.c
     csrc/ops.c
@@ -230,6 +231,15 @@ set_source_files_properties("${BART_SRC}/noncart/nufft.c" PROPERTIES
 
 set_source_files_properties("${BART_SRC}/noncart/precond.c" PROPERTIES
     COMPILE_DEFINITIONS "nufft_precond_create=bart_nufft_precond_create")
+
+# The few entry points BART reads element by element rather than through md_
+# operations; csrc/host_reads.c answers them over a host copy when a tool is
+# handed memory on a card.
+set_source_files_properties("${BART_SRC}/misc/mri2.c" PROPERTIES
+    COMPILE_DEFINITIONS "estimate_im_dims=bart_estimate_im_dims;estimate_fast_sq_im_dims=bart_estimate_fast_sq_im_dims")
+
+set_source_files_properties("${BART_SRC}/sense/optcom.c" PROPERTIES
+    COMPILE_DEFINITIONS "estimate_scaling_norm=bart_estimate_scaling_norm")
 
 target_include_directories(bartorch PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/csrc"

@@ -16,6 +16,7 @@ C library with a small C ABI; Python reaches it through ctypes.
 | `csrc/backend.[ch]`, `ref_blas.c`, `cblas_shim.c`, `lapacke_shim.c` | CBLAS and LAPACKE as BART calls them, forwarded to a table of Fortran-ABI routines with reference BLAS as the fallback. |
 | `csrc/ops.c` | Operators: host callbacks as BART linops and nlops, BART's own operators as handles, least squares and Gauss-Newton. |
 | `csrc/cuda.c` | Device selection, stream ordering against the caller's stream, and BART's memory cache. Present in both builds; the CPU build reports that it has no CUDA. |
+| `csrc/host_reads.c` | The entry points BART reads element by element, answered over a host copy when a tool is on a card. |
 | `csrc/finufft.c`, `nufft_finufft.c` | FINUFFT's and cuFINUFFT's entry points, and BART's NUFFT operator built out of a pair of their plans. |
 | `csrc/compat/` | The `cblas.h`, `lapacke.h` and `fftw3.h` BART includes. |
 | `third_party/` | pocketfft and BlocksRuntime, vendored with their licenses. |
@@ -205,15 +206,31 @@ trajectory always carries three components, so whether a transform is two- or
 three-dimensional is decided by whether kz is used, not by the trajectory's
 shape.
 
-**Tools take host memory; operators take the memory as it is.** BART's tools
-are command mains that map their inputs the way the command line does, and
-several read them there: `estimate_im_dims` in `nufft`, the sort in `pics`'s
-scaling estimate, `gram_matrix` in `ecalib`. A device pointer in those is a
-segmentation fault, not an error, so `dispatch` copies a tensor on a card to
-the host and copies the result back; what happens in between is BART's own
-device path, on the card the tensors came from. BART also maps input files
-copy-on-write and some tools write into them, so a host tensor is cloned
-unless the caller turns that off.
+**A tool keeps the card where that is safe; an operator always does.** Two
+things stand between a BART tool and the memory it was handed. The few entry
+points that read an array element by element rather than through `md_` --
+`estimate_im_dims` sizing an image from a trajectory, `estimate_scaling_norm`
+taking a median of k-space -- are answered in `csrc/host_reads.c` over a host
+copy of that one array, which is what BART already does for its own virtual
+pointers. What cannot be reached that way is a tool that allocates a temporary
+of its own on the host and mixes it with its input: `pocsense` takes its
+pattern from `md_alloc`, `nlinv` from `anon_cfl`, `ecalib` sets `bart_use_gpu`
+from its own flag. `md_` operations take the host path unless every argument
+is on a device, and take it silently, so that is a segmentation fault rather
+than a slower answer.
+
+Which tools are which is a property of their own code, so `_ON_DEVICE` in
+`core/graph.py` holds only what has been run on a card and checked against the
+host, and a test in `tests/test_cuda.py` runs every name in it. The rest are
+given host memory and their result comes back on the card. On a 256x256
+eight-coil radial dataset that is `pics` in 0.12 s rather than 0.25 s and
+`fft` in 3 ms rather than 10 ms.
+
+Whichever way a tool runs, what BART allocates for itself comes from torch on
+the memory that tool was given: an output on the other side of the bus from
+its input is the same silent host path. BART also maps input files
+copy-on-write and some tools write into them, so a tensor is cloned unless the
+caller turns that off.
 
 An operator reaches its arguments through BART's `md_` operations, which
 dispatch on where a pointer is, so it takes a device tensor as it stands and
