@@ -15,11 +15,13 @@ inside BART's conjugate gradients.
 pip install bartorch
 ```
 
-The wheel carries one C library holding all of BART and depends on `numpy` and
-`torch` alone. BLAS and LAPACK are taken from the library torch already loaded
-into the process; the FFT is pocketfft. No BART binary, no MKL, no FFTW.
+The wheel carries one C library holding all of BART. BLAS and LAPACK are the
+compiled routines already in the process — the MKL that torch links, Accelerate
+on macOS, and SciPy's OpenBLAS for what those do not export — so no numerical
+work is ever done in Python. The FFT is pocketfft. No BART binary, no MKL
+download, no FFTW.
 
-From source, with clang and CMake:
+From source, with clang or GCC 14+ and CMake:
 
 ```bash
 git clone --recurse-submodules https://github.com/mcencini/bartpy
@@ -78,9 +80,11 @@ place of the forward-adjoint pair.
   BART routine is replaced by leaving its unit out and compiling one with the
   same signatures: the in-memory array registry allocates through the host,
   the FFTW interface is served by pocketfft, and CBLAS and LAPACKE forward to
-  a Fortran-ABI table filled at import from whatever the process provides.
-- The library is a clang build: BART's nested functions become Blocks, so it
-  loads without an executable stack.
+  a Fortran-ABI table filled at import from the compiled BLAS and LAPACK the
+  process already holds.
+- BART's nested functions become Blocks under clang and heap trampolines under
+  GCC 14+, so the library loads without an executable stack either way. Both
+  compilers are tested in CI.
 - Only the `bartorch_*` symbols are exported.
 
 ## Status

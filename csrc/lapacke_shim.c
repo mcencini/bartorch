@@ -17,7 +17,7 @@
 static lapack_int missing(int id)
 {
 	char msg[128];
-	snprintf(msg, sizeof(msg), "no LAPACK backend installed for %s", bartorch_fn_names[id]);
+	snprintf(msg, sizeof(msg), "no compiled LAPACK routine was found for %s; install scipy", bartorch_fn_names[id]);
 	bartorch_record_error(msg);
 	return -1;
 }

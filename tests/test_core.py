@@ -17,7 +17,7 @@ def test_library_reports_the_pinned_bart_version():
 
 def test_build_info_names_the_nested_function_mode():
     info = bartorch.build_info()
-    assert "nested=clang-blocks" in info
+    assert "nested=clang-blocks" in info or "nested=gcc-heap-trampolines" in info
 
 
 def test_argv_flags_positionals_inputs_output_in_that_order():
@@ -122,3 +122,40 @@ def test_scratch_inputs_skip_the_copy():
     finally:
         bartorch.set_copy_inputs(True)
     assert not torch.allclose(a, a0)
+
+
+def test_every_blas_and_lapack_routine_comes_from_a_compiled_library():
+    sources = bartorch.backend_sources()
+    assert sources, "the backend table was never filled"
+    missing = [name for name, src in sources.items() if src == "missing"]
+    assert not missing, f"no compiled routine found for {missing}"
+
+
+def test_lapack_is_served_by_a_library_not_by_the_built_in_reference():
+    # The library carries reference BLAS for the handful of level-1 and level-2
+    # routines, but no LAPACK at all: every LAPACK entry must resolve to a
+    # library in the process.
+    lapack = {
+        name: src
+        for name, src in bartorch.backend_sources().items()
+        if name[1:].startswith(
+            (
+                "heev",
+                "hegv",
+                "gesdd",
+                "gesvd",
+                "geqrf",
+                "ungqr",
+                "potrf",
+                "trtri",
+                "trtrs",
+                "getrf",
+                "getri",
+                "gees",
+                "trsyl",
+                "gesv",
+            )
+        )
+    }
+    assert lapack
+    assert all(src not in ("reference", "missing") for src in lapack.values()), lapack

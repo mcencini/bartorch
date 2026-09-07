@@ -22,6 +22,9 @@ jobs:
           - os: ubuntu-latest
             python-version: "3.12"
             cc: clang
+          - os: ubuntu-latest
+            python-version: "3.12"
+            cc: gcc-14
           - os: macos-latest
             python-version: "3.12"
             cc: clang
@@ -37,9 +40,9 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      - name: Install compiler and CMake (Linux)
+      - name: Install compiler, OpenMP and CMake (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get install -y cmake ${{ matrix.cc }}
+        run: sudo apt-get install -y cmake ${{ matrix.cc }} libomp-dev
 
       - name: Install CMake (macOS)
         if: runner.os == 'macOS'
@@ -47,13 +50,13 @@ jobs:
 
       - name: Install torch (CPU) and the build backend
         run: |
-          pip install scikit-build-core numpy pytest scipy
+          pip install scikit-build-core numpy scipy pytest
           pip install torch --index-url https://download.pytorch.org/whl/cpu
 
       - name: Build and install bartorch
         env:
           CC: ${{ matrix.cc }}
-          CXX: clang++
+          CXX: ${{ matrix.cc == 'gcc-14' && 'g++-14' || 'clang++' }}
         run: pip install -e . --no-build-isolation -v
 
       - name: Run the test suite

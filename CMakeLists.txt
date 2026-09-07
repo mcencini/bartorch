@@ -59,13 +59,21 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang")
         list(APPEND BART_EXTRA_LIBS blocksruntime)
     endif()
 elseif(CMAKE_C_COMPILER_ID STREQUAL "GNU")
-    # GCC compiles BART's nested functions to trampolines on the stack.  Calling
-    # them without an executable stack relies on BART reading a trampoline
-    # layout that GCC only emits for non-PIC executables; a shared library gets
-    # the 64-bit form and the check fails at runtime.
-    message(FATAL_ERROR "libbartorch must be built with clang (CC=clang CXX=clang++); GCC would need an executable stack for BART's nested functions")
+    # GCC turns BART's nested functions into trampolines.  On the stack those
+    # need an executable stack, which glibc 2.41 refuses to dlopen; GCC 14
+    # places them on the heap instead, so the library loads anywhere.
+    if(CMAKE_C_COMPILER_VERSION VERSION_LESS 14)
+        message(FATAL_ERROR
+            "GCC ${CMAKE_C_COMPILER_VERSION} would need an executable stack for BART's nested "
+            "functions.  Use GCC 14 or newer, which has -ftrampoline-impl=heap, or clang.")
+    endif()
+    list(APPEND BART_C_OPTIONS -ftrampoline-impl=heap
+        -Wno-vla-parameter -Wno-nonnull -Wno-maybe-uninitialized
+        -include assert.h)
+    list(APPEND BART_LINK_OPTIONS -Wl,-z,noexecstack)
+    set(BARTORCH_NESTED "gcc-heap-trampolines")
 else()
-    message(FATAL_ERROR "BART needs clang; ${CMAKE_C_COMPILER_ID} cannot compile it")
+    message(FATAL_ERROR "BART needs clang or GCC 14+; ${CMAKE_C_COMPILER_ID} cannot compile it")
 endif()
 
 find_package(Threads REQUIRED)

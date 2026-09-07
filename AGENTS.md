@@ -17,7 +17,7 @@ C library with a small C ABI; Python reaches it through ctypes.
 | `csrc/ops.c` | Operators: host callbacks as BART linops and nlops, BART's own operators as handles, least squares and Gauss-Newton. |
 | `csrc/compat/` | The `cblas.h`, `lapacke.h` and `fftw3.h` BART includes. |
 | `third_party/` | pocketfft and BlocksRuntime, vendored with their licenses. |
-| `src/bartorch/` | The package: `_lib.py` (ctypes), `_backend.py` (which library serves BLAS and LAPACK), `_linalg.py` (NumPy LAPACK callbacks), `core/graph.py` (tools on tensors), `ops.py` (operators), `tools/` (one function per BART command). |
+| `src/bartorch/` | The package: `_lib.py` (ctypes), `_backend.py` (which library serves BLAS and LAPACK), `core/graph.py` (tools on tensors), `ops.py` (operators), `tools/` (one function per BART command). |
 | `build_tools/gen_tools.py` | Generates `tools/_generated.py` from the BART sources. |
 | `attic/prototype/` | An earlier pybind11 extension, kept for reference and not built. |
 
@@ -34,23 +34,35 @@ BART-order dimension vectors. That is what makes one wheel per platform serve
 every interpreter and torch version, and it is why the CUDA path, when it
 comes, will pass device pointers and streams through the same ABI.
 
-**BLAS, LAPACK and FFT come from the process.** At import, `_backend.py`
-looks for Fortran-ABI routines in the library torch loaded (`libtorch_cpu`
-exports the MKL routines torch itself uses), then in the process, then
-serves what is missing with NumPy callbacks. The FFT is pocketfft, the same
-code torch uses on CPU without MKL. Nothing is downloaded beyond torch.
+**BLAS, LAPACK and FFT come from compiled libraries in the process, never
+from Python.** At import, `_backend.py` fills the routine table from the
+library torch links (`libtorch_cpu` exports the MKL routines torch itself
+uses, Accelerate on macOS), then from SciPy's `cython_blas` and
+`cython_lapack`, whose capsules hold the addresses of the compiled OpenBLAS
+routines and cover all of BLAS and LAPACK. `BARTORCH_BLAS_LIBRARY` points the
+search at a specific library first. A test asserts that every routine
+resolved to a library. The FFT is pocketfft, the same code torch uses on CPU
+without MKL.
 
 **Tools copy their inputs; operators do not.** BART maps input files
 copy-on-write and some tools write into them, so a tool gets a clone unless
 the caller turns that off. An operator never writes its input, so the
 operator path is zero-copy in both directions.
 
-**Compiler.** BART is GNU C and the library is a clang build: nested
-functions become Blocks (the vendored runtime on Linux, libSystem on macOS),
-so the library loads without an executable stack. GCC would need one: BART's
-static-chain workaround reads a trampoline layout GCC emits only for non-PIC
-executables, not for a shared library. MSVC cannot build BART; a Windows
-wheel will be a clang build too.
+**Compilers.** BART is GNU C, and the difficulty is its nested functions.
+Under clang they become Blocks, resolved by the vendored runtime on Linux and
+by libSystem on macOS. Under GCC they become trampolines, and a trampoline on
+the stack needs an executable stack, which glibc 2.41 refuses to `dlopen`; so
+GCC 14's `-ftrampoline-impl=heap` is required and older GCC is rejected at
+configure time. BART's own `NOEXEC_STACK` workaround does not help here: it
+parses a trampoline layout GCC emits only for non-PIC executables, not for a
+shared library. Both compilers are built and tested in CI.
+
+MSVC cannot compile BART. It does not have to: nothing here is a Python
+extension module, so a Windows build is a plain DLL that ctypes loads
+whatever compiler torch was built with. That DLL comes from clang or
+mingw-w64 GCC 14, and BART already carries the `src/win/` shims (`mmap`,
+`fmemopen`) such a build needs.
 
 **Errors.** Every library entry point runs under BART's error catcher, so
 `error()` inside BART returns an error code and its message, captured
