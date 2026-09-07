@@ -95,11 +95,16 @@ def test_bart_solves_against_a_finufft_operator():
 
 @pytest.fixture
 def in_tools():
-    """BART's tools computing their NUFFT with FINUFFT, for one test."""
+    """BART's tools computing their NUFFT with FINUFFT, for one test.
+
+    That is where the library starts, so what this restores afterwards is the
+    substitution rather than BART's gridder: a test that turns it off must not
+    leave the next one quietly on it.
+    """
     if not _finufft.use_in_tools():
         pytest.skip("the substitution declined to install itself")
     yield
-    _finufft.use_in_tools(False)
+    _finufft.use_in_tools(True)
 
 
 def _dft(traj, image, n):
@@ -242,17 +247,23 @@ def test_the_two_normals_solve_the_same_problem(in_tools):
 
 @requires_finufft
 def test_turning_it_off_gives_the_tools_barts_operator_back():
-    _finufft.use_in_tools(False)
-    n = 32
-    traj = bt.traj(x=n, y=16, r=True)
-    img = bt.phantom([n, n]).reshape(1, n, n)
+    """BART's own gridder is available, but only to somebody who asked."""
+    import bartorch
 
-    _finufft.reset_counters()
-    bt.nufft(traj, img)
+    bartorch.finufft.disable()
+    try:
+        n = 32
+        traj = bt.traj(x=n, y=16, r=True)
+        img = bt.phantom([n, n]).reshape(1, n, n)
 
-    assert not _finufft.used_in_tools()
-    assert _finufft.operators_built() == (0, 1)
-    assert _finufft.decline_reason() == "FINUFFT is not in use"
+        _finufft.reset_counters()
+        bt.nufft(traj, img)
+
+        assert not _finufft.used_in_tools()
+        assert _finufft.operators_built() == (0, 1)
+        assert _finufft.fallback_allowed()
+    finally:
+        _finufft.use_in_tools(True)
 
 
 @requires_finufft
@@ -601,3 +612,64 @@ def test_precision_can_be_traded_for_a_transform_that_fits():
         assert careful < cheap < 1e-2, (careful, cheap)
     finally:
         _finufft.use_in_tools(False)
+
+
+@requires_finufft
+def test_nothing_reaches_barts_gridder_without_having_been_sent_there():
+    """The substitution installs itself, and a decline is an error either way.
+
+    A caller who never mentions FINUFFT still gets it, because the alternative
+    is an answer an order further from the transform and several times slower
+    with nothing to say so.  BART's own gridder is one call away and no closer.
+    """
+    n, spokes = 32, 16
+    traj = bt.traj(x=n, y=spokes, r=True)
+    img = bt.phantom([n, n]).reshape(1, n, n)
+
+    _finufft.reset_counters()
+    bt.nufft(traj, img)
+    assert _finufft.operators_built() == (1, 0), _finufft.decline_reason()
+    assert not _finufft.fallback_allowed()
+
+    # Something FINUFFT cannot serve, with nothing having been asked for.
+    frames = 4
+    varying = bt.traj(x=n, y=5 * frames, r=True).reshape(frames, 5, n, 3)[:, None, None]
+    per_frame = torch.zeros(frames, 1, 2, 1, n, n, dtype=torch.complex64)
+    with pytest.raises(bartorch.BartError, match="FINUFFT cannot serve"):
+        bt.nufft(varying, per_frame)
+
+
+@requires_finufft
+def test_a_subspace_operator_needs_no_tool_and_no_fallback():
+    """The operator layer can say what the tools can, or it is a way back to BART.
+
+    A caller who wants a subspace transform without BART's command mains had
+    no way to ask for one, and shapes that implied it were refused, which left
+    the tool path as the only route.  The basis belongs to the operator
+    because the normal is a point spread function over it.
+    """
+    n, spokes, frames, coeffs = 16, 5, 4, 2
+    traj, basis = _subspace(n, spokes, frames, coeffs)
+    torch.manual_seed(0)
+    img = torch.randn(coeffs, 1, 1, 1, 1, n, n, dtype=torch.complex64)
+
+    _finufft.reset_counters()
+    A = LinearOperator.nufft(
+        traj,
+        (coeffs, 1, 1, 1, 1, n, n),
+        kspace_shape=(frames, 1, 1, spokes, n, 1),
+        basis=basis,
+        toeplitz=False,
+    )
+    assert _finufft.operators_built() == (1, 0), _finufft.decline_reason()
+    assert not _finufft.fallback_allowed()
+
+    phase = _phase_per_frame(traj, n, -1)
+    im = img.numpy().reshape(coeffs, n, n)
+    b = basis.numpy().reshape(coeffs, frames)
+    per_coeff = np.stack(
+        [(phase * im[c][None, None, None]).sum(axis=(-1, -2)) / n for c in range(coeffs)]
+    )
+    ref = np.einsum("kt,ktsr->tsr", b, per_coeff)
+    got = A(img).numpy().reshape(ref.shape)
+    assert np.linalg.norm(got - ref) / np.linalg.norm(ref) < 1e-4

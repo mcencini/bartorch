@@ -127,7 +127,20 @@ def _bind(lib: ctypes.CDLL) -> ctypes.CDLL:
     lib.bartorch_linop_sampling.restype = P
     lib.bartorch_linop_sampling.argtypes = [L, L, P]
     lib.bartorch_linop_nufft.restype = P
-    lib.bartorch_linop_nufft.argtypes = [c.c_int, L, L, L, P, c.c_int, c.c_float, c.c_float]
+    lib.bartorch_linop_nufft.argtypes = [
+        c.c_int,
+        L,
+        L,
+        L,
+        P,
+        L,
+        P,
+        L,
+        P,
+        c.c_int,
+        c.c_float,
+        c.c_float,
+    ]
     lib.bartorch_linop_chain.restype = P
     lib.bartorch_linop_chain.argtypes = [P, P]
     lib.bartorch_linop_plus.restype = P

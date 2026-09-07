@@ -113,13 +113,26 @@ and `bartorch_nufft_decline_text` says why; the counters say whether an
 operator was built by FINUFFT or by BART, which is how a test asserts that a
 tool ran on it rather than that FINUFFT was merely available.
 
-**A decline is an error, not a quieter reconstruction.** A caller who asked
-for FINUFFT and silently got BART's gridder would get an answer an order of
-magnitude further from the transform and several times slower, with nothing
-to say so. So `nufft_create2` refuses, naming the reason, and
-`enable(fallback=True)` is what hands those back to BART. `enable` itself
-raises when `finufft` is missing, and when `cufinufft` is missing on a machine
-whose card BART would otherwise use.
+**Nothing reaches BART's gridder without having been sent there.** An answer
+an order of magnitude further from the transform and several times slower,
+arriving with nothing to say so, is worse than no answer. So the substitution
+installs itself the first time anything needs it -- a caller who has the
+package does not have to ask -- and `nufft_create2` refuses whatever it cannot
+serve, naming the reason. The substitution being switched off is a reason like
+any other, which is what closes the case that used to be silent: the library
+as it starts, before anyone has mentioned FINUFFT.
+
+BART's own gridder is one call away and no closer.
+`bartorch.finufft.enable(fallback=True)` hands it whatever FINUFFT declines,
+`bartorch.finufft.disable()` gives it everything, and `enable` raises when
+`finufft` is missing, or when `cufinufft` is missing on a machine whose card
+BART would otherwise use. A test suite that leaves any of that switched over
+would carry it into the next test, so `tests/conftest.py` puts it back.
+
+The operator layer says what the tools say: `LinearOperator.nufft` takes the
+weights and the subspace basis, because the normal is a point spread function
+over both and a chain could not be. Anything it cannot express is another way
+back to BART.
 
 **A trajectory that varies across frames is one plan, not one per frame.**
 Every axis the trajectory indexes is a sample of one transform and the rest

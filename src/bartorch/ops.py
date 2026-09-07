@@ -254,6 +254,8 @@ class LinearOperator:
         traj: torch.Tensor,
         image_shape: Shape,
         kspace_shape: Shape | None = None,
+        weights: torch.Tensor | None = None,
+        basis: torch.Tensor | None = None,
         toeplitz: bool = True,
         oversampling: float = 0.0,
         width: float = 0.0,
@@ -270,6 +272,14 @@ class LinearOperator:
         kspace_shape : tuple of int, optional
             Sample shape; by default the trajectory's shape with the
             coordinate axis replaced by the coil axes of ``image_shape``.
+        weights : tensor, optional
+            A diagonal in k-space the transform is multiplied by on the way
+            out and its conjugate on the way back.
+        basis : tensor, optional
+            A subspace basis over frames and coefficients, which contracts the
+            coefficients the images carry into the frames k-space has.  The
+            normal is a point spread function over both, which is why these
+            belong to the operator rather than to something chained onto it.
         toeplitz : bool
             Apply the normal operator through the Toeplitz embedding.
         oversampling, width : float
@@ -284,6 +294,8 @@ class LinearOperator:
             kspace_shape = _default_kspace_shape(
                 tuple(t.shape), image_shape, _finufft.spatial_ndim(t)
             )
+        w = None if weights is None else _as_operand(weights, tuple(weights.shape), "weights")
+        b = None if basis is None else _as_operand(basis, tuple(basis.shape), "basis")
         with _lock, _on_device(t.device):
             ptr = library().bartorch_linop_nufft(
                 DIMS,
@@ -291,11 +303,16 @@ class LinearOperator:
                 _dims(image_shape),
                 _dims(tuple(t.shape)),
                 t.data_ptr(),
+                None if w is None else _dims(tuple(w.shape)),
+                None if w is None else w.data_ptr(),
+                None if b is None else _dims(tuple(b.shape)),
+                None if b is None else b.data_ptr(),
                 int(toeplitz),
                 float(oversampling),
                 float(width),
             )
-        return cls._create(ptr, image_shape, tuple(kspace_shape), (t,))
+        keep = tuple(x for x in (t, w, b) if x is not None)
+        return cls._create(ptr, image_shape, tuple(kspace_shape), keep)
 
     @classmethod
     def finufft(

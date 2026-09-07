@@ -172,7 +172,11 @@ def test_a_three_dimensional_nufft_takes_three_spatial_axes_from_the_trajectory(
     planar = volumetric.clone()
     planar[..., 2] = 0
 
+    # A volume: the last three axes are spatial and the coils sit in front.
     A = LinearOperator.nufft(volumetric, (coils, n, n, n), toeplitz=False)
-    B = LinearOperator.nufft(planar, (coils, n, n), toeplitz=False)
     assert A.oshape == (coils, spokes, n, 1)
-    assert B.oshape == (coils, spokes, n, 1)
+
+    # The same shape read two-dimensionally would have made the coils a third
+    # spatial axis, so kz staying at zero is what has to say otherwise.
+    B = LinearOperator.nufft(planar, (1, n, n), toeplitz=False)
+    assert B.oshape == (1, spokes, n, 1)

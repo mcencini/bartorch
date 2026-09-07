@@ -435,7 +435,7 @@ const char* bartorch_nufft_decline_text(void)
 	switch (decline_reason) {
 
 	case 0: return "";
-	case 1: return "FINUFFT is not in use";
+	case 1: return "FINUFFT is not in use, and installing itself did not work";
 	case 2: return "the trajectory is missing";
 	case 3: return "cuFINUFFT is not in use and BART is on a device";
 	case 4: return "the trajectory does not carry three components";
@@ -855,12 +855,15 @@ struct linop_s* nufft_create2(int N, const long ksp_dims[N], const long cim_dims
 	if (NULL != op)
 		return op;
 
-	/* `bartorch_finufft_usable` is false while the substitution is switched
-	 * off, which is BART's own operator asked for on purpose. */
-	if (!allow_fallback && bartorch_finufft_usable())
+	/* Nothing reaches BART's own gridder without having been sent there.
+	 * The substitution being switched off is a reason like any other: a
+	 * caller who never asked for it would otherwise get an answer an order
+	 * further from the transform, several times slower, silently. */
+	if (!allow_fallback)
 		error("bartorch: FINUFFT cannot serve this NUFFT: %s.\n"
-		      "Let BART's own operator answer it with "
-		      "bartorch.finufft.enable(fallback=True).\n",
+		      "Let BART's own gridder answer it with "
+		      "bartorch.finufft.enable(fallback=True), or take it for "
+		      "everything with bartorch.finufft.disable().\n",
 		      bartorch_nufft_decline_text());
 
 	count(CNT_BART);

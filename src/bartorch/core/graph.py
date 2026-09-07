@@ -119,6 +119,11 @@ def _ensure_ready() -> None:
         _backend.install()
         _ready = True
 
+    # After _ready, because putting it in place runs a tool of its own.
+    from bartorch import _finufft
+
+    _finufft.install_once()
+
 
 def set_debug_level(level: int) -> None:
     """Set BART's verbosity: 0 errors, 1 warnings, 2 info, 3 and up debug."""

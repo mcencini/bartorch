@@ -116,7 +116,8 @@ BARTORCH_API bartorch_linop* bartorch_linop_cdiag(int N, const long* dims, unsig
 BARTORCH_API bartorch_linop* bartorch_linop_fmac(int N, const long* odims, const long* idims, const long* tdims, const void* tensor);
 BARTORCH_API bartorch_linop* bartorch_linop_sampling(const long* dims, const long* pat_dims, const void* pattern);
 BARTORCH_API bartorch_linop* bartorch_linop_nufft(int N, const long* ksp_dims, const long* cim_dims, const long* traj_dims,
-		const void* traj, int toeplitz, float os, float width);
+		const void* traj, const long* wgh_dims, const void* weights,
+		const long* bas_dims, const void* basis, int toeplitz, float os, float width);
 BARTORCH_API bartorch_linop* bartorch_linop_chain(const bartorch_linop* a, const bartorch_linop* b);
 BARTORCH_API bartorch_linop* bartorch_linop_plus(const bartorch_linop* a, const bartorch_linop* b);
 BARTORCH_API int bartorch_linop_domain(const bartorch_linop* h, int N, long* dims);

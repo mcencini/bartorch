@@ -178,6 +178,7 @@ def use_in_tools(
     lib = library()
     if not enable:
         lib.bartorch_finufft_use_in_tools(0)
+        lib.bartorch_nufft_allow_fallback(1)
         return False
 
     if not available():
@@ -296,9 +297,14 @@ def _tools_agree_with_bart(tolerance: float = 1e-2) -> bool:
 
     lib.bartorch_finufft_use_in_tools(1)
     fast = bt.nufft(traj, image)
+
+    # BART's own operator, asked for rather than fallen back on.
+    allowed = lib.bartorch_nufft_fallback_allowed()
+    lib.bartorch_nufft_allow_fallback(1)
     lib.bartorch_finufft_use_in_tools(0)
     reference = bt.nufft(traj, image)
     lib.bartorch_finufft_use_in_tools(1)
+    lib.bartorch_nufft_allow_fallback(allowed)
 
     scale = reference.abs().max()
     if scale == 0:
@@ -401,3 +407,35 @@ def transforms(
     plans = _Transforms(traj, spatial, batch, eps, scale)
     kspace_shape = tuple(image_shape[:-ndim]) + tuple(traj.shape[:-1]) + (1,)
     return plans, kspace_shape
+
+
+def disable() -> None:
+    """Compute every NUFFT with BART's own gridder instead.
+
+    Nothing reaches it by accident, so taking it for everything is something
+    to say out loud.
+    """
+    use_in_tools(False)
+
+
+_installed = False
+
+
+def install_once() -> None:
+    """Put the substitution in place the first time anything needs it.
+
+    A caller who has the package should not have to ask for it, and one who
+    does not should hear about it when a transform wants it rather than get a
+    quieter answer from BART.  What went wrong is left to the transform to
+    report, because most of what BART does needs no NUFFT at all.
+    """
+    global _installed
+    if _installed:
+        return
+    _installed = True
+    if not available():
+        return
+    try:
+        use_in_tools(True)
+    except (ImportError, RuntimeError):
+        pass

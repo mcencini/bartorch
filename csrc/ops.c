@@ -260,6 +260,8 @@ bartorch_linop* bartorch_linop_sampling(const long* dims, const long* pat_dims, 
 struct linop_nufft_args {
 
 	int N; const long* ksp_dims; const long* cim_dims; const long* traj_dims; const void* traj;
+	const long* wgh_dims; const void* weights;
+	const long* bas_dims; const void* basis;
 	int toeplitz; float os; float width;
 	bartorch_linop* result;
 };
@@ -277,14 +279,27 @@ static int linop_nufft_worker(void* p)
 	if (a->width > 0.f)
 		conf.width = a->width;
 
-	a->result = wrap_linop(nufft_create(a->N, a->ksp_dims, a->cim_dims, a->traj_dims, a->traj, NULL, conf));
+	/* Weights and a subspace basis belong to the operator rather than to
+	 * something chained onto it: the normal is a point spread function over
+	 * both, which a chain could not be. */
+	long wgh_dims[a->N];
+
+	if (NULL == a->weights)
+		md_singleton_dims(a->N, wgh_dims);
+	else
+		md_copy_dims(a->N, wgh_dims, a->wgh_dims);
+
+	a->result = wrap_linop(nufft_create2(a->N, a->ksp_dims, a->cim_dims, a->traj_dims, a->traj,
+			wgh_dims, a->weights, a->bas_dims, a->basis, conf));
 	return 0;
 }
 
 bartorch_linop* bartorch_linop_nufft(int N, const long* ksp_dims, const long* cim_dims, const long* traj_dims,
-		const void* traj, int toeplitz, float os, float width)
+		const void* traj, const long* wgh_dims, const void* weights,
+		const long* bas_dims, const void* basis, int toeplitz, float os, float width)
 {
-	struct linop_nufft_args a = { N, ksp_dims, cim_dims, traj_dims, traj, toeplitz, os, width, NULL };
+	struct linop_nufft_args a = { N, ksp_dims, cim_dims, traj_dims, traj,
+		wgh_dims, weights, bas_dims, basis, toeplitz, os, width, NULL };
 	return (0 == guarded(linop_nufft_worker, &a)) ? a.result : NULL;
 }
 
