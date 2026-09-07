@@ -17,6 +17,24 @@
 
 extern int bart_command(int len, char* buf, int argc, char* argv[]);
 
+/* A failed assertion reaches the caller instead of the process.
+ *
+ * BART checks its arguments with assert() and routes it through error() --
+ * which the error catcher turns into a return code -- only under USE_DWARF,
+ * which also wants libdw and libunwind for backtraces.  Without that define
+ * assert() is glibc's, and glibc's calls abort(), so a shape a caller got
+ * wrong would take the interpreter down with it.  Answering __assert_fail
+ * here puts those assertions back on BART's own error path and needs neither
+ * the define nor the libraries; the symbol is hidden, so it binds inside this
+ * library and nothing outside it changes.
+ */
+void __assert_fail(const char* assertion, const char* file, unsigned int line, const char* function);
+
+void __assert_fail(const char* assertion, const char* file, unsigned int line, const char* function)
+{
+	error("Assertion '%s' failed in %s:%u (%s)\n", assertion, file, line, function);
+}
+
 #ifndef BARTORCH_BUILD_INFO
 #define BARTORCH_BUILD_INFO "unknown"
 #endif

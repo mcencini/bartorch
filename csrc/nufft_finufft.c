@@ -429,7 +429,11 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 		batch *= cim_dims[i];
 	}
 
-	if ((batch < 1) || (batch > 1024))
+	/* FINUFFT batches the transforms it is asked for against one point set
+	 * internally, a slice at a time, so what bounds this is the int its plan
+	 * takes rather than memory: the arrays belong to BART and exist either
+	 * way. */
+	if ((batch < 1) || (batch > INT32_MAX))
 		DECLINE(10);
 
 	/* BART multiplies the transform by the weights on the way out and by

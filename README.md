@@ -152,6 +152,18 @@ nothing more.
 pip install -e . --config-settings=cmake.define.BARTORCH_CUDA=ON
 ```
 
+A release also carries a prebuilt CUDA wheel. It has the same name, version
+and platform tag as the CPU wheel, which PyPI cannot hold twice, so it is
+attached to the GitHub release rather than published:
+
+```sh
+pip install https://github.com/mcencini/bartpy/releases/download/<tag>/bartorch-<version>-py3-none-manylinux_2_28_x86_64.whl
+```
+
+It carries BART's device code for five architectures and links the CUDA
+runtimes torch already brings, so it costs a few megabytes and needs no
+toolchain on the target.
+
 A tensor on a card selects that card, and BART's streams are ordered against
 torch's current stream by an event in each direction, so neither side
 synchronises it.

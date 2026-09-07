@@ -39,7 +39,8 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
 endif()
 
-# BART routes assert through its own error path; NDEBUG must not remove it.
+# BART checks its arguments with assert and csrc/api.c puts those on its error
+# path, so NDEBUG must not remove them.
 set(CMAKE_C_FLAGS_RELEASE "-O2")
 set(CMAKE_CXX_FLAGS_RELEASE "-O2")
 
@@ -77,6 +78,15 @@ elseif(CMAKE_C_COMPILER_ID STREQUAL "GNU")
     set(BARTORCH_NESTED "gcc-heap-trampolines")
 else()
     message(FATAL_ERROR "BART needs clang or GCC 14+; ${CMAKE_C_COMPILER_ID} cannot compile it")
+endif()
+
+# The library exports a C ABI and exchanges no C++ objects with the process it
+# is loaded into, so its GCC runtime can be its own.  Linked dynamically it
+# would carry the toolchain's floor into every target system -- a GCC 14 build
+# asks for GCC_14.0.0 from libgcc_s, which no released distribution has -- and
+# that is a load-time failure, not a fallback.  Static leaves libc and libgomp.
+if(NOT APPLE AND NOT WIN32)
+    list(APPEND BART_LINK_OPTIONS -static-libgcc -static-libstdc++)
 endif()
 
 find_package(Threads REQUIRED)

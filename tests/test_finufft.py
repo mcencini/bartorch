@@ -328,3 +328,34 @@ def test_one_operator_serves_both_sides_of_the_bus(in_tools):
     got = on_card.cpu().numpy().reshape(ref.shape)
     assert np.linalg.norm(got - ref) / np.linalg.norm(ref) < 1e-4
     torch.testing.assert_close(on_card.cpu(), on_host, rtol=1e-4, atol=1e-4)
+
+
+@requires_finufft
+def test_more_frames_than_a_batch_of_one_thousand_are_still_finuffts(in_tools):
+    """FINUFFT batches against one point set, so frame count is not what decides.
+
+    A dynamic dataset carries far more frames than coils, and each frame is
+    another transform over the same trajectory.  FINUFFT takes them as one
+    plan and slices them internally, so the operator has no reason to hand a
+    long series back to BART.
+    """
+    n, frames = 16, 1500
+    traj = bt.traj(x=n, y=8, r=True)
+    # Frames sit beyond the three spatial axes, which is what makes them a batch.
+    image = torch.zeros(frames, 1, n, n, dtype=torch.complex64)
+    image[..., n // 2, n // 2] = 1.0  # a point source at the centre of every frame
+
+    _finufft.reset_counters()
+    A = LinearOperator.nufft(
+        traj, (frames, 1, n, n), kspace_shape=(frames, 8, n, 1), toeplitz=False
+    )
+    assert _finufft.operators_built() == (1, 0), _finufft.decline_reason()
+
+    y = A(image)
+    assert y.shape[0] == frames
+
+    # Every frame holds the same source, so every frame holds the same samples.
+    torch.testing.assert_close(y[0], y[-1])
+    ref = _dft(traj, image[:1], n)
+    got = y[0].numpy().reshape(ref.shape)
+    assert np.linalg.norm(got - ref) / np.linalg.norm(ref) < 1e-4

@@ -176,7 +176,7 @@ _DECLINED = {
     7: "the image has no spatial extent",
     8: "the trajectory and k-space disagree on the number of samples",
     9: "k-space and the coil images disagree beyond the spatial axes",
-    10: "there are too many frames for one plan",
+    10: "there are more frames than one plan can batch",
     11: "FINUFFT would not plan the forward transform",
     12: "FINUFFT would not plan the adjoint transform",
     13: "FINUFFT would not take the trajectory",

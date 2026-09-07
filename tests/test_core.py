@@ -198,3 +198,20 @@ def test_a_named_backend_can_be_asked_for():
 
     providers = {p.name for p in _backend._providers()}
     assert "scipy" in providers, "SciPy is a dependency and must always be a candidate"
+
+
+def test_a_failed_assertion_inside_bart_reaches_the_caller():
+    """BART checks its arguments with assert, and assert must not end the process.
+
+    Coil images and k-space that disagree on their dimensions trip an
+    assertion deep inside BART's own NUFFT.  glibc's assert would abort, so
+    the library answers __assert_fail itself and puts it back on BART's error
+    path, where the error catcher turns it into a return code.
+    """
+    import bartorch.tools as bt
+    from bartorch.ops import LinearOperator
+
+    n = 16
+    traj = bt.traj(x=n, y=8, r=True)
+    with pytest.raises(bartorch.BartError):
+        LinearOperator.nufft(traj, (8, 1, n, n), toeplitz=False)

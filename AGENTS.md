@@ -208,10 +208,27 @@ whatever compiler torch was built with. That DLL comes from clang or
 mingw-w64 GCC 14, and BART already carries the `src/win/` shims (`mmap`,
 `fmemopen`) such a build needs.
 
+The compiler's own runtime is linked statically on Linux, because otherwise
+the toolchain's floor becomes the target system's: a GCC 14 build asks
+`libgcc_s` for `GCC_14.0.0`, which no released distribution ships, and that is
+a `dlopen` failure rather than a fallback. The library exports a C ABI and
+exchanges no C++ objects with the process it is loaded into, so its libgcc and
+libstdc++ can be its own. What is left is glibc, which the manylinux image
+sets, and libgomp. A wheel built this way asks for `GLIBC_2.28` and nothing
+else.
+
 **Errors.** Every library entry point runs under BART's error catcher, so
 `error()` inside BART returns an error code and its message, captured
 through `vendor_log`, and never exits the process. A BART tool's text
 output arrives the same way.
+
+That includes assertions, which is how BART checks the arguments a caller is
+most likely to get wrong. BART routes `assert` through `error()` only under
+`USE_DWARF`, which also wants libdw and libunwind for backtraces; without it
+glibc's `assert` calls `abort()` and a wrong shape takes the interpreter down.
+`csrc/api.c` answers `__assert_fail` instead, which needs neither the define
+nor the libraries, and the symbol is hidden so it binds inside this library
+alone.
 
 ## Commands
 
