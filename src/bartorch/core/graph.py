@@ -170,15 +170,21 @@ def _expand_list_flags(kwargs: dict[str, Any]) -> list[tuple[str, Any]]:
 
 
 def _flag_string(key: str) -> str:
-    base = key
+    """The flag a keyword stands for.
+
+    ``x`` is ``-x`` and ``psf_export`` is ``--psf-export``.  A flag BART
+    spells with a digit takes a ``flag_`` prefix, so ``flag_3`` is ``-3``, and
+    a trailing digit otherwise repeats a flag: ``R_1`` and ``R_2`` are both
+    ``-R``.
+    """
     stem, _, suffix = key.rpartition("_")
-    if stem and suffix.isdigit():
-        base = stem
-    if len(base) == 1:
-        return "-" + base
-    if base.startswith("flag_") and len(base) > 5:
-        return "-" + base[5:]
-    return "--" + base.replace("_", "-")
+    if stem and stem != "flag" and suffix.isdigit():
+        key = stem
+    if key.startswith("flag_") and len(key) > 5:
+        return "-" + key[5:]
+    if len(key) == 1:
+        return "-" + key
+    return "--" + key.replace("_", "-")
 
 
 def build_argv(

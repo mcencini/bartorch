@@ -13,6 +13,9 @@ still, and :func:`decline_reason` says which.
     True
     >>> image = bartorch.tools.pics(kspace, maps, t=traj)
 
+A transform is served by whichever library the data is on: FINUFFT on the
+host, cuFINUFFT on a card, which :func:`used_on_device` reports.
+
 :meth:`bartorch.ops.LinearOperator.finufft` is the same transform as an
 operator, for use outside BART's tools.
 """
@@ -21,9 +24,11 @@ from bartorch._finufft import (
     available,
     cuda_available,
     decline_reason,
+    normals_built,
     operators_built,
     reset_counters,
     tolerance,
+    used_on_device,
 )
 from bartorch._finufft import use_in_tools as enable
 from bartorch._finufft import used_in_tools as enabled
@@ -34,7 +39,9 @@ __all__ = [
     "decline_reason",
     "enable",
     "enabled",
+    "normals_built",
     "operators_built",
     "reset_counters",
     "tolerance",
+    "used_on_device",
 ]

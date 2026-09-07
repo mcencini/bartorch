@@ -25,6 +25,7 @@ from typing import Any
 
 import torch
 
+from bartorch import _buffer
 from bartorch._lib import APPLY_FN, DIMS, library
 from bartorch.core.graph import BartError, _ensure_ready, _lock
 
@@ -73,13 +74,7 @@ def _axes_flags(axes, ndim: int) -> int:
 
 def _view(ptr: int, shape: Shape) -> torch.Tensor:
     """A complex64 tensor over BART's buffer, without a copy."""
-    numel = 1
-    for d in shape:
-        numel *= d
-    if numel == 0:
-        return torch.empty(shape, dtype=torch.complex64)
-    buf = (ctypes.c_float * (2 * numel)).from_address(ptr)
-    return torch.frombuffer(buf, dtype=torch.complex64).reshape(shape)
+    return _buffer.view(ptr, shape)
 
 
 def _as_operand(x: Any, shape: Shape, what: str) -> torch.Tensor:

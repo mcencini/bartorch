@@ -16,10 +16,10 @@ C library with a small C ABI; Python reaches it through ctypes.
 | `csrc/backend.[ch]`, `ref_blas.c`, `cblas_shim.c`, `lapacke_shim.c` | CBLAS and LAPACKE as BART calls them, forwarded to a table of Fortran-ABI routines with reference BLAS as the fallback. |
 | `csrc/ops.c` | Operators: host callbacks as BART linops and nlops, BART's own operators as handles, least squares and Gauss-Newton. |
 | `csrc/cuda.c` | Device selection, stream ordering against the caller's stream, and BART's memory cache. Present in both builds; the CPU build reports that it has no CUDA. |
-| `csrc/finufft.c`, `nufft_finufft.c` | FINUFFT's entry points, and BART's NUFFT operator built out of a pair of its plans. |
+| `csrc/finufft.c`, `nufft_finufft.c` | FINUFFT's and cuFINUFFT's entry points, and BART's NUFFT operator built out of a pair of their plans. |
 | `csrc/compat/` | The `cblas.h`, `lapacke.h` and `fftw3.h` BART includes. |
 | `third_party/` | pocketfft and BlocksRuntime, vendored with their licenses. |
-| `src/bartorch/` | The package: `_lib.py` (ctypes), `_backend.py` (which library serves BLAS and LAPACK), `core/graph.py` (tools on tensors), `ops.py` (operators), `finufft.py` (the substitution), `tools/` (one function per BART command). |
+| `src/bartorch/` | The package: `_lib.py` (ctypes), `_backend.py` (which library serves BLAS and LAPACK), `_buffer.py` (a tensor over one of BART's buffers, host or device), `core/graph.py` (tools on tensors), `ops.py` (operators), `finufft.py` (the substitution), `tools/` (one function per BART command). |
 | `build_tools/gen_tools.py` | Generates `tools/_generated.py` from the BART sources. |
 | `attic/prototype/` | An earlier pybind11 extension, kept for reference and not built. |
 
@@ -99,8 +99,9 @@ root of the voxel count. Nothing about gridding kernels or deapodisation has to
 be matched, because FINUFFT does the whole transform, and every tool that
 builds a NUFFT gets it: `nufft`, `pics`, `nlinv`, `moba`.
 
-Density weights are a diagonal in k-space, so they are chained on as a
-`linop_cdiag_create`, which is what lets `pics` take this path -- it always
+Density weights are a diagonal in k-space -- BART multiplies the transform by
+them on the way out and by their conjugate on the way back -- so the operator
+carries them itself, which is what lets `pics` take this path: it always
 passes a sampling pattern. A subspace basis, weights that do not lie along
 k-space, and a trajectory that varies across frames are declined, and
 `bartorch_nufft_decline_reason` says which; the counters say whether an
@@ -115,6 +116,16 @@ read the wrong struct. `pics` only reaches them for `--psf_export` and
 A plan holds the trajectory by pointer rather than copying it, so the
 coordinate arrays live in the operator's data and are freed with it.
 
+**The normal operator stays BART's.** A^H A is a convolution, so a solve
+applies it as one multiply against a point spread function rather than a
+transform each way -- and `nufft.c` already computes that function, with
+`compress_psf`, `decomposed_psf` and `lowmem` around it. So the substituted
+operator asks `bart_nufft_create2` for BART's own operator over the same
+trajectory and borrows its normal, while FINUFFT keeps the pair. Nothing is
+reimplemented and nothing is added to the dependency list. `conf.toeplitz`
+decides, so `pics --no-toeplitz` and `nufft -t` mean what they mean, and
+`bartorch.finufft.normals_built()` says which of the two answered.
+
 On a 256x256 eight-coil radial dataset of 401 spokes, against an explicit
 discrete Fourier sum on one spoke:
 
@@ -124,11 +135,24 @@ discrete Fourier sum on one spoke:
 | FINUFFT, tolerance 1e-6 | 26 ms | 26 ms | 2.2e-06 |
 | FINUFFT, tolerance 1e-4 | 16 ms | 16 ms | 1.1e-05 |
 
-`pics` end to end comes out about the same either way, because BART's operator
-answers a normal-equations apply with one point-spread-function multiply and
-this one does not: it has no PSF, so conjugate gradients runs a forward and an
-adjoint per iteration. Giving it a Toeplitz normal operator is the obvious
-next thing.
+and `pics` over the same data, agreeing with BART's own reconstruction to
+1.2e-03:
+
+| | Toeplitz | forward and adjoint |
+| --- | --- | --- |
+| BART | 1.66 s | 6.44 s |
+| FINUFFT | 1.06 s | 2.33 s |
+
+**cuFINUFFT is the same table.** `csrc/finufft.c` holds two of them, filled
+from the `finufft` and `cufinufft` wheels, and a transform is served by
+whichever matches where the trajectory is; without the `cufinufft` wheel a
+trajectory on a card stays with BART's own operator rather than quietly
+running on the host. Everything the operator does around the transform --
+taking a trajectory component, rescaling it into radians, the scaling, the
+weights -- goes through BART's own `md_` operations, which is what makes one
+piece of code serve both: the arrays come out where the trajectory is. A
+callback reaches a device buffer through the CUDA array interface
+(`src/bartorch/_buffer.py`), which is how a Python operator sees one.
 
 `LinearOperator.finufft` is the same transform reached without BART's tools,
 for chaining and solving in Python. It makes a plan once and reuses it, matches
@@ -195,9 +219,20 @@ Returns, Raises.
 
 ## What is not done
 
-Windows, a Toeplitz normal operator for the FINUFFT NUFFT, cuFINUFFT on the
-device path, tools with optional extra outputs, and the wider solver surface
+Windows, tools with optional extra outputs, and the wider solver surface
 (ADMM, FISTA, proximal operators) through the operator layer.
+
+Two of mrtoeplitz's ideas have no route in from here: a transfer that stays on
+the host and is streamed across in chunks, and bfloat16 transfers, which halve
+what crosses the bus. Both are decisions about how the point spread function
+is stored, which lives inside `nufft.c`, so neither is reachable by
+substituting an entry point -- they would need a BART edit or a normal
+operator written here. The seam is one function: `toeplitz_for` in
+`csrc/nufft_finufft.c` decides what the operator's normal is, and an
+mrtoeplitz kernel behind a host callback would go there. What BART does have
+is `compress_psf`, `decomposed_psf` and `lowmem`, and its own overlap:
+`bartorch.cuda.set_streams` sets `cuda_num_streams`, which is what puts BART's
+transfers and its arithmetic on different streams.
 
 The CUDA path is verified only as far as a machine without a card allows: it
 compiles, links, loads, reports no device, and runs the whole host suite. The

@@ -183,7 +183,9 @@ def _bind(lib: ctypes.CDLL) -> ctypes.CDLL:
     lib.bartorch_finufft_set.restype = c.c_int
     lib.bartorch_finufft_set.argtypes = [c.c_char_p, P]
     lib.bartorch_finufft_layout.restype = c.c_int
-    lib.bartorch_finufft_layout.argtypes = [c.c_int, c.c_int]
+    lib.bartorch_finufft_layout.argtypes = [c.c_int, c.c_int, c.c_int]
+    lib.bartorch_finufft_usable_on.restype = c.c_int
+    lib.bartorch_finufft_usable_on.argtypes = [c.c_int]
     lib.bartorch_finufft_set_tolerance.restype = None
     lib.bartorch_finufft_set_tolerance.argtypes = [c.c_double]
     lib.bartorch_finufft_tolerance.restype = c.c_double
@@ -198,6 +200,10 @@ def _bind(lib: ctypes.CDLL) -> ctypes.CDLL:
     lib.bartorch_nufft_counter.argtypes = [c.c_int]
     lib.bartorch_nufft_reset_counters.restype = None
     lib.bartorch_nufft_reset_counters.argtypes = []
+    lib.bartorch_toeplitz_counter.restype = c.c_long
+    lib.bartorch_toeplitz_counter.argtypes = [c.c_int]
+    lib.bartorch_toeplitz_reset_counters.restype = None
+    lib.bartorch_toeplitz_reset_counters.argtypes = []
     lib.bartorch_on_device.restype = c.c_int
     lib.bartorch_on_device.argtypes = [P]
     return lib

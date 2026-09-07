@@ -42,15 +42,30 @@ extern void bart_nufft_update_traj(const struct linop_s* nufft, int N, const lon
 extern const struct operator_s* bart_nufft_precond_create(const struct linop_s* nufft_op);
 
 /* Provided by finufft.c, which owns the FINUFFT entry points. */
-extern int bartorch_finufft_plan(int type, int dim, const int64_t n_modes[3], int ntrans,
-		int isign, double eps, void** plan);
+extern int bartorch_finufft_plan(int device, int type, int dim, const int64_t n_modes[3],
+		int ntrans, int isign, double eps, void** plan);
 extern int bartorch_finufft_setpts(void* plan, long M, float* x, float* y, float* z);
 extern int bartorch_finufft_exec(void* plan, complex float* c, complex float* f);
 extern void bartorch_finufft_free(void* plan);
-extern int bartorch_finufft_usable(void);
 extern double bartorch_finufft_tolerance(void);
 
 /* ------------------------------------------------------------------------ */
+
+/* Normal operators built since the last reset, so a test can say that a
+ * solve ran on a point spread function rather than on the transform pair. */
+enum { TP_PSF, TP_PAIR };
+static long toeplitz_counters[2];
+
+long bartorch_toeplitz_counter(int which)
+{
+	return ((0 == which) || (1 == which)) ? toeplitz_counters[which] : -1;
+}
+
+void bartorch_toeplitz_reset_counters(void)
+{
+	toeplitz_counters[TP_PSF] = 0;
+	toeplitz_counters[TP_PAIR] = 0;
+}
 
 struct nufft_fi_s {
 
@@ -62,6 +77,11 @@ struct nufft_fi_s {
 	float* coord[3];
 	pthread_mutex_t lock;
 
+	/* BART's own operator over the same trajectory, held for the point
+	 * spread function its normal applies.  NULL when the caller asked for
+	 * no Toeplitz embedding, and the pair answers the normal instead. */
+	const struct linop_s* toeplitz;
+
 	long samples;
 	long batch;
 	long image_elements;
@@ -71,6 +91,7 @@ struct nufft_fi_s {
 	 * none; ksp_dims and their strides say how they broadcast onto k-space. */
 	int N;
 	complex float* weights;
+	long* cim_dims;
 	long* ksp_dims;
 	long* ksp_strs;
 	long* wgh_strs;
@@ -96,8 +117,7 @@ static void nufft_fi_forward(const linop_data_t* _d, complex float* dst, const c
 	if (0 != ret)
 		error("bartorch: FINUFFT forward transform failed\n");
 
-	for (long i = 0; i < d->samples * d->batch; i++)
-		dst[i] *= d->scale;
+	md_zsmul(d->N, d->ksp_dims, dst, dst, d->scale);
 
 	if (NULL != d->weights)
 		md_zmul2(d->N, d->ksp_dims, d->ksp_strs, dst, d->ksp_strs, dst, d->wgh_strs, d->weights);
@@ -125,8 +145,14 @@ static void nufft_fi_adjoint(const linop_data_t* _d, complex float* dst, const c
 	if (0 != ret)
 		error("bartorch: FINUFFT adjoint transform failed\n");
 
-	for (long i = 0; i < d->image_elements * d->batch; i++)
-		dst[i] *= d->scale;
+	md_zsmul(d->N, d->cim_dims, dst, dst, d->scale);
+}
+
+static void nufft_fi_normal(const linop_data_t* _d, complex float* dst, const complex float* src)
+{
+	struct nufft_fi_s* d = CAST_DOWN(nufft_fi_s, _d);
+
+	linop_normal_unchecked(d->toeplitz, dst, src);
 }
 
 static void nufft_fi_del(const linop_data_t* _d)
@@ -136,11 +162,14 @@ static void nufft_fi_del(const linop_data_t* _d)
 	bartorch_finufft_free(d->forward_plan);
 	bartorch_finufft_free(d->adjoint_plan);
 
+	if (NULL != d->toeplitz)
+		linop_free(d->toeplitz);
+
 	for (int i = 0; i < 3; i++)
-		if (NULL != d->coord[i])
-			xfree(d->coord[i]);
+		md_free(d->coord[i]);
 
 	md_free(d->weights);
+	xfree(d->cim_dims);
 	xfree(d->ksp_dims);
 	xfree(d->ksp_strs);
 	xfree(d->wgh_strs);
@@ -182,22 +211,53 @@ static void count(int which)
 
 #define DECLINE(code) do { decline_reason = (code); return NULL; } while (0)
 
+/* BART's own operator over the same trajectory, for its normal alone.
+ *
+ * A^H A is a convolution, so BART answers it with one multiply against a
+ * point spread function rather than a forward and an adjoint transform; that
+ * is `nufft.c`'s work and there is no reason to do it twice.  What is left to
+ * FINUFFT is the transform pair, which is what a solve spends the rest of its
+ * time in.
+ *
+ * The caller decides: `conf.toeplitz` is what `pics --no-toeplitz` and
+ * `nufft -t` set, and it carries the memory the function costs.
+ */
+static const struct linop_s* toeplitz_for(int N, const long ksp_dims[N], const long cim_dims[N],
+		const long traj_dims[N], const complex float* traj,
+		const long wgh_dims[N], const complex float* weights, struct nufft_conf_s conf)
+{
+	if (!conf.toeplitz) {
+
+#pragma omp atomic
+		toeplitz_counters[TP_PAIR]++;
+
+		return NULL;
+	}
+
+	const struct linop_s* op = bart_nufft_create2(N, ksp_dims, cim_dims, traj_dims, traj,
+			wgh_dims, weights, NULL, NULL, conf);
+
+#pragma omp atomic
+	toeplitz_counters[TP_PSF]++;
+
+	return op;
+}
+
 static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_dims[N],
 		const long traj_dims[N], const complex float* traj,
 		const long wgh_dims[N], const complex float* weights,
 		const complex float* basis, struct nufft_conf_s conf)
 {
-	if (!bartorch_finufft_usable())
-		DECLINE(1);
+	int device = bartorch_on_device(traj) ? 1 : 0;
+
+	if (!bartorch_finufft_usable_on(device))
+		DECLINE(device ? 3 : 1);
 
 	if (NULL != basis)
 		DECLINE(14);
 
 	if ((N < 4) || (NULL == traj))
 		DECLINE(2);
-
-	if (bartorch_on_device(traj))
-		DECLINE(3);
 
 	if (3 != traj_dims[0])
 		DECLINE(4);
@@ -256,26 +316,40 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 	void* forward_plan = NULL;
 	void* adjoint_plan = NULL;
 
-	if (0 != bartorch_finufft_plan(2, dim, n_modes, (int)batch, -1, eps, &forward_plan))
+	if (0 != bartorch_finufft_plan(device, 2, dim, n_modes, (int)batch, -1, eps, &forward_plan))
 		DECLINE(11);
 
-	if (0 != bartorch_finufft_plan(1, dim, n_modes, (int)batch, +1, eps, &adjoint_plan)) {
+	if (0 != bartorch_finufft_plan(device, 1, dim, n_modes, (int)batch, +1, eps, &adjoint_plan)) {
 
 		bartorch_finufft_free(forward_plan);
 		DECLINE(12);
 	}
 
+	/* BART's trajectory counts samples of the image grid and FINUFFT takes
+	 * the same position in radians.  Taking one component and rescaling it
+	 * with BART's own operations is what makes this the same code on a card:
+	 * the arrays come out where the trajectory is. */
+	long one_dims[N];
+	long one_strs[N];
+	long trj_strs[N];
+
+	md_select_dims(N, ~1UL, one_dims, traj_dims);
+	md_calc_strides(N, one_strs, one_dims, CFL_SIZE);
+	md_calc_strides(N, trj_strs, traj_dims, CFL_SIZE);
+
+	complex float* component = md_alloc_sameplace(N, one_dims, CFL_SIZE, traj);
 	float* coord[3] = { NULL, NULL, NULL };
 
-	for (int i = 0; i < dim; i++)
-		coord[i] = xmalloc((size_t)samples * sizeof(float));
+	for (int i = 0; i < dim; i++) {
 
-	/* BART's trajectory counts samples of the image grid; FINUFFT takes the
-	 * same position in radians. */
-#pragma omp parallel for
-	for (long s = 0; s < samples; s++)
-		for (int i = 0; i < dim; i++)
-			coord[i][s] = (float)(2. * M_PI * crealf(traj[3 * s + axis[i]]) / (double)cim_dims[axis[i]]);
+		md_copy2(N, one_dims, one_strs, component, trj_strs, traj + axis[i], CFL_SIZE);
+
+		coord[i] = md_alloc_sameplace(N, one_dims, FL_SIZE, traj);
+		md_real(N, one_dims, coord[i], component);
+		md_smul(N, one_dims, coord[i], coord[i], (float)(2. * M_PI / (double)cim_dims[axis[i]]));
+	}
+
+	md_free(component);
 
 	int ret = bartorch_finufft_setpts(forward_plan, samples, coord[0], coord[1], coord[2]);
 
@@ -288,8 +362,7 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 		bartorch_finufft_free(adjoint_plan);
 
 		for (int i = 0; i < 3; i++)
-			if (NULL != coord[i])
-				xfree(coord[i]);
+			md_free(coord[i]);
 
 		DECLINE(13);
 	}
@@ -316,10 +389,12 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 
 	d->N = N;
 	d->weights = NULL;
+	d->cim_dims = xmalloc((size_t)N * sizeof(long));
 	d->ksp_dims = xmalloc((size_t)N * sizeof(long));
 	d->ksp_strs = xmalloc((size_t)N * sizeof(long));
 	d->wgh_strs = xmalloc((size_t)N * sizeof(long));
 
+	md_copy_dims(N, d->cim_dims, cim_dims);
 	md_copy_dims(N, d->ksp_dims, ksp_dims);
 	md_calc_strides(N, d->ksp_strs, ksp_dims, CFL_SIZE);
 
@@ -330,8 +405,14 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 		md_calc_strides(N, d->wgh_strs, wgh_dims, CFL_SIZE);
 	}
 
+	d->toeplitz = toeplitz_for(N, ksp_dims, cim_dims, traj_dims, traj, wgh_dims, weights, conf);
+
+	/* PTR_PASS hands the data over and clears the pointer, so what the
+	 * operator is built with is read out first. */
+	lop_fun_t normal = (NULL != d->toeplitz) ? nufft_fi_normal : NULL;
+
 	struct linop_s* op = linop_create(N, ksp_dims, N, cim_dims, CAST_UP(PTR_PASS(d)),
-			nufft_fi_forward, nufft_fi_adjoint, NULL, NULL, nufft_fi_del);
+			nufft_fi_forward, nufft_fi_adjoint, normal, NULL, nufft_fi_del);
 
 	decline_reason = 0;
 	count(CNT_FI);

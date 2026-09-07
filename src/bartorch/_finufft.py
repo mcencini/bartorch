@@ -14,6 +14,7 @@ of voxels.
 
 from __future__ import annotations
 
+import importlib
 import math
 from pathlib import Path
 
@@ -43,14 +44,22 @@ def cuda_available() -> bool:
     return True
 
 
-def _library_path() -> str | None:
-    """The compiled library inside the ``finufft`` wheel."""
+def used_on_device() -> bool:
+    """Whether a transform on a CUDA tensor would be computed by cuFINUFFT."""
+    from bartorch._lib import library
+
+    return bool(library().bartorch_finufft_usable_on(1))
+
+
+def _library_path(package: str, stem: str) -> str | None:
+    """The compiled library inside a FINUFFT wheel."""
     try:
-        import finufft
+        module = importlib.import_module(package)
     except ImportError:
         return None
-    for name in ("libfinufft.so", "libfinufft.dylib", "finufft.dll", "libfinufft.dll"):
-        candidate = Path(finufft.__file__).resolve().parent / name
+    here = Path(module.__file__).resolve().parent
+    for name in (f"lib{stem}.so", f"lib{stem}.dylib", f"{stem}.dll", f"lib{stem}.dll"):
+        candidate = here / name
         if candidate.exists():
             return str(candidate)
     return None
@@ -59,40 +68,69 @@ def _library_path() -> str | None:
 def _load_symbols() -> bool:
     """Hand the library FINUFFT's entry points and its options layout.
 
-    The layout is read from the package that will interpret the struct, so a
+    The host's library is required; the device's is loaded when the
+    ``cufinufft`` wheel is installed, and its absence only means that a
+    trajectory on a card stays with BART's own operator.
+
+    A layout is read from the package that will interpret the struct, so a
     release that moves a field cannot be misread here.
     """
+    return _load_one(0, "finufft", "finufft", "finufftf_") and (
+        _load_one(1, "cufinufft", "cufinufft", "cufinufftf_") or True
+    )
+
+
+def _load_one(device: int, package: str, stem: str, prefix: str) -> bool:
+    """Register one library's entry points and the offset of the field to set."""
     import ctypes as c
 
     from bartorch._lib import library
 
     lib = library()
-    path = _library_path()
+    path = _library_path(package, stem)
     if path is None:
         return False
 
     try:
-        from finufft._finufft import FinufftOpts
-    except ImportError:
+        opts, field = _options_layout(package)
+    except (ImportError, AttributeError):
         return False
 
     handle = c.CDLL(path)
     _keepalive.append(handle)
-    for symbol in (
-        "finufftf_makeplan",
-        "finufftf_setpts",
-        "finufftf_execute",
-        "finufftf_destroy",
-        "finufftf_default_opts",
-    ):
-        try:
-            fn = getattr(handle, symbol)
-        except AttributeError:
+    symbols = [prefix + name for name in ("makeplan", "setpts", "execute", "destroy")]
+    symbols.append(_default_opts_symbol(handle, prefix))
+    for symbol in symbols:
+        fn = getattr(handle, symbol, None)
+        if fn is None:
             return False
         if lib.bartorch_finufft_set(symbol.encode(), c.cast(fn, c.c_void_p)) != 0:
             return False
 
-    return 0 == lib.bartorch_finufft_layout(c.sizeof(FinufftOpts), FinufftOpts.nthreads.offset)
+    return 0 == lib.bartorch_finufft_layout(device, c.sizeof(opts), field.offset)
+
+
+def _default_opts_symbol(handle, prefix: str) -> str:
+    """FINUFFT spells its defaults per precision and cuFINUFFT does not."""
+    name = prefix + "default_opts"
+    if getattr(handle, name, None) is not None:
+        return name
+    return prefix.replace("f_", "_") + "default_opts"
+
+
+def _options_layout(package: str):
+    """The options struct a package interprets, and the field to fill in.
+
+    FINUFFT is told how many threads to take -- zero, meaning all of them --
+    and cuFINUFFT which device to run on.
+    """
+    if package == "finufft":
+        from finufft._finufft import FinufftOpts as opts
+
+        return opts, opts.nthreads
+    from cufinufft._cufinufft import NufftOpts as opts
+
+    return opts, opts.gpu_device_id
 
 
 def use_in_tools(enable: bool = True, tolerance: float = 1e-6) -> bool:
@@ -131,7 +169,7 @@ _DECLINED = {
     0: "",
     1: "FINUFFT is not in use",
     2: "the trajectory is missing",
-    3: "the trajectory is on a device",
+    3: "cuFINUFFT is not in use and the trajectory is on a device",
     4: "the trajectory does not carry three components",
     5: "k-space is not a single line of samples per readout",
     6: "the transform is over axes other than the spatial three",
@@ -163,11 +201,27 @@ def operators_built() -> tuple[int, int]:
     return int(lib.bartorch_nufft_counter(0)), int(lib.bartorch_nufft_counter(1))
 
 
-def reset_counters() -> None:
-    """Start counting operators again."""
+def normals_built() -> tuple[int, int]:
+    """Normal operators since the last reset: by a point spread function, by the pair.
+
+    A^H A is a convolution, so BART answers it with one multiply against a
+    point spread function rather than a forward and an adjoint transform, and
+    the substituted operator borrows that for its normal.  ``pics
+    --no-toeplitz`` and ``nufft -t`` are what decide whether there is one.
+    """
     from bartorch._lib import library
 
-    library().bartorch_nufft_reset_counters()
+    lib = library()
+    return int(lib.bartorch_toeplitz_counter(0)), int(lib.bartorch_toeplitz_counter(1))
+
+
+def reset_counters() -> None:
+    """Start counting operators and normal operators again."""
+    from bartorch._lib import library
+
+    lib = library()
+    lib.bartorch_nufft_reset_counters()
+    lib.bartorch_toeplitz_reset_counters()
 
 
 def tolerance() -> float:

@@ -186,15 +186,33 @@ BARTORCH_API long bartorch_cuda_free_memory(void);
  * and bartorch_nufft_decline_reason says which.
  */
 BARTORCH_API int bartorch_finufft_set(const char* symbol, void* fn);
-BARTORCH_API int bartorch_finufft_layout(int opts_size, int nthreads);
+/* `device` picks the table: FINUFFT's on the host, cuFINUFFT's on a card.
+ * `device_field` is the byte offset of the one option this sets -- the thread
+ * count on the host, the device number on a card. */
+BARTORCH_API int bartorch_finufft_layout(int device, int opts_size, int device_field);
 BARTORCH_API void bartorch_finufft_set_tolerance(double eps);
 BARTORCH_API double bartorch_finufft_tolerance(void);
 BARTORCH_API void bartorch_finufft_use_in_tools(int enable);
+/* Whether a transform can be served where the data is: 0 host, 1 device. */
+BARTORCH_API int bartorch_finufft_usable_on(int device);
 BARTORCH_API int bartorch_finufft_usable(void);
 BARTORCH_API int bartorch_nufft_decline_reason(void);
 /* Operators built since the last reset: 0 by FINUFFT, 1 by BART. */
 BARTORCH_API long bartorch_nufft_counter(int which);
 BARTORCH_API void bartorch_nufft_reset_counters(void);
+
+/*
+ * A^H A for a non-Cartesian encoding is a convolution, so a solve applies it
+ * as one multiply against a point spread function rather than a forward and
+ * an adjoint transform.  That is BART's own Toeplitz embedding, which the
+ * substituted operator borrows for its normal while FINUFFT keeps the pair;
+ * `pics --no-toeplitz` and `nufft -t` are what decide whether there is one.
+ *
+ * Normal operators since the last reset: 0 answered by a point spread
+ * function, 1 by the transform pair.
+ */
+BARTORCH_API long bartorch_toeplitz_counter(int which);
+BARTORCH_API void bartorch_toeplitz_reset_counters(void);
 
 /* Whether a pointer is device memory; always false without CUDA. */
 BARTORCH_API int bartorch_on_device(const void* ptr);

@@ -100,13 +100,25 @@ BART builds every non-Cartesian transform through `nufft_create`, and that is
 the seam: with FINUFFT in place, `nufft`, `pics`, `nlinv` and `moba` compute
 their forward and adjoint transforms with FINUFFT's type 2 and type 1 instead
 of BART's Kaiser-Bessel gridder and oversampled FFT. Nothing about kernels or
-deapodisation has to agree, because FINUFFT does the whole transform. On a
-256x256 eight-coil radial dataset the transform takes 26 ms against BART's 70 ms
-forward and 130 ms adjoint, and sits an order of magnitude closer to an explicit
-discrete Fourier sum. A subspace basis, weights that do not lie along k-space
+deapodisation has to agree, because FINUFFT does the whole transform. A
+trajectory on a CUDA tensor is served by cuFINUFFT, one on the host by FINUFFT.
+
+The normal operator stays BART's: `A^H A` is a convolution, and `pics` applies
+it as one multiply against the point spread function BART already knows how to
+compute, so a solve gets FINUFFT's transforms and BART's Toeplitz embedding
+together. On a 256x256 eight-coil radial dataset of 401 spokes:
+
+| | transform | adjoint | `pics` |
+| --- | --- | --- | --- |
+| BART | 70 ms | 130 ms | 1.66 s |
+| FINUFFT | 26 ms | 26 ms | 1.06 s |
+
+and the reconstruction agrees with BART's to 1.2e-03 while sitting an order of
+magnitude closer to an explicit discrete Fourier sum. `--no-toeplitz` means
+what it means on both. A subspace basis, weights that do not lie along k-space
 and a trajectory that varies across frames stay with BART's own operator;
-`bartorch.finufft.decline_reason()` says which, and
-`bartorch.finufft.operators_built()` counts how many operators each side built.
+`bartorch.finufft.decline_reason()` says which, and `operators_built()` and
+`normals_built()` count what each side built.
 
 ```python
 N = LinearOperator.finufft(traj, (8, 256, 256))
@@ -159,9 +171,9 @@ rather than hundreds of megabytes of vendored libraries.
 ## Status
 
 Linux and macOS on the host, and a CUDA build that compiles, links and runs
-the host suite — the device path itself is written but has not been run on a
-card. Windows, cuFINUFFT on the device, and the remaining solver entry points
-are next; see `AGENTS.md`.
+the host suite — the device path itself, cuFINUFFT included, is written but
+has not been run on a card. Windows and the remaining solver entry points are
+next; see `AGENTS.md`.
 
 ## License
 

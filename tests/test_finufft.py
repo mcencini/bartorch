@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 import torch
 
+import bartorch
 import bartorch.tools as bt
 from bartorch import _finufft
 from bartorch.ops import LinearOperator
@@ -186,6 +187,60 @@ def test_pics_reconstructs_the_same_image_either_way(in_tools):
 
 
 @requires_finufft
+def test_the_normal_solves_the_normal_equations(in_tools):
+    # A^H A is a convolution, so the substituted operator answers it with
+    # BART's point spread function rather than a transform each way.  What
+    # pins it is the solve: an iterative inverse driven by a wrong normal
+    # lands somewhere else.
+    n, lam = 16, 1e-2
+    traj = bt.traj(x=n, y=32, r=True)
+    image = bt.phantom([n, n]).reshape(1, n, n)
+    kspace = bt.nufft(traj, image)
+
+    _finufft.reset_counters()
+    got = bt.nufft(traj, kspace, inverse=True, image_dims=(n, n, 1), l2_reg=lam, max_iter=200)
+    assert _finufft.normals_built() == (1, 0), "the solve did not run on a point spread function"
+
+    trj = traj.numpy().real
+    x = np.arange(n) - n // 2
+    E = (
+        np.exp(
+            -2j
+            * np.pi
+            * (
+                trj[..., 0][..., None, None] * x[None, None, None, :] / n
+                + trj[..., 1][..., None, None] * x[None, None, :, None] / n
+            )
+        ).reshape(-1, n * n)
+        / n
+    )
+    y = kspace.numpy().reshape(-1)
+    ref = np.linalg.solve(E.conj().T @ E + lam * np.eye(n * n), E.conj().T @ y).reshape(n, n)
+
+    err = np.linalg.norm(got.numpy().reshape(n, n) - ref) / np.linalg.norm(ref)
+    assert err < 5e-2, f"the solve landed {err:.2e} from the explicit one"
+
+
+@requires_finufft
+def test_the_two_normals_solve_the_same_problem(in_tools):
+    n = 64
+    traj = bt.traj(x=n, y=128, r=True)
+    image = bt.phantom([n, n]).reshape(1, n, n)
+    kspace = bt.nufft(traj, image)
+    maps = torch.ones(1, n, n, dtype=torch.complex64)
+
+    _finufft.reset_counters()
+    fast = bt.pics(kspace, maps, t=traj)
+    assert _finufft.normals_built() == (1, 0)
+
+    _finufft.reset_counters()
+    pair = bt.pics(kspace, maps, t=traj, no_toeplitz=True)
+    assert _finufft.normals_built() == (0, 1)
+
+    assert (fast - pair).norm().item() / pair.norm().item() < 0.05
+
+
+@requires_finufft
 def test_turning_it_off_gives_the_tools_barts_operator_back():
     _finufft.use_in_tools(False)
     n = 32
@@ -214,3 +269,32 @@ def test_the_operator_is_unaffected_by_the_substitution():
         torch.testing.assert_close(A(img), y, rtol=1e-5, atol=1e-5)
     finally:
         _finufft.use_in_tools(False)
+
+
+@requires_finufft
+def test_the_device_transform_is_offered_only_where_cufinufft_is(in_tools):
+    # The two libraries are registered together and picked by where the data
+    # is, so a trajectory on a card is BART's own operator's without the
+    # cufinufft wheel rather than a transform that quietly runs on the host.
+    assert _finufft.used_on_device() == (_finufft.cuda_available() and bartorch.cuda.built()), (
+        _finufft.decline_reason()
+    )
+
+
+@requires_finufft
+@pytest.mark.skipif(
+    not (bartorch.cuda.available() and _finufft.cuda_available()),
+    reason="this needs a CUDA device and the cufinufft package",
+)
+def test_a_trajectory_on_a_card_is_transformed_by_cufinufft(in_tools):
+    n = 32
+    traj = bt.traj(x=n, y=16, r=True).cuda()
+    image = bt.phantom([n, n]).reshape(1, n, n).cuda()
+
+    _finufft.reset_counters()
+    y = bt.nufft(traj, image)
+
+    assert y.device.type == "cuda"
+    assert _finufft.operators_built() == (1, 0), _finufft.decline_reason()
+    ref = _dft(traj.cpu(), image.cpu(), n)
+    assert np.linalg.norm(y.cpu().numpy().reshape(ref.shape) - ref) / np.linalg.norm(ref) < 1e-4
