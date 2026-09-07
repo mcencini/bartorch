@@ -192,6 +192,8 @@ output arrives the same way.
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
 BARTORCH_LIBRARY=$PWD/build/libbartorch.so PYTHONPATH=src pytest tests/
 pip install -e .                    # the same through scikit-build-core
+pip install -e . --config-settings=cmake.define.BARTORCH_CUDA=ON   # with device code
+python scripts/check_device.py      # everything a card can answer that a host cannot
 python build_tools/gen_tools.py     # after a submodule bump
 ruff format src tests build_tools && ruff check src tests build_tools
 ```
@@ -236,12 +238,16 @@ transfers and its arithmetic on different streams.
 
 The CUDA path is verified only as far as a machine without a card allows: it
 compiles, links, loads, reports no device, and runs the whole host suite. The
-tests that need a card are written and skip. What wants checking on real
-hardware, in order: that a tool on device tensors returns a device tensor with
-the right numbers, that BART's allocations and torch's caching allocator
-coexist on a card with little memory (`bartorch.cuda.use_memcache(False)`
-gives BART's memory straight back), whether tools need `-g` passed as well as
-`bart_use_gpu` being set, and whether more than one BART stream actually
-overlaps transfer with arithmetic. Routing BART's device allocations through
-torch's allocator is a further step: `mem_device_malloc` takes the allocator
-as a parameter, so replacing `num/mem.c` would do it without a BART edit.
+tests that need a card are written and skip. `scripts/check_device.py` walks
+what is left in dependency order -- a tool answering on the device, a NUFFT
+against an explicit discrete Fourier sum, cuFINUFFT serving the card, the
+device and host transforms agreeing, `pics` with and without the Toeplitz
+normal, whether more than one BART stream overlaps anything, whether BART's
+allocations and torch's caching allocator coexist
+(`bartorch.cuda.use_memcache(False)` gives BART's memory straight back), and
+whether a tool needs `-g` beyond the device pointers. Each check is
+independent and names its own reason, so the first failure is the thing to fix.
+
+Routing BART's device allocations through torch's allocator is a further step:
+`mem_device_malloc` takes the allocator as a parameter, so replacing
+`num/mem.c` would do it without a BART edit.
