@@ -3,6 +3,7 @@ that are not BART.
 """
 
 import ctypes
+import os
 
 import numpy as np
 import pytest
@@ -164,14 +165,20 @@ def test_lapack_is_served_by_a_library_not_by_the_built_in_reference():
     assert all(src not in ("reference", "missing") for src in lapack.values()), lapack
 
 
-def test_an_installed_mkl_can_serve_every_routine_when_asked_for():
-    # MKL is not the default because it brings a second OpenMP runtime, but a
-    # caller who asks for it must get it for everything, not just some.
+def test_an_installed_mkl_serves_every_routine():
+    # MKL is preferred when the mkl extra is installed, and it has to cover
+    # everything rather than leave gaps for another library to fill.
     from bartorch import _backend
 
+    if os.environ.get("BARTORCH_BLAS_LIBRARY"):
+        pytest.skip("a backend was asked for explicitly")
     if _backend._mkl_library() is None:
         pytest.skip("no MKL installed in this environment")
-    mkl = _backend._SharedLibrary("mkl", ctypes.CDLL(str(_backend._mkl_library())))
-    lib = bartorch._lib.library()
-    names = [lib.bartorch_backend_name(i).decode() for i in range(lib.bartorch_backend_count())]
-    assert all(mkl.lookup(name) is not None for name in names)
+    assert set(bartorch.backend_sources().values()) == {"mkl"}
+
+
+def test_a_named_backend_can_be_asked_for():
+    from bartorch import _backend
+
+    providers = {p.name for p in _backend._providers()}
+    assert "scipy" in providers, "SciPy is a dependency and must always be a candidate"

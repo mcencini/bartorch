@@ -2,22 +2,24 @@
 
 The compiled library carries reference BLAS and no LAPACK; both are filled in
 at import from libraries already present in the process.  Every entry is a
-compiled Fortran-ABI routine, never a Python callback:
+compiled Fortran-ABI routine, never a Python callback.  In order:
 
+* MKL, when the ``mkl`` extra is installed.  It covers every routine BART
+  calls and is the fastest of these on the work that leans on LAPACK: an
+  ESPIRiT calibration, whose per-voxel eigendecompositions dominate it, takes
+  about half as long as it does on the others.  There is no MKL wheel for
+  macOS, so this is a Linux and Windows path;
 * the BLAS and LAPACK torch itself links, which is MKL statically on Linux and
   Windows and Accelerate on macOS.  Only the routines torch calls are
-  exported, which is thirteen of the thirty BART needs;
+  exported, thirteen of the thirty;
 * Accelerate directly, on macOS;
 * SciPy's ``cython_blas`` and ``cython_lapack``, which publish the whole of
   BLAS and LAPACK as function pointers into their compiled OpenBLAS, and cover
-  what the others do not.
+  whatever the others do not.
 
-``BARTORCH_BLAS_LIBRARY`` points the search at one library first, either a
-path or ``mkl`` to mean the MKL installed in this environment (``pip install
-mkl``), which covers every routine on its own.  It is not the default: MKL
-brings its own OpenMP runtime alongside the one BART is built with, and two
-thread pools cost more than MKL saves until the arrays are large.  Measure
-before choosing.  :func:`sources` reports what each routine resolved to.
+``BARTORCH_BLAS_LIBRARY`` puts one source first: ``mkl``, ``scipy``, ``torch``,
+or the path to a shared library.  :func:`sources` reports what each routine
+resolved to.
 """
 
 from __future__ import annotations
@@ -134,43 +136,49 @@ def _open(name: str, path: str) -> _Provider | None:
         return None
 
 
+def _mkl_providers() -> list[_Provider | None]:
+    mkl = _mkl_library()
+    return [_open("mkl", str(mkl))] if mkl is not None else []
+
+
+def _torch_providers() -> list[_Provider | None]:
+    found: list[_Provider | None] = []
+    torch_lib = _torch_library()
+    if torch_lib is not None:
+        found.append(_open(torch_lib.name, str(torch_lib)))
+    if sys.platform == "darwin":
+        found.append(
+            _open("Accelerate", "/System/Library/Frameworks/Accelerate.framework/Accelerate")
+        )
+    if sys.platform != "win32":
+        found.append(_open("process", None))
+    return found
+
+
+def _scipy_providers() -> list[_Provider | None]:
+    found: list[_Provider | None] = []
+    for module in ("scipy.linalg.cython_blas", "scipy.linalg.cython_lapack"):
+        try:
+            table = __import__(module, fromlist=["__pyx_capi__"]).__pyx_capi__
+        except (ImportError, AttributeError):
+            continue
+        found.append(_CythonCapsules("scipy", table))
+    return found
+
+
+_NAMED = {"mkl": _mkl_providers, "torch": _torch_providers, "scipy": _scipy_providers}
+
+
 def _providers() -> list[_Provider]:
     """Sources of compiled routines, most preferred first."""
     found: list[_Provider | None] = []
 
     override = os.environ.get("BARTORCH_BLAS_LIBRARY")
-    if override == "mkl":
-        mkl = _mkl_library()
-        if mkl is None:
-            raise RuntimeError(
-                "BARTORCH_BLAS_LIBRARY=mkl, but no libmkl_rt was found in this "
-                "environment; pip install mkl, or give a path instead"
-            )
-        found.append(_open("mkl", str(mkl)))
-    elif override:
+    if override and override not in _NAMED:
         found.append(_open(override, override))
 
-    torch_lib = _torch_library()
-    if torch_lib is not None:
-        found.append(_open(torch_lib.name, str(torch_lib)))
-
-    if sys.platform == "darwin":
-        found.append(
-            _open("Accelerate", "/System/Library/Frameworks/Accelerate.framework/Accelerate")
-        )
-
-    if sys.platform != "win32":
-        found.append(_open("process", None))
-
-    for module, label in (
-        ("scipy.linalg.cython_blas", "scipy"),
-        ("scipy.linalg.cython_lapack", "scipy"),
-    ):
-        try:
-            table = __import__(module, fromlist=["__pyx_capi__"]).__pyx_capi__
-        except (ImportError, AttributeError):
-            continue
-        found.append(_CythonCapsules(label, table))
+    for name in _NAMED if not override else [override] + [n for n in _NAMED if n != override]:
+        found.extend(_NAMED[name]())
 
     return [p for p in found if p is not None]
 

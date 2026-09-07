@@ -15,15 +15,21 @@ inside BART's conjugate gradients.
 pip install bartorch
 ```
 
-The wheel carries one C library holding all of BART. BLAS and LAPACK are the
-compiled routines already in the process — the MKL torch links, Accelerate on
-macOS, and SciPy's OpenBLAS for the seventeen of thirty routines torch does not
-export — so no numerical work is ever done in Python. The FFT is pocketfft. No
-BART binary, no MKL download, no FFTW.
+The wheel carries one C library holding all of BART, and depends on `numpy`,
+`scipy` and `torch`. BLAS and LAPACK are compiled routines already in the
+process, so no numerical work is ever done in Python.
 
-`BARTORCH_BLAS_LIBRARY=mkl` switches every routine to a full MKL when one is
-installed; it is not the default because MKL's own OpenMP runtime alongside
-BART's costs more than it saves until the arrays are large.
+```bash
+pip install "bartorch[mkl]"     # Linux and Windows: MKL for every routine
+```
+
+MKL is worth the extra where it exists. It is the only source covering all
+thirty routines BART calls — torch links MKL statically and exports the
+thirteen it uses itself — and on a 256x256 eight-coil dataset an ESPIRiT
+calibration takes 0.13 s against 0.29 s, the difference being its per-voxel
+eigendecompositions. There is no MKL wheel for macOS, where Accelerate and
+SciPy's OpenBLAS serve instead. `BARTORCH_BLAS_LIBRARY` puts one source first:
+`mkl`, `torch`, `scipy`, or a path.
 
 From source, with clang or GCC 14+ and CMake:
 

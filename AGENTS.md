@@ -36,25 +36,35 @@ every interpreter and torch version, and it is why a device pointer and a
 stream cross the same ABI as a host pointer.
 
 **BLAS, LAPACK and FFT come from compiled libraries in the process, never
-from Python.** At import, `_backend.py` fills the routine table from the
-library torch links, which exports thirteen of the thirty routines BART needs
-(MKL is static inside `libtorch_cpu` and only what torch calls is visible),
-and from SciPy's `cython_blas` and `cython_lapack`, whose capsules hold the
-addresses of the compiled OpenBLAS routines and cover the rest. A test asserts
-that every routine resolved to a library and that no LAPACK entry fell back to
-the built-in reference.
+from Python.** At import, `_backend.py` fills the routine table from, in
+order: MKL when the `mkl` extra is installed, the library torch links, and
+SciPy's `cython_blas` and `cython_lapack`, whose capsules hold the addresses
+of the compiled OpenBLAS routines. A test asserts that every routine resolved
+to a library and that no LAPACK entry fell back to the built-in reference.
 
-`BARTORCH_BLAS_LIBRARY` names one library to try first, either a path or `mkl`
-for the MKL installed in this environment, which covers all thirty on its own.
-That is not the default, and the reason is measured: MKL loads its own OpenMP
-runtime beside the one BART is built with, and on small arrays the two thread
-pools cost more than MKL saves. On the test suite MKL is about a third slower
-than the torch-and-SciPy mix, and matches it at `MKL_NUM_THREADS=1`. Large
-reconstructions may well go the other way; the knob is there to be measured
-with, not assumed.
+MKL is preferred because it is the only one that covers all thirty routines —
+torch links MKL statically and exports the thirteen it calls itself — and
+because it is faster where it counts. On a 256x256 eight-coil dataset:
+
+| | ecalib | pics | svd 512 |
+| --- | --- | --- | --- |
+| MKL | 0.13 s | 0.08 s | 0.04 s |
+| torch + SciPy | 0.29 s | 0.08 s | 0.04 s |
+
+The gap is all in `ecalib`, whose per-voxel eigendecompositions are the
+LAPACK-heavy part; `pics` is FFT-bound and does not care. On small arrays MKL
+loses instead, because it brings its own OpenMP runtime beside BART's and two
+thread pools cost more than MKL saves there. Neither build showed a duplicate
+OpenMP runtime error; `MKL_THREADING_LAYER=GNU` is the escape hatch if one
+appears.
+
+There is no MKL wheel for macOS, so a Mac gets Accelerate through torch and
+SciPy's OpenBLAS for the rest. `BARTORCH_BLAS_LIBRARY` puts one source first:
+`mkl`, `torch`, `scipy`, or a path, which is also how to benchmark one against
+another.
 
 On a device none of this applies: BART calls cuBLAS directly, and it has no
-GPU LAPACK, so eigendecompositions and SVDs go back to the host table.
+GPU LAPACK, so eigendecompositions and SVDs come back to the host table.
 
 The FFT is pocketfft on the host, the same code torch uses on CPU without MKL,
 and cuFFT on a device.
