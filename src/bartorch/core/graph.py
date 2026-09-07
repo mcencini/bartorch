@@ -14,6 +14,7 @@ and nothing else happens to the data.
 
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import logging
 import threading
@@ -22,7 +23,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from bartorch import _backend
+from bartorch import _backend, _cuda
 from bartorch._lib import ALLOC_FN, DIMS, FREE_FN, LOG_FN, library
 
 __all__ = [
@@ -135,6 +136,16 @@ def set_num_threads(n: int) -> None:
 
 
 # --- argv -------------------------------------------------------------------
+
+
+@contextlib.contextmanager
+def _on_device(device: torch.device):
+    """Point BART at *device* for the duration, ordered against torch's stream."""
+    if device.type != "cuda":
+        yield
+        return
+    with _cuda.ordered(device):
+        yield
 
 
 def _value_str(val: Any) -> str:
@@ -287,12 +298,15 @@ def dispatch(
     if len(devices) > 1:
         raise ValueError("all inputs must live on the same device")
     device = devices.pop() if devices else torch.device("cpu")
-    if device.type != "cpu":
-        raise ValueError("this build of bartorch runs BART on the host; pass CPU tensors")
+    if device.type == "cuda" and not _cuda.available():
+        raise ValueError(
+            "this library has no CUDA support built in, or no device is present; "
+            "move the tensors to the host with .cpu()"
+        )
     want_output = output_dims is not False
     min_ndim = len(output_dims) if isinstance(output_dims, (list, tuple)) else 1
 
-    with _lock:
+    with _lock, _on_device(device):
         _call_id += 1
         call = _call_id
         names = [f"_bt_{call}_in{i}.mem" for i in range(len(tensors))]

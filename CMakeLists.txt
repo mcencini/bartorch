@@ -22,6 +22,9 @@ if(NOT EXISTS "${BART_SRC}/bart.c")
 endif()
 
 option(BARTORCH_OPENMP "Build BART with OpenMP" ON)
+option(BARTORCH_CUDA "Build BART's CUDA kernels" OFF)
+set(BARTORCH_CUDA_ARCHITECTURES "75;80;86;89;90" CACHE STRING
+    "Architectures to emit SASS for; PTX for the last one is added for newer cards")
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_EXTENSIONS ON)
@@ -77,6 +80,39 @@ else()
 endif()
 
 find_package(Threads REQUIRED)
+
+# ---------------------------------------------------------------------------
+# CUDA
+#
+# BART's kernels are compiled by nvcc and the runtime libraries are linked
+# dynamically, so the wheel carries device code and nothing else: cudart,
+# cuFFT, cuBLAS and cuSOLVER come from the nvidia wheels torch already
+# depends on.
+#
+# CUDA_GET_CUDA_DEVICE_NUM makes BART ask the driver whether a pointer is on
+# a device rather than consult its own allocation table, which is what lets a
+# tensor the host allocated be passed straight in.
+# ---------------------------------------------------------------------------
+if(BARTORCH_CUDA)
+    enable_language(CUDA)
+    find_package(CUDAToolkit REQUIRED)
+
+    list(APPEND BART_C_DEFS USE_CUDA CUDA_GET_CUDA_DEVICE_NUM)
+
+    set(CMAKE_CUDA_STANDARD 17)
+    set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+    set(CMAKE_CUDA_SEPARABLE_COMPILATION OFF)
+
+    set(_arch "")
+    foreach(_a ${BARTORCH_CUDA_ARCHITECTURES})
+        list(APPEND _arch "${_a}-real")
+    endforeach()
+    list(GET BARTORCH_CUDA_ARCHITECTURES -1 _newest)
+    list(APPEND _arch "${_newest}-virtual")
+    set(BARTORCH_CUDA_ARCH_SPEC "${_arch}")
+
+    message(STATUS "CUDA ${CUDAToolkit_VERSION}: architectures ${BARTORCH_CUDA_ARCH_SPEC}")
+endif()
 
 if(BARTORCH_OPENMP)
     find_package(OpenMP COMPONENTS C)
@@ -146,6 +182,13 @@ foreach(_dir ${_module_dirs})
 endforeach()
 file(GLOB _tool_srcs "${BART_SRC}/*.c")
 list(APPEND BART_SOURCES ${_tool_srcs})
+
+if(BARTORCH_CUDA)
+    foreach(_dir calib motion noncart num wavelet)
+        file(GLOB _cu "${BART_SRC}/${_dir}/*.cu")
+        list(APPEND BART_SOURCES ${_cu})
+    endforeach()
+endif()
 list(REMOVE_ITEM BART_SOURCES
     "${BART_SRC}/main.c"
     "${BART_SRC}/bbox.c"
@@ -157,6 +200,7 @@ set(BARTORCH_SOURCES
     csrc/backend.c
     csrc/cblas_shim.c
     csrc/lapacke_shim.c
+    csrc/cuda.c
     csrc/memcfl.c
     csrc/ops.c
     csrc/ref_blas.c
@@ -178,10 +222,29 @@ target_compile_definitions(bartorch PRIVATE
     NO_PNG
     _GNU_SOURCE
     ${BART_C_DEFS}
-    BARTORCH_BUILD_INFO="bart=${BART_VERSION},compiler=${CMAKE_C_COMPILER_ID}-${CMAKE_C_COMPILER_VERSION},nested=${BARTORCH_NESTED},openmp=${OpenMP_C_FOUND}")
+    BARTORCH_BUILD_INFO="bart=${BART_VERSION},compiler=${CMAKE_C_COMPILER_ID}-${CMAKE_C_COMPILER_VERSION},nested=${BARTORCH_NESTED},openmp=${OpenMP_C_FOUND},cuda=${BARTORCH_CUDA}")
 
 target_compile_options(bartorch PRIVATE
-    $<$<COMPILE_LANGUAGE:C>:${BART_C_OPTIONS}>)
+    $<$<COMPILE_LANGUAGE:C>:${BART_C_OPTIONS}>
+    # nvcc reaches the host compiler for the code around each kernel, and
+    # -compress-all keeps the fatbinaries from dominating the wheel.
+    $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-fPIC;-Xfatbin=-compress-all>)
+
+if(BARTORCH_CUDA)
+    set_target_properties(bartorch PROPERTIES
+        CUDA_ARCHITECTURES "${BARTORCH_CUDA_ARCH_SPEC}")
+    target_link_libraries(bartorch PRIVATE
+        CUDA::cudart CUDA::cufft CUDA::cublas CUDA::cusolver)
+    # The runtime libraries live beside torch in the nvidia wheels; torch
+    # loads them before this library, and the rpath covers a bare import.
+    set_property(TARGET bartorch APPEND PROPERTY INSTALL_RPATH
+        "$ORIGIN/../nvidia/cuda_runtime/lib"
+        "$ORIGIN/../nvidia/cufft/lib"
+        "$ORIGIN/../nvidia/cublas/lib"
+        "$ORIGIN/../nvidia/cusolver/lib"
+        "$ORIGIN/../nvidia/cu12/lib"
+        "$ORIGIN/../nvidia/cu13/lib")
+endif()
 
 target_link_options(bartorch PRIVATE ${BART_LINK_OPTIONS})
 

@@ -146,6 +146,32 @@ BARTORCH_API void bartorch_nlop_free(bartorch_nlop* h);
 BARTORCH_API int bartorch_irgnm(const bartorch_nlop* F, int iter, float alpha, float alpha_min, float redu,
 		int cgiter, float cgtol, void* x, const void* y, const void* xref);
 
+/*
+ * CUDA.  Every entry point exists in both builds; without CUDA compiled in,
+ * bartorch_cuda_built() returns 0 and the rest report failure.
+ *
+ * BART recognises device memory by asking the driver about the pointer, so a
+ * tensor the host allocated on a device needs no registration, and an array
+ * BART creates comes from the host's allocator on the selected device.
+ * bartorch_cuda_enable() must be called before a command that is to run on a
+ * device, and with -1 to go back to the host.
+ *
+ * The stream functions take a cudaStream_t as a void*.  wait_for_stream holds
+ * BART's streams until the work already queued on the caller's stream has
+ * run; signal_stream holds the caller's stream until BART's work has.  A
+ * caller that does both around a command never synchronises the device.
+ */
+BARTORCH_API int bartorch_cuda_built(void);
+BARTORCH_API int bartorch_cuda_device_count(void);
+BARTORCH_API int bartorch_cuda_enable(int device);
+BARTORCH_API int bartorch_cuda_device(void);
+BARTORCH_API int bartorch_cuda_set_streams(int n);
+BARTORCH_API int bartorch_cuda_get_streams(void);
+BARTORCH_API int bartorch_cuda_use_memcache(int enable);
+BARTORCH_API int bartorch_cuda_wait_for_stream(void* stream);
+BARTORCH_API int bartorch_cuda_signal_stream(void* stream);
+BARTORCH_API long bartorch_cuda_free_memory(void);
+
 #ifdef __cplusplus
 }
 #endif

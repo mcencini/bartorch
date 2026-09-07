@@ -87,10 +87,35 @@ place of the forward-adjoint pair.
   compilers are tested in CI.
 - Only the `bartorch_*` symbols are exported.
 
+## CUDA
+
+```bash
+pip install -e . --config-settings=cmake.define.BARTORCH_CUDA=ON
+```
+
+A tool or operator given CUDA tensors runs on that device. BART recognises the
+pointers, writes its output into a tensor torch allocated on the same device,
+and its streams are ordered against torch's current stream by an event in each
+direction, so nothing crosses the host and neither side synchronises the card.
+
+```python
+import bartorch
+
+bartorch.cuda.available()        # built with CUDA, and a device present
+bartorch.cuda.set_streams(2)     # overlap BART's transfers with its kernels
+bartorch.cuda.use_memcache(False)  # give freed memory back for torch to use
+```
+
+The CUDA runtime libraries are linked dynamically from the `nvidia` wheels
+torch already depends on, so a CUDA build adds about 2 MB of device code
+rather than hundreds of megabytes of vendored libraries.
+
 ## Status
 
-CPU, Linux and macOS. CUDA, Windows, FINUFFT gridding and the remaining
-solver entry points are in progress; see `AGENTS.md` for the design.
+Linux and macOS on the host, and a CUDA build that compiles, links and runs
+the host suite — the device path itself is written but has not been run on a
+card. Windows, FINUFFT gridding and the remaining solver entry points are
+next; see `AGENTS.md`.
 
 ## License
 

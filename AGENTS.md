@@ -15,6 +15,7 @@ C library with a small C ABI; Python reaches it through ctypes.
 | `csrc/fftw_pocketfft.cpp` | The FFTW guru interface BART plans with, executed by pocketfft. |
 | `csrc/backend.[ch]`, `ref_blas.c`, `cblas_shim.c`, `lapacke_shim.c` | CBLAS and LAPACKE as BART calls them, forwarded to a table of Fortran-ABI routines with reference BLAS as the fallback. |
 | `csrc/ops.c` | Operators: host callbacks as BART linops and nlops, BART's own operators as handles, least squares and Gauss-Newton. |
+| `csrc/cuda.c` | Device selection, stream ordering against the caller's stream, and BART's memory cache. Present in both builds; the CPU build reports that it has no CUDA. |
 | `csrc/compat/` | The `cblas.h`, `lapacke.h` and `fftw3.h` BART includes. |
 | `third_party/` | pocketfft and BlocksRuntime, vendored with their licenses. |
 | `src/bartorch/` | The package: `_lib.py` (ctypes), `_backend.py` (which library serves BLAS and LAPACK), `core/graph.py` (tools on tensors), `ops.py` (operators), `tools/` (one function per BART command). |
@@ -31,8 +32,8 @@ should be a pointer bump plus regenerating the tool wrappers.
 **No torch or Python in the compiled code.** The library exports only the
 `bartorch_*` ABI. Torch owns every tensor; the library sees data pointers and
 BART-order dimension vectors. That is what makes one wheel per platform serve
-every interpreter and torch version, and it is why the CUDA path, when it
-comes, will pass device pointers and streams through the same ABI.
+every interpreter and torch version, and it is why a device pointer and a
+stream cross the same ABI as a host pointer.
 
 **BLAS, LAPACK and FFT come from compiled libraries in the process, never
 from Python.** At import, `_backend.py` fills the routine table from the
@@ -43,6 +44,17 @@ routines and cover all of BLAS and LAPACK. `BARTORCH_BLAS_LIBRARY` points the
 search at a specific library first. A test asserts that every routine
 resolved to a library. The FFT is pocketfft, the same code torch uses on CPU
 without MKL.
+
+**CUDA is the same ABI.** `-DBARTORCH_CUDA=ON` compiles BART's thirteen `.cu`
+files with nvcc and links cudart, cuFFT, cuBLAS and cuSOLVER dynamically, so
+the wheel carries device code and nothing else: about 2 MB of fatbinary for
+five architectures on top of the host library. `CUDA_GET_CUDA_DEVICE_NUM`
+switches BART to asking the driver whether a pointer is on a device, which is
+what lets a torch CUDA tensor be passed in without being registered, and the
+allocator callback returns tensors on whichever device the caller selected.
+Ordering is two events per call rather than a synchronise:
+`bartorch_cuda_wait_for_stream` holds BART's streams until torch's queued work
+has run and `bartorch_cuda_signal_stream` does the reverse.
 
 **Tools copy their inputs; operators do not.** BART maps input files
 copy-on-write and some tools write into them, so a tool gets a clone unless
@@ -99,7 +111,18 @@ Returns, Raises.
 
 ## What is not done
 
-CUDA (device pointers through the ABI, BART's GPU kernels, cuFINUFFT
-gridding, stream ordering against torch), Windows, FINUFFT replacing BART's
-gridder, tools with optional extra outputs, and the wider solver surface
-(ADMM, FISTA, proximal operators) through the operator layer.
+Windows, FINUFFT replacing BART's gridder, tools with optional extra outputs,
+and the wider solver surface (ADMM, FISTA, proximal operators) through the
+operator layer.
+
+The CUDA path is verified only as far as a machine without a card allows: it
+compiles, links, loads, reports no device, and runs the whole host suite. The
+tests that need a card are written and skip. What wants checking on real
+hardware, in order: that a tool on device tensors returns a device tensor with
+the right numbers, that BART's allocations and torch's caching allocator
+coexist on a card with little memory (`bartorch.cuda.use_memcache(False)`
+gives BART's memory straight back), whether tools need `-g` passed as well as
+`bart_use_gpu` being set, and whether more than one BART stream actually
+overlaps transfer with arithmetic. Routing BART's device allocations through
+torch's allocator is a further step: `mem_device_malloc` takes the allocator
+as a parameter, so replacing `num/mem.c` would do it without a BART edit.

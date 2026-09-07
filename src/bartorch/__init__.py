@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError, version
 
+from bartorch import cuda
 from bartorch.core.graph import (
     BartError,
     dispatch,
@@ -55,6 +56,7 @@ def backend_sources() -> dict[str, str]:
 
 __all__ = [
     "BartError",
+    "cuda",
     "__version__",
     "backend_sources",
     "bart_version",

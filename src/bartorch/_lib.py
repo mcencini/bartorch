@@ -164,6 +164,21 @@ def _bind(lib: ctypes.CDLL) -> ctypes.CDLL:
         P,
         P,
     ]
+
+    for name in ("built", "device_count", "device", "get_streams"):
+        fn = getattr(lib, f"bartorch_cuda_{name}")
+        fn.restype = c.c_int
+        fn.argtypes = []
+    for name in ("enable", "set_streams", "use_memcache"):
+        fn = getattr(lib, f"bartorch_cuda_{name}")
+        fn.restype = c.c_int
+        fn.argtypes = [c.c_int]
+    for name in ("wait_for_stream", "signal_stream"):
+        fn = getattr(lib, f"bartorch_cuda_{name}")
+        fn.restype = c.c_int
+        fn.argtypes = [P]
+    lib.bartorch_cuda_free_memory.restype = c.c_long
+    lib.bartorch_cuda_free_memory.argtypes = []
     return lib
 
 
