@@ -234,14 +234,13 @@ if(BARTORCH_CUDA)
     set_target_properties(bartorch PROPERTIES
         CUDA_ARCHITECTURES "${BARTORCH_CUDA_ARCH_SPEC}")
     target_link_libraries(bartorch PRIVATE
-        CUDA::cudart CUDA::cufft CUDA::cublas CUDA::cusolver)
+        CUDA::cudart CUDA::cufft CUDA::cublas)
     # The runtime libraries live beside torch in the nvidia wheels; torch
     # loads them before this library, and the rpath covers a bare import.
     set_property(TARGET bartorch APPEND PROPERTY INSTALL_RPATH
         "$ORIGIN/../nvidia/cuda_runtime/lib"
         "$ORIGIN/../nvidia/cufft/lib"
         "$ORIGIN/../nvidia/cublas/lib"
-        "$ORIGIN/../nvidia/cusolver/lib"
         "$ORIGIN/../nvidia/cu12/lib"
         "$ORIGIN/../nvidia/cu13/lib")
 endif()

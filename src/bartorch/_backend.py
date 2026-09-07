@@ -4,15 +4,20 @@ The compiled library carries reference BLAS and no LAPACK; both are filled in
 at import from libraries already present in the process.  Every entry is a
 compiled Fortran-ABI routine, never a Python callback:
 
-* the BLAS and LAPACK torch itself links, which is MKL on Linux and Windows
-  and Accelerate on macOS;
+* the BLAS and LAPACK torch itself links, which is MKL statically on Linux and
+  Windows and Accelerate on macOS.  Only the routines torch calls are
+  exported, which is thirteen of the thirty BART needs;
 * Accelerate directly, on macOS;
 * SciPy's ``cython_blas`` and ``cython_lapack``, which publish the whole of
-  BLAS and LAPACK as function pointers into their compiled OpenBLAS.
+  BLAS and LAPACK as function pointers into their compiled OpenBLAS, and cover
+  what the others do not.
 
-``BARTORCH_BLAS_LIBRARY`` points the search at a specific shared library
-first, for a caller who wants a particular MKL, OpenBLAS or vendor build.
-:func:`sources` reports what each routine resolved to.
+``BARTORCH_BLAS_LIBRARY`` points the search at one library first, either a
+path or ``mkl`` to mean the MKL installed in this environment (``pip install
+mkl``), which covers every routine on its own.  It is not the default: MKL
+brings its own OpenMP runtime alongside the one BART is built with, and two
+thread pools cost more than MKL saves until the arrays are large.  Measure
+before choosing.  :func:`sources` reports what each routine resolved to.
 """
 
 from __future__ import annotations
@@ -20,6 +25,7 @@ from __future__ import annotations
 import ctypes
 import os
 import sys
+import sysconfig
 from pathlib import Path
 
 from bartorch._lib import library
@@ -78,6 +84,31 @@ class _CythonCapsules(_Provider):
         return _PyCapsule_GetPointer(capsule, _PyCapsule_GetName(capsule))
 
 
+def _mkl_library() -> Path | None:
+    """A full MKL in this environment, if one is installed.
+
+    The ``mkl`` wheel puts its libraries under the install prefix rather than
+    beside the package, and that prefix is not always ``sys.prefix``.
+    """
+    roots = {Path(sysconfig.get_paths()["data"]), Path(sys.prefix), Path(sys.base_prefix)}
+    roots |= {root / "Library" for root in list(roots)}  # Windows layout
+    names = (
+        "mkl_rt.dll",
+        "mkl_rt.2.dll",
+        "libmkl_rt.dylib",
+        "libmkl_rt.so.2",
+        "libmkl_rt.so.3",
+        "libmkl_rt.so",
+    )
+    for root in sorted(roots):
+        for sub in ("lib", "lib64", "bin"):
+            for name in names:
+                candidate = root / sub / name
+                if candidate.exists():
+                    return candidate
+    return None
+
+
 def _torch_library() -> Path | None:
     try:
         import torch
@@ -108,7 +139,15 @@ def _providers() -> list[_Provider]:
     found: list[_Provider | None] = []
 
     override = os.environ.get("BARTORCH_BLAS_LIBRARY")
-    if override:
+    if override == "mkl":
+        mkl = _mkl_library()
+        if mkl is None:
+            raise RuntimeError(
+                "BARTORCH_BLAS_LIBRARY=mkl, but no libmkl_rt was found in this "
+                "environment; pip install mkl, or give a path instead"
+            )
+        found.append(_open("mkl", str(mkl)))
+    elif override:
         found.append(_open(override, override))
 
     torch_lib = _torch_library()

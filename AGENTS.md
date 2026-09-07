@@ -37,18 +37,32 @@ stream cross the same ABI as a host pointer.
 
 **BLAS, LAPACK and FFT come from compiled libraries in the process, never
 from Python.** At import, `_backend.py` fills the routine table from the
-library torch links (`libtorch_cpu` exports the MKL routines torch itself
-uses, Accelerate on macOS), then from SciPy's `cython_blas` and
-`cython_lapack`, whose capsules hold the addresses of the compiled OpenBLAS
-routines and cover all of BLAS and LAPACK. `BARTORCH_BLAS_LIBRARY` points the
-search at a specific library first. A test asserts that every routine
-resolved to a library. The FFT is pocketfft, the same code torch uses on CPU
-without MKL.
+library torch links, which exports thirteen of the thirty routines BART needs
+(MKL is static inside `libtorch_cpu` and only what torch calls is visible),
+and from SciPy's `cython_blas` and `cython_lapack`, whose capsules hold the
+addresses of the compiled OpenBLAS routines and cover the rest. A test asserts
+that every routine resolved to a library and that no LAPACK entry fell back to
+the built-in reference.
+
+`BARTORCH_BLAS_LIBRARY` names one library to try first, either a path or `mkl`
+for the MKL installed in this environment, which covers all thirty on its own.
+That is not the default, and the reason is measured: MKL loads its own OpenMP
+runtime beside the one BART is built with, and on small arrays the two thread
+pools cost more than MKL saves. On the test suite MKL is about a third slower
+than the torch-and-SciPy mix, and matches it at `MKL_NUM_THREADS=1`. Large
+reconstructions may well go the other way; the knob is there to be measured
+with, not assumed.
+
+On a device none of this applies: BART calls cuBLAS directly, and it has no
+GPU LAPACK, so eigendecompositions and SVDs go back to the host table.
+
+The FFT is pocketfft on the host, the same code torch uses on CPU without MKL,
+and cuFFT on a device.
 
 **CUDA is the same ABI.** `-DBARTORCH_CUDA=ON` compiles BART's thirteen `.cu`
-files with nvcc and links cudart, cuFFT, cuBLAS and cuSOLVER dynamically, so
-the wheel carries device code and nothing else: about 2 MB of fatbinary for
-five architectures on top of the host library. `CUDA_GET_CUDA_DEVICE_NUM`
+files with nvcc and links cudart, cuFFT and cuBLAS dynamically, which are the
+three BART uses, so the wheel carries device code and nothing else: about 2 MB
+of fatbinary for five architectures on top of the host library. `CUDA_GET_CUDA_DEVICE_NUM`
 switches BART to asking the driver whether a pointer is on a device, which is
 what lets a torch CUDA tensor be passed in without being registered, and the
 allocator callback returns tensors on whichever device the caller selected.

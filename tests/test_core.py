@@ -2,11 +2,14 @@
 that are not BART.
 """
 
+import ctypes
+
 import numpy as np
 import pytest
 import torch
 
 import bartorch
+import bartorch._lib
 import bartorch.tools as bt
 from bartorch.core.graph import build_argv, dispatch
 
@@ -159,3 +162,16 @@ def test_lapack_is_served_by_a_library_not_by_the_built_in_reference():
     }
     assert lapack
     assert all(src not in ("reference", "missing") for src in lapack.values()), lapack
+
+
+def test_an_installed_mkl_can_serve_every_routine_when_asked_for():
+    # MKL is not the default because it brings a second OpenMP runtime, but a
+    # caller who asks for it must get it for everything, not just some.
+    from bartorch import _backend
+
+    if _backend._mkl_library() is None:
+        pytest.skip("no MKL installed in this environment")
+    mkl = _backend._SharedLibrary("mkl", ctypes.CDLL(str(_backend._mkl_library())))
+    lib = bartorch._lib.library()
+    names = [lib.bartorch_backend_name(i).decode() for i in range(lib.bartorch_backend_count())]
+    assert all(mkl.lookup(name) is not None for name in names)

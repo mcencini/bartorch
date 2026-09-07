@@ -16,10 +16,14 @@ pip install bartorch
 ```
 
 The wheel carries one C library holding all of BART. BLAS and LAPACK are the
-compiled routines already in the process — the MKL that torch links, Accelerate
-on macOS, and SciPy's OpenBLAS for what those do not export — so no numerical
-work is ever done in Python. The FFT is pocketfft. No BART binary, no MKL
-download, no FFTW.
+compiled routines already in the process — the MKL torch links, Accelerate on
+macOS, and SciPy's OpenBLAS for the seventeen of thirty routines torch does not
+export — so no numerical work is ever done in Python. The FFT is pocketfft. No
+BART binary, no MKL download, no FFTW.
+
+`BARTORCH_BLAS_LIBRARY=mkl` switches every routine to a full MKL when one is
+installed; it is not the default because MKL's own OpenMP runtime alongside
+BART's costs more than it saves until the arrays are large.
 
 From source, with clang or GCC 14+ and CMake:
 
