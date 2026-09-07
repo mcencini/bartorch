@@ -425,6 +425,51 @@ int bartorch_nufft_decline_reason(void)
 	return decline_reason;
 }
 
+/* Why the last operator was not FINUFFT's.  The words live here rather than
+ * in the host so that the two cannot drift apart. */
+const char* bartorch_nufft_decline_text(void)
+{
+	switch (decline_reason) {
+
+	case 0: return "";
+	case 1: return "FINUFFT is not in use";
+	case 2: return "the trajectory is missing";
+	case 3: return "cuFINUFFT is not in use and BART is on a device";
+	case 4: return "the trajectory does not carry three components";
+	case 5: return "k-space is not a single line of samples per readout";
+	case 6: return "the transform is over axes other than the spatial three";
+	case 7: return "the image has no spatial extent";
+	case 8: return "the trajectory and k-space disagree on the samples";
+	case 9: return "k-space and the coil images disagree beyond the spatial axes";
+	case 10: return "there are more frames than one plan can batch";
+	case 11: return "FINUFFT would not plan the forward transform";
+	case 12: return "FINUFFT would not plan the adjoint transform";
+	case 13: return "FINUFFT would not take the trajectory";
+	case 14: return "the subspace basis does not lie along frames and coefficients";
+	case 15: return "the weights do not lie along k-space";
+	case 16: return "the images vary across frames as well as the trajectory";
+	}
+
+	return "of a reason this build does not name";
+}
+
+/* Whether BART's own operator may answer what FINUFFT will not.
+ *
+ * Off, a transform FINUFFT cannot serve is an error rather than a quieter
+ * reconstruction: a caller who asked for FINUFFT gets it or gets told why
+ * not, instead of BART's gridder standing in unannounced. */
+static bool allow_fallback;
+
+void bartorch_nufft_allow_fallback(int enable)
+{
+	allow_fallback = (0 != enable);
+}
+
+int bartorch_nufft_fallback_allowed(void)
+{
+	return allow_fallback ? 1 : 0;
+}
+
 /* Which operator each nufft_create call returned, so a test can say that a
  * tool ran on FINUFFT rather than that FINUFFT was merely available. */
 enum { CNT_FI, CNT_BART };
@@ -762,6 +807,14 @@ struct linop_s* nufft_create2(int N, const long ksp_dims[N], const long cim_dims
 
 	if (NULL != op)
 		return op;
+
+	/* `bartorch_finufft_usable` is false while the substitution is switched
+	 * off, which is BART's own operator asked for on purpose. */
+	if (!allow_fallback && bartorch_finufft_usable())
+		error("bartorch: FINUFFT cannot serve this NUFFT: %s.\n"
+		      "Let BART's own operator answer it with "
+		      "bartorch.finufft.enable(fallback=True).\n",
+		      bartorch_nufft_decline_text());
 
 	count(CNT_BART);
 

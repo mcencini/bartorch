@@ -463,3 +463,49 @@ def test_a_subspace_adjoint_on_a_card_agrees_with_the_host(in_tools):
     assert _finufft.operators_built() == (1, 0), _finufft.decline_reason()
     on_host = bt.nufft(traj, y, adjoint=True, image_dims=(n, n, 1), B=basis)
     torch.testing.assert_close(on_card.cpu(), on_host, rtol=1e-4, atol=1e-5)
+
+
+@requires_finufft
+def test_a_transform_finufft_cannot_serve_is_an_error_rather_than_barts_gridder():
+    """Asking for FINUFFT and quietly getting BART would be the worst outcome.
+
+    Images that vary across frames along the same axis the trajectory varies
+    on need one transform per frame, which one plan cannot express.  That is a
+    refusal by default, and BART's own operator answers it only when the
+    caller says so.
+    """
+    n, spokes, frames, coils = 16, 5, 4, 2
+    traj = bt.traj(x=n, y=spokes * frames, r=True).reshape(frames, spokes, n, 3)[:, None, None]
+    torch.manual_seed(0)
+    img = torch.randn(frames, 1, coils, 1, n, n, dtype=torch.complex64)
+
+    _finufft.use_in_tools(True)
+    try:
+        assert not _finufft.fallback_allowed()
+        with pytest.raises(bartorch.BartError, match="vary across frames"):
+            bt.nufft(traj, img)
+
+        _finufft.use_in_tools(True, fallback=True)
+        assert _finufft.fallback_allowed()
+        _finufft.reset_counters()
+        bt.nufft(traj, img)
+        assert _finufft.operators_built() == (0, 1)
+    finally:
+        _finufft.use_in_tools(False)
+
+
+def test_enabling_without_finufft_says_so_rather_than_carrying_on(monkeypatch):
+    monkeypatch.setattr(_finufft, "available", lambda: False)
+    with pytest.raises(ImportError, match="finufft"):
+        _finufft.use_in_tools(True)
+
+
+@requires_finufft
+def test_enabling_on_a_machine_with_a_device_needs_cufinufft(monkeypatch):
+    """A card BART would use and no cuFINUFFT is a gap the caller should hear about."""
+    from bartorch import _cuda
+
+    monkeypatch.setattr(_cuda, "available", lambda: True)
+    monkeypatch.setattr(_finufft, "cuda_available", lambda: False)
+    with pytest.raises(ImportError, match="cufinufft"):
+        _finufft.use_in_tools(True)

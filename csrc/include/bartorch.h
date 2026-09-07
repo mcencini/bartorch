@@ -197,6 +197,9 @@ BARTORCH_API void bartorch_finufft_use_in_tools(int enable);
 BARTORCH_API int bartorch_finufft_usable_on(int device);
 BARTORCH_API int bartorch_finufft_usable(void);
 BARTORCH_API int bartorch_nufft_decline_reason(void);
+BARTORCH_API const char* bartorch_nufft_decline_text(void);
+BARTORCH_API void bartorch_nufft_allow_fallback(int enable);
+BARTORCH_API int bartorch_nufft_fallback_allowed(void);
 /* Operators built since the last reset: 0 by FINUFFT, 1 by BART. */
 BARTORCH_API long bartorch_nufft_counter(int which);
 BARTORCH_API void bartorch_nufft_reset_counters(void);

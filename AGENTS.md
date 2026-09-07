@@ -108,9 +108,17 @@ Density weights are a diagonal in k-space -- BART multiplies the transform by
 them on the way out and by their conjugate on the way back -- so the operator
 carries them itself, which is what lets `pics` take this path: it always
 passes a sampling pattern. Weights that do not lie along k-space are declined,
-and `bartorch_nufft_decline_reason` says which; the counters say whether an
+and `bartorch_nufft_decline_text` says why; the counters say whether an
 operator was built by FINUFFT or by BART, which is how a test asserts that a
 tool ran on it rather than that FINUFFT was merely available.
+
+**A decline is an error, not a quieter reconstruction.** A caller who asked
+for FINUFFT and silently got BART's gridder would get an answer an order of
+magnitude further from the transform and several times slower, with nothing
+to say so. So `nufft_create2` refuses, naming the reason, and
+`enable(fallback=True)` is what hands those back to BART. `enable` itself
+raises when `finufft` is missing, and when `cufinufft` is missing on a machine
+whose card BART would otherwise use.
 
 **A trajectory that varies across frames is one plan, not one per frame.**
 Every axis the trajectory indexes is a sample of one transform and the rest

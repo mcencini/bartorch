@@ -16,6 +16,12 @@ varies along a sample axis -- is BART's own operator still, and
     True
     >>> image = bartorch.tools.pics(kspace, maps, t=traj)
 
+:func:`enable` raises rather than returning quietly when ``finufft`` is
+missing, or when ``cufinufft`` is missing on a machine whose card BART would
+otherwise use, and a transform FINUFFT cannot serve is an error rather than a
+slower reconstruction nobody asked for.  ``enable(fallback=True)`` gives BART's
+own operator back.
+
 A transform is served by whichever library the data is on: FINUFFT on the
 host, cuFINUFFT on a card, which :func:`used_on_device` reports.
 
@@ -27,6 +33,7 @@ from bartorch._finufft import (
     available,
     cuda_available,
     decline_reason,
+    fallback_allowed,
     normals_built,
     operators_built,
     reset_counters,
@@ -42,6 +49,7 @@ __all__ = [
     "decline_reason",
     "enable",
     "enabled",
+    "fallback_allowed",
     "normals_built",
     "operators_built",
     "reset_counters",

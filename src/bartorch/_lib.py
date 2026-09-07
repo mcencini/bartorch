@@ -212,6 +212,12 @@ def _bind(lib: ctypes.CDLL) -> ctypes.CDLL:
     lib.bartorch_finufft_usable.argtypes = []
     lib.bartorch_nufft_decline_reason.restype = c.c_int
     lib.bartorch_nufft_decline_reason.argtypes = []
+    lib.bartorch_nufft_decline_text.restype = c.c_char_p
+    lib.bartorch_nufft_decline_text.argtypes = []
+    lib.bartorch_nufft_allow_fallback.restype = None
+    lib.bartorch_nufft_allow_fallback.argtypes = [c.c_int]
+    lib.bartorch_nufft_fallback_allowed.restype = c.c_int
+    lib.bartorch_nufft_fallback_allowed.argtypes = []
     lib.bartorch_nufft_counter.restype = c.c_long
     lib.bartorch_nufft_counter.argtypes = [c.c_int]
     lib.bartorch_nufft_reset_counters.restype = None

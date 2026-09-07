@@ -133,11 +133,33 @@ def _options_layout(package: str):
     return opts, opts.gpu_device_id
 
 
-def use_in_tools(enable: bool = True, tolerance: float = 1e-6) -> bool:
+def use_in_tools(enable: bool = True, tolerance: float = 1e-6, fallback: bool = False) -> bool:
     """Have BART's own tools compute their NUFFT with FINUFFT.
 
-    Returns whether the substitution is in place and agrees with BART.
+    Parameters
+    ----------
+    enable : bool
+        Turn the substitution on, or off to leave BART its own gridder.
+    tolerance : float
+        The tolerance FINUFFT plans are made with.
+    fallback : bool
+        Whether BART's own operator may answer a transform FINUFFT cannot
+        serve.  By default it may not: such a transform raises, naming the
+        reason, rather than reconstructing more slowly and less accurately
+        without saying so.
+
+    Returns
+    -------
+    bool
+        Whether the substitution is in place and agrees with BART.
+
+    Raises
+    ------
+    ImportError
+        When ``finufft`` is missing, or ``cufinufft`` is missing on a machine
+        where BART would otherwise run on a card.
     """
+    from bartorch import _cuda
     from bartorch._lib import library
 
     lib = library()
@@ -145,15 +167,31 @@ def use_in_tools(enable: bool = True, tolerance: float = 1e-6) -> bool:
         lib.bartorch_finufft_use_in_tools(0)
         return False
 
+    if not available():
+        raise ImportError("this needs the finufft package: pip install 'bartorch[finufft]'")
+
+    if _cuda.available() and not cuda_available():
+        raise ImportError(
+            "this machine has a device BART can use, and cuFINUFFT is what would serve it: "
+            "pip install 'bartorch[cufinufft]'"
+        )
+
     if not _load_symbols():
-        return False
+        raise ImportError(
+            "the finufft package is installed but its library did not hand over the entry "
+            "points this needs; check that it matches the version pyproject.toml asks for"
+        )
 
     lib.bartorch_finufft_set_tolerance(float(tolerance))
+    lib.bartorch_nufft_allow_fallback(int(bool(fallback)))
     lib.bartorch_finufft_use_in_tools(1)
 
     if not _tools_agree_with_bart():
         lib.bartorch_finufft_use_in_tools(0)
-        return False
+        raise RuntimeError(
+            "FINUFFT is installed but its NUFFT does not agree with BART's own; "
+            "the substitution has been left off"
+        )
 
     return bool(lib.bartorch_finufft_usable())
 
@@ -165,33 +203,11 @@ def used_in_tools() -> bool:
     return bool(library().bartorch_finufft_usable())
 
 
-_DECLINED = {
-    0: "",
-    1: "FINUFFT is not in use",
-    2: "the trajectory is missing",
-    3: "cuFINUFFT is not in use and BART is on a device",
-    4: "the trajectory does not carry three components",
-    5: "k-space is not a single line of samples per readout",
-    6: "the transform is over axes other than the spatial three",
-    7: "the image has no spatial extent",
-    8: "the trajectory and k-space disagree on the number of samples",
-    9: "k-space and the coil images disagree beyond the spatial axes",
-    10: "there are more frames than one plan can batch",
-    11: "FINUFFT would not plan the forward transform",
-    12: "FINUFFT would not plan the adjoint transform",
-    13: "FINUFFT would not take the trajectory",
-    14: "the subspace basis does not lie along frames and coefficients",
-    15: "the weights do not lie along k-space",
-    16: "the images vary across frames as well as the trajectory",
-}
-
-
 def decline_reason() -> str:
     """Why the last operator was BART's rather than FINUFFT's; empty if it was FINUFFT's."""
     from bartorch._lib import library
 
-    code = library().bartorch_nufft_decline_reason()
-    return _DECLINED.get(code, f"reason {code}")
+    return library().bartorch_nufft_decline_text().decode()
 
 
 def operators_built() -> tuple[int, int]:
@@ -230,6 +246,13 @@ def tolerance() -> float:
     from bartorch._lib import library
 
     return float(library().bartorch_finufft_tolerance())
+
+
+def fallback_allowed() -> bool:
+    """Whether BART's own operator may answer what FINUFFT will not."""
+    from bartorch._lib import library
+
+    return bool(library().bartorch_nufft_fallback_allowed())
 
 
 def _tools_agree_with_bart(tolerance: float = 1e-2) -> bool:
