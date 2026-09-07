@@ -115,7 +115,10 @@ class _Handle:
 
     def __init__(self, ptr: int, free, keep: tuple = ()):
         if not ptr:
-            raise BartError("BART could not create the operator; see the log for its message")
+            # An operator has no return code to carry a message, so BART's own
+            # is read from where the error catcher left it.
+            said = library().bartorch_last_error().decode(errors="replace").strip()
+            raise BartError(said or "BART could not create the operator")
         self.ptr = ptr
         self._keep = keep
         self._finalizer = weakref.finalize(self, _Handle._release, ptr, free, keep)

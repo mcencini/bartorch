@@ -42,6 +42,7 @@ struct fi_table {
 
 	int opts_size;
 	int off_device;		/* nthreads on the host, gpu_device_id on a device */
+	int off_upsampling;	/* upsampfac, a double, which both spell alike */
 };
 
 static struct {
@@ -51,8 +52,9 @@ static struct {
 
 	int use_in_tools;
 	double tolerance;
+	double upsampling;
 
-} fi = { .use_in_tools = 0, .tolerance = 1.e-6 };
+} fi = { .use_in_tools = 0, .tolerance = 1.e-6, .upsampling = 1.25 };
 
 static pthread_mutex_t fi_lock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -74,17 +76,21 @@ int bartorch_finufft_set(const char* symbol, void* fn)
 	return 0;
 }
 
-/* `device_field` is the byte offset of the one field this sets: the thread
- * count on the host, the device number on a card. */
-int bartorch_finufft_layout(int device, int opts_size, int device_field)
+/* The byte offsets of the fields this sets: the thread count on the host and
+ * the device number on a card, and the grid FINUFFT spreads onto. */
+int bartorch_finufft_layout(int device, int opts_size, int device_field, int upsampling_field)
 {
 	struct fi_table* t = device ? &fi.device : &fi.host;
 
 	if ((opts_size < 16) || (opts_size > 4096) || (device_field < 0) || (device_field + 4 > opts_size))
 		return -1;
 
+	if ((upsampling_field < 0) || (upsampling_field + 8 > opts_size))
+		return -1;
+
 	t->opts_size = opts_size;
 	t->off_device = device_field;
+	t->off_upsampling = upsampling_field;
 	return 0;
 }
 
@@ -97,6 +103,22 @@ void bartorch_finufft_set_tolerance(double eps)
 double bartorch_finufft_tolerance(void)
 {
 	return fi.tolerance;
+}
+
+/* How far past the image FINUFFT spreads before it transforms.
+ *
+ * Two is the textbook grid and the widest working set; a quarter over is a
+ * third of the memory for a wider kernel, which is the cheaper half of the
+ * trade on both sides of the bus.  Zero asks FINUFFT for its own default. */
+void bartorch_finufft_set_upsampling(double upsampling)
+{
+	if ((0. == upsampling) || ((upsampling > 1.) && (upsampling <= 4.)))
+		fi.upsampling = upsampling;
+}
+
+double bartorch_finufft_upsampling(void)
+{
+	return fi.upsampling;
 }
 
 /* The entry points are there and the options layout is known. */
@@ -135,7 +157,7 @@ struct bartorch_fi_plan {
 };
 
 int bartorch_finufft_plan(int device, int type, int dim, const int64_t n_modes[3], int ntrans,
-		int isign, double eps, void** plan)
+		int isign, double eps, double upsampling, void** plan)
 {
 	const struct fi_table* t = device ? &fi.device : &fi.host;
 
@@ -150,6 +172,9 @@ int bartorch_finufft_plan(int device, int type, int dim, const int64_t n_modes[3
 
 	t->default_opts(opts);
 	*(int*)(opts + t->off_device) = (which > 0) ? which : 0;
+
+	if (0. != upsampling)
+		*(double*)(opts + t->off_upsampling) = upsampling;
 
 	finufft_plan_t p = NULL;
 	int ret = t->makeplan(type, dim, n_modes, isign, ntrans, (float)eps, &p, opts);

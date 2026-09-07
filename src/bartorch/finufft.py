@@ -38,6 +38,7 @@ from bartorch._finufft import (
     operators_built,
     reset_counters,
     tolerance,
+    upsampling,
     used_on_device,
 )
 from bartorch._finufft import use_in_tools as enable
@@ -54,5 +55,6 @@ __all__ = [
     "operators_built",
     "reset_counters",
     "tolerance",
+    "upsampling",
     "used_on_device",
 ]

@@ -62,11 +62,17 @@ static int guard_shim(int argc, char* argv[argc])
 	return c->fn(c->arg);
 }
 
-/* Run fn under BART's error catcher; an error inside returns -1. */
+/* Run fn under BART's error catcher; an error inside returns -1.
+ *
+ * The message is cleared first so that what the host reads afterwards belongs
+ * to this call.  A nested call leaves the outer one's catcher and message in
+ * place, which is what carries the reason out. */
 static int guarded(int (*fn)(void*), void* arg)
 {
 	if (error_jumper.initialized)
 		return fn(arg);
+
+	bartorch_clear_error();
 
 	struct guard_call c = { fn, arg };
 	char* argv[1] = { (char*)&c };

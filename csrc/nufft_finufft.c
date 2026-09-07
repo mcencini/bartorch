@@ -44,11 +44,12 @@ extern const struct operator_s* bart_nufft_precond_create(const struct linop_s* 
 
 /* Provided by finufft.c, which owns the FINUFFT entry points. */
 extern int bartorch_finufft_plan(int device, int type, int dim, const int64_t n_modes[3],
-		int ntrans, int isign, double eps, void** plan);
+		int ntrans, int isign, double eps, double upsampling, void** plan);
 extern int bartorch_finufft_setpts(void* plan, long M, float* x, float* y, float* z);
 extern int bartorch_finufft_exec(void* plan, complex float* c, complex float* f);
 extern void bartorch_finufft_free(void* plan);
 extern double bartorch_finufft_tolerance(void);
+extern double bartorch_finufft_upsampling(void);
 
 /* ------------------------------------------------------------------------ */
 
@@ -119,6 +120,7 @@ struct nufft_fi_s {
 	int dim;
 	int64_t n_modes[3];
 	double eps;
+	double upsampling;
 
 	long samples;
 	long batch;
@@ -198,10 +200,10 @@ static int side_build(struct nufft_fi_s* d, int which)
 	s->ntrans = which ? 1 : (int)d->batch;
 	s->executes = which ? d->batch : 1;
 
-	if (0 != bartorch_finufft_plan(which, 2, d->dim, d->n_modes, s->ntrans, -1, d->eps, &s->forward_plan))
+	if (0 != bartorch_finufft_plan(which, 2, d->dim, d->n_modes, s->ntrans, -1, d->eps, d->upsampling, &s->forward_plan))
 		return 11;
 
-	if (0 != bartorch_finufft_plan(which, 1, d->dim, d->n_modes, s->ntrans, +1, d->eps, &s->adjoint_plan)) {
+	if (0 != bartorch_finufft_plan(which, 1, d->dim, d->n_modes, s->ntrans, +1, d->eps, d->upsampling, &s->adjoint_plan)) {
 
 		side_free(d, s);
 		return 12;
@@ -448,6 +450,7 @@ const char* bartorch_nufft_decline_text(void)
 	case 14: return "the subspace basis does not lie along frames and coefficients";
 	case 15: return "the weights do not lie along k-space";
 	case 16: return "the images vary across frames as well as the trajectory";
+	case 17: return "a gridding kernel width was asked for, and FINUFFT sizes its own from the tolerance";
 	}
 
 	return "of a reason this build does not name";
@@ -557,6 +560,11 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 	if ((0UL != conf.flags) && (7UL != conf.flags))
 		DECLINE(6);
 
+	/* FINUFFT sizes its kernel from the tolerance and the upsampling; a
+	 * width asked for is a different gridder, not a different setting. */
+	if (6 != conf.width)
+		DECLINE(17);
+
 	int dim = 0;
 	int axis[3];
 	int64_t n_modes[3];
@@ -656,6 +664,14 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 
 	double eps = bartorch_finufft_tolerance();
 
+	/* BART's `-o` and FINUFFT's upsampfac are the same number: how far past
+	 * the image the transform is computed on.  BART's own default is two, so
+	 * anything else was asked for on purpose and is carried across; two
+	 * itself leaves the choice to whatever `enable` was told, because a
+	 * quarter over costs a third of the memory for a wider kernel and that
+	 * is the cheaper half of the trade here. */
+	double upsampling = (2. == conf.os) ? bartorch_finufft_upsampling() : conf.os;
+
 	/* BART's trajectory counts samples of the image grid and FINUFFT takes
 	 * the same position in radians.  One component is taken and rescaled
 	 * with BART's own operations, on the host, and a side copies it to
@@ -704,6 +720,7 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 		d->n_modes[i] = n_modes[i];
 
 	d->eps = eps;
+	d->upsampling = upsampling;
 	d->samples = samples;
 	d->batch = batch;
 	d->image_elements = image_elements;

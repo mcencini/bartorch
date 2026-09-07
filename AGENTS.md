@@ -199,6 +199,22 @@ int64 sample count in `cufinufftf_setpts`, and defaults filled from the
 options struct alone, spelled `cufinufft_default_opts` without the precision
 suffix FINUFFT uses.
 
+**`-o` is `upsampfac`; `-w` is not anything.** How far past the image the
+transform is computed on is the one gridding parameter both sides spell the
+same way, so BART's `-o` is carried across wherever it is not BART's own
+default of two, and `enable(upsampling=...)` is what two itself means. The
+default is a quarter over rather than the textbook factor: the upsampled grid
+goes as the factor to the power of the dimensions, so in three dimensions it
+is a third of the memory rather than half, and on a 128 cube that is 82 MB
+against 188 and six times faster on the host. Accuracy pays for it -- against
+an explicit sum on a 256x256 radial dataset, 1.4e-05 rather than 3.0e-06 --
+which is still an order below BART's own 3.6e-05.
+
+A kernel width is refused. FINUFFT sizes its own from the tolerance and the
+upsampling, and there is no field to tell it otherwise; BART's own operator
+cannot serve a second width in one process either, because its Kaiser-Bessel
+window is built once and refuses a different beta.
+
 `LinearOperator.finufft` is the same transform reached without BART's tools,
 for chaining and solving in Python. It makes a plan once and reuses it, matches
 BART's sign and scaling, and goes into BART's solvers unchanged. A BART

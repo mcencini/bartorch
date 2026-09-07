@@ -92,7 +92,7 @@ def _load_one(device: int, package: str, stem: str, prefix: str) -> bool:
         return False
 
     try:
-        opts, field = _options_layout(package)
+        opts, field, upsampling = _options_layout(package)
     except (ImportError, AttributeError):
         return False
 
@@ -107,7 +107,7 @@ def _load_one(device: int, package: str, stem: str, prefix: str) -> bool:
         if lib.bartorch_finufft_set(symbol.encode(), c.cast(fn, c.c_void_p)) != 0:
             return False
 
-    return 0 == lib.bartorch_finufft_layout(device, c.sizeof(opts), field.offset)
+    return 0 == lib.bartorch_finufft_layout(device, c.sizeof(opts), field.offset, upsampling.offset)
 
 
 def _default_opts_symbol(handle, prefix: str) -> str:
@@ -119,21 +119,27 @@ def _default_opts_symbol(handle, prefix: str) -> str:
 
 
 def _options_layout(package: str):
-    """The options struct a package interprets, and the field to fill in.
+    """The options struct a package interprets, and the fields to fill in.
 
     FINUFFT is told how many threads to take -- zero, meaning all of them --
-    and cuFINUFFT which device to run on.
+    and cuFINUFFT which device to run on; both are told how far past the image
+    to spread, which they spell alike.
     """
     if package == "finufft":
         from finufft._finufft import FinufftOpts as opts
 
-        return opts, opts.nthreads
+        return opts, opts.nthreads, opts.upsampfac
     from cufinufft._cufinufft import NufftOpts as opts
 
-    return opts, opts.gpu_device_id
+    return opts, opts.gpu_device_id, opts.upsampfac
 
 
-def use_in_tools(enable: bool = True, tolerance: float = 1e-6, fallback: bool = False) -> bool:
+def use_in_tools(
+    enable: bool = True,
+    tolerance: float = 1e-6,
+    fallback: bool = False,
+    upsampling: float = 1.25,
+) -> bool:
     """Have BART's own tools compute their NUFFT with FINUFFT.
 
     Parameters
@@ -142,6 +148,12 @@ def use_in_tools(enable: bool = True, tolerance: float = 1e-6, fallback: bool = 
         Turn the substitution on, or off to leave BART its own gridder.
     tolerance : float
         The tolerance FINUFFT plans are made with.
+    upsampling : float
+        How far past the image to spread before transforming.  A quarter over
+        costs a third of the memory of the textbook factor of two for a wider
+        kernel, which is the cheaper half of the trade on both sides of the
+        bus.  ``BART``'s ``-o`` takes precedence wherever it is not BART's own
+        default; zero leaves the choice to FINUFFT.
     fallback : bool
         Whether BART's own operator may answer a transform FINUFFT cannot
         serve.  By default it may not: such a transform raises, naming the
@@ -183,6 +195,7 @@ def use_in_tools(enable: bool = True, tolerance: float = 1e-6, fallback: bool = 
         )
 
     lib.bartorch_finufft_set_tolerance(float(tolerance))
+    lib.bartorch_finufft_set_upsampling(float(upsampling))
     lib.bartorch_nufft_allow_fallback(int(bool(fallback)))
     lib.bartorch_finufft_use_in_tools(1)
 
@@ -246,6 +259,17 @@ def tolerance() -> float:
     from bartorch._lib import library
 
     return float(library().bartorch_finufft_tolerance())
+
+
+def upsampling() -> float:
+    """How far past the image FINUFFT spreads before it transforms.
+
+    BART's ``-o`` is the same number and takes precedence wherever it is not
+    BART's own default of two; zero leaves the choice to FINUFFT.
+    """
+    from bartorch._lib import library
+
+    return float(library().bartorch_finufft_upsampling())
 
 
 def fallback_allowed() -> bool:

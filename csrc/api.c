@@ -101,6 +101,20 @@ void bartorch_set_num_threads(int n)
 	bartorch_fft_set_num_threads(n);
 }
 
+/* What BART last said when it failed.
+ *
+ * A tool's message comes back with its return code; an operator has no return
+ * code to carry one, so this is where the reason it refused is read from. */
+const char* bartorch_last_error(void)
+{
+	return g_err;
+}
+
+void bartorch_clear_error(void)
+{
+	g_err[0] = '\0';
+}
+
 void bartorch_record_error(const char* msg)
 {
 	size_t used = strlen(g_err);

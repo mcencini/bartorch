@@ -189,13 +189,17 @@ BARTORCH_API int bartorch_finufft_set(const char* symbol, void* fn);
 /* `device` picks the table: FINUFFT's on the host, cuFINUFFT's on a card.
  * `device_field` is the byte offset of the one option this sets -- the thread
  * count on the host, the device number on a card. */
-BARTORCH_API int bartorch_finufft_layout(int device, int opts_size, int device_field);
+BARTORCH_API int bartorch_finufft_layout(int device, int opts_size, int device_field, int upsampling_field);
 BARTORCH_API void bartorch_finufft_set_tolerance(double eps);
 BARTORCH_API double bartorch_finufft_tolerance(void);
+BARTORCH_API void bartorch_finufft_set_upsampling(double upsampling);
+BARTORCH_API double bartorch_finufft_upsampling(void);
 BARTORCH_API void bartorch_finufft_use_in_tools(int enable);
 /* Whether a transform can be served where the data is: 0 host, 1 device. */
 BARTORCH_API int bartorch_finufft_usable_on(int device);
 BARTORCH_API int bartorch_finufft_usable(void);
+BARTORCH_API const char* bartorch_last_error(void);
+BARTORCH_API void bartorch_clear_error(void);
 BARTORCH_API int bartorch_nufft_decline_reason(void);
 BARTORCH_API const char* bartorch_nufft_decline_text(void);
 BARTORCH_API void bartorch_nufft_allow_fallback(int enable);
