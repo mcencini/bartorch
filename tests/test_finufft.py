@@ -359,3 +359,107 @@ def test_more_frames_than_a_batch_of_one_thousand_are_still_finuffts(in_tools):
     ref = _dft(traj, image[:1], n)
     got = y[0].numpy().reshape(ref.shape)
     assert np.linalg.norm(got - ref) / np.linalg.norm(ref) < 1e-4
+
+
+def _subspace(n, spokes, frames, coeffs):
+    """A trajectory that varies across frames, and a basis over them.
+
+    BART puts frames on TE and coefficients on COEFF, so in C order the
+    trajectory is ``(frames, 1, 1, spokes, readout, 3)`` and the basis
+    ``(coeffs, frames, 1, 1, 1, 1, 1)``.
+    """
+    traj = bt.traj(x=n, y=spokes * frames, r=True).reshape(frames, spokes, n, 3)[:, None, None]
+    basis = torch.zeros(coeffs, frames, 1, 1, 1, 1, 1, dtype=torch.complex64)
+    basis[0, :, 0, 0, 0, 0, 0] = 1.0
+    basis[1, :, 0, 0, 0, 0, 0] = torch.linspace(-1, 1, frames)
+    return traj, basis
+
+
+def _phase_per_frame(traj, n, sign):
+    """``exp(sign * 2i pi k.x / n)`` for every sample of every frame."""
+    frames, spokes = traj.shape[0], traj.shape[3]
+    k = traj.numpy().real.reshape(frames, spokes, n, 3)
+    g = np.arange(n) - n // 2
+    return np.exp(
+        sign
+        * 2j
+        * np.pi
+        * (
+            k[..., 0][..., None, None] * g[None, None, None, None, :] / n
+            + k[..., 1][..., None, None] * g[None, None, None, :, None] / n
+        )
+    )
+
+
+@requires_finufft
+def test_a_subspace_adjoint_over_a_per_frame_trajectory_matches_an_explicit_sum(in_tools):
+    """One plan over the whole raveled trajectory serves every coefficient.
+
+    Each frame is acquired along its own trajectory, and the adjoint sums all
+    of them into one image per coefficient, weighted by the conjugate basis.
+    The samples of every coefficient are the same points, so the operator
+    plans once and the basis is a contraction either side of the transform.
+    """
+    n, spokes, frames, coeffs = 16, 5, 4, 2
+    traj, basis = _subspace(n, spokes, frames, coeffs)
+    torch.manual_seed(0)
+    y = torch.randn(frames, 1, 1, spokes, n, 1, dtype=torch.complex64)
+
+    _finufft.reset_counters()
+    x = bt.nufft(traj, y, adjoint=True, image_dims=(n, n, 1), B=basis)
+    assert _finufft.operators_built() == (1, 0), _finufft.decline_reason()
+
+    phase = _phase_per_frame(traj, n, +1)
+    data = y.numpy().reshape(frames, spokes, n)
+    b = basis.numpy().reshape(coeffs, frames)
+    ref = np.stack(
+        [
+            (np.conj(b[c])[:, None, None, None, None] * data[..., None, None] * phase).sum(
+                axis=(0, 1, 2)
+            )
+            / n
+            for c in range(coeffs)
+        ]
+    )
+    got = x.numpy().reshape(ref.shape)
+    assert np.linalg.norm(got - ref) / np.linalg.norm(ref) < 1e-4
+
+
+@requires_finufft
+def test_a_subspace_forward_over_a_per_frame_trajectory_matches_an_explicit_sum(in_tools):
+    n, spokes, frames, coeffs = 16, 5, 4, 2
+    traj, basis = _subspace(n, spokes, frames, coeffs)
+    torch.manual_seed(0)
+    img = torch.randn(coeffs, 1, 1, 1, 1, n, n, dtype=torch.complex64)
+
+    _finufft.reset_counters()
+    y = bt.nufft(traj, img, B=basis)
+    assert _finufft.operators_built() == (1, 0), _finufft.decline_reason()
+
+    phase = _phase_per_frame(traj, n, -1)
+    im = img.numpy().reshape(coeffs, n, n)
+    b = basis.numpy().reshape(coeffs, frames)
+    per_coeff = np.stack(
+        [(phase * im[c][None, None, None]).sum(axis=(-1, -2)) / n for c in range(coeffs)]
+    )
+    ref = np.einsum("kt,ktsr->tsr", b, per_coeff)
+    got = y.numpy().reshape(ref.shape)
+    assert np.linalg.norm(got - ref) / np.linalg.norm(ref) < 1e-4
+
+
+@requires_finufft
+@pytest.mark.skipif(
+    not (bartorch.cuda.available() and _finufft.cuda_available()),
+    reason="this needs a CUDA device and the cufinufft package",
+)
+def test_a_subspace_adjoint_on_a_card_agrees_with_the_host(in_tools):
+    n, spokes, frames, coeffs = 16, 5, 4, 2
+    traj, basis = _subspace(n, spokes, frames, coeffs)
+    torch.manual_seed(0)
+    y = torch.randn(frames, 1, 1, spokes, n, 1, dtype=torch.complex64)
+
+    _finufft.reset_counters()
+    on_card = bt.nufft(traj.cuda(), y.cuda(), adjoint=True, image_dims=(n, n, 1), B=basis.cuda())
+    assert _finufft.operators_built() == (1, 0), _finufft.decline_reason()
+    on_host = bt.nufft(traj, y, adjoint=True, image_dims=(n, n, 1), B=basis)
+    torch.testing.assert_close(on_card.cpu(), on_host, rtol=1e-4, atol=1e-5)

@@ -107,11 +107,29 @@ builds a NUFFT gets it: `nufft`, `pics`, `nlinv`, `moba`.
 Density weights are a diagonal in k-space -- BART multiplies the transform by
 them on the way out and by their conjugate on the way back -- so the operator
 carries them itself, which is what lets `pics` take this path: it always
-passes a sampling pattern. A subspace basis, weights that do not lie along
-k-space, and a trajectory that varies across frames are declined, and
-`bartorch_nufft_decline_reason` says which; the counters say whether an
+passes a sampling pattern. Weights that do not lie along k-space are declined,
+and `bartorch_nufft_decline_reason` says which; the counters say whether an
 operator was built by FINUFFT or by BART, which is how a test asserts that a
 tool ran on it rather than that FINUFFT was merely available.
+
+**A trajectory that varies across frames is one plan, not one per frame.**
+Every axis the trajectory indexes is a sample of one transform and the rest
+are separate transforms, so frames join the readout and the spokes in the
+point set rather than splitting it. That is what makes a subspace fit: each
+coefficient is transformed over the same raveled trajectory, and the basis is
+a contraction on the k-space side of the pair -- `md_ztenmul` on the way out,
+its conjugate on the way back, which is what `nufft.c` does either side of its
+own gridder. The normal stays BART's, now built over the basis as well, so a
+subspace `pics` still solves against a point spread function.
+
+BART hands one of two k-spaces in -- `nufft` gives it a single coefficient and
+`pics` gives it all of them -- so the operator carries both: `out_dims` is what
+the caller sees, `grd_dims` what the transform pair works in. FINUFFT executes
+on a transform's samples together, and BART's own order is already that unless
+a sample axis sits above a batch axis, which frames do; a buffer in the
+transform's layout stands between when it does. An image that varies along a
+sample axis is declined, because that would need a transform per frame rather
+than one plan over all of them.
 
 The entry points that read the operator's internals -- `nufft_get_psf*`,
 `nufft_update_*`, `nufft_precond_create` -- refuse on one of these rather than

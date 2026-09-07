@@ -116,10 +116,15 @@ together. On a 256x256 eight-coil radial dataset of 401 spokes:
 
 and the reconstruction agrees with BART's to 1.2e-03 while sitting an order of
 magnitude closer to an explicit discrete Fourier sum. `--no-toeplitz` means
-what it means on both. A subspace basis, weights that do not lie along k-space
-and a trajectory that varies across frames stay with BART's own operator;
-`bartorch.finufft.decline_reason()` says which, and `operators_built()` and
-`normals_built()` count what each side built.
+what it means on both.
+
+A trajectory that varies across frames and a subspace basis go through it too:
+the frames join the point set rather than splitting it, so one plan over the
+raveled trajectory serves every coefficient, and the basis contracts them away
+on the k-space side of the transform pair. Weights that do not lie along
+k-space stay with BART's own operator; `bartorch.finufft.decline_reason()`
+says which, and `operators_built()` and `normals_built()` count what each side
+built.
 
 ```python
 N = LinearOperator.finufft(traj, (8, 256, 256))

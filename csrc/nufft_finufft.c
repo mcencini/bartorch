@@ -82,6 +82,7 @@ struct fi_side {
 	/* A plan holds the points by pointer, so they outlive setpts. */
 	float* coord[3];
 	complex float* weights;
+	complex float* basis;
 
 	/* Transforms one execute carries, and how many executes that leaves.
 	 *
@@ -105,9 +106,10 @@ struct nufft_fi_s {
 	pthread_mutex_t lock;
 
 	/* What a side is built from, on the host: the trajectory in radians,
-	 * one array per transformed axis, and the weights. */
+	 * one array per transformed axis, the weights and the basis. */
 	float* radians[3];
 	complex float* host_weights;
+	complex float* host_basis;
 
 	/* BART's own operator over the same trajectory, held for the point
 	 * spread function its normal applies.  NULL when the caller asked for
@@ -123,13 +125,32 @@ struct nufft_fi_s {
 	long image_elements;
 	float scale;
 
-	/* ksp_dims and the strides say how the weights broadcast onto k-space. */
+	/* out_dims is k-space as the caller sees it -- what BART calls out_dims,
+	 * frames present and coefficients contracted away -- and the strides say
+	 * how the weights broadcast onto it.
+	 *
+	 * `grd_dims` is what the transform pair works in.  Without a basis it is
+	 * k-space; with one it carries the coefficients k-space does not, and
+	 * the basis contracts them away on the way out and spreads them on the
+	 * way back, which is what `nufft.c` does either side of its gridder.
+	 *
+	 * `trf_strs` lays `grd_dims` out the way FINUFFT executes: a transform's
+	 * samples together, the batch stepping over them.  BART's own order is
+	 * that already unless a sample axis sits above a batch axis -- frames do,
+	 * when the trajectory varies across them -- and `needs_tmp` says whether
+	 * a buffer in that layout has to stand between.
+	 */
 	int N;
+	bool needs_tmp;
 	long* cim_dims;
-	long* ksp_dims;
-	long* ksp_strs;
+	long* out_dims;
+	long* out_strs;
+	long* grd_dims;
+	long* trf_strs;
 	long* wgh_dims;
 	long* wgh_strs;
+	long* bas_dims;
+	long* bas_strs;
 };
 
 static DEF_TYPEID(nufft_fi_s);
@@ -164,6 +185,9 @@ static void side_free(struct nufft_fi_s* d, struct fi_side* s)
 
 	md_free(s->weights);
 	s->weights = NULL;
+
+	md_free(s->basis);
+	s->basis = NULL;
 }
 
 /* Plans on `which`, over a copy of the coordinates and the weights there. */
@@ -195,6 +219,12 @@ static int side_build(struct nufft_fi_s* d, int which)
 
 		s->weights = alloc_on(which, d->N, d->wgh_dims, CFL_SIZE);
 		md_copy(d->N, d->wgh_dims, s->weights, d->host_weights, CFL_SIZE);
+	}
+
+	if (NULL != d->host_basis) {
+
+		s->basis = alloc_on(which, d->N, d->bas_dims, CFL_SIZE);
+		md_copy(d->N, d->bas_dims, s->basis, d->host_basis, CFL_SIZE);
 	}
 
 	if (   (0 != bartorch_finufft_setpts(s->forward_plan, d->samples, s->coord[0], s->coord[1], s->coord[2]))
@@ -229,6 +259,20 @@ static const struct fi_side* side_for(struct nufft_fi_s* d, const void* ptr)
 	return &d->side[which];
 }
 
+/* The buffer the transform pair works in, or NULL when it works in place.
+ *
+ * One is needed when the basis has to be applied, and when BART's own layout
+ * does not already put a transform's samples together. */
+static complex float* transform_buffer(const struct nufft_fi_s* d, const void* ref)
+{
+	if (!d->needs_tmp)
+		return NULL;
+
+	long dims[1] = { d->samples * d->batch };
+
+	return md_alloc_sameplace(1, dims, CFL_SIZE, ref);
+}
+
 /* Whether an operator is one of these, so the entry points that read BART's
  * internals can tell one from one of BART's. */
 static bool is_ours(const struct linop_s* op)
@@ -242,24 +286,43 @@ static void nufft_fi_forward(const linop_data_t* _d, complex float* dst, const c
 
 	const struct fi_side* s = side_for(d, dst);
 
+	complex float* tmp = transform_buffer(d, dst);
+	complex float* out = (NULL != tmp) ? tmp : dst;
+
 	pthread_mutex_lock(&d->lock);
 
 	int ret = 0;
 
 	for (long i = 0; (0 == ret) && (i < s->executes); i++)
 		ret = bartorch_finufft_exec(s->forward_plan,
-				dst + i * s->ntrans * d->samples,
+				out + i * s->ntrans * d->samples,
 				(complex float*)src + i * s->ntrans * d->image_elements);
 
 	pthread_mutex_unlock(&d->lock);
 
-	if (0 != ret)
-		error("bartorch: FINUFFT forward transform failed\n");
+	if (0 != ret) {
 
-	md_zsmul(d->N, d->ksp_dims, dst, dst, d->scale);
+		md_free(tmp);
+		error("bartorch: FINUFFT forward transform failed\n");
+	}
+
+	/* The coefficients the transform produced are contracted away here, the
+	 * frames left as they are; without a basis this only reads the buffer
+	 * back into BART's own layout. */
+	if (NULL != tmp) {
+
+		if (NULL != s->basis)
+			md_ztenmul2(d->N, d->grd_dims, d->out_strs, dst, d->trf_strs, tmp, d->bas_strs, s->basis);
+		else
+			md_copy2(d->N, d->grd_dims, d->out_strs, dst, d->trf_strs, tmp, CFL_SIZE);
+
+		md_free(tmp);
+	}
+
+	md_zsmul(d->N, d->out_dims, dst, dst, d->scale);
 
 	if (NULL != s->weights)
-		md_zmul2(d->N, d->ksp_dims, d->ksp_strs, dst, d->ksp_strs, dst, d->wgh_strs, s->weights);
+		md_zmul2(d->N, d->out_dims, d->out_strs, dst, d->out_strs, dst, d->wgh_strs, s->weights);
 }
 
 static void nufft_fi_adjoint(const linop_data_t* _d, complex float* dst, const complex float* src)
@@ -272,9 +335,29 @@ static void nufft_fi_adjoint(const linop_data_t* _d, complex float* dst, const c
 
 	if (NULL != s->weights) {
 
-		weighted = md_alloc_sameplace(d->N, d->ksp_dims, CFL_SIZE, dst);
-		md_zmulc2(d->N, d->ksp_dims, d->ksp_strs, weighted, d->ksp_strs, src, d->wgh_strs, s->weights);
+		weighted = md_alloc_sameplace(d->N, d->out_dims, CFL_SIZE, dst);
+		md_zmulc2(d->N, d->out_dims, d->out_strs, weighted, d->out_strs, src, d->wgh_strs, s->weights);
 		src = weighted;
+	}
+
+	/* Spread the samples back over the coefficients the images carry, into
+	 * the layout the transform executes in; without a basis this only lays
+	 * the samples out that way. */
+	complex float* tmp = transform_buffer(d, dst);
+
+	if (NULL != tmp) {
+
+		if (NULL != s->basis)
+			md_ztenmulc2(d->N, d->grd_dims, d->trf_strs, tmp, d->out_strs, src, d->bas_strs, s->basis);
+		else
+			md_copy2(d->N, d->grd_dims, d->trf_strs, tmp, d->out_strs, src, CFL_SIZE);
+
+		src = tmp;
+
+		/* The weighted copy has been read into the buffer, and the
+		 * transform is the point where memory is tightest. */
+		md_free(weighted);
+		weighted = NULL;
 	}
 
 	pthread_mutex_lock(&d->lock);
@@ -288,6 +371,7 @@ static void nufft_fi_adjoint(const linop_data_t* _d, complex float* dst, const c
 
 	pthread_mutex_unlock(&d->lock);
 
+	md_free(tmp);
 	md_free(weighted);
 
 	if (0 != ret)
@@ -317,11 +401,16 @@ static void nufft_fi_del(const linop_data_t* _d)
 		md_free(d->radians[i]);
 
 	md_free(d->host_weights);
+	md_free(d->host_basis);
 	xfree(d->cim_dims);
-	xfree(d->ksp_dims);
-	xfree(d->ksp_strs);
+	xfree(d->out_dims);
+	xfree(d->out_strs);
+	xfree(d->grd_dims);
+	xfree(d->trf_strs);
 	xfree(d->wgh_dims);
 	xfree(d->wgh_strs);
+	xfree(d->bas_dims);
+	xfree(d->bas_strs);
 
 	pthread_mutex_destroy(&d->lock);
 	xfree(d);
@@ -373,7 +462,8 @@ static void count(int which)
  */
 static const struct linop_s* toeplitz_for(int N, const long ksp_dims[N], const long cim_dims[N],
 		const long traj_dims[N], const complex float* traj,
-		const long wgh_dims[N], const complex float* weights, struct nufft_conf_s conf)
+		const long wgh_dims[N], const complex float* weights,
+		const long bas_dims[N], const complex float* basis, struct nufft_conf_s conf)
 {
 	if (!conf.toeplitz) {
 
@@ -384,7 +474,7 @@ static const struct linop_s* toeplitz_for(int N, const long ksp_dims[N], const l
 	}
 
 	const struct linop_s* op = bart_nufft_create2(N, ksp_dims, cim_dims, traj_dims, traj,
-			wgh_dims, weights, NULL, NULL, conf);
+			wgh_dims, weights, (NULL != basis) ? bas_dims : NULL, basis, conf);
 
 #pragma omp atomic
 	toeplitz_counters[TP_PSF]++;
@@ -395,7 +485,7 @@ static const struct linop_s* toeplitz_for(int N, const long ksp_dims[N], const l
 static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_dims[N],
 		const long traj_dims[N], const complex float* traj,
 		const long wgh_dims[N], const complex float* weights,
-		const complex float* basis, struct nufft_conf_s conf)
+		const long bas_dims[N], const complex float* basis, struct nufft_conf_s conf)
 {
 	/* Which sides the operator may be applied on.  BART on a card applies
 	 * one to either: `pics` takes its first adjoint from the k-space it
@@ -409,9 +499,6 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 
 	if (device && !bartorch_finufft_usable_on(1))
 		DECLINE(3);
-
-	if (NULL != basis)
-		DECLINE(14);
 
 	if ((N < 4) || (NULL == traj))
 		DECLINE(2);
@@ -442,21 +529,70 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 	if (0 == dim)
 		DECLINE(7);
 
-	long samples = ksp_dims[1] * ksp_dims[2];
+	/* Two spaces.  `out_dims` is k-space as the caller sees it, which is what
+	 * BART hands back from the operator: frames along TE, coefficients
+	 * contracted away.  `grd_dims` is what the transform pair works in, with
+	 * the coefficients present.  Without a basis they are the same thing.
+	 *
+	 * A caller may pass either one in: `nufft` gives k-space with a single
+	 * coefficient and `pics` gives it with all of them, which is why BART
+	 * fills the coefficient axis in rather than reading it. */
+	long out_dims[N];
+	long grd_dims[N];
 
-	if (samples != md_calc_size(N - 1, traj_dims + 1))
-		DECLINE(8);
+	md_copy_dims(N, out_dims, ksp_dims);
+	md_copy_dims(N, grd_dims, ksp_dims);
 
-	/* Frames beyond the coils are more batches, and each one has to see the
-	 * same trajectory: a plan holds the points it was given. */
+	if (NULL != basis) {
+
+		if (1 != md_calc_size(5, bas_dims))
+			DECLINE(14);
+
+		if (cim_dims[6] != bas_dims[6])
+			DECLINE(14);
+
+		if ((1 != ksp_dims[6]) && (ksp_dims[6] != bas_dims[6]))
+			DECLINE(14);
+
+		grd_dims[6] = bas_dims[6];
+		out_dims[5] = bas_dims[5];
+		out_dims[6] = 1;
+	}
+
+	/* Every axis the trajectory indexes is a sample of one transform; the
+	 * rest are separate transforms.  A frame is a sample axis when the
+	 * trajectory varies across frames, which is what lets one plan over the
+	 * whole raveled trajectory serve every coefficient and every coil. */
+	long samples = md_calc_size(N - 1, traj_dims + 1);
 	long batch = 1;
 
-	for (int i = 3; i < N; i++) {
+	for (int i = 1; i < N; i++) {
 
-		if (cim_dims[i] != ksp_dims[i])
+		if (1 < traj_dims[i]) {
+
+			if (grd_dims[i] != traj_dims[i])
+				DECLINE(8);
+
+			/* An image that varies along a sample axis would need one
+			 * transform per frame, not one plan over all of them. */
+			if ((3 <= i) && (1 != cim_dims[i]))
+				DECLINE(16);
+
+			continue;
+		}
+
+		if (3 > i) {
+
+			if (1 != grd_dims[i])
+				DECLINE(8);
+
+			continue;
+		}
+
+		if (cim_dims[i] != grd_dims[i])
 			DECLINE(9);
 
-		batch *= cim_dims[i];
+		batch *= grd_dims[i];
 	}
 
 	/* FINUFFT batches the transforms it is asked for against one point set
@@ -470,7 +606,7 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 	 * their conjugate on the way back, so they broadcast onto k-space. */
 	if (NULL != weights)
 		for (int i = 0; i < N; i++)
-			if ((1 != wgh_dims[i]) && (wgh_dims[i] != ksp_dims[i]))
+			if ((1 != wgh_dims[i]) && (wgh_dims[i] != out_dims[i]))
 				DECLINE(15);
 
 	double eps = bartorch_finufft_tolerance();
@@ -530,17 +666,58 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 
 	d->N = N;
 	d->host_weights = NULL;
+	d->host_basis = NULL;
 	d->cim_dims = xmalloc((size_t)N * sizeof(long));
-	d->ksp_dims = xmalloc((size_t)N * sizeof(long));
-	d->ksp_strs = xmalloc((size_t)N * sizeof(long));
+	d->out_dims = xmalloc((size_t)N * sizeof(long));
+	d->out_strs = xmalloc((size_t)N * sizeof(long));
+	d->grd_dims = xmalloc((size_t)N * sizeof(long));
+	d->trf_strs = xmalloc((size_t)N * sizeof(long));
 	d->wgh_dims = xmalloc((size_t)N * sizeof(long));
 	d->wgh_strs = xmalloc((size_t)N * sizeof(long));
+	d->bas_dims = xmalloc((size_t)N * sizeof(long));
+	d->bas_strs = xmalloc((size_t)N * sizeof(long));
 
 	md_copy_dims(N, d->cim_dims, cim_dims);
-	md_copy_dims(N, d->ksp_dims, ksp_dims);
-	md_calc_strides(N, d->ksp_strs, ksp_dims, CFL_SIZE);
+	md_copy_dims(N, d->out_dims, out_dims);
+	md_calc_strides(N, d->out_strs, out_dims, CFL_SIZE);
+	md_copy_dims(N, d->grd_dims, grd_dims);
 	md_singleton_dims(N, d->wgh_dims);
 	md_singleton_strides(N, d->wgh_strs);
+	md_singleton_dims(N, d->bas_dims);
+	md_singleton_strides(N, d->bas_strs);
+
+	/* FINUFFT executes on a transform's samples together with the batch
+	 * stepping over them, so the sample axes take the fastest strides and
+	 * the rest follow.  BART's own order is already that unless a sample
+	 * axis sits above a batch axis. */
+	long stride = 1;
+
+	for (int i = 1; i < N; i++)
+		if (1 < traj_dims[i]) {
+
+			d->trf_strs[i] = (1 == grd_dims[i]) ? 0 : stride * (long)CFL_SIZE;
+			stride *= grd_dims[i];
+		}
+
+	for (int i = 0; i < N; i++)
+		if ((0 == i) || (1 >= traj_dims[i])) {
+
+			d->trf_strs[i] = (1 == grd_dims[i]) ? 0 : stride * (long)CFL_SIZE;
+			stride *= grd_dims[i];
+		}
+
+	long grd_strs[N];
+	md_calc_strides(N, grd_strs, grd_dims, CFL_SIZE);
+
+	d->needs_tmp = (NULL != basis) || (0 != memcmp(d->trf_strs, grd_strs, (size_t)N * sizeof(long)));
+
+	if (NULL != basis) {
+
+		md_copy_dims(N, d->bas_dims, bas_dims);
+		md_calc_strides(N, d->bas_strs, bas_dims, CFL_SIZE);
+		d->host_basis = md_alloc(N, bas_dims, CFL_SIZE);
+		md_copy(N, bas_dims, d->host_basis, basis, CFL_SIZE);
+	}
 
 	if (NULL != weights) {
 
@@ -561,13 +738,14 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 		DECLINE(ret);
 	}
 
-	d->toeplitz = toeplitz_for(N, ksp_dims, cim_dims, traj_dims, traj, wgh_dims, weights, conf);
+	d->toeplitz = toeplitz_for(N, ksp_dims, cim_dims, traj_dims, traj, wgh_dims, weights,
+			bas_dims, basis, conf);
 
 	/* PTR_PASS hands the data over and clears the pointer, so what the
 	 * operator is built with is read out first. */
 	lop_fun_t normal = (NULL != d->toeplitz) ? nufft_fi_normal : NULL;
 
-	struct linop_s* op = linop_create(N, ksp_dims, N, cim_dims, CAST_UP(PTR_PASS(d)),
+	struct linop_s* op = linop_create(N, out_dims, N, cim_dims, CAST_UP(PTR_PASS(d)),
 			nufft_fi_forward, nufft_fi_adjoint, normal, NULL, nufft_fi_del);
 
 	decline_reason = 0;
@@ -580,7 +758,7 @@ struct linop_s* nufft_create2(int N, const long ksp_dims[N], const long cim_dims
 		const long wgh_dims[N], const complex float* weights,
 		const long bas_dims[N], const complex float* basis, struct nufft_conf_s conf)
 {
-	struct linop_s* op = try_create(N, ksp_dims, cim_dims, traj_dims, traj, wgh_dims, weights, basis, conf);
+	struct linop_s* op = try_create(N, ksp_dims, cim_dims, traj_dims, traj, wgh_dims, weights, bas_dims, basis, conf);
 
 	if (NULL != op)
 		return op;

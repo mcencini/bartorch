@@ -276,7 +276,11 @@ class LinearOperator:
         t = _as_operand(traj, tuple(traj.shape), "traj")
         image_shape = tuple(image_shape)
         if kspace_shape is None:
-            kspace_shape = _default_kspace_shape(tuple(t.shape), image_shape)
+            from bartorch import _finufft
+
+            kspace_shape = _default_kspace_shape(
+                tuple(t.shape), image_shape, _finufft.spatial_ndim(t)
+            )
         with _lock, _on_device(t.device):
             ptr = library().bartorch_linop_nufft(
                 DIMS,
@@ -401,11 +405,13 @@ class LinearOperator:
         return f"LinearOperator({self.ishape} -> {self.oshape})"
 
 
-def _default_kspace_shape(traj_shape: Shape, image_shape: Shape) -> Shape:
+def _default_kspace_shape(traj_shape: Shape, image_shape: Shape, ndim: int) -> Shape:
     # BART: traj dims [3, samples, spokes, ...], kspace dims [1, samples, spokes, coils, ...].
     # In C order the trajectory is (..., spokes, samples, 3) and the coil axes of
-    # the image sit in front of its two spatial axes.
-    coils = tuple(image_shape[:-2])
+    # the image sit in front of its spatial ones -- two or three of them, which
+    # only the trajectory can say, since (coils, y, x) and (z, y, x) are the same
+    # shape.
+    coils = tuple(image_shape[:-ndim])
     return coils + tuple(traj_shape[:-1]) + (1,)
 
 

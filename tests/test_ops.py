@@ -157,3 +157,22 @@ def test_model_based_reconstruction_chains_a_torch_model_with_a_bart_encoding():
     mask = img > 0.1
     err = (x[0][mask] - truth[0][mask]).abs().max().item()
     assert err < 5e-2
+
+
+def test_a_three_dimensional_nufft_takes_three_spatial_axes_from_the_trajectory():
+    """(coils, y, x) and (z, y, x) are the same shape; the trajectory decides.
+
+    A BART trajectory always carries three components and leaves kz at zero
+    for a two-dimensional transform, so that is what says how many of an
+    image's trailing axes are spatial and how many are coils.
+    """
+    n, coils, spokes = 16, 2, 40
+    torch.manual_seed(0)
+    volumetric = ((torch.rand(spokes, n, 3) - 0.5) * n).to(torch.complex64)
+    planar = volumetric.clone()
+    planar[..., 2] = 0
+
+    A = LinearOperator.nufft(volumetric, (coils, n, n, n), toeplitz=False)
+    B = LinearOperator.nufft(planar, (coils, n, n), toeplitz=False)
+    assert A.oshape == (coils, spokes, n, 1)
+    assert B.oshape == (coils, spokes, n, 1)

@@ -180,8 +180,9 @@ _DECLINED = {
     11: "FINUFFT would not plan the forward transform",
     12: "FINUFFT would not plan the adjoint transform",
     13: "FINUFFT would not take the trajectory",
-    14: "a subspace basis is in use",
+    14: "the subspace basis does not lie along frames and coefficients",
     15: "the weights do not lie along k-space",
+    16: "the images vary across frames as well as the trajectory",
 }
 
 
