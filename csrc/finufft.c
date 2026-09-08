@@ -43,6 +43,7 @@ struct fi_table {
 	int opts_size;
 	int off_device;		/* nthreads on the host, gpu_device_id on a device */
 	int off_upsampling;	/* upsampfac, a double, which both spell alike */
+	int off_spreadonly;	/* spreadinterponly on the host, gpu_ prefixed on a device */
 };
 
 static struct {
@@ -78,11 +79,14 @@ int bartorch_finufft_set(const char* symbol, void* fn)
 
 /* The byte offsets of the fields this sets: the thread count on the host and
  * the device number on a card, and the grid FINUFFT spreads onto. */
-int bartorch_finufft_layout(int device, int opts_size, int device_field, int upsampling_field)
+int bartorch_finufft_layout(int device, int opts_size, int device_field, int upsampling_field, int spreadonly_field)
 {
 	struct fi_table* t = device ? &fi.device : &fi.host;
 
 	if ((opts_size < 16) || (opts_size > 4096) || (device_field < 0) || (device_field + 4 > opts_size))
+		return -1;
+
+	if ((spreadonly_field < 0) || (spreadonly_field + 4 > opts_size))
 		return -1;
 
 	if ((upsampling_field < 0) || (upsampling_field + 8 > opts_size))
@@ -91,6 +95,7 @@ int bartorch_finufft_layout(int device, int opts_size, int device_field, int ups
 	t->opts_size = opts_size;
 	t->off_device = device_field;
 	t->off_upsampling = upsampling_field;
+	t->off_spreadonly = spreadonly_field;
 	return 0;
 }
 
@@ -158,8 +163,12 @@ struct bartorch_fi_plan {
 	finufft_plan_t plan;
 };
 
+/* `spread_only` asks FINUFFT for the spreading alone -- no transform, no
+ * deapodisation -- which puts the kernel's own footprint on the grid.  That is
+ * what a compressed point spread function's mask is: which grid points the
+ * samples reach. */
 int bartorch_finufft_plan(int device, int type, int dim, const int64_t n_modes[3], int ntrans,
-		int isign, double eps, double upsampling, void** plan)
+		int isign, double eps, double upsampling, int spread_only, void** plan)
 {
 	const struct fi_table* t = device ? &fi.device : &fi.host;
 
@@ -177,6 +186,9 @@ int bartorch_finufft_plan(int device, int type, int dim, const int64_t n_modes[3
 
 	if (0. != upsampling)
 		*(double*)(opts + t->off_upsampling) = upsampling;
+
+	if (0 != spread_only)
+		*(int*)(opts + t->off_spreadonly) = 1;
 
 	finufft_plan_t p = NULL;
 	int ret = t->makeplan(type, dim, n_modes, isign, ntrans, (float)eps, &p, opts);

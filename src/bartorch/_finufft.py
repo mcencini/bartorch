@@ -91,7 +91,7 @@ def _load_one(device: int, package: str, stem: str, prefix: str) -> bool:
         return False
 
     try:
-        opts, field, upsampling = _options_layout(package)
+        opts, field, upsampling, spreadonly = _options_layout(package)
     except (ImportError, AttributeError):
         return False
 
@@ -106,7 +106,9 @@ def _load_one(device: int, package: str, stem: str, prefix: str) -> bool:
         if lib.bartorch_finufft_set(symbol.encode(), c.cast(fn, c.c_void_p)) != 0:
             return False
 
-    return 0 == lib.bartorch_finufft_layout(device, c.sizeof(opts), field.offset, upsampling.offset)
+    return 0 == lib.bartorch_finufft_layout(
+        device, c.sizeof(opts), field.offset, upsampling.offset, spreadonly.offset
+    )
 
 
 def _default_opts_symbol(handle, prefix: str) -> str:
@@ -122,15 +124,16 @@ def _options_layout(package: str):
 
     FINUFFT is told how many threads to take -- zero, meaning all of them --
     and cuFINUFFT which device to run on; both are told how far past the image
-    to spread, which they spell alike.
+    to spread, which they spell alike, and whether to spread and stop there,
+    which they do not.
     """
     if package == "finufft":
         from finufft._finufft import FinufftOpts as opts
 
-        return opts, opts.nthreads, opts.upsampfac
+        return opts, opts.nthreads, opts.upsampfac, opts.spreadinterponly
     from cufinufft._cufinufft import NufftOpts as opts
 
-    return opts, opts.gpu_device_id, opts.upsampfac
+    return opts, opts.gpu_device_id, opts.upsampfac, opts.gpu_spreadinterponly
 
 
 def use_in_tools(

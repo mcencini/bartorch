@@ -201,13 +201,21 @@ way of storing it still works and costs no gridding:
 `operators_built()` returning zero for BART is the whole claim, and every
 route to one of BART's operators increments it.
 
-The mask a compressed function keeps is BART's, from BART's gridder, and that
-is the one BART gridding left. It grids the sampling pattern rather than any
-data, once per operator, and only under `--compress-psf`. `grid2_decomp` is
-static in `nufft.c`, so `install_psf` does what it does -- half the kernel
-width on an unoversampled grid, the shift of the frequency set, the
-half-sample an odd length carries -- around the `grid2` that file calls and
-exports.
+The mask a compressed function keeps is spread with FINUFFT's kernel too.
+BART finds it by spreading the sampling pattern with its own, and that is the
+wrong footprint once the function is FINUFFT's: what the mask has to cover is
+where this function has signal. `spreadinterponly` is the spreading with
+nothing after it -- no transform, no deapodisation -- so what comes back is
+the kernel's own reach, on whichever grid it is asked for. Both wheels carry
+the field, spelled differently and at different offsets, which the options
+layout reads from each package like the others.
+
+It is asked for the grid the mask lives on, one set of frequencies at a time:
+the doubled grid decomposes into that many copies of the image, each carrying
+the samples shifted by its own fraction of a cell, and a point any of them
+reaches is a point the mask keeps. Doing it a set at a time is what keeps the
+doubled grid from ever being allocated, which is the whole reason the
+decomposition is there.
 
 It cannot come off the function instead, which is the obvious thing to try.
 A transfer function is nonzero over the whole grid: the adjoint transform
@@ -216,13 +224,16 @@ and the deapodisation does not undo it. Measured on a 32x32 grid of 48
 spokes, the fraction of it standing above a millionth of its peak is 100 per
 cent, for BART's own gridder and for FINUFFT alike. So the mask is not a
 question about magnitudes but about geometry -- which Cartesian frequencies
-the trajectory visited -- and spreading the pattern with the kernel answers
-exactly that. Thresholding the function keeps 99 per cent of the grid and
-compresses nothing; BART's mask keeps 89 per cent.
+the trajectory reaches -- which is what a spreading answers and a threshold
+does not.
 
-What compression then costs is the tails outside the sampled region, which it
-discards deliberately: 1.2e-01 from the uncompressed reconstruction here,
-against 1.4e-01 for BART's own.
+The mask that comes out is looser than BART's and costs an order less. On
+that dataset it keeps 95 per cent of the grid against BART's 89, because
+FINUFFT's kernel is as many cells wide on the image grid as it is on the fine
+one, where the footprint a set actually needs is narrower than that; and a
+compressed reconstruction is 1.4e-02 from an uncompressed one against BART's
+1.4e-01. Conservative in the direction that matters: it keeps what the
+function put there.
 
 `zero-mem` is the exception that is not one: it is a parenthesised flag in
 BART's own help, and its Toeplitz normal does not reconstruct in BART either

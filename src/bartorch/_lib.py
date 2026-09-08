@@ -212,7 +212,7 @@ def _bind(lib: ctypes.CDLL) -> ctypes.CDLL:
     lib.bartorch_finufft_set.restype = c.c_int
     lib.bartorch_finufft_set.argtypes = [c.c_char_p, P]
     lib.bartorch_finufft_layout.restype = c.c_int
-    lib.bartorch_finufft_layout.argtypes = [c.c_int, c.c_int, c.c_int, c.c_int]
+    lib.bartorch_finufft_layout.argtypes = [c.c_int, c.c_int, c.c_int, c.c_int, c.c_int]
     lib.bartorch_finufft_usable_on.restype = c.c_int
     lib.bartorch_finufft_usable_on.argtypes = [c.c_int]
     lib.bartorch_finufft_set_tolerance.restype = None

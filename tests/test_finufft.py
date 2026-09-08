@@ -979,10 +979,10 @@ def test_every_way_bart_stores_a_point_spread_function_is_served(in_tools, mode)
     if mode == "zero-mem":
         return
 
-    # Compression throws away what its mask does not cover, and that mask is
-    # BART's own: it costs about as much here as it does in BART, where a
-    # compressed reconstruction is 1.4e-01 from an uncompressed one.
-    bound = 0.3 if mode == "compress-psf" else 1e-2
+    # Compression throws away what its mask does not cover.  The mask is
+    # spread with FINUFFT's kernel, so it covers where this function has
+    # signal rather than where BART's would have had it.
+    bound = 5e-2 if mode == "compress-psf" else 1e-2
     assert float((out - reference).abs().max() / reference.abs().max()) < bound
 
 
@@ -1009,3 +1009,31 @@ def test_an_upper_triangular_subspace_function_is_served(in_tools):
 
     assert _finufft.operators_built()[1] == 0, _finufft.decline_reason()
     torch.testing.assert_close(half, whole, rtol=1e-4, atol=1e-4)
+
+
+@requires_finufft
+def test_a_compressed_function_keeps_what_this_transform_put_there(in_tools):
+    """The mask is the footprint of the kernel that spread the function.
+
+    BART finds it by spreading the sampling pattern with its own Kaiser-Bessel
+    kernel, which is the wrong footprint once the function is FINUFFT's.
+    Spreading the pattern with FINUFFT's kernel instead -- `spreadinterponly`,
+    one set of frequencies at a time so the doubled grid is never allocated --
+    covers where the function actually has signal, and the reconstruction says
+    so.
+    """
+    n, spokes, coils = 32, 48, 2
+    traj = bt.traj(x=n, y=spokes, r=True)
+    ksp = bt.nufft(traj, bt.phantom([n, n], ncoils=coils))
+    maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
+
+    def cost():
+        plain = bt.pics(ksp, maps, t=traj)
+        compressed = bt.pics(ksp, maps, t=traj, nufft_conf="compress-psf")
+        return float((compressed - plain).abs().max() / plain.abs().max())
+
+    ours = cost()
+    with _finufft.barts_own_gridder():
+        theirs = cost()
+
+    assert ours < theirs, (ours, theirs)

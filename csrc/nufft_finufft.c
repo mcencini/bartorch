@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "misc/debug.h"
 #include "misc/misc.h"
 #include "misc/mri.h"
 #include "misc/types.h"
@@ -29,6 +30,7 @@
 #include "num/flpmath.h"
 #include "num/init.h"
 #include "num/multind.h"
+#include "num/shuffle.h"
 
 #include "noncart/nufft.h"
 #include "noncart/nufft_priv.h"
@@ -54,7 +56,7 @@ extern void bartorch_psf_shift(int NS, float shift[NS], int N, const long factor
 
 /* Provided by finufft.c, which owns the FINUFFT entry points. */
 extern int bartorch_finufft_plan(int device, int type, int dim, const int64_t n_modes[3],
-		int ntrans, int isign, double eps, double upsampling, void** plan);
+		int ntrans, int isign, double eps, double upsampling, int spread_only, void** plan);
 extern int bartorch_finufft_setpts(void* plan, long M, float* x, float* y, float* z);
 extern int bartorch_finufft_exec(void* plan, complex float* c, complex float* f);
 extern void bartorch_finufft_free(void* plan);
@@ -263,10 +265,10 @@ static int side_build(struct nufft_fi_s* d, int which)
 	s->ntrans = which ? 1 : (int)d->batch;
 	s->executes = which ? d->batch : 1;
 
-	if (0 != bartorch_finufft_plan(which, 2, d->dim, d->n_modes, s->ntrans, -1, d->eps, d->upsampling, &s->forward_plan))
+	if (0 != bartorch_finufft_plan(which, 2, d->dim, d->n_modes, s->ntrans, -1, d->eps, d->upsampling, 0, &s->forward_plan))
 		return 11;
 
-	if (0 != bartorch_finufft_plan(which, 1, d->dim, d->n_modes, s->ntrans, +1, d->eps, d->upsampling, &s->adjoint_plan)) {
+	if (0 != bartorch_finufft_plan(which, 1, d->dim, d->n_modes, s->ntrans, +1, d->eps, d->upsampling, 0, &s->adjoint_plan)) {
 
 		side_free(d, s);
 		return 12;
@@ -587,6 +589,175 @@ static struct nufft_conf_s barts_conf(struct nufft_conf_s conf)
  * The caller decides: `conf.toeplitz` is what `pics --no-toeplitz` and
  * `nufft -t` set, and it carries the memory the function costs.
  */
+/* The mask a compressed point spread function keeps: which grid points the
+ * samples reach.
+ *
+ * BART finds them by spreading the sampling pattern with its own kernel, and
+ * that is the wrong footprint for a function spread with another: what the
+ * mask covers has to be where the function has signal, and the function is
+ * FINUFFT's now.  So the pattern is spread with FINUFFT's kernel instead, at
+ * the tolerance and grid the transforms were planned with.
+ *
+ * `spreadinterponly` is the spreading with nothing after it -- no transform,
+ * no deapodisation -- so what comes back is the kernel's own reach, on
+ * whichever grid it is asked for.  It is asked for the one the mask lives on,
+ * a set of frequencies at a time: the doubled grid decomposes into as many
+ * copies of the image, each carrying the samples shifted by its own fraction
+ * of a cell, and a point any of them reaches is a point the mask keeps.  That
+ * is also what keeps the doubled grid from ever being allocated, which is the
+ * whole reason the decomposition is there.
+ */
+static int spread_mask(struct nufft_data* data, const complex float* traj, long* max_idx)
+{
+	int N = data->N;
+	int ND = N + 1;
+
+	const complex float* pattern = multiplace_read(data->weights, traj);
+
+	if (NULL == pattern)
+		error("bartorch: a compressed point spread function needs a pattern\n");
+
+	int device = bartorch_on_device(traj) ? 1 : 0;
+
+	int dim = 0;
+	int axis[3];
+	int64_t n_modes[3];
+
+	for (int i = 0; i < 3; i++) {
+
+		if (!MD_IS_SET(data->flags, i) || (1 == data->img_dims[i]))
+			continue;
+
+		axis[dim] = i;
+		n_modes[dim] = data->img_dims[i];
+		dim++;
+	}
+
+	if (0 == dim)
+		return -1;
+
+	long factors[N];
+
+	for (int i = 0; i < N; i++)
+		factors[i] = ((data->img_dims[i] > 1) && MD_IS_SET(data->flags, i)) ? 2 : 1;
+
+	long sets = md_calc_size(N, factors);
+
+	long one_dims[ND];
+	long one_strs[ND];
+	long trj_strs[ND];
+	long wgh_strs[ND];
+
+	md_select_dims(ND, ~1UL, one_dims, data->trj_dims);
+	md_calc_strides(ND, one_strs, one_dims, CFL_SIZE);
+	md_calc_strides(ND, trj_strs, data->trj_dims, CFL_SIZE);
+	md_calc_strides(ND, wgh_strs, data->wgh_dims, CFL_SIZE);
+
+	long samples = md_calc_size(ND, one_dims);
+
+	/* One component of the trajectory per transformed axis, in grid samples,
+	 * before the shift of a set turns it into that set's coordinates. */
+	complex float* component = alloc_on(device, ND, one_dims, CFL_SIZE);
+	float* grid_samples[3] = { NULL, NULL, NULL };
+
+	for (int i = 0; i < dim; i++) {
+
+		md_copy2(ND, one_dims, one_strs, component, trj_strs, traj + axis[i], CFL_SIZE);
+
+		grid_samples[i] = alloc_on(device, ND, one_dims, FL_SIZE);
+		md_real(ND, one_dims, grid_samples[i], component);
+	}
+
+	md_free(component);
+
+	complex float* samples_in = alloc_on(device, ND, one_dims, CFL_SIZE);
+	md_copy2(ND, one_dims, one_strs, samples_in, wgh_strs, pattern, CFL_SIZE);
+
+	complex float* reach = alloc_on(device, ND, data->com_dims, CFL_SIZE);
+	complex float* mask = alloc_on(device, ND, data->com_dims, CFL_SIZE);
+	md_clear(ND, data->com_dims, mask, CFL_SIZE);
+
+	float* coord[3] = { NULL, NULL, NULL };
+
+	for (int i = 0; i < dim; i++)
+		coord[i] = alloc_on(device, ND, one_dims, FL_SIZE);
+
+	long com_strs[ND];
+	md_calc_strides(ND, com_strs, data->com_dims, CFL_SIZE);
+
+	int ret = 0;
+
+	for (long set = 0; (0 == ret) && (set < sets); set++) {
+
+		float shift[3];
+		bartorch_psf_shift(3, shift, N, factors, (int)set);
+
+		for (int i = 0; i < dim; i++) {
+
+			int a = axis[i];
+			double scale = 2. * M_PI / (double)data->img_dims[a];
+
+			/* The half sample an odd length carries, as `nufft.c` adds it. */
+			float odd = (float)((data->img_dims[a] / 2.0 - data->img_dims[a] / 2));
+
+			md_smul(ND, one_dims, coord[i], grid_samples[i], (float)scale);
+			md_sadd(ND, one_dims, coord[i], coord[i], (float)((shift[a] + odd) * scale));
+		}
+
+		md_clear(ND, data->com_dims, reach, CFL_SIZE);
+
+		void* plan = NULL;
+
+		ret = bartorch_finufft_plan(device, 1, dim, n_modes, 1, +1,
+				bartorch_finufft_tolerance(), bartorch_finufft_upsampling(), 1, &plan);
+
+		if (0 == ret)
+			ret = bartorch_finufft_setpts(plan, samples, coord[0], coord[1], coord[2]);
+
+		if (0 == ret)
+			ret = bartorch_finufft_exec(plan, samples_in, reach);
+
+		bartorch_finufft_free(plan);
+
+		if (0 != ret)
+			break;
+
+		md_zabs(ND, data->com_dims, reach, reach);
+		md_zmax(ND, data->com_dims, mask, mask, reach);
+	}
+
+	md_free(samples_in);
+	md_free(reach);
+
+	for (int i = 0; i < 3; i++) {
+
+		md_free(grid_samples[i]);
+		md_free(coord[i]);
+	}
+
+	if (0 != ret) {
+
+		md_free(mask);
+		return -1;
+	}
+
+	complex float* mask_cpu = md_alloc(ND, data->com_dims, CFL_SIZE);
+	md_copy(ND, data->com_dims, mask_cpu, mask, CFL_SIZE);
+	md_free(mask);
+
+	long* idx = md_alloc(ND, data->com_dims, sizeof(long));
+	*max_idx = md_compress_mask_to_index(ND, data->com_dims, idx, mask_cpu);
+	md_free(mask_cpu);
+
+	multiplace_free(data->compress);
+	data->compress = multiplace_move_F(ND, data->com_dims, sizeof(long), idx);
+
+	debug_printf(DP_DEBUG1, "Compressing PSF to %.0f%%\n",
+			100. * *max_idx / md_calc_size(ND, data->com_dims));
+
+	return 0;
+}
+
 /* The function BART's Toeplitz normal convolves with, computed here and
  * stored the way the operator wants it.
  *
@@ -615,54 +786,10 @@ static void install_psf(struct nufft_data* data, const complex float* traj)
 
 	if (data->conf.compress_psf) {
 
-		/* Which entries are worth keeping: BART's own mask, from BART's own
-		 * gridder.  `grid2_decomp` is static in `nufft.c`, so this is what it
-		 * does -- half the kernel width on an unoversampled grid, the shift
-		 * of the frequency set, and the half-sample an odd length carries --
-		 * around the `grid2` that file calls.  The mask has to be the kernel's
-		 * footprint rather than anything measured off the function, or the
-		 * entries it drops are not the ones BART drops. */
 		md_select_dims(ND, FFT_FLAGS, data->com_dims, data->img_dims);
 
-		const complex float* pattern = multiplace_read(data->weights, traj);
-
-		if (NULL == pattern)
-			error("bartorch: a compressed point spread function needs a pattern\n");
-
-		complex float* grid = md_alloc_sameplace(ND, data->com_dims, CFL_SIZE, traj);
-		md_clear(ND, data->com_dims, grid, CFL_SIZE);
-
-		long sets = md_calc_size(N, data->factors);
-
-		for (int i = 0; i < sets; i++) {
-
-			struct grid_conf_s gconf = data->grid_conf;
-			gconf.periodic = true;
-			gconf.width /= 2.;
-			gconf.os = 1.;
-
-			bartorch_psf_shift(3, gconf.shift, N, data->factors, i);
-
-			for (int j = 0; j < 3; j++)
-				if (1 < data->factors[j])
-					gconf.shift[j] += (data->com_dims[j] / 2.0 - data->com_dims[j] / 2) / gconf.os;
-
-			grid2(&gconf, ND, data->trj_dims, multiplace_read(data->traj, traj),
-					data->com_dims, grid, data->wgh_dims, pattern);
-		}
-
-		md_zabs(ND, data->com_dims, grid, grid);
-
-		complex float* mask = md_alloc(ND, data->com_dims, CFL_SIZE);
-		md_copy(ND, data->com_dims, mask, grid, CFL_SIZE);
-		md_free(grid);
-
-		long* idx = md_alloc(ND, data->com_dims, sizeof(long));
-		max_idx = md_compress_mask_to_index(ND, data->com_dims, idx, mask);
-		md_free(mask);
-
-		multiplace_free(data->compress);
-		data->compress = multiplace_move_F(ND, data->com_dims, sizeof(long), idx);
+		if (0 != spread_mask(data, traj, &max_idx))
+			error("bartorch: FINUFFT would not spread the pattern for a compressed function\n");
 	}
 
 	multiplace_free(data->psf);
