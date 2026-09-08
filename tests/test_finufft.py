@@ -1124,3 +1124,38 @@ def test_the_mask_is_the_width_and_not_the_upsampling(in_tools, caplog):
 
     assert wide == cheap, (wide, cheap)
     assert narrow < wide, (narrow, wide)
+
+
+@requires_finufft
+def test_the_toeplitz_kernel_is_the_doubled_grid_whatever_the_upsampling(in_tools):
+    """The embedding's grid is twice the image, and the kernel's is not.
+
+    Two things are called an oversampling here and only one of them is the
+    Toeplitz grid: the function is over 2N whatever FINUFFT spreads on
+    underneath, held as 2^d copies of N because that is how `nufft.c` stores
+    it.  The upsampling buys accuracy in the transform that builds it and
+    nothing else, so a looser one has to give the same function to within the
+    tolerance rather than a different-shaped one.
+    """
+    from bartorch.tools import _generated as g
+
+    n = 32
+    traj = bt.traj(x=n, y=48, r=True)
+
+    kernels = {}
+    try:
+        for label, eps, upsampling in (("cheap", 1e-3, 1.25), ("careful", 1e-6, 2.0)):
+            _finufft.use_in_tools(True, tolerance=eps, upsampling=upsampling)
+            kernels[label] = g.psf(traj, oversampled=True)
+    finally:
+        _finufft.use_in_tools(True)
+
+    for label, kernel in kernels.items():
+        assert kernel.numel() == (2 * n) ** 2, (label, tuple(kernel.shape))
+        assert kernel.shape[0] == 4, (label, tuple(kernel.shape))  # 2^d sets
+        assert kernel.shape[-2:] == (n, n), (label, tuple(kernel.shape))
+
+    assert kernels["cheap"].shape == kernels["careful"].shape
+
+    cheap, careful = kernels["cheap"].numpy(), kernels["careful"].numpy()
+    assert np.linalg.norm(cheap - careful) / np.linalg.norm(careful) < 5 * 1e-3

@@ -256,7 +256,12 @@ reconstructions says more about the conditioning than about either mask.
 The oversampling of two the Toeplitz embedding needs is the grid, not the
 kernel: `compute_psf2` asks for an image of 2N and the decomposition rewrites
 that as 2^d grids of N, and FINUFFT's upsampling sizes its own fine grid
-underneath, which is free. So the two can be set apart, and are.
+underneath, which is free. So the two can be set apart, and are. On a 32-grid
+the function comes back as 4 sets of 32x32 -- (2N)^2 points -- at a quarter
+over, at twice, at a tolerance of a hundredth, and from BART; what the
+upsampling changes is how close it is, 8.9e-04 at a thousandth against
+3.6e-03 at a hundredth. This is the same object `torchkbnufft` builds at
+twice its image size whatever its `grid_size` is.
 
 Accuracy is not what says the mask is in the right place: one that keeps the
 wrong points but more of them reconstructs well too. The compression rate is
