@@ -30,14 +30,17 @@ M = NonlinearOperator.from_torch(signal, (2, n, n), (nechoes, n, n))
 F = LinearOperator.fft((nechoes, n, n), axes=(-2, -1))
 A = F @ M
 # Simulate using the analytic signal and an independent Fourier implementation.
-data = torch.fft.fftshift(torch.fft.fft2(
-    torch.fft.ifftshift(signal(truth), dim=(-2, -1)), norm="ortho"
-), dim=(-2, -1))
+data = torch.fft.fftshift(
+    torch.fft.fft2(torch.fft.ifftshift(signal(truth), dim=(-2, -1)), norm="ortho"), dim=(-2, -1)
+)
 x0 = torch.stack([torch.ones(n, n), 0.5 * torch.ones(n, n)]).to(torch.complex64)
 estimate = A.irgnm(data, x0, iterations=12, alpha=1, alpha_min=1e-6, redu=3, cgiter=60)
 foreground = amplitude > 0.1
 assert (estimate[0][foreground] - truth[0][foreground]).abs().max() < 0.05
-print("Relative signal residual:", ((signal(estimate) - signal(truth)).norm() / signal(truth).norm()).item())
+print(
+    "Relative signal residual:",
+    ((signal(estimate) - signal(truth)).norm() / signal(truth).norm()).item(),
+)
 
 # %%
 # A decay rate is not identifiable where amplitude is zero. Mask background

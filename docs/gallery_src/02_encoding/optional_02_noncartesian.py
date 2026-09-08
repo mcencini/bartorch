@@ -29,9 +29,9 @@ samples = A(image)
 grid = torch.arange(n, dtype=torch.float64) - n // 2
 y, x = torch.meshgrid(grid, grid, indexing="ij")
 coords = trajectory.real.to(torch.float64)
-phase = torch.exp(-2j * torch.pi * (
-    coords[..., 0, None, None] * x + coords[..., 1, None, None] * y
-) / n)
+phase = torch.exp(
+    -2j * torch.pi * (coords[..., 0, None, None] * x + coords[..., 1, None, None] * y) / n
+)
 reference = (phase * image[0]).sum(dim=(-2, -1)) / n
 error = (samples.reshape(reference.shape) - reference).norm() / reference.norm()
 assert error < 2e-4

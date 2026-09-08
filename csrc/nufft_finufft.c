@@ -615,8 +615,16 @@ static int psf_shape(int N, long psf_dims[N + 1], const long cim_dims[N],
 
 	if (NULL != basis) {
 
-		psf_dims[6] = bas_dims[6];
-		psf_dims[5] = bas_dims[6];
+		if (conf.upper_triag) {
+
+			psf_dims[6] = bas_dims[6] * (bas_dims[6] + 1) / 2;
+			psf_dims[5] = 1;
+
+		} else {
+
+			psf_dims[6] = bas_dims[6];
+			psf_dims[5] = bas_dims[6];
+		}
 	}
 
 	return ND;
@@ -624,13 +632,18 @@ static int psf_shape(int N, long psf_dims[N + 1], const long cim_dims[N],
 
 /* Whether the normal is one this can build.
  *
- * A compressed or a real point spread function is stored inside the operator
- * in a form `nufft_update_psf` does not write, and the upper-triangular one
- * is a different function; those stay BART's, and BART grids once to make
- * them. */
+ * `nufft_create_normal` takes its function through `nufft_update_psf`, which
+ * writes a whole complex one.  A real point spread function is stored as
+ * floats and a compressed one as the entries that are not zero beside an
+ * index of where they were, and neither is something to hand over that way.
+ * Those two keep BART's operator, and BART grids once to make them.
+ *
+ * Everything else is served, the upper-triangular subspace function included:
+ * `compute_psf2` computes that one too, and the only difference here is the
+ * shape it comes back in. */
 static bool normal_is_ours(struct nufft_conf_s conf)
 {
-	return !conf.compress_psf && !conf.real && !conf.upper_triag && conf.precomp_linphase;
+	return !conf.compress_psf && !conf.real;
 }
 
 /* BART's own normal operator, over a point spread function computed here.

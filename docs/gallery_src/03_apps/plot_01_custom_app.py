@@ -1,6 +1,6 @@
 """
 Build a reconstruction app with a Python callback
-================================================
+=================================================
 
 A fixed phase field is a simple custom encoding component. Wrap it as a BART
 linear operator, compose it with BART's FFT, and solve a regularized inverse
@@ -21,7 +21,8 @@ def make_encoding(shape, phase):
     """Construct a fixed phase modulation followed by Fourier encoding."""
     modulation = torch.exp(1j * phase).to(torch.complex64)
     W = LinearOperator.from_callbacks(
-        shape, shape,
+        shape,
+        shape,
         forward=lambda image: modulation * image,
         adjoint=lambda data: modulation.conj() * data,
     )
@@ -34,9 +35,9 @@ grid = torch.linspace(-1, 1, n)
 phase = 0.8 * grid[:, None] + 0.3 * grid[None, :].square()
 A = make_encoding(tuple(truth.shape), phase)
 # Simulate data independently in PyTorch.
-data = torch.fft.fftshift(torch.fft.fft2(
-    torch.fft.ifftshift(torch.exp(1j * phase) * truth), norm="ortho"
-))
+data = torch.fft.fftshift(
+    torch.fft.fft2(torch.fft.ifftshift(torch.exp(1j * phase) * truth), norm="ortho")
+)
 lambda_ = 0.01
 reconstruction = A.lstsq(data, lambda_=lambda_, maxiter=30, tol=1e-7)
 # This fully sampled unitary model has a closed-form ridge solution.
@@ -49,7 +50,8 @@ print("Relative data residual:", ((A(reconstruction) - data).norm() / data.norm(
 # the application and retain the composed operator for repeated solves.
 fig, axes = plt.subplots(1, 3, figsize=(9, 3), layout="constrained")
 for ax, value, title in zip(
-    axes, [truth.abs(), phase, reconstruction.abs()],
+    axes,
+    [truth.abs(), phase, reconstruction.abs()],
     ["Truth magnitude", "Known phase (rad)", "Reconstruction magnitude"],
 ):
     im = ax.imshow(value.numpy(), cmap="viridis")

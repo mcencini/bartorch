@@ -1,6 +1,6 @@
 """
 Phantom, Fourier transform, and calibration
-==========================================
+===========================================
 
 Use prepackaged tools on tensors, inspect their shapes, and verify a unitary
 Fourier round trip. Requires bartorch, PyTorch, and Matplotlib on CPU.

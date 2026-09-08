@@ -189,10 +189,24 @@ transform underneath is the substitution's like every other.
 
 `nufft_create_normal` asserts that the shape agrees with the linear phases it
 would have built, which is the check that this stayed in step with `nufft.c`.
-A compressed, real or upper-triangular point spread function is stored inside
-the operator in a form `nufft_update_psf` does not write, so those stay BART's
-and are counted with the declines: `operators_built()` returning zero for BART
-is the whole claim, and every route to one of BART's operators increments it.
+
+Every way BART stores that function still works, and two of them still cost a
+gridding. `nufft_create_normal` takes its function through `nufft_update_psf`,
+which writes a whole complex one:
+
+| `--nufft-conf` | the normal | what it costs |
+| --- | --- | --- |
+| (none), `lowmem`, `no-precomp`, `zero-mem` | computed here | nothing |
+| `decomposed-psf` | computed here, a set of frequencies at a time | nothing |
+| `upper-triag-psf` | computed here, half of a Hermitian function | nothing |
+| `real-psf` | BART's, stored as floats | one gridding |
+| `compress-psf` | BART's, the entries that are not zero beside an index | one gridding |
+
+Those last two keep BART's operator and are counted with the declines:
+`operators_built()` returning zero for BART is the whole claim, and every
+route to one of BART's operators increments it.  A compressed function throws
+away what it decides is zero, which moves a reconstruction by about a tenth in
+BART too; that is the mode, not the substitution.
 
 A^H A as one convolution against A^H A as two transforms differs by 1.2e-03 at
 a thousandth and 2.1e-06 at a millionth -- it closes with the tolerance, which

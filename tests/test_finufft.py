@@ -943,3 +943,69 @@ def test_nothing_builds_barts_own_nufft(in_tools):
         _finufft.reset_counters()
         run()
         assert _finufft.operators_built()[1] == 0, (name, _finufft.decline_reason())
+
+
+@requires_finufft
+@pytest.mark.parametrize(
+    "mode,barts",
+    [
+        (None, 0),
+        ("lowmem", 0),
+        ("no-precomp", 0),
+        ("zero-mem", 0),
+        ("decomposed-psf", 0),
+        ("real-psf", 1),
+        ("compress-psf", 1),
+    ],
+)
+def test_every_way_bart_stores_a_point_spread_function_still_works(in_tools, mode, barts):
+    """Nothing was taken away, and two of them still cost a gridding.
+
+    `nufft_create_normal` takes its function through `nufft_update_psf`, which
+    writes a whole complex one, so a real function -- stored as floats -- and
+    a compressed one -- the entries that are not zero, beside an index of
+    where they were -- keep BART's operator and BART's gridder with it.
+    """
+    n, spokes, coils = 32, 48, 2
+    traj = bt.traj(x=n, y=spokes, r=True)
+    img = bt.phantom([n, n], ncoils=coils)
+    ksp = bt.nufft(traj, img)
+    maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
+
+    reference = bt.pics(ksp, maps, t=traj)
+
+    _finufft.reset_counters()
+    kwargs = {} if mode is None else {"nufft_conf": mode}
+    out = bt.pics(ksp, maps, t=traj, **kwargs)
+
+    assert _finufft.operators_built()[1] == barts, _finufft.decline_reason()
+
+    # A compressed function throws away what it decides is zero, and does so
+    # in BART too; the rest reconstruct what the default does.
+    bound = 0.3 if mode == "compress-psf" else 1e-2
+    assert float((out - reference).abs().max() / reference.abs().max()) < bound
+
+
+@requires_finufft
+def test_an_upper_triangular_subspace_function_is_served(in_tools):
+    """Half of a Hermitian function is still one this computes.
+
+    `compute_psf2` takes the flag, so the only difference here is the shape it
+    comes back in -- and `nufft_create_normal` asserts that shape against the
+    linear phases it would have built, which is what checks it.
+    """
+    from bartorch.tools import _generated as g
+
+    n, spokes, frames, coeffs, coils = 16, 5, 4, 2, 2
+    traj, basis = _subspace(n, spokes, frames, coeffs)
+    torch.manual_seed(0)
+    k = torch.randn(frames, 1, coils, spokes, n, 1, dtype=torch.complex64)
+    maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
+
+    whole = g.pics(k, maps, t=traj, B=basis, i=5)
+
+    _finufft.reset_counters()
+    half = g.pics(k, maps, t=traj, B=basis, i=5, nufft_conf="upper-triag-psf")
+
+    assert _finufft.operators_built()[1] == 0, _finufft.decline_reason()
+    torch.testing.assert_close(half, whole, rtol=1e-4, atol=1e-4)

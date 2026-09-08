@@ -1,6 +1,6 @@
 """
 Prewhitening, coil compression, and sensitivity maps
-===================================================
+====================================================
 
 Estimate a whitening transform from noise-only samples, compress the whitened
 coil space, and calibrate in that same space. Requires the base CPU installation.
@@ -30,8 +30,10 @@ def covariance(samples):
 
 
 torch.testing.assert_close(
-    covariance(white_noise), torch.eye(ncoils, dtype=torch.complex64),
-    atol=0.08, rtol=0.08,
+    covariance(white_noise),
+    torch.eye(ncoils, dtype=torch.complex64),
+    atol=0.08,
+    rtol=0.08,
 )
 
 # %%

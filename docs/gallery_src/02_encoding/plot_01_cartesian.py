@@ -30,23 +30,27 @@ A = P @ F @ S
 image = torch.exp(-5 * (x.square() + y.square())).to(torch.complex64)[None]
 measurements = A(image)
 
-reference = torch.fft.fftshift(
-    torch.fft.fft2(torch.fft.ifftshift(maps * image, dim=(-2, -1)), norm="ortho"),
-    dim=(-2, -1),
-) * mask
+reference = (
+    torch.fft.fftshift(
+        torch.fft.fft2(torch.fft.ifftshift(maps * image, dim=(-2, -1)), norm="ortho"),
+        dim=(-2, -1),
+    )
+    * mask
+)
 torch.testing.assert_close(measurements, reference, atol=2e-6, rtol=2e-5)
 probe = torch.randn(*coil_shape, dtype=torch.complex64)
 lhs = torch.vdot(measurements.flatten(), probe.flatten())
 rhs = torch.vdot(image.flatten(), A.adjoint(probe).flatten())
 torch.testing.assert_close(lhs, rhs, atol=2e-5, rtol=2e-5)
-print(f"Complex adjoint error: {abs(lhs-rhs).item():.2e}")
+print(f"Complex adjoint error: {abs(lhs - rhs).item():.2e}")
 
 # %%
 # The adjoint is a backprojection, not generally the inverse. Sampling removes
 # information, so an iterative solve and appropriate prior may be needed.
 fig, axes = plt.subplots(1, 3, figsize=(9, 3), layout="constrained")
 for ax, data, title in zip(
-    axes, [image[0].abs(), mask[0].real, A.adjoint(measurements)[0].abs()],
+    axes,
+    [image[0].abs(), mask[0].real, A.adjoint(measurements)[0].abs()],
     ["Image magnitude", "Sampling mask", "Adjoint magnitude"],
 ):
     ax.imshow(data.numpy(), cmap="gray")

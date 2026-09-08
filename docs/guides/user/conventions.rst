@@ -1,5 +1,5 @@
 Tensors, tools, and operators
-============================
+=============================
 
 Shape and axis conventions
 --------------------------
