@@ -277,8 +277,7 @@ static int linop_nufft_worker(void* p)
 	 * own factor of two is told apart from one who asked for nothing. */
 	conf.os = (a->os > 0.f) ? a->os : 0.;
 
-	if (a->width > 0.f)
-		conf.width = a->width;
+	conf.width = (a->width > 0.f) ? a->width : 0.;
 
 	/* Weights and a subspace basis belong to the operator rather than to
 	 * something chained onto it: the normal is a point spread function over

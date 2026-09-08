@@ -227,10 +227,15 @@ question about magnitudes but about geometry -- which Cartesian frequencies
 the trajectory reaches -- which is what a spreading answers and a threshold
 does not.
 
-The width it spreads with is the one the transform's kernel really covers. A
-kernel of `ns` cells on a grid oversampled by sigma covers `ns/sigma` cells of
-the grid underneath, and that is the footprint the mask needs -- BART says the
-same thing as a width of K/2 at os 1 for a transform of width K at os 2.
+The width it spreads with is the one the transform's kernel really covers.
+`ns` is FINUFFT's name for its kernel width, counted in cells of the fine grid
+it spreads on, and BART's `-w` is the same number for its own kernel. A kernel
+of `ns` cells on a grid oversampled by sigma covers `ns/sigma` cells of the
+grid underneath, and that is the footprint the mask needs -- BART says the
+same thing as a width of K/2 at os 1 for a transform of width K at os 2. The
+mask is planned with the tolerance and upsampling the operator was planned
+with, not with the library's defaults, or a caller who set `-o` or `-w` would
+get a mask for a kernel that is not the one they asked for.
 FINUFFT refuses an upsampling of one and takes no width, so the width is asked
 for as the tolerance that buys it: `fi_width` and `fi_tolerance_for` are that
 formula both ways round, checked against what the library plans for every
@@ -268,6 +273,14 @@ millionth at an upsampling of two and a thousandth at a quarter over both buy
 a width of four, and both keep 88 per cent of that grid. A width of three
 keeps 86 and a width of six keeps 91, so it is monotone in the width, as
 nested masks have to be. A displaced one would not land there.
+
+Only one pair can be compared against BART in a process. BART's Kaiser-Bessel
+table is a global that the first gridding fixes, and the first gridding is the
+self-check, at BART's own width of six -- a Toeplitz normal asked for any
+other width afterwards dies on `Kaiser-Bessel window initialized with
+different beta`. A transform on its own takes whatever width it is given,
+because that one is FINUFFT's alone; it is borrowing BART's operator for the
+normal that pins it.
 
 `zero-mem` is the exception that is not one: it is a parenthesised flag in
 BART's own help, and its Toeplitz normal does not reconstruct in BART either
