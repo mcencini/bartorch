@@ -12,6 +12,7 @@ C library with a small C ABI; Python reaches it through ctypes.
 | `csrc/include/bartorch.h` | The C ABI. The only header a host sees. Plain C: no complex types, no variable-length arrays. |
 | `csrc/api.c` | Command execution under BART's error catcher, log capture, threads. |
 | `csrc/memcfl.c` | The in-memory array registry, replacing `bart/src/misc/memcfl.c`. Arrays BART creates come from the host's allocator callback. |
+| `csrc/sense.c` | The SENSE operators, walking their coils a slab at a time. |
 | `csrc/fft.cpp` | The FFTW guru interface BART plans with, executed by MKL where the process has it. |
 | `csrc/backend.[ch]`, `ref_blas.c`, `cblas_shim.c`, `lapacke_shim.c` | CBLAS and LAPACKE as BART calls them, forwarded to a table of Fortran-ABI routines with reference BLAS as the fallback. |
 | `csrc/ops.c` | Operators: host callbacks as BART linops and nlops, BART's own operators as handles, least squares and Gauss-Newton. |

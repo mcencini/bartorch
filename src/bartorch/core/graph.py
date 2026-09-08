@@ -150,6 +150,30 @@ def set_copy_inputs(copy: bool) -> None:
     _copy_inputs = bool(copy)
 
 
+def set_coil_batch(n: int) -> None:
+    """How many coils a SENSE operator holds at once.
+
+    The coils are independent until the sum that ends an adjoint, so the
+    operator walks them a slab at a time and what is resident is a slab
+    rather than the whole bank.  Behind a non-Cartesian transform that also
+    shrinks the grid its Toeplitz normal convolves on, which is the largest
+    thing a three-dimensional reconstruction allocates.
+
+    One coil at a time is the smallest and the default.  More is faster --
+    FINUFFT batches a plan across transforms, and a slab of one gives that up
+    -- and proportionally larger.  Zero leaves BART its own operator over
+    every coil at once, which is the fastest and the largest of all.
+    """
+    _ensure_ready()
+    library().bartorch_sense_set_coil_batch(int(n))
+
+
+def coil_batch() -> int:
+    """Coils a SENSE operator holds at once; zero means all of them."""
+    _ensure_ready()
+    return int(library().bartorch_sense_coil_batch())
+
+
 def set_num_threads(n: int) -> None:
     """Set the number of threads BART, its FFT and FINUFFT use.
 

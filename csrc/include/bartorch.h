@@ -102,6 +102,20 @@ BARTORCH_API int bartorch_backend_has_fallback(int index);
  * is not transforming.  Give this the DFTI entry points, from the same
  * library the BLAS table was filled from.
  */
+/*
+ * SENSE.  A coil-by-coil loop inside the operator keeps a slab of coils
+ * resident rather than the whole bank, and shrinks the doubled grid the
+ * Toeplitz normal convolves on by the same factor.  The slab is how many
+ * coils at once: larger is faster and larger, zero leaves BART its own
+ * operator over every coil at once.
+ */
+BARTORCH_API void bartorch_sense_set_coil_batch(int coils);
+BARTORCH_API int bartorch_sense_coil_batch(void);
+/* Operators built since the last reset: 0 with the coil loop, 1 as BART's
+ * own chain because the arrangement could not be sliced. */
+BARTORCH_API long bartorch_sense_counter(int which);
+BARTORCH_API void bartorch_sense_reset_counters(void);
+
 BARTORCH_API int bartorch_fft_set(const char* symbol, void* fn);
 BARTORCH_API int bartorch_fft_usable(void);
 /* Plans built since the last reset: 0 by MKL, 1 by the built-in transform. */

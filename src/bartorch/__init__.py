@@ -17,9 +17,11 @@ from importlib.metadata import PackageNotFoundError, version
 from bartorch import cuda, finufft
 from bartorch.core.graph import (
     BartError,
+    coil_batch,
     dispatch,
     get_debug_level,
     run_command,
+    set_coil_batch,
     set_copy_inputs,
     set_debug_level,
     set_num_threads,
@@ -65,6 +67,8 @@ __all__ = [
     "dispatch",
     "get_debug_level",
     "run_command",
+    "coil_batch",
+    "set_coil_batch",
     "set_copy_inputs",
     "set_debug_level",
     "set_num_threads",
