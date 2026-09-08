@@ -232,8 +232,32 @@ The width it spreads with is the one the transform's kernel really covers.
 it spreads on, and BART's `-w` is the same number for its own kernel. A kernel
 of `ns` cells on a grid oversampled by sigma covers `ns/sigma` cells of the
 grid underneath, and that is the footprint the mask needs -- BART says the
-same thing as a width of K/2 at os 1 for a transform of width K at os 2. The
-mask is planned with the tolerance and upsampling the operator was planned
+same thing as a width of K/2 at os 1 for a transform of width K at os 2. That
+arithmetic is this library's own; what `ns` is, is FINUFFT's.
+
+So `ns` is asked for rather than worked out. FINUFFT sizes its kernel from the
+tolerance and the upsampling by a formula in its own `src/common/kernel.cpp`,
+which it exports only as a C++ symbol over an internal struct, and which
+cuFINUFFT does not export at all: a copy of it here would be a copy that goes
+stale quietly. `fi_measure_width` spreads one sample with `spreadinterponly`
+and counts what lands, which is the kernel, and the two libraries are asked
+separately because nothing says they must agree. Going the other way -- the
+tolerance that buys a width, which `-w` needs and so does the mask -- is a
+bisection over the same question, with the published formula as a starting
+guess and never as the answer.
+
+The probe is a grid of 32 per transformed axis, made and freed per question,
+and it has to carry the real number of dimensions: `ns` depends on them.
+At a thousandth on a grid a quarter over it is 5 in one dimension and in two,
+and 6 in three -- which is this library's own default, so a probe in one
+dimension would answer the wrong question for a volume.
+
+Both happen when an operator is built and never while one is applied: a
+reconstruction of ten conjugate-gradient iterations and one of sixty make the
+same eight FINUFFT plans, sixteen with a compressed function and eleven with a
+width asked for.
+
+The mask is planned with the tolerance and upsampling the operator was planned
 with, not with the library's defaults, or a caller who set `-o` or `-w` would
 get a mask for a kernel that is not the one they asked for.
 FINUFFT refuses an upsampling of one and takes no width, so the width is asked

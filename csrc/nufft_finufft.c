@@ -592,38 +592,124 @@ static struct nufft_conf_s barts_conf(struct nufft_conf_s conf)
  * The caller decides: `conf.toeplitz` is what `pics --no-toeplitz` and
  * `nufft -t` set, and it carries the memory the function costs.
  */
-/* FINUFFT sizes its kernel from the tolerance and the grid it spreads on:
+/* What FINUFFT's kernel spans, asked of the library rather than worked out.
  *
- *     ns = ceil( ln(tolfac / eps) / (pi sqrt(1 - 1/sigma)) + 1 )
- *
- * with tolfac = 0.18 * 1.4^(dim-1), from FINUFFT's src/common/kernel.cpp.
- * Both directions are wanted: the width a tolerance buys, and the tolerance
- * that buys a width.  Checked against what the library actually plans, for
- * every tolerance from a tenth to a millionth at both upsamplings.
+ * It sizes the kernel from the tolerance and the upsampling by a formula of
+ * its own, and a copy of that formula here would be a copy that goes stale
+ * quietly: it lives in FINUFFT's `src/common/kernel.cpp`, the only thing
+ * exported for it is a C++ symbol over an internal struct, and cuFINUFFT
+ * exports nothing at all.  So the library is asked instead.  Spreading one
+ * sample with nothing after it -- no transform, no deapodisation -- puts the
+ * kernel on the grid, and what came back is as wide as the kernel is.  The
+ * two libraries are asked separately, because nothing says they must agree.
  */
-static double fi_tolfac(int dim)
+static int fi_measure_width(int device, int dim, double eps, double upsampling)
+{
+	enum { PROBE = 32 };	/* wider than any kernel FINUFFT will use */
+
+	int64_t n_modes[3] = { PROBE, PROBE, PROBE };
+	long grid_dims[3] = { 1, 1, 1 };
+	long one[1] = { 1 };
+
+	for (int i = 0; i < dim; i++)
+		grid_dims[i] = PROBE;
+
+	void* plan = NULL;
+
+	if (0 != bartorch_finufft_plan(device, 1, dim, n_modes, 1, +1, eps, upsampling, 1, &plan))
+		return -1;
+
+	float* coord[3] = { NULL, NULL, NULL };
+	complex float* sample = alloc_on(device, 1, one, CFL_SIZE);
+	complex float* grid = alloc_on(device, 3, grid_dims, CFL_SIZE);
+
+	for (int i = 0; i < dim; i++) {
+
+		coord[i] = alloc_on(device, 1, one, FL_SIZE);
+		md_clear(1, one, coord[i], FL_SIZE);
+	}
+
+	md_zfill(1, one, sample, 1.);
+	md_clear(3, grid_dims, grid, CFL_SIZE);
+
+	int ret = bartorch_finufft_setpts(plan, 1, coord[0], coord[1], coord[2]);
+
+	if (0 == ret)
+		ret = bartorch_finufft_exec(plan, sample, grid);
+
+	bartorch_finufft_free(plan);
+	md_free(sample);
+
+	for (int i = 0; i < 3; i++)
+		md_free(coord[i]);
+
+	if (0 != ret) {
+
+		md_free(grid);
+		return -1;
+	}
+
+	complex float* host = md_alloc(3, grid_dims, CFL_SIZE);
+	md_copy(3, grid_dims, host, grid, CFL_SIZE);
+	md_free(grid);
+
+	/* Along one axis through the middle, where the sample was put. */
+	long stride = 1;
+	long centre = 0;
+
+	for (int i = 1; i < dim; i++) {
+
+		stride *= PROBE;
+		centre += (PROBE / 2) * stride;
+	}
+
+	int width = 0;
+
+	for (int i = 0; i < PROBE; i++)
+		if (0. != cabsf(host[centre + i]))
+			width++;
+
+	md_free(host);
+
+	return (0 == width) ? -1 : width;
+}
+
+/* The tolerance that buys a width, by asking for widths until one of them is
+ * it.  The width falls as the tolerance rises, so this is a bisection; the
+ * formula FINUFFT publishes is a good enough starting bracket to make it a
+ * short one, and is never the answer. */
+static double fi_tolerance_for(int device, int dim, double width, double upsampling)
 {
 	double tolfac = 0.18;
 
 	for (int i = 1; i < dim; i++)
 		tolfac *= 1.4;
 
-	return tolfac;
-}
+	double guess = tolfac * exp(-(width - 1.) * M_PI * sqrt(1. - 1. / upsampling));
 
-static double fi_decay(double upsampling)
-{
-	return M_PI * sqrt(1. - 1. / upsampling);
-}
+	if (width == (double)fi_measure_width(device, dim, guess, upsampling))
+		return guess;
 
-static int fi_width(int dim, double eps, double upsampling)
-{
-	return (int)ceil(log(fi_tolfac(dim) / eps) / fi_decay(upsampling) + 1.);
-}
+	double lo = (double)FLT_EPSILON;	/* the widest kernel it will make */
+	double hi = 0.5;			/* the narrowest */
 
-static double fi_tolerance_for(int dim, double width, double upsampling)
-{
-	return fi_tolfac(dim) * exp(-(width - 1.) * fi_decay(upsampling));
+	for (int i = 0; i < 40; i++) {
+
+		double mid = sqrt(lo * hi);
+		int got = fi_measure_width(device, dim, mid, upsampling);
+
+		if (got < 0)
+			return guess;
+
+		if (got > width)
+			lo = mid;
+		else if (got < width)
+			hi = mid;
+		else
+			return mid;
+	}
+
+	return guess;
 }
 
 /* The mask a compressed point spread function keeps: which grid points the
@@ -741,12 +827,17 @@ static int spread_mask(struct nufft_data* data, const complex float* traj, long*
 	if (upsampling <= 1.)
 		upsampling = 2.;
 
-	double width = ceil((double)fi_width(dim, bartorch_finufft_tolerance(), upsampling) / upsampling);
+	int spread = fi_measure_width(device, dim, bartorch_finufft_tolerance(), upsampling);
+
+	if (spread < 0)
+		return -1;
+
+	double width = ceil((double)spread / upsampling);
 
 	if (width < 2.)
 		width = 2.;
 
-	double mask_eps = fi_tolerance_for(dim, width, upsampling);
+	double mask_eps = fi_tolerance_for(device, dim, width, upsampling);
 
 	debug_printf(DP_DEBUG2, "PSF mask spread at width %g, tolerance %g\n", width, mask_eps);
 
@@ -1105,7 +1196,7 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 		if (0. == upsampling)
 			upsampling = 2.;
 
-		eps = fi_tolerance_for(dim, conf.width, upsampling);
+		eps = fi_tolerance_for(device, dim, conf.width, upsampling);
 
 		/* Past a certain width the tolerance it stands for is below what a
 		 * single-precision transform can reach, and FINUFFT refuses one it

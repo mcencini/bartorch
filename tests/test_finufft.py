@@ -612,7 +612,11 @@ def test_a_kernel_width_asked_for_buys_the_accuracy_that_width_buys(in_tools):
         errors[width] = np.linalg.norm(got - ref) / nref
 
     assert errors[2.0] > errors[3.0] > errors[4.0], errors
-    assert errors[4.0] < 1e-3, errors
+    # A width of four at a quarter over is about two thousandths.  It used to
+    # read better than that because the tolerance a width was asked for landed
+    # exactly on the boundary between two widths, and rounding handed back a
+    # kernel one wider than the one requested.
+    assert errors[4.0] < 5e-3, errors
 
 
 @requires_finufft
@@ -748,7 +752,7 @@ def test_oversampling_and_width_compose(in_tools):
 
     assert narrow_on_a_half > wide_on_a_half, "a narrower kernel is a looser transform"
     assert wide_on_a_quarter > wide_on_a_half, "the same width on a smaller grid is coarser"
-    assert wide_on_a_half < 5e-4
+    assert wide_on_a_half < 2e-3
 
 
 @requires_finufft
