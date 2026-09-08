@@ -201,13 +201,16 @@ way of storing it still works and costs no gridding:
 `operators_built()` returning zero for BART is the whole claim, and every
 route to one of BART's operators increments it.
 
-The mask a compressed function keeps is the one difference taken deliberately.
-BART grids the sampling pattern to find which points to keep, which is the
-footprint of its own kernel; the function itself says the same thing and is
-already computed, so the mask is where it stands above what the transform can
-tell from zero. That is a better mask than the one it replaces: a compressed
-reconstruction is 6.8e-03 from the uncompressed one here, against 1.4e-01 for
-BART's own.
+The mask a compressed function keeps is BART's, from BART's gridder. It has
+to be: the mask is the footprint of the kernel the entries were spread with,
+and anything measured off the function instead drops different entries than
+BART drops. `grid2_decomp` is static in `nufft.c`, so `install_psf` does what
+it does -- half the kernel width on an unoversampled grid, the shift of the
+frequency set, the half-sample an odd length carries -- around the `grid2`
+that file calls. That is the one BART gridding left, and it grids the
+sampling pattern rather than any data. Compression costs about what it costs
+in BART: 1.2e-01 from the uncompressed reconstruction here against 1.4e-01
+for BART's own.
 
 `zero-mem` is the exception that is not one: it is a parenthesised flag in
 BART's own help, and its Toeplitz normal does not reconstruct in BART either

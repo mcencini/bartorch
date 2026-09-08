@@ -222,7 +222,10 @@ static void psf_factors(int N, unsigned long flags, long factors[N], const long 
 		factors[i] = (MD_IS_SET(flags, i)) ? 2 : 1;
 }
 
-static void psf_shift(int NS, float shift[NS], int N, const long factors[N], int idx)
+/* The shift of one set of frequencies, as `nufft.c` computes it.  Shared
+ * because the mask a compressed function keeps is gridded at the same shifts
+ * the function itself was decomposed at. */
+void bartorch_psf_shift(int NS, float shift[NS], int N, const long factors[N], int idx)
 {
 	assert(NS <= N);
 
@@ -288,7 +291,7 @@ complex float* compute_psf2_decomposed(int N, const long psf_dims[N + 1], unsign
 	for (int k = 0; k < trj_dims2[N]; k++) {
 
 		float shift[3];
-		psf_shift(3, shift, ND, factors, k);
+		bartorch_psf_shift(3, shift, ND, factors, k);
 
 		for (int j = 0; j < trj_dims2[0]; j++)
 			tp[k][j] = (1 != psf_dims2[j] ? 0.5 * psf_dims2[j] : 0.) + shift[j];

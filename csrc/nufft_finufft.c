@@ -33,6 +33,8 @@
 #include "noncart/nufft.h"
 #include "noncart/nufft_priv.h"
 
+#include "noncart/grid.h"
+
 #include "num/compress.h"
 #include "num/multiplace.h"
 
@@ -46,6 +48,9 @@ extern void bart_nufft_update_psf(const struct linop_s* nufft, int ND, const lon
 extern void bart_nufft_update_psf2(const struct linop_s* nufft, int ND, const long psf_dims[ND], const long psf_strs[ND], const complex float* psf);
 extern void bart_nufft_update_traj(const struct linop_s* nufft, int N, const long trj_dims[N], const complex float* traj, const long wgh_dims[N], const complex float* weights, const long bas_dims[N], const complex float* basis);
 extern const struct operator_s* bart_nufft_precond_create(const struct linop_s* nufft_op);
+
+/* Provided by psf.c, which computes the function this convolves with. */
+extern void bartorch_psf_shift(int NS, float shift[NS], int N, const long factors[N], int idx);
 
 /* Provided by finufft.c, which owns the FINUFFT entry points. */
 extern int bartorch_finufft_plan(int device, int type, int dim, const int64_t n_modes[3],
@@ -610,38 +615,51 @@ static void install_psf(struct nufft_data* data, const complex float* traj)
 
 	if (data->conf.compress_psf) {
 
-		/* Which entries are worth keeping.  BART grids the sampling pattern
-		 * to find them, which is the footprint of its own kernel; the
-		 * function itself says the same thing and is already here, so the
-		 * mask is where it stands above what the transform can tell from
-		 * zero. */
+		/* Which entries are worth keeping: BART's own mask, from BART's own
+		 * gridder.  `grid2_decomp` is static in `nufft.c`, so this is what it
+		 * does -- half the kernel width on an unoversampled grid, the shift
+		 * of the frequency set, and the half-sample an odd length carries --
+		 * around the `grid2` that file calls.  The mask has to be the kernel's
+		 * footprint rather than anything measured off the function, or the
+		 * entries it drops are not the ones BART drops. */
 		md_select_dims(ND, FFT_FLAGS, data->com_dims, data->img_dims);
 
-		complex float* mask = md_alloc_sameplace(ND, data->com_dims, CFL_SIZE, psf);
-		md_clear(ND, data->com_dims, mask, CFL_SIZE);
+		const complex float* pattern = multiplace_read(data->weights, traj);
 
-		long psf_strs[ND];
-		long com_strs[ND];
-		md_calc_strides(ND, psf_strs, data->psf_dims, CFL_SIZE);
-		md_calc_strides(ND, com_strs, data->com_dims, CFL_SIZE);
+		if (NULL == pattern)
+			error("bartorch: a compressed point spread function needs a pattern\n");
 
-		complex float* magnitude = md_alloc_sameplace(ND, data->psf_dims, CFL_SIZE, psf);
-		md_zabs(ND, data->psf_dims, magnitude, psf);
-		md_zmax2(ND, data->psf_dims, com_strs, mask, com_strs, mask, psf_strs, magnitude);
+		complex float* grid = md_alloc_sameplace(ND, data->com_dims, CFL_SIZE, traj);
+		md_clear(ND, data->com_dims, grid, CFL_SIZE);
 
-		float peak = md_znorm(ND, data->com_dims, mask);
-		md_free(magnitude);
+		long sets = md_calc_size(N, data->factors);
 
-		md_zsgreatequal(ND, data->com_dims, mask, mask,
-				(float)(bartorch_finufft_tolerance() * peak));
+		for (int i = 0; i < sets; i++) {
 
-		complex float* mask_cpu = md_alloc(ND, data->com_dims, CFL_SIZE);
-		md_copy(ND, data->com_dims, mask_cpu, mask, CFL_SIZE);
-		md_free(mask);
+			struct grid_conf_s gconf = data->grid_conf;
+			gconf.periodic = true;
+			gconf.width /= 2.;
+			gconf.os = 1.;
+
+			bartorch_psf_shift(3, gconf.shift, N, data->factors, i);
+
+			for (int j = 0; j < 3; j++)
+				if (1 < data->factors[j])
+					gconf.shift[j] += (data->com_dims[j] / 2.0 - data->com_dims[j] / 2) / gconf.os;
+
+			grid2(&gconf, ND, data->trj_dims, multiplace_read(data->traj, traj),
+					data->com_dims, grid, data->wgh_dims, pattern);
+		}
+
+		md_zabs(ND, data->com_dims, grid, grid);
+
+		complex float* mask = md_alloc(ND, data->com_dims, CFL_SIZE);
+		md_copy(ND, data->com_dims, mask, grid, CFL_SIZE);
+		md_free(grid);
 
 		long* idx = md_alloc(ND, data->com_dims, sizeof(long));
-		max_idx = md_compress_mask_to_index(ND, data->com_dims, idx, mask_cpu);
-		md_free(mask_cpu);
+		max_idx = md_compress_mask_to_index(ND, data->com_dims, idx, mask);
+		md_free(mask);
 
 		multiplace_free(data->compress);
 		data->compress = multiplace_move_F(ND, data->com_dims, sizeof(long), idx);
