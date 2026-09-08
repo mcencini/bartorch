@@ -589,6 +589,40 @@ static struct nufft_conf_s barts_conf(struct nufft_conf_s conf)
  * The caller decides: `conf.toeplitz` is what `pics --no-toeplitz` and
  * `nufft -t` set, and it carries the memory the function costs.
  */
+/* FINUFFT sizes its kernel from the tolerance and the grid it spreads on:
+ *
+ *     ns = ceil( ln(tolfac / eps) / (pi sqrt(1 - 1/sigma)) + 1 )
+ *
+ * with tolfac = 0.18 * 1.4^(dim-1), from FINUFFT's src/common/kernel.cpp.
+ * Both directions are wanted: the width a tolerance buys, and the tolerance
+ * that buys a width.  Checked against what the library actually plans, for
+ * every tolerance from a tenth to a millionth at both upsamplings.
+ */
+static double fi_tolfac(int dim)
+{
+	double tolfac = 0.18;
+
+	for (int i = 1; i < dim; i++)
+		tolfac *= 1.4;
+
+	return tolfac;
+}
+
+static double fi_decay(double upsampling)
+{
+	return M_PI * sqrt(1. - 1. / upsampling);
+}
+
+static int fi_width(int dim, double eps, double upsampling)
+{
+	return (int)ceil(log(fi_tolfac(dim) / eps) / fi_decay(upsampling) + 1.);
+}
+
+static double fi_tolerance_for(int dim, double width, double upsampling)
+{
+	return fi_tolfac(dim) * exp(-(width - 1.) * fi_decay(upsampling));
+}
+
 /* The mask a compressed point spread function keeps: which grid points the
  * samples reach.
  *
@@ -685,6 +719,29 @@ static int spread_mask(struct nufft_data* data, const complex float* traj, long*
 	long com_strs[ND];
 	md_calc_strides(ND, com_strs, data->com_dims, CFL_SIZE);
 
+	/* The width to spread the mask with.
+	 *
+	 * A kernel of ns cells on a grid oversampled by sigma covers ns/sigma
+	 * cells of the grid underneath it, and that is the footprint the mask
+	 * has to have -- BART says the same thing as a width of K/2 at os 1 for
+	 * a transform of width K at os 2.  FINUFFT will not be asked for an
+	 * upsampling of one, and takes no width, so the width is asked for as
+	 * the tolerance that buys it.
+	 */
+	double upsampling = bartorch_finufft_upsampling();
+
+	if (upsampling <= 1.)
+		upsampling = 2.;
+
+	double width = ceil((double)fi_width(dim, bartorch_finufft_tolerance(), upsampling) / upsampling);
+
+	if (width < 2.)
+		width = 2.;
+
+	double mask_eps = fi_tolerance_for(dim, width, upsampling);
+
+	debug_printf(DP_DEBUG2, "PSF mask spread at width %g, tolerance %g\n", width, mask_eps);
+
 	int ret = 0;
 
 	for (long set = 0; (0 == ret) && (set < sets); set++) {
@@ -709,7 +766,7 @@ static int spread_mask(struct nufft_data* data, const complex float* traj, long*
 		void* plan = NULL;
 
 		ret = bartorch_finufft_plan(device, 1, dim, n_modes, 1, +1,
-				bartorch_finufft_tolerance(), bartorch_finufft_upsampling(), 1, &plan);
+				mask_eps, upsampling, 1, &plan);
 
 		if (0 == ret)
 			ret = bartorch_finufft_setpts(plan, samples, coord[0], coord[1], coord[2]);
@@ -1026,12 +1083,7 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 		if (0. == upsampling)
 			upsampling = 2.;
 
-		double tolfac = 0.18;
-
-		for (int i = 1; i < dim; i++)
-			tolfac *= 1.4;
-
-		eps = tolfac * exp(-((double)conf.width - 1.) * M_PI * sqrt(1. - 1. / upsampling));
+		eps = fi_tolerance_for(dim, conf.width, upsampling);
 
 		/* Past a certain width the tolerance it stands for is below what a
 		 * single-precision transform can reach, and FINUFFT refuses one it

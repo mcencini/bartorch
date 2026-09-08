@@ -227,13 +227,26 @@ question about magnitudes but about geometry -- which Cartesian frequencies
 the trajectory reaches -- which is what a spreading answers and a threshold
 does not.
 
-The mask that comes out is looser than BART's and costs an order less. On
-that dataset it keeps 95 per cent of the grid against BART's 89, because
-FINUFFT's kernel is as many cells wide on the image grid as it is on the fine
-one, where the footprint a set actually needs is narrower than that; and a
-compressed reconstruction is 1.4e-02 from an uncompressed one against BART's
-1.4e-01. Conservative in the direction that matters: it keeps what the
-function put there.
+The width it spreads with is the one the transform's kernel really covers. A
+kernel of `ns` cells on a grid oversampled by sigma covers `ns/sigma` cells of
+the grid underneath, and that is the footprint the mask needs -- BART says the
+same thing as a width of K/2 at os 1 for a transform of width K at os 2.
+FINUFFT refuses an upsampling of one and takes no width, so the width is asked
+for as the tolerance that buys it: `fi_width` and `fi_tolerance_for` are that
+formula both ways round, checked against what the library plans for every
+tolerance from a tenth to a millionth at both upsamplings.
+
+What it costs against BART's mask, in norm, from compressing:
+
+| | 64^2, 64 spokes | 64^2, 128 | 128^2, 128 | 128^2, 256 |
+| --- | --- | --- | --- | --- |
+| this mask | 1.1e-02 | 5.1e-03 | 2.8e-03 | 1.4e-03 |
+| BART's | 2.5e-02 | 1.5e-02 | 5.8e-03 | 3.3e-03 |
+
+Two to three times less, everywhere the problem is posed well enough for the
+comparison to mean anything. Far below that -- sixteen spokes across a 128
+grid -- conjugate gradients wander and the difference between two
+reconstructions says more about the conditioning than about either mask.
 
 `zero-mem` is the exception that is not one: it is a parenthesised flag in
 BART's own help, and its Toeplitz normal does not reconstruct in BART either
