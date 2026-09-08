@@ -12,6 +12,8 @@
 #include "misc/version.h"
 #include "num/init.h"
 
+#include "noncart/nufft.h"
+
 #include "include/bartorch.h"
 #include "backend.h"
 
@@ -171,6 +173,14 @@ int bartorch_command(int argc, const char* const* argv, char* out, size_t outlen
 
 	for (int i = 0; i < argc; i++)
 		av[i + 1] = strdup(argv[i]);
+
+	/* The NUFFT options are a global the command line writes into, and this
+	 * process runs more than one command, so an `-o` in one would otherwise
+	 * still be in force for the next.  Zero is not a grid anybody can ask
+	 * for, which is what makes it mean "nobody asked": FINUFFT's own default
+	 * then stands, and BART gets its two back before it ever sees the conf. */
+	nufft_conf_options = nufft_conf_defaults;
+	nufft_conf_options.os = 0.;
 
 	bool have_out = (NULL != out) && (outlen > 0);
 

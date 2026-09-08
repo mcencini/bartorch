@@ -539,6 +539,16 @@ static void count(int which)
 
 #define DECLINE(code) do { decline_reason = (code); return NULL; } while (0)
 
+/* BART's own conf: the oversampling it would have had if we had not taken
+ * zero to mean that nobody asked for one. */
+static struct nufft_conf_s barts_conf(struct nufft_conf_s conf)
+{
+	if (0. == conf.os)
+		conf.os = nufft_conf_defaults.os;
+
+	return conf;
+}
+
 /* BART's own operator over the same trajectory, for its normal alone.
  *
  * A^H A is a convolution, so BART answers it with one multiply against a
@@ -564,7 +574,7 @@ static const struct linop_s* toeplitz_for(int N, const long ksp_dims[N], const l
 	}
 
 	const struct linop_s* op = bart_nufft_create2(N, ksp_dims, cim_dims, traj_dims, traj,
-			wgh_dims, weights, (NULL != basis) ? bas_dims : NULL, basis, conf);
+			wgh_dims, weights, (NULL != basis) ? bas_dims : NULL, basis, barts_conf(conf));
 
 #pragma omp atomic
 	toeplitz_counters[TP_PSF]++;
@@ -707,7 +717,7 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 	 * itself leaves the choice to whatever `enable` was told, because a
 	 * quarter over costs a third of the memory for a wider kernel and that
 	 * is the cheaper half of the trade here. */
-	double upsampling = (2. == conf.os) ? bartorch_finufft_upsampling() : conf.os;
+	double upsampling = (0. == conf.os) ? bartorch_finufft_upsampling() : conf.os;
 
 	/* BART's `-w` and FINUFFT's ns are the same count of grid points, and
 	 * FINUFFT has no field to be told one: it sizes ns from the tolerance,
@@ -892,7 +902,7 @@ struct linop_s* nufft_create2(int N, const long ksp_dims[N], const long cim_dims
 
 	count(CNT_BART);
 
-	return bart_nufft_create2(N, ksp_dims, cim_dims, traj_dims, traj, wgh_dims, weights, bas_dims, basis, conf);
+	return bart_nufft_create2(N, ksp_dims, cim_dims, traj_dims, traj, wgh_dims, weights, bas_dims, basis, barts_conf(conf));
 }
 
 struct linop_s* nufft_create(int N, const long ksp_dims[N], const long cim_dims[N],

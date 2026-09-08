@@ -264,6 +264,37 @@ def _bart_dims(shape: tuple[int, ...]) -> tuple[int, ctypes.Array]:
 # same tool on the host.  Everything else is given host memory.
 _ON_DEVICE = frozenset({"estdims", "fft", "ifft", "nufft", "pics", "rss"})
 
+# Tools that calibrate before a reconstruction is attempted, at a resolution
+# where the textbook grid costs nothing.
+#
+# The default transform is the cheap one, because what a reconstruction is
+# held to is the data rather than the transform.  Coil sensitivities are not
+# that: `nlinv` and its relatives fit them from a low-resolution image that
+# everything after them is built on, and a grid twice over at FINUFFT's own
+# tolerance is a few megabytes there.  So they get it.
+_CALIBRATES = frozenset({"ncalib", "nlinv", "rtnlinv"})
+
+_CAREFUL_TOLERANCE = 1e-6
+_CAREFUL_UPSAMPLING = 2.0
+
+
+@contextlib.contextmanager
+def _transform_for(op_name: str):
+    """The tolerance and grid this tool's transforms are planned with."""
+    if op_name not in _CALIBRATES:
+        yield
+        return
+
+    lib = library()
+    was = (lib.bartorch_finufft_tolerance(), lib.bartorch_finufft_upsampling())
+    lib.bartorch_finufft_set_tolerance(_CAREFUL_TOLERANCE)
+    lib.bartorch_finufft_set_upsampling(_CAREFUL_UPSAMPLING)
+    try:
+        yield
+    finally:
+        lib.bartorch_finufft_set_tolerance(was[0])
+        lib.bartorch_finufft_set_upsampling(was[1])
+
 
 def _for_bart(x: torch.Tensor, op_name: str) -> torch.Tensor:
     """The tensor a tool is given: the caller's own, or a private copy.
@@ -375,7 +406,7 @@ def dispatch(
     want_output = output_dims is not False
     min_ndim = len(output_dims) if isinstance(output_dims, (list, tuple)) else 1
 
-    with _lock, _on_device(device):
+    with _lock, _on_device(device), _transform_for(op_name):
         # What BART allocates for itself comes from torch, on the memory the
         # tool was actually given: an output on the other side of the bus from
         # its input is a segmentation fault, not a slower answer.

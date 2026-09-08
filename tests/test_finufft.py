@@ -735,3 +735,78 @@ def test_oversampling_and_width_compose(in_tools):
     assert narrow_on_a_half > wide_on_a_half, "a narrower kernel is a looser transform"
     assert wide_on_a_quarter > wide_on_a_half, "the same width on a smaller grid is coarser"
     assert wide_on_a_half < 5e-4
+
+
+@requires_finufft
+def test_the_grid_a_caller_asks_for_is_the_grid_they_get(in_tools):
+    """Two is a factor like any other, not a way of saying nothing.
+
+    ``nufft_conf_s`` carries two as BART's own default, so a conf that says
+    two says nothing about whether anybody asked for it.  Zero is what says
+    nobody did, and BART gets its two back before it sees the conf.
+    """
+    n, spokes = 64, 48
+    traj = bt.traj(x=n, y=spokes, r=True)
+    img = bt.phantom([n, n]).reshape(1, n, n)
+    ref = _dft(traj, img, n)
+    nref = np.linalg.norm(ref)
+
+    def error(**kw):
+        A = LinearOperator.nufft(traj, (1, n, n), toeplitz=False, **kw)
+        return np.linalg.norm(A(img).numpy().reshape(ref.shape) - ref) / nref
+
+    assert _finufft.upsampling() == pytest.approx(1.25), "a quarter over by default"
+    default = error()
+    assert error(oversampling=1.25) == pytest.approx(default), "the default, said out loud"
+
+    # The textbook grid is finer than the default, and asking for it works.
+    assert error(oversampling=2.0) < default, "asking for two has to give two"
+
+
+@requires_finufft
+def test_a_tools_oversampling_does_not_outlive_the_command(in_tools):
+    """``nufft_conf_options`` is a global, and this process runs more than one
+    command through it."""
+    n, spokes = 64, 48
+    traj = bt.traj(x=n, y=spokes, r=True)
+    img = bt.phantom([n, n]).reshape(1, n, n)
+    ref = _dft(traj, img, n)
+
+    def error(**kw):
+        y = bt.nufft(traj, img, **kw)
+        return np.linalg.norm(y.numpy().reshape(ref.shape) - ref) / np.linalg.norm(ref)
+
+    before = error()
+    assert error(o=2.0) < before, "`-o 2` is two"
+    assert error() == pytest.approx(before), "and is gone by the next command"
+
+
+@requires_finufft
+def test_a_tool_that_calibrates_gets_the_careful_transform(in_tools):
+    """Coil sensitivities are what everything after them is built on.
+
+    ``nlinv`` fits them at a resolution where the textbook grid costs a few
+    megabytes, so it gets FINUFFT's own tolerance on it rather than the cheap
+    default the rest of the library runs at.
+    """
+    from bartorch.core import graph
+
+    assert "nlinv" in graph._CALIBRATES
+
+    n, spokes, coils = 32, 32, 2
+    traj = bt.traj(x=n, y=spokes, r=True)
+    ksp = bt.nufft(traj, bt.phantom([n, n], ncoils=coils))
+
+    careful = bt.nlinv(ksp, t=traj, iter_=4)
+
+    was = graph._CALIBRATES
+    graph._CALIBRATES = frozenset()
+    try:
+        cheap = bt.nlinv(ksp, t=traj, iter_=4)
+    finally:
+        graph._CALIBRATES = was
+
+    assert float((careful - cheap).abs().max()) > 0.0, "the careful transform changed nothing"
+    # And the library is left as it was found.
+    assert _finufft.tolerance() == pytest.approx(1e-3)
+    assert _finufft.upsampling() == pytest.approx(1.25)

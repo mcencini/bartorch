@@ -365,6 +365,15 @@ decides for an operator -- 34 MB against nothing on that dataset -- and
 nothing at all for a tool, because BART's `main` clears the cache when a
 command ends.
 
+The default transform is a thousandth on a grid a quarter over, because a
+reconstruction is held to its data rather than to its transform. Two
+exceptions: a caller who names an upsampling gets it -- `nufft_conf_s` carries
+two as BART's own default, so zero is what says nobody asked, and BART gets
+its two back before it sees the conf -- and the tools that calibrate before a
+reconstruction is attempted (`nlinv`, `rtnlinv`, `ncalib`, in `_CALIBRATES`)
+run at FINUFFT's own tolerance on the textbook grid, which costs a few
+megabytes at the resolution they fit sensitivities at.
+
 Every BART entry point that builds a NUFFT is served: `nufft` forward,
 adjoint, inverse and Toeplitz, `pics` with and without a pattern, `sqpics`,
 `nlinv`, `rtnlinv`, `moba`, `ncalib` and `LinearOperator.nufft`, on the host

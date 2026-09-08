@@ -273,8 +273,9 @@ static int linop_nufft_worker(void* p)
 	struct nufft_conf_s conf = nufft_conf_defaults;
 	conf.toeplitz = (0 != a->toeplitz);
 
-	if (a->os > 0.f)
-		conf.os = a->os;
+	/* Zero is what says nobody asked, so that a caller who asks for BART's
+	 * own factor of two is told apart from one who asked for nothing. */
+	conf.os = (a->os > 0.f) ? a->os : 0.;
 
 	if (a->width > 0.f)
 		conf.width = a->width;
