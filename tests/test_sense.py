@@ -13,6 +13,7 @@ import torch
 import bartorch
 import bartorch.tools as bt
 from bartorch._lib import library
+from bartorch.ops import LinearOperator
 
 
 @pytest.fixture
@@ -103,3 +104,87 @@ def test_the_setting_reports_itself(restore_batch):
     assert bartorch.coil_batch() == 3
     bartorch.set_coil_batch(0)
     assert bartorch.coil_batch() == 0
+
+
+# --- sensitivities held as kernels ------------------------------------------
+
+
+def _smooth_bank(n=32, coils=4, size=8, seed=0):
+    """A bank that is band-limited by construction, and its kernels."""
+    torch.manual_seed(seed)
+    kernels = torch.randn(coils, size, size, dtype=torch.complex64)
+    return kernels, bartorch.kernels_to_maps(kernels, (n, n))
+
+
+def test_kernels_and_maps_are_the_same_thing_from_either_side():
+    """Padding a cropped unitary spectrum back on to its own grid is a mask.
+
+    So a bank that is band-limited to the kernel survives the round trip
+    exactly, which is what says the two conventions -- where the centre is,
+    and how the transform is normalised -- agree.
+    """
+    kernels, maps = _smooth_bank()
+    again = bartorch.maps_to_kernels(maps, 8)
+    torch.testing.assert_close(again, kernels, rtol=1e-5, atol=1e-5)
+
+
+def test_an_odd_kernel_is_centred_where_the_transform_puts_it():
+    """``md_resize_center`` centres at ``dim / 2``, so the offset between two
+    sizes is the difference of their halves, not half their difference."""
+    torch.manual_seed(0)
+    kernels = torch.randn(4, 7, 7, dtype=torch.complex64)
+    maps = bartorch.kernels_to_maps(kernels, (32, 32))
+    torch.testing.assert_close(bartorch.maps_to_kernels(maps, 7), kernels, rtol=1e-5, atol=1e-5)
+
+
+def test_a_kernel_bank_applies_as_the_maps_it_stands_for():
+    """The operator inflates a slab at a time; that has to be the same
+    operator as the one over the whole bank."""
+    n, coils = 32, 4
+    kernels, maps = _smooth_bank(n=n, coils=coils)
+    x = bt.phantom([n, n]).reshape(1, n, n)
+
+    dense = LinearOperator.sense(maps, (coils, n, n))
+    compact = LinearOperator.sense(kernels, (coils, n, n), kernels=True)
+
+    assert dense.ishape == compact.ishape
+    assert dense.oshape == compact.oshape
+    torch.testing.assert_close(compact(x), dense(x), rtol=1e-4, atol=1e-5)
+    torch.testing.assert_close(
+        compact.adjoint(dense(x)), dense.adjoint(dense(x)), rtol=1e-4, atol=1e-5
+    )
+
+
+def test_a_kernel_bank_applies_off_the_grid_too():
+    n, coils = 32, 4
+    kernels, maps = _smooth_bank(n=n, coils=coils)
+    traj = bt.traj(x=n, y=48, r=True)
+    x = bt.phantom([n, n]).reshape(1, n, n)
+
+    dense = LinearOperator.sense(maps, (coils, n, n), traj=traj)
+    compact = LinearOperator.sense(kernels, (coils, n, n), kernels=True, traj=traj)
+
+    torch.testing.assert_close(compact(x), dense(x), rtol=1e-3, atol=1e-4)
+
+
+def test_the_operator_is_the_sensitivities_and_the_transform():
+    """Held against the tools, which are not this operator."""
+    n, coils = 32, 4
+    torch.manual_seed(0)
+    maps = torch.randn(coils, n, n, dtype=torch.complex64)
+    x = bt.phantom([n, n]).reshape(1, n, n)
+    coil_images = (x * maps).reshape(coils, 1, n, n)
+
+    grid = LinearOperator.sense(maps, (coils, n, n))
+    torch.testing.assert_close(
+        grid(x).reshape(coils, 1, n, n),
+        bt.fft(coil_images, axes=(-2, -1), unitary=True),
+        rtol=1e-4,
+        atol=1e-5,
+    )
+
+    traj = bt.traj(x=n, y=48, r=True)
+    off = LinearOperator.sense(maps, (coils, n, n), traj=traj)
+    torch.testing.assert_close(
+        off(x).reshape(coils, 48, n, 1), bt.nufft(traj, coil_images), rtol=1e-4, atol=1e-5
+    )

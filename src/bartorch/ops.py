@@ -314,6 +314,97 @@ class LinearOperator:
         keep = tuple(x for x in (t, w, b) if x is not None)
         return cls._create(ptr, image_shape, tuple(kspace_shape), keep)
 
+    @classmethod
+    def sense(
+        cls,
+        sensitivities: torch.Tensor,
+        image_shape: Shape,
+        traj: torch.Tensor | None = None,
+        kspace_shape: Shape | None = None,
+        kernels: bool = False,
+        toeplitz: bool = True,
+    ) -> LinearOperator:
+        """Sensitivities and a transform, over one slab of coils at a time.
+
+        The coils are independent until the sum that ends the adjoint, so this
+        applies a slab of sensitivities, transforms that slab and sums it in.
+        What is resident is a slab rather than the whole bank, and the
+        transform is built for a slab, so the grid its Toeplitz normal
+        convolves on shrinks with it.  ``bartorch.set_coil_batch`` is how many
+        coils a slab holds.
+
+        Parameters
+        ----------
+        sensitivities : tensor
+            Coil sensitivities of shape ``(coils, *image_shape[1:])``, or the
+            k-space kernels they band-limit to when ``kernels`` is set.
+        image_shape : tuple of int
+            Coil-image shape, C order, for instance ``(coils, y, x)``.
+        traj : tensor, optional
+            Trajectory in grid units; without one this is the Cartesian
+            operator and the transform is the centred unitary FFT, which is
+            ``bartorch.tools.fft(..., unitary=True)``.
+        kspace_shape : tuple of int, optional
+            Sample shape; by default the trajectory's, or the image's on a
+            grid.
+        kernels : bool
+            Read ``sensitivities`` as kernels: the centre of each map's
+            spectrum, which is all a smooth map carries.  A slab is padded
+            back on to the image grid and transformed when it is needed, so a
+            bank that would not fit is never held.  What the operator applies
+            is then the maps band-limited to the kernel, which
+            :func:`bartorch.maps_to_kernels` reports the error of.
+        toeplitz : bool
+            Apply the normal through the Toeplitz embedding.
+        """
+        _ensure_ready()
+        image_shape = tuple(image_shape)
+        if len(image_shape) < 3:
+            raise ValueError("image_shape is (coils, *spatial), for instance (coils, y, x)")
+
+        # BART reads the coils off a dimension of their own, which sits after
+        # the three spatial ones, so a two-dimensional problem carries the
+        # third as a singleton.  The caller need not write it out.
+        coils, spatial = image_shape[0], image_shape[1:]
+        if len(spatial) == 2:
+            spatial = (1, *spatial)
+
+        s = _as_operand(sensitivities, tuple(sensitivities.shape), "sensitivities")
+        if s.shape[0] != coils:
+            raise ValueError(f"{s.shape[0]} sensitivities for {coils} coils")
+        sens_spatial = tuple(s.shape[1:])
+        if len(sens_spatial) == 2:
+            sens_spatial = (1, *sens_spatial)
+            s = s.reshape(coils, *sens_spatial)
+        t = None if traj is None else _as_operand(traj, tuple(traj.shape), "traj")
+
+        max_shape = (coils, *spatial)
+
+        if kspace_shape is None:
+            if t is None:
+                kspace_shape = max_shape
+            else:
+                # BART lays non-Cartesian samples out with the read axis a
+                # singleton and the coils where they always are, so the coil
+                # axis lines up with the sensitivities rather than landing on
+                # the one that carries sets of maps.
+                kspace_shape = (coils, *tuple(t.shape)[:-1], 1)
+        kspace_shape = tuple(kspace_shape)
+
+        with _lock, _on_device(s.device):
+            ptr = library().bartorch_linop_sense(
+                _dims(max_shape),
+                _dims(kspace_shape),
+                _dims((coils, *sens_spatial)),
+                s.data_ptr(),
+                int(kernels),
+                None if t is None else _dims(tuple(t.shape)),
+                None if t is None else t.data_ptr(),
+                int(toeplitz),
+            )
+        keep = tuple(x for x in (s, t) if x is not None)
+        return cls._create(ptr, spatial, kspace_shape, keep)
+
     # --- algebra --------------------------------------------------------
 
     def __matmul__(self, other: LinearOperator) -> LinearOperator:

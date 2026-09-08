@@ -223,6 +223,17 @@ def _bind(lib: ctypes.CDLL) -> ctypes.CDLL:
     lib.bartorch_finufft_set_upsampling.argtypes = [c.c_double]
     lib.bartorch_finufft_upsampling.restype = c.c_double
     lib.bartorch_finufft_upsampling.argtypes = []
+    lib.bartorch_linop_sense.restype = c.c_void_p
+    lib.bartorch_linop_sense.argtypes = [
+        c.POINTER(c.c_long),
+        c.POINTER(c.c_long),
+        c.POINTER(c.c_long),
+        c.c_void_p,
+        c.c_int,
+        c.POINTER(c.c_long),
+        c.c_void_p,
+        c.c_int,
+    ]
     lib.bartorch_sense_set_coil_batch.restype = None
     lib.bartorch_sense_set_coil_batch.argtypes = [c.c_int]
     lib.bartorch_sense_coil_batch.restype = c.c_int

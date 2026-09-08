@@ -150,6 +150,79 @@ def set_copy_inputs(copy: bool) -> None:
     _copy_inputs = bool(copy)
 
 
+def _resize_centre(x, spatial):
+    """Crop or zero-pad the trailing axes about the centre the FFT uses.
+
+    ``md_resize_center`` puts the centre at ``dim / 2``, so the offset between
+    two sizes is the difference of their halves -- which is not the same as
+    half their difference when one of them is odd.
+    """
+    import torch
+
+    spatial = tuple(spatial)
+    out = x
+    for axis, want in zip(range(-len(spatial), 0), spatial, strict=True):
+        have = out.shape[axis]
+        if have == want:
+            continue
+        offset = abs(want // 2 - have // 2)
+        if want < have:
+            out = out.narrow(axis, offset, want)
+        else:
+            shape = list(out.shape)
+            shape[axis] = want
+            padded = torch.zeros(shape, dtype=out.dtype, device=out.device)
+            padded.narrow(axis, offset, have).copy_(out)
+            out = padded
+    return out
+
+
+def maps_to_kernels(maps, size):
+    """The centre of each sensitivity's spectrum, which is all a smooth map carries.
+
+    A bank of maps is one image per coil; the kernels are a few dozen samples
+    across, so a bank that would not fit becomes one that costs nothing.  What
+    is lost is everything above the kernel's own band, which for sensitivities
+    from a calibration is close to nothing -- and the loss is measurable, by
+    inflating the kernels again and comparing.
+
+    Parameters
+    ----------
+    maps : tensor
+        Sensitivities, coils first: ``(coils, *spatial)``.
+    size : int or tuple of int
+        The kernel's spatial size, per axis or the same for all.
+
+    Returns
+    -------
+    tensor
+        Kernels of shape ``(coils, *size)``.
+    """
+    import bartorch.tools as bt
+
+    spatial = tuple(maps.shape[1:])
+    size = (size,) * len(spatial) if isinstance(size, int) else tuple(size)
+    if len(size) != len(spatial):
+        raise ValueError(f"kernel size {size} does not match the map's {spatial} spatial axes")
+
+    axes = tuple(range(-len(spatial), 0))
+    spectrum = bt.fft(maps, axes=axes, unitary=True)
+    return _resize_centre(spectrum, size)
+
+
+def kernels_to_maps(kernels, spatial):
+    """The maps a kernel bank stands for: padded back on to the grid and transformed.
+
+    This is what the SENSE operator does to one slab at a time; doing it here
+    is how the approximation is checked against the maps the kernels came from.
+    """
+    import bartorch.tools as bt
+
+    spatial = tuple(spatial)
+    axes = tuple(range(-len(spatial), 0))
+    return bt.fft(_resize_centre(kernels, spatial), axes=axes, unitary=True, inverse=True)
+
+
 def set_coil_batch(n: int) -> None:
     """How many coils a SENSE operator holds at once.
 

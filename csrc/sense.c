@@ -100,6 +100,7 @@ struct sense_s {
 	long out_dims[DIMS];
 	long img_dims[DIMS];
 
+	long map_dims[DIMS];
 	long cim_strs[DIMS];
 	long out_strs[DIMS];
 	long img_strs[DIMS];
@@ -118,6 +119,17 @@ struct sense_s {
 	const complex float* maps;
 	complex float* owned;
 
+	/* Or the sensitivities as k-space kernels: the centre of their
+	 * spectrum, which is all a smooth map carries.  A slab is inflated
+	 * into a buffer of its own at the top of each iteration and nothing
+	 * the size of the whole bank is ever resident.  Padding a cropped
+	 * unitary spectrum back to the grid it was taken on needs no scaling,
+	 * so what comes back is the map band-limited and nothing else. */
+	const complex float* kernels;
+	long kern_dims[DIMS];
+	long kern_strs[DIMS];
+	long kern_slab_offset;
+
 	/* The transform for one slab: a Fourier transform on a grid, a NUFFT
 	 * off one. */
 	const struct linop_s* slab;
@@ -132,18 +144,67 @@ static long slab_at(long stride, long coil)
 	return coil * stride / (long)CFL_SIZE;
 }
 
+/* The sensitivities this slab needs.
+ *
+ * Held densely they are already there and are read where they lie.  Held as
+ * kernels they are made here: the slab's kernels are laid out, padded back on
+ * to the image grid and transformed, which is the map they were taken from
+ * with everything above the kernel's own band removed. */
+static const complex float* slab_sens(const struct sense_s* d, long coil, complex float* scratch)
+{
+	if (NULL == d->kernels)
+		return d->maps + slab_at(d->map_slab_offset, coil);
+
+	long kdims[DIMS];
+	md_copy_dims(DIMS, kdims, d->kern_dims);
+	kdims[COIL_DIM] = d->batch;
+
+	long mdims[DIMS];
+	md_copy_dims(DIMS, mdims, d->map_dims);
+	mdims[COIL_DIM] = d->batch;
+
+	long kstrs[DIMS];
+	md_calc_strides(DIMS, kstrs, kdims, CFL_SIZE);
+
+	complex float* k = md_alloc_sameplace(DIMS, kdims, CFL_SIZE, scratch);
+
+	md_copy2(DIMS, kdims, kstrs, k, d->kern_strs,
+			d->kernels + slab_at(d->kern_slab_offset, coil), CFL_SIZE);
+
+	md_resize_center(DIMS, mdims, scratch, kdims, k, CFL_SIZE);
+	md_free(k);
+
+	ifftuc(DIMS, mdims, FFT_FLAGS, scratch, scratch);
+
+	return scratch;
+}
+
+/* A slab's worth of sensitivities, when they have to be made. */
+static complex float* sens_scratch(const struct sense_s* d, const void* ref)
+{
+	if (NULL == d->kernels)
+		return NULL;
+
+	long mdims[DIMS];
+	md_copy_dims(DIMS, mdims, d->map_dims);
+	mdims[COIL_DIM] = d->batch;
+
+	return md_alloc_sameplace(DIMS, mdims, CFL_SIZE, ref);
+}
+
 static void sense_forward(const linop_data_t* _d, complex float* dst, const complex float* src)
 {
 	const auto d = CAST_DOWN(sense_s, _d);
 
 	complex float* cim = md_alloc_sameplace(DIMS, d->cim_dims, CFL_SIZE, dst);
 	complex float* out = md_alloc_sameplace(DIMS, d->out_dims, CFL_SIZE, dst);
+	complex float* sens = sens_scratch(d, dst);
 
 	for (long c = 0; c < d->coils; c += d->batch) {
 
 		md_ztenmul2(DIMS, d->slab_dims, d->cim_strs, cim,
 				d->img_strs, src,
-				d->map_strs, d->maps + slab_at(d->map_slab_offset, c));
+				d->map_strs, slab_sens(d, c, sens));
 
 		linop_forward(d->slab, DIMS, d->out_dims, out, DIMS, d->cim_dims, cim);
 
@@ -151,6 +212,7 @@ static void sense_forward(const linop_data_t* _d, complex float* dst, const comp
 				d->out_strs, out, CFL_SIZE);
 	}
 
+	md_free(sens);
 	md_free(out);
 	md_free(cim);
 }
@@ -161,6 +223,7 @@ static void sense_adjoint(const linop_data_t* _d, complex float* dst, const comp
 
 	complex float* cim = md_alloc_sameplace(DIMS, d->cim_dims, CFL_SIZE, dst);
 	complex float* out = md_alloc_sameplace(DIMS, d->out_dims, CFL_SIZE, dst);
+	complex float* sens = sens_scratch(d, dst);
 
 	md_clear(DIMS, d->img_dims, dst, CFL_SIZE);
 
@@ -173,9 +236,10 @@ static void sense_adjoint(const linop_data_t* _d, complex float* dst, const comp
 
 		md_zfmacc2(DIMS, d->slab_dims, d->img_strs, dst,
 				d->cim_strs, cim,
-				d->map_strs, d->maps + slab_at(d->map_slab_offset, c));
+				d->map_strs, slab_sens(d, c, sens));
 	}
 
+	md_free(sens);
 	md_free(out);
 	md_free(cim);
 }
@@ -189,12 +253,13 @@ static void sense_normal(const linop_data_t* _d, complex float* dst, const compl
 
 	complex float* cim = md_alloc_sameplace(DIMS, d->cim_dims, CFL_SIZE, dst);
 	complex float* nrm = md_alloc_sameplace(DIMS, d->cim_dims, CFL_SIZE, dst);
+	complex float* sens = sens_scratch(d, dst);
 
 	md_clear(DIMS, d->img_dims, dst, CFL_SIZE);
 
 	for (long c = 0; c < d->coils; c += d->batch) {
 
-		const complex float* map = d->maps + slab_at(d->map_slab_offset, c);
+		const complex float* map = slab_sens(d, c, sens);
 
 		md_ztenmul2(DIMS, d->slab_dims, d->cim_strs, cim, d->img_strs, src, d->map_strs, map);
 
@@ -203,6 +268,7 @@ static void sense_normal(const linop_data_t* _d, complex float* dst, const compl
 		md_zfmacc2(DIMS, d->slab_dims, d->img_strs, dst, d->cim_strs, nrm, d->map_strs, map);
 	}
 
+	md_free(sens);
 	md_free(nrm);
 	md_free(cim);
 }
@@ -251,7 +317,11 @@ static struct sense_s* sense_slabs(const long max_dims[DIMS], const long map_dim
 	d->batch = MIN((long)coil_batch, d->coils);
 	d->maps = NULL;
 	d->owned = NULL;
+	d->kernels = NULL;
 	d->slab = NULL;
+	d->kern_slab_offset = 0;
+
+	md_copy_dims(DIMS, d->map_dims, map_dims);
 
 	md_copy_dims(DIMS, d->slab_dims, max_dims);
 	d->slab_dims[COIL_DIM] = d->batch;
@@ -381,6 +451,62 @@ const struct linop_s* sense_nc_init(const long max_dims[DIMS], const long map_di
 	 * spread function has no coil axis. */
 	if (NULL != fft_opp)
 		*fft_opp = linop_clone(d->slab);
+
+	return sense_operator(d);
+}
+
+
+/* A SENSE operator built here rather than by BART, from sensitivities held
+ * either way.
+ *
+ * This is what a caller reaches when the bank itself is what will not fit:
+ * kernels are a few kilobytes a coil against an image apiece, and the loop
+ * inflates only the slab it is about to use.  BART's own tools hand over
+ * dense maps and get the same operator over them.
+ */
+const struct linop_s* bartorch_sense_operator(const long max_dims[DIMS], const long sens_dims[DIMS],
+		const complex float* sens, int kernels, const long ksp_dims[DIMS],
+		const long traj_dims[DIMS], const complex float* traj, const struct nufft_conf_s* conf)
+{
+	long map_dims[DIMS];
+	md_select_dims(DIMS, FFT_FLAGS | COIL_FLAG | MAPS_FLAG, map_dims, max_dims);
+
+	struct sense_s* d = sense_slabs(max_dims, map_dims, ksp_dims, 0UL);
+
+	if (0 != kernels) {
+
+		d->kernels = sens;
+		md_copy_dims(DIMS, d->kern_dims, sens_dims);
+		md_calc_strides(DIMS, d->kern_strs, sens_dims, CFL_SIZE);
+		d->kern_slab_offset = d->kern_strs[COIL_DIM];
+
+		/* What a slab of inflated maps looks like, which is what the
+		 * contraction reads rather than a window on to a whole bank. */
+		long slab_map_dims[DIMS];
+		md_copy_dims(DIMS, slab_map_dims, map_dims);
+		slab_map_dims[COIL_DIM] = d->batch;
+		md_calc_strides(DIMS, d->map_strs, slab_map_dims, CFL_SIZE);
+		d->map_slab_offset = 0;
+
+	} else {
+
+		d->maps = sens;
+	}
+
+	long slab_ksp_dims[DIMS];
+	md_copy_dims(DIMS, slab_ksp_dims, ksp_dims);
+	slab_ksp_dims[COIL_DIM] = d->batch;
+
+	/* Centred, which is what `bartorch.tools.fft` is and so what a caller
+	 * who chains this against one will expect; BART's own SENSE operator
+	 * folds the same centring into the sensitivities instead. */
+	if (NULL == traj)
+		d->slab = linop_fftc_create(DIMS, slab_ksp_dims, FFT_FLAGS);
+	else
+		d->slab = nufft_create2(DIMS, slab_ksp_dims, d->cim_dims, traj_dims, traj,
+				NULL, NULL, NULL, NULL, *conf);
+
+	sense_output_from(d);
 
 	return sense_operator(d);
 }

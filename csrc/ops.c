@@ -303,6 +303,43 @@ bartorch_linop* bartorch_linop_nufft(int N, const long* ksp_dims, const long* ci
 	return (0 == guarded(linop_nufft_worker, &a)) ? a.result : NULL;
 }
 
+/* Sensitivities, either as maps or as the kernels they band-limit to. */
+extern const struct linop_s* bartorch_sense_operator(const long max_dims[DIMS], const long sens_dims[DIMS],
+		const _Complex float* sens, int kernels, const long ksp_dims[DIMS],
+		const long traj_dims[DIMS], const _Complex float* traj, const struct nufft_conf_s* conf);
+
+struct linop_sense_args {
+
+	const long* max_dims; const long* ksp_dims;
+	const long* sens_dims; const void* sens; int kernels;
+	const long* traj_dims; const void* traj;
+	int toeplitz;
+	bartorch_linop* result;
+};
+
+static int linop_sense_worker(void* p)
+{
+	struct linop_sense_args* a = p;
+
+	struct nufft_conf_s conf = nufft_conf_defaults;
+	conf.toeplitz = (0 != a->toeplitz);
+	conf.os = 0.;
+	conf.width = 0.;
+
+	a->result = wrap_linop(bartorch_sense_operator(a->max_dims, a->sens_dims, a->sens, a->kernels,
+				a->ksp_dims, a->traj_dims, a->traj, &conf));
+	return 0;
+}
+
+bartorch_linop* bartorch_linop_sense(const long* max_dims, const long* ksp_dims,
+		const long* sens_dims, const void* sens, int kernels,
+		const long* traj_dims, const void* traj, int toeplitz)
+{
+	struct linop_sense_args a = { max_dims, ksp_dims, sens_dims, sens, kernels,
+		traj_dims, traj, toeplitz, NULL };
+	return (0 == guarded(linop_sense_worker, &a)) ? a.result : NULL;
+}
+
 struct linop_pair_args { const bartorch_linop* a; const bartorch_linop* b; bartorch_linop* result; };
 
 static int linop_chain_worker(void* p)
