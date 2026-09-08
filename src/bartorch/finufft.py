@@ -1,40 +1,30 @@
-"""FINUFFT underneath BART.
+"""The NUFFT underneath BART.
 
 BART builds every non-Cartesian transform through ``nufft_create``, and that
-is the seam: with FINUFFT in place, ``nufft``, ``pics``, ``nlinv`` and ``moba``
-compute their forward and adjoint transforms with FINUFFT's type 2 and type 1
-rather than with BART's Kaiser-Bessel gridder and oversampled FFT.  A
-trajectory that varies across frames is part of that: the frames join the
-point set rather than splitting it, so one plan serves them, and a subspace
-basis contracts its coefficients away on the k-space side of the pair.  What
-FINUFFT cannot serve -- weights that do not lie along k-space, an image that
-varies along a sample axis -- is BART's own operator still, and
-:func:`decline_reason` says which.
+is the seam: ``nufft``, ``pics``, ``nlinv`` and ``moba`` compute their forward
+and adjoint transforms with FINUFFT's type 2 and type 1 rather than with
+BART's Kaiser-Bessel gridder and oversampled FFT, and so does
+:meth:`bartorch.ops.LinearOperator.nufft`.  A trajectory that varies across
+frames is part of that -- the frames join the point set rather than splitting
+it, so one plan serves them -- and a subspace basis contracts its coefficients
+away on the k-space side of the pair.
 
-    >>> import bartorch
-    >>> bartorch.finufft.enable()
-    True
-    >>> image = bartorch.tools.pics(kspace, maps, t=traj)
-
-:func:`enable` raises rather than returning quietly when ``finufft`` is
-missing, or when ``cufinufft`` is missing on a machine whose card BART would
-otherwise use, and a transform FINUFFT cannot serve is an error rather than a
-slower reconstruction nobody asked for.  ``enable(fallback=True)`` gives BART's
-own operator back.
+None of that has to be asked for.  The substitution puts itself in place the
+first time anything needs it, and what it cannot serve is an error naming the
+reason rather than a quieter answer from BART: an order further from the
+transform and several times slower, with nothing to say so.
+:func:`decline_reason` is that reason, and ``operators_built()`` and
+``normals_built()`` count what was built.
 
 A transform is served by whichever library the data is on: FINUFFT on the
 host, cuFINUFFT on a card, which :func:`used_on_device` reports.
-
-:meth:`bartorch.ops.LinearOperator.finufft` is the same transform as an
-operator, for use outside BART's tools.
+:func:`configure` sets what they are planned with.
 """
 
 from bartorch._finufft import (
     available,
     cuda_available,
     decline_reason,
-    disable,
-    fallback_allowed,
     normals_built,
     operators_built,
     reset_counters,
@@ -42,17 +32,15 @@ from bartorch._finufft import (
     upsampling,
     used_on_device,
 )
-from bartorch._finufft import use_in_tools as enable
+from bartorch._finufft import use_in_tools as configure
 from bartorch._finufft import used_in_tools as enabled
 
 __all__ = [
     "available",
+    "configure",
     "cuda_available",
     "decline_reason",
-    "disable",
-    "enable",
     "enabled",
-    "fallback_allowed",
     "normals_built",
     "operators_built",
     "reset_counters",

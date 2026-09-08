@@ -111,7 +111,11 @@ def test_every_tool_kept_on_the_card_answers_there_and_agrees_with_the_host():
     """
     from bartorch.core.graph import _ON_DEVICE
 
-    n, coils, spokes = 32, 2, 24
+    # Enough spokes that `pics` is not solving an ill-posed problem: at a
+    # thousandth, conjugate gradients over a heavily undersampled radial set
+    # amplify the difference between two libraries into tens of percent, which
+    # says nothing about whether the tool ran on the card.
+    n, coils, spokes = 32, 2, 64
     torch.manual_seed(0)
     img = bt.phantom([n, n], ncoils=coils)
     ksp_cart = bt.fft(img, axes=(-2, -1))
@@ -119,15 +123,14 @@ def test_every_tool_kept_on_the_card_answers_there_and_agrees_with_the_host():
     ksp_rad = bt.nufft(traj, img)
     maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
 
-    # BART's own gridder does not give the same answer on a card as on the
-    # host -- a `pics` over the same data differs by a few percent whatever
-    # the size -- so what a solve over it is held to is looser than what a
-    # transform is.  With FINUFFT underneath the same comparison is 5e-3.
+    # The two sides are FINUFFT and cuFINUFFT, each promised the tolerance
+    # the plans were made with, so what they can differ from each other by is
+    # about that.  A solve compounds it and is held looser still.
     cases = {
         "fft": (lambda d: bt.fft(ksp_cart.to(d), axes=(-2, -1)), 1e-5),
         "ifft": (lambda d: bt.ifft(ksp_cart.to(d), axes=(-2, -1)), 1e-5),
         "rss": (lambda d: bt.rss(img.to(d), axes=0), 1e-5),
-        "nufft": (lambda d: bt.nufft(traj.to(d), img.to(d)), 1e-4),
+        "nufft": (lambda d: bt.nufft(traj.to(d), img.to(d)), 5 * bartorch.finufft.tolerance()),
         "pics": (lambda d: bt.pics(ksp_rad.to(d), maps.to(d), t=traj.to(d)), 1e-1),
         "estdims": (lambda d: bt.estdims(traj.to(d)), 0.0),
     }

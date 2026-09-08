@@ -92,8 +92,7 @@ pip install "bartorch[cufinufft]"    # device
 import bartorch
 import bartorch.tools as bt
 
-bartorch.finufft.enable()
-image = bt.pics(kspace, maps, t=traj)
+image = bt.pics(kspace, maps, t=traj)   # FINUFFT underneath, unasked
 ```
 
 BART builds every non-Cartesian transform through `nufft_create`, and that is
@@ -121,19 +120,25 @@ what it means on both.
 A trajectory that varies across frames and a subspace basis go through it too:
 the frames join the point set rather than splitting it, so one plan over the
 raveled trajectory serves every coefficient, and the basis contracts them away
-on the k-space side of the transform pair. Weights that do not lie along
-k-space stay with BART's own operator; `bartorch.finufft.decline_reason()`
-says which, and `operators_built()` and `normals_built()` count what each side
-built.
+on the k-space side of the transform pair.
+
+Nothing asks for any of it. The substitution puts itself in place the first
+time anything needs one, and what it cannot serve -- weights that do not lie
+along k-space, images that vary along an axis the trajectory varies on -- is an
+error naming the reason rather than a quieter answer from BART's own gridder:
+an order further from the transform and several times slower, with nothing to
+say so. `bartorch.finufft.decline_reason()` is that reason, and
+`operators_built()` and `normals_built()` count what was built.
 
 ```python
-N = LinearOperator.finufft(traj, (8, 256, 256))
+A = LinearOperator.nufft(traj, (8, 1, 256, 256), (8, 401, 256, 1), basis=basis)
 ```
 
 is the same transform as an operator, for chaining and solving outside BART's
-tools. It computes what `LinearOperator.nufft` computes and is interchangeable
-with it. Both wheels ship a compiled library, so this is a pip install and
-nothing more.
+tools, and it takes the weights and the subspace basis for the same reason the
+tools do. `bartorch.finufft.configure(tolerance=1e-3)` is what makes a large
+three-dimensional problem fit. Both wheels ship a compiled library, so this is
+a pip install and nothing more.
 
 ## How it is built
 

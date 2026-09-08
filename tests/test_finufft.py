@@ -14,6 +14,29 @@ from bartorch.ops import LinearOperator
 requires_finufft = pytest.mark.skipif(not _finufft.available(), reason="finufft is not installed")
 
 
+def _within_tolerance(got, ref):
+    """As close to the explicit sum as the tolerance the plan was made with.
+
+    FINUFFT delivers the tolerance it is given and no more, so a bound tied to
+    it is what the transform promises.  What these tests are really pinning is
+    the sign, the scaling and the axis order, and a wrong one of those misses
+    by orders of magnitude rather than by a factor of a few.
+    """
+    error = np.linalg.norm(got - ref) / np.linalg.norm(ref)
+    assert error < 5 * _finufft.tolerance(), (error, _finufft.tolerance())
+
+
+def _sides_agree(card, host):
+    """Two libraries promised the same tolerance agree to about it.
+
+    Element-wise closeness is the wrong measure where a transform passes
+    through zero, so this is the difference over the norm of what it is held
+    against.
+    """
+    error = (card - host).norm().item() / host.norm().item()
+    assert error < 5 * _finufft.tolerance(), (error, _finufft.tolerance())
+
+
 def _inner(a, b):
     return torch.vdot(a.flatten(), b.flatten()).real.item()
 
@@ -23,7 +46,7 @@ def test_matches_an_explicit_dft_on_a_radial_trajectory():
     n = 64
     traj = bt.traj(x=n, y=32, r=True)
     img = bt.phantom([n, n]).reshape(1, n, n)
-    y = LinearOperator.finufft(traj, (1, n, n))(img)
+    y = LinearOperator.nufft(traj, (1, n, n), toeplitz=False)(img)
 
     trj = traj.numpy().real
     im = img.numpy().reshape(n, n)
@@ -43,11 +66,14 @@ def test_matches_an_explicit_dft_on_a_radial_trajectory():
 
 @requires_finufft
 def test_agrees_with_barts_own_gridder():
+    """The substitution and the thing it replaces compute the same operator."""
     n = 64
     traj = bt.traj(x=n, y=32, r=True)
     img = bt.phantom([n, n]).reshape(1, n, n)
-    bart = LinearOperator.nufft(traj, (1, n, n), toeplitz=False)
-    fast = LinearOperator.finufft(traj, (1, n, n))
+
+    fast = LinearOperator.nufft(traj, (1, n, n), toeplitz=False)
+    with _finufft.barts_own_gridder():
+        bart = LinearOperator.nufft(traj, (1, n, n), toeplitz=False)
     assert fast.ishape == bart.ishape and fast.oshape == bart.oshape
     a, b = bart(img), fast(img)
     assert (a - b).norm().item() / a.norm().item() < 5e-3
@@ -57,7 +83,7 @@ def test_agrees_with_barts_own_gridder():
 def test_adjoint_identity_holds():
     n = 32
     traj = bt.traj(x=n, y=16, r=True)
-    A = LinearOperator.finufft(traj, (1, n, n))
+    A = LinearOperator.nufft(traj, (1, n, n), toeplitz=False)
     x = torch.randn(*A.ishape, dtype=torch.complex64)
     y = torch.randn(*A.oshape, dtype=torch.complex64)
     assert _inner(A(x), y) == pytest.approx(_inner(x, A.adjoint(y)), rel=1e-3)
@@ -65,14 +91,16 @@ def test_adjoint_identity_holds():
 
 @requires_finufft
 def test_it_carries_coils_through_one_plan():
-    n, ncoils = 32, 4
-    traj = bt.traj(x=n, y=16, r=True)
-    A = LinearOperator.finufft(traj, (ncoils, n, n))
+    # BART puts the coils past the three spatial axes, so a two-dimensional
+    # coil image is (coils, 1, y, x) and its k-space (coils, spokes, readout, 1).
+    n, ncoils, spokes = 32, 4, 16
+    traj = bt.traj(x=n, y=spokes, r=True)
+    A = LinearOperator.nufft(traj, (ncoils, 1, n, n), (ncoils, spokes, n, 1), toeplitz=False)
     assert A.oshape[0] == ncoils
-    x = torch.randn(ncoils, n, n, dtype=torch.complex64)
+    x = torch.randn(ncoils, 1, n, n, dtype=torch.complex64)
     y = A(x)
     # Each coil must transform independently of the others.
-    single = LinearOperator.finufft(traj, (1, n, n))
+    single = LinearOperator.nufft(traj, (1, 1, n, n), (1, spokes, n, 1), toeplitz=False)
     for c in range(ncoils):
         torch.testing.assert_close(
             y[c].reshape(-1), single(x[c : c + 1]).reshape(-1), rtol=1e-4, atol=1e-4
@@ -86,7 +114,7 @@ def test_bart_solves_against_a_finufft_operator():
     n = 32
     traj = bt.traj(x=n, y=64, r=True)
     img = bt.phantom([n, n]).reshape(1, n, n)
-    A = LinearOperator.finufft(traj, (1, n, n))
+    A = LinearOperator.nufft(traj, (1, n, n), toeplitz=False)
     y = A(img)
     x = A.lstsq(y, lambda_=1e-3, maxiter=30)
     assert x.shape == img.shape
@@ -135,7 +163,7 @@ def test_barts_nufft_tool_matches_an_explicit_dft_with_finufft_underneath(in_too
 
     assert _finufft.operators_built() == (1, 0), _finufft.decline_reason()
     ref = _dft(traj, img, n)
-    assert np.linalg.norm(y.numpy().reshape(ref.shape) - ref) / np.linalg.norm(ref) < 1e-4
+    _within_tolerance(y.numpy().reshape(ref.shape), ref)
 
 
 @requires_finufft
@@ -163,7 +191,7 @@ def test_weights_multiply_the_transform_and_their_conjugate_its_adjoint(in_tools
 
     assert _finufft.operators_built() == (1, 0), _finufft.decline_reason()
     ref = _dft(traj, img, n) * weights.numpy().reshape(spokes, n)
-    assert np.linalg.norm(y.numpy().reshape(ref.shape) - ref) / np.linalg.norm(ref) < 1e-4
+    _within_tolerance(y.numpy().reshape(ref.shape), ref)
 
     x = torch.randn(1, n, n, dtype=torch.complex64)
     k = torch.randn(spokes, n, 1, dtype=torch.complex64)
@@ -183,10 +211,10 @@ def test_pics_reconstructs_the_same_image_either_way(in_tools):
     fast = bt.pics(kspace, maps, t=traj)
     assert _finufft.operators_built() == (1, 0), _finufft.decline_reason()
 
-    _finufft.use_in_tools(False)
-    _finufft.reset_counters()
-    reference = bt.pics(kspace, maps, t=traj)
-    assert _finufft.operators_built() == (0, 1)
+    with _finufft.barts_own_gridder():
+        _finufft.reset_counters()
+        reference = bt.pics(kspace, maps, t=traj)
+        assert _finufft.operators_built() == (0, 1)
 
     assert (fast - reference).norm().item() / reference.norm().item() < 0.05
 
@@ -246,24 +274,26 @@ def test_the_two_normals_solve_the_same_problem(in_tools):
 
 
 @requires_finufft
-def test_turning_it_off_gives_the_tools_barts_operator_back():
-    """BART's own gridder is available, but only to somebody who asked."""
+def test_barts_own_gridder_is_reachable_only_from_inside_the_package():
+    """It is there for holding the substitution against, and for nothing else."""
     import bartorch
 
-    bartorch.finufft.disable()
-    try:
-        n = 32
-        traj = bt.traj(x=n, y=16, r=True)
-        img = bt.phantom([n, n]).reshape(1, n, n)
+    assert not hasattr(bartorch.finufft, "disable")
+    assert not hasattr(bartorch.finufft, "enable")
 
+    n = 32
+    traj = bt.traj(x=n, y=16, r=True)
+    img = bt.phantom([n, n]).reshape(1, n, n)
+
+    with _finufft.barts_own_gridder():
         _finufft.reset_counters()
         bt.nufft(traj, img)
-
-        assert not _finufft.used_in_tools()
         assert _finufft.operators_built() == (0, 1)
-        assert _finufft.fallback_allowed()
-    finally:
-        _finufft.use_in_tools(True)
+
+    _finufft.reset_counters()
+    bt.nufft(traj, img)
+    assert _finufft.operators_built() == (1, 0), "the block put it back"
+    assert not _finufft.fallback_allowed()
 
 
 @requires_finufft
@@ -271,7 +301,7 @@ def test_the_operator_is_unaffected_by_the_substitution():
     n = 32
     traj = bt.traj(x=n, y=16, r=True)
     img = bt.phantom([n, n]).reshape(1, n, n)
-    A = LinearOperator.finufft(traj, (1, n, n))
+    A = LinearOperator.nufft(traj, (1, n, n), toeplitz=False)
 
     _finufft.use_in_tools(False)
     y = A(img)
@@ -308,7 +338,7 @@ def test_a_trajectory_on_a_card_is_transformed_by_cufinufft(in_tools):
     assert y.device.type == "cuda"
     assert _finufft.operators_built() == (1, 0), _finufft.decline_reason()
     ref = _dft(traj.cpu(), image.cpu(), n)
-    assert np.linalg.norm(y.cpu().numpy().reshape(ref.shape) - ref) / np.linalg.norm(ref) < 1e-4
+    _within_tolerance(y.cpu().numpy().reshape(ref.shape), ref)
 
 
 @requires_finufft
@@ -337,8 +367,8 @@ def test_one_operator_serves_both_sides_of_the_bus(in_tools):
 
     ref = _dft(traj.cpu(), image, n)
     got = on_card.cpu().numpy().reshape(ref.shape)
-    assert np.linalg.norm(got - ref) / np.linalg.norm(ref) < 1e-4
-    torch.testing.assert_close(on_card.cpu(), on_host, rtol=1e-4, atol=1e-4)
+    _within_tolerance(got, ref)
+    _sides_agree(on_card.cpu(), on_host)
 
 
 @requires_finufft
@@ -369,7 +399,7 @@ def test_more_frames_than_a_batch_of_one_thousand_are_still_finuffts(in_tools):
     torch.testing.assert_close(y[0], y[-1])
     ref = _dft(traj, image[:1], n)
     got = y[0].numpy().reshape(ref.shape)
-    assert np.linalg.norm(got - ref) / np.linalg.norm(ref) < 1e-4
+    _within_tolerance(got, ref)
 
 
 def _subspace(n, spokes, frames, coeffs):
@@ -433,7 +463,7 @@ def test_a_subspace_adjoint_over_a_per_frame_trajectory_matches_an_explicit_sum(
         ]
     )
     got = x.numpy().reshape(ref.shape)
-    assert np.linalg.norm(got - ref) / np.linalg.norm(ref) < 1e-4
+    _within_tolerance(got, ref)
 
 
 @requires_finufft
@@ -455,7 +485,7 @@ def test_a_subspace_forward_over_a_per_frame_trajectory_matches_an_explicit_sum(
     )
     ref = np.einsum("kt,ktsr->tsr", b, per_coeff)
     got = y.numpy().reshape(ref.shape)
-    assert np.linalg.norm(got - ref) / np.linalg.norm(ref) < 1e-4
+    _within_tolerance(got, ref)
 
 
 @requires_finufft
@@ -475,7 +505,7 @@ def test_a_subspace_adjoint_on_a_card_agrees_with_the_host(in_tools):
     on_host = bt.nufft(traj, y, adjoint=True, image_dims=(n, n, 1), B=basis)
     # The two libraries agree to about 2e-3 on a grid this coarse at the
     # upsampling the substitution defaults to; on a 128 grid it is 1e-5.
-    torch.testing.assert_close(on_card.cpu(), on_host, rtol=1e-2, atol=1e-4)
+    _sides_agree(on_card.cpu(), on_host)
 
 
 @requires_finufft
@@ -492,19 +522,15 @@ def test_a_transform_finufft_cannot_serve_is_an_error_rather_than_barts_gridder(
     torch.manual_seed(0)
     img = torch.randn(frames, 1, coils, 1, n, n, dtype=torch.complex64)
 
-    _finufft.use_in_tools(True)
-    try:
-        assert not _finufft.fallback_allowed()
-        with pytest.raises(bartorch.BartError, match="vary across frames"):
-            bt.nufft(traj, img)
+    assert not _finufft.fallback_allowed()
+    with pytest.raises(bartorch.BartError, match="vary across frames"):
+        bt.nufft(traj, img)
 
-        _finufft.use_in_tools(True, fallback=True)
-        assert _finufft.fallback_allowed()
+    # BART's own gridder still computes it, for whoever holds the two together.
+    with _finufft.barts_own_gridder():
         _finufft.reset_counters()
         bt.nufft(traj, img)
         assert _finufft.operators_built() == (0, 1)
-    finally:
-        _finufft.use_in_tools(False)
 
 
 def test_enabling_without_finufft_says_so_rather_than_carrying_on(monkeypatch):
@@ -577,13 +603,13 @@ def test_a_kernel_width_asked_for_buys_the_accuracy_that_width_buys(in_tools):
 
 @requires_finufft
 def test_precision_can_be_traded_for_a_transform_that_fits():
-    """A large volume is only feasible at a tolerance somebody chose.
+    """The default is the cheap transform, and precision is what is asked for.
 
-    The default leaves the upsampling to FINUFFT at a tolerance that beats
-    BART's own gridder, which is the right thing not to have to think about.
-    It is not the right thing for a three-dimensional subspace problem on a
-    laptop, where a looser tolerance against a smaller grid is what makes the
-    transform fit at all, so both are the caller's to set.
+    A reconstruction is not made better by a transform an order more accurate
+    than the data going into it, and a three-dimensional subspace problem on a
+    laptop is only feasible at a tolerance and a grid somebody chose.  So the
+    default is a thousandth on a grid a quarter over, and a caller who wants
+    the textbook grid and six digits asks for them.
     """
     n, spokes = 64, 48
     traj = bt.traj(x=n, y=spokes, r=True)
@@ -599,19 +625,20 @@ def test_precision_can_be_traded_for_a_transform_that_fits():
 
     try:
         _finufft.use_in_tools(True)
-        careful = error()
-        assert _finufft.upsampling() == 0.0, "the default leaves the grid to FINUFFT"
-
-        _finufft.use_in_tools(True, tolerance=1e-3, upsampling=1.25)
         cheap = error()
-        assert _finufft.tolerance() == pytest.approx(1e-3)
-        assert _finufft.upsampling() == pytest.approx(1.25)
+        assert _finufft.tolerance() == pytest.approx(1e-3), "a thousandth by default"
+        assert _finufft.upsampling() == pytest.approx(1.25), "a quarter over by default"
 
-        # What was asked for is what came back: looser, and loose by about the
-        # amount asked for rather than by an unbounded amount.
+        _finufft.use_in_tools(True, tolerance=1e-6, upsampling=2.0)
+        careful = error()
+        assert _finufft.tolerance() == pytest.approx(1e-6)
+        assert _finufft.upsampling() == pytest.approx(2.0)
+
+        # What was asked for is what came back: each loose by about the amount
+        # asked for rather than by an unbounded amount.
         assert careful < cheap < 1e-2, (careful, cheap)
     finally:
-        _finufft.use_in_tools(False)
+        _finufft.use_in_tools(True)
 
 
 @requires_finufft
@@ -672,4 +699,39 @@ def test_a_subspace_operator_needs_no_tool_and_no_fallback():
     )
     ref = np.einsum("kt,ktsr->tsr", b, per_coeff)
     got = A(img).numpy().reshape(ref.shape)
-    assert np.linalg.norm(got - ref) / np.linalg.norm(ref) < 1e-4
+    _within_tolerance(got, ref)
+
+
+@requires_finufft
+def test_oversampling_and_width_compose(in_tools):
+    """``-o`` and ``-w`` are both carried across, and mean what they mean together.
+
+    ``-o`` is FINUFFT's upsampfac outright.  ``-w`` has no field of its own, so
+    it becomes the tolerance that yields that kernel width -- at the upsampling
+    in force, which is why the same width buys less on a smaller grid: three
+    points of kernel on a grid a quarter over really is coarser than three on
+    one twice over.
+    """
+    n, spokes = 64, 48
+    traj = bt.traj(x=n, y=spokes, r=True)
+    img = bt.phantom([n, n]).reshape(1, n, n)
+    ref = _dft(traj, img, n)
+    nref = np.linalg.norm(ref)
+
+    def error(**kw):
+        A = LinearOperator.nufft(traj, (1, n, n), toeplitz=False, **kw)
+        _finufft.reset_counters()
+        out = A(img)
+        return np.linalg.norm(out.numpy().reshape(ref.shape) - ref) / nref
+
+    # Half over, not twice: two is BART's own default for `-o` and
+    # `nufft_conf_s` carries no way to tell it from a caller who never set it,
+    # and by two and a half a wider grid already gives what the kernel would,
+    # so the width stops changing anything that can be measured.
+    wide_on_a_half = error(oversampling=1.5, width=4.0)
+    narrow_on_a_half = error(oversampling=1.5, width=3.0)
+    wide_on_a_quarter = error(oversampling=1.25, width=4.0)
+
+    assert narrow_on_a_half > wide_on_a_half, "a narrower kernel is a looser transform"
+    assert wide_on_a_quarter > wide_on_a_half, "the same width on a smaller grid is coarser"
+    assert wide_on_a_half < 5e-4

@@ -54,7 +54,7 @@ static struct {
 	double tolerance;
 	double upsampling;
 
-} fi = { .use_in_tools = 0, .tolerance = 1.e-6, .upsampling = 0. };
+} fi = { .use_in_tools = 0, .tolerance = 1.e-3, .upsampling = 1.25 };
 
 static pthread_mutex_t fi_lock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -108,10 +108,10 @@ double bartorch_finufft_tolerance(void)
 /* How far past the image FINUFFT spreads before it transforms.
  *
  * Two is the textbook grid; a quarter over trades a smaller one for a wider
- * kernel, which pays only where the samples are sparse enough that spreading
- * is not what the transform spends its time in.  Zero lets FINUFFT weigh that
- * per problem, which is the default because it is never the worse of the two
- * and holds less than either. */
+ * kernel, and that is the default here: it holds a quarter of the memory the
+ * textbook grid does at the tolerance this asks for, and a reconstruction is
+ * not made better by a transform an order more accurate than the data.  Zero
+ * lets FINUFFT weigh it per problem instead. */
 void bartorch_finufft_set_upsampling(double upsampling)
 {
 	if ((0. == upsampling) || ((upsampling > 1.) && (upsampling <= 4.)))

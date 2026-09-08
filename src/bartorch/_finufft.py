@@ -14,11 +14,10 @@ of voxels.
 
 from __future__ import annotations
 
+import contextlib
 import importlib
-import math
 from pathlib import Path
 
-import numpy as np
 import torch
 
 _keepalive: list[object] = []
@@ -136,9 +135,8 @@ def _options_layout(package: str):
 
 def use_in_tools(
     enable: bool = True,
-    tolerance: float = 1e-6,
-    fallback: bool = False,
-    upsampling: float = 0.0,
+    tolerance: float = 1e-3,
+    upsampling: float = 1.25,
 ) -> bool:
     """Have BART's own tools compute their NUFFT with FINUFFT.
 
@@ -147,19 +145,16 @@ def use_in_tools(
     enable : bool
         Turn the substitution on, or off to leave BART its own gridder.
     tolerance : float
-        The tolerance FINUFFT plans are made with.
+        The tolerance FINUFFT plans are made with.  A thousandth by default:
+        a reconstruction is not made better by a transform an order more
+        accurate than the data going into it, and the kernel narrows as the
+        tolerance loosens.
     upsampling : float
         How far past the image to spread before transforming.  Two is the
-        textbook grid; a quarter over trades a smaller one for a wider kernel,
-        which pays only where the samples are sparse enough that spreading is
-        not what the transform spends its time in.  Zero, the default, lets
-        FINUFFT weigh that per problem.  BART's ``-o`` takes precedence
-        wherever it is not BART's own default of two.
-    fallback : bool
-        Whether BART's own operator may answer a transform FINUFFT cannot
-        serve.  By default it may not: such a transform raises, naming the
-        reason, rather than reconstructing more slowly and less accurately
-        without saying so.
+        textbook grid; a quarter over, the default here, trades a smaller one
+        for a wider kernel and holds a quarter of the memory at this
+        tolerance.  Zero leaves the choice to FINUFFT, per problem.  BART's
+        ``-o`` takes precedence wherever it is not BART's own default of two.
 
     Returns
     -------
@@ -198,7 +193,7 @@ def use_in_tools(
 
     lib.bartorch_finufft_set_tolerance(float(tolerance))
     lib.bartorch_finufft_set_upsampling(float(upsampling))
-    lib.bartorch_nufft_allow_fallback(int(bool(fallback)))
+    lib.bartorch_nufft_allow_fallback(0)
     lib.bartorch_finufft_use_in_tools(1)
 
     if not _tools_agree_with_bart():
@@ -266,8 +261,9 @@ def tolerance() -> float:
 def upsampling() -> float:
     """How far past the image FINUFFT spreads before it transforms.
 
-    BART's ``-o`` is the same number and takes precedence wherever it is not
-    BART's own default of two; zero leaves the choice to FINUFFT.
+    A quarter over by default.  BART's ``-o`` is the same number and takes
+    precedence wherever it is not BART's own default of two; zero leaves the
+    choice to FINUFFT.
     """
     from bartorch._lib import library
 
@@ -298,65 +294,15 @@ def _tools_agree_with_bart(tolerance: float = 1e-2) -> bool:
     lib.bartorch_finufft_use_in_tools(1)
     fast = bt.nufft(traj, image)
 
-    # BART's own operator, asked for rather than fallen back on.
-    allowed = lib.bartorch_nufft_fallback_allowed()
-    lib.bartorch_nufft_allow_fallback(1)
-    lib.bartorch_finufft_use_in_tools(0)
-    reference = bt.nufft(traj, image)
+    with barts_own_gridder():
+        reference = bt.nufft(traj, image)
+
     lib.bartorch_finufft_use_in_tools(1)
-    lib.bartorch_nufft_allow_fallback(allowed)
 
     scale = reference.abs().max()
     if scale == 0:
         return False
     return bool(((fast - reference).abs().max() / scale).item() < tolerance)
-
-
-def _coordinates(traj: torch.Tensor, spatial: Shape) -> list[np.ndarray]:
-    """BART trajectory in grid samples to FINUFFT's radians, slowest axis first.
-
-    A BART trajectory holds kx, ky, kz along its last axis, kx belonging to the
-    fastest-varying image axis; FINUFFT takes one coordinate array per image
-    axis in the order the image is laid out, so the order is reversed here.
-    """
-    coords = traj.detach().cpu().numpy().real.astype(np.float32)
-    if coords.shape[-1] < len(spatial):
-        raise ValueError(f"trajectory has {coords.shape[-1]} components, need {len(spatial)}")
-    out = []
-    for axis, size in enumerate(spatial):
-        component = coords[..., len(spatial) - 1 - axis].ravel()
-        out.append(np.ascontiguousarray(2 * np.pi * component / size, dtype=np.float32))
-    return out
-
-
-class _Transforms:
-    """A pair of FINUFFT plans, made once and reused by both callbacks."""
-
-    def __init__(self, traj: torch.Tensor, spatial: Shape, batch: int, eps: float, scale: float):
-        import finufft
-
-        self.spatial = tuple(spatial)
-        self.batch = int(batch)
-        self.scale = float(scale)
-        self.samples = int(traj.numel() // traj.shape[-1])
-        coords = _coordinates(traj, self.spatial)
-        common = dict(n_trans=self.batch, eps=eps, dtype="complex64")
-        self.forward_plan = finufft.Plan(2, self.spatial, isign=-1, **common)
-        self.adjoint_plan = finufft.Plan(1, self.spatial, isign=+1, **common)
-        self.forward_plan.setpts(*coords)
-        self.adjoint_plan.setpts(*coords)
-
-    def forward(self, image: torch.Tensor) -> torch.Tensor:
-        x = np.ascontiguousarray(image.detach().cpu().numpy().reshape(self.batch, *self.spatial))
-        y = self.forward_plan.execute(x)
-        return torch.from_numpy(np.ascontiguousarray(y * self.scale))
-
-    def adjoint(self, samples: torch.Tensor) -> torch.Tensor:
-        y = np.ascontiguousarray(
-            samples.detach().cpu().numpy().reshape(self.batch, self.samples).astype(np.complex64)
-        )
-        x = self.adjoint_plan.execute(y)
-        return torch.from_numpy(np.ascontiguousarray(x * self.scale))
 
 
 def spatial_ndim(traj: torch.Tensor) -> int:
@@ -370,52 +316,29 @@ def spatial_ndim(traj: torch.Tensor) -> int:
     return 3 if bool(torch.any(traj[..., 2].real != 0)) else 2
 
 
-def transforms(
-    traj: torch.Tensor,
-    image_shape: Shape,
-    eps: float = 1e-6,
-    scale: float | None = None,
-    ndim: int | None = None,
-) -> tuple[_Transforms, Shape]:
-    """Plans for *image_shape*, and the sample shape they produce.
+@contextlib.contextmanager
+def barts_own_gridder():
+    """BART's Kaiser-Bessel gridder, for as long as the block lasts.
 
-    Parameters
-    ----------
-    traj : tensor
-        Trajectory in grid samples, ``(..., samples, 3)``, as
-        ``bartorch.tools.traj`` produces.
-    image_shape : tuple of int
-        Coil-image shape in C order, the last two or three axes spatial.
-    eps : float
-        FINUFFT's tolerance.
-    scale : float, optional
-        By default the factor that makes this agree with BART's own NUFFT.
-    ndim : int, optional
-        Spatial dimensions; by default two or three as the trajectory says.
+    Not part of the package's surface.  What it is for is holding the
+    substitution against the thing it replaces -- the agreement check below,
+    and the tests that pin one to the other -- because a caller who reached it
+    by mistake would get an answer an order further from the transform and
+    several times slower, with nothing to say so.
     """
-    if not available():
-        raise ImportError("this needs the finufft package: pip install 'bartorch[finufft]'")
-    image_shape = tuple(image_shape)
-    if ndim is None:
-        ndim = spatial_ndim(traj)
-    if len(image_shape) < ndim:
-        raise ValueError(f"a {ndim}-dimensional transform needs at least that many image axes")
-    spatial = image_shape[-ndim:]
-    batch = math.prod(image_shape[:-ndim]) if len(image_shape) > ndim else 1
-    if scale is None:
-        scale = 1.0 / math.sqrt(math.prod(spatial))
-    plans = _Transforms(traj, spatial, batch, eps, scale)
-    kspace_shape = tuple(image_shape[:-ndim]) + tuple(traj.shape[:-1]) + (1,)
-    return plans, kspace_shape
+    from bartorch._lib import library
 
+    lib = library()
+    allowed = lib.bartorch_nufft_fallback_allowed()
+    was_in_tools = lib.bartorch_finufft_usable()
 
-def disable() -> None:
-    """Compute every NUFFT with BART's own gridder instead.
-
-    Nothing reaches it by accident, so taking it for everything is something
-    to say out loud.
-    """
-    use_in_tools(False)
+    lib.bartorch_nufft_allow_fallback(1)
+    lib.bartorch_finufft_use_in_tools(0)
+    try:
+        yield
+    finally:
+        lib.bartorch_finufft_use_in_tools(1 if was_in_tools else 0)
+        lib.bartorch_nufft_allow_fallback(allowed)
 
 
 _installed = False

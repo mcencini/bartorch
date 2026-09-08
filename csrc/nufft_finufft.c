@@ -119,6 +119,7 @@ struct nufft_fi_s {
 	const struct linop_s* toeplitz;
 
 	int dim;
+	int axis[3];
 	int64_t n_modes[3];
 	double eps;
 	double upsampling;
@@ -157,6 +158,42 @@ struct nufft_fi_s {
 };
 
 static DEF_TYPEID(nufft_fi_s);
+
+/* BART's trajectory counts samples of the image grid and FINUFFT takes the
+ * same position in radians.  One component is taken and rescaled with BART's
+ * own operations, on the host, and a side copies it to wherever its plans
+ * are; md_copy2 crosses the bus if the trajectory is on the other side.
+ *
+ * A trajectory can arrive after the operator: `nlinv` and the network models
+ * build theirs against dimensions alone and fill it in with
+ * `nufft_update_traj` once there is one. */
+static void install_traj(struct nufft_fi_s* d, const long traj_dims[], const complex float* traj)
+{
+	int N = d->N;
+
+	long one_dims[N];
+	long one_strs[N];
+	long trj_strs[N];
+
+	md_select_dims(N, ~1UL, one_dims, traj_dims);
+	md_calc_strides(N, one_strs, one_dims, CFL_SIZE);
+	md_calc_strides(N, trj_strs, traj_dims, CFL_SIZE);
+
+	complex float* component = md_alloc(N, one_dims, CFL_SIZE);
+
+	for (int i = 0; i < d->dim; i++) {
+
+		md_copy2(N, one_dims, one_strs, component, trj_strs, traj + d->axis[i], CFL_SIZE);
+
+		md_free(d->radians[i]);
+		d->radians[i] = md_alloc(N, one_dims, FL_SIZE);
+		md_real(N, one_dims, d->radians[i], component);
+		md_smul(N, one_dims, d->radians[i], d->radians[i],
+				(float)(2. * M_PI / (double)d->cim_dims[d->axis[i]]));
+	}
+
+	md_free(component);
+}
 
 /* Memory on one side of the bus.  A device only exists in a CUDA build, and
  * `device` is never set without one: `bartorch_on_device` says no, and
@@ -197,6 +234,9 @@ static void side_free(struct nufft_fi_s* d, struct fi_side* s)
 static int side_build(struct nufft_fi_s* d, int which)
 {
 	struct fi_side* s = &d->side[which];
+
+	if (NULL == d->radians[0])
+		return 18;
 
 	s->ntrans = which ? 1 : (int)d->batch;
 	s->executes = which ? d->batch : 1;
@@ -436,7 +476,7 @@ const char* bartorch_nufft_decline_text(void)
 
 	case 0: return "";
 	case 1: return "FINUFFT is not in use, and installing itself did not work";
-	case 2: return "the trajectory is missing";
+	case 2: return "k-space carries fewer than four axes";
 	case 3: return "cuFINUFFT is not in use and BART is on a device";
 	case 4: return "the trajectory does not carry three components";
 	case 5: return "k-space is not a single line of samples per readout";
@@ -452,6 +492,7 @@ const char* bartorch_nufft_decline_text(void)
 	case 15: return "the weights do not lie along k-space";
 	case 16: return "the images vary across frames as well as the trajectory";
 	case 17: return "the kernel width asked for has no tolerance that would give it";
+	case 18: return "a transform was asked for before the trajectory arrived";
 	}
 
 	return "of a reason this build does not name";
@@ -549,7 +590,7 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 	if (device && !bartorch_finufft_usable_on(1))
 		DECLINE(3);
 
-	if ((N < 4) || (NULL == traj))
+	if (N < 4)
 		DECLINE(2);
 
 	if (3 != traj_dims[0])
@@ -702,33 +743,6 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 			DECLINE(17);
 	}
 
-	/* BART's trajectory counts samples of the image grid and FINUFFT takes
-	 * the same position in radians.  One component is taken and rescaled
-	 * with BART's own operations, on the host, and a side copies it to
-	 * wherever its plans are; md_copy2 crosses the bus if the trajectory is
-	 * on the other side. */
-	long one_dims[N];
-	long one_strs[N];
-	long trj_strs[N];
-
-	md_select_dims(N, ~1UL, one_dims, traj_dims);
-	md_calc_strides(N, one_strs, one_dims, CFL_SIZE);
-	md_calc_strides(N, trj_strs, traj_dims, CFL_SIZE);
-
-	complex float* component = md_alloc(N, one_dims, CFL_SIZE);
-	float* radians[3] = { NULL, NULL, NULL };
-
-	for (int i = 0; i < dim; i++) {
-
-		md_copy2(N, one_dims, one_strs, component, trj_strs, traj + axis[i], CFL_SIZE);
-
-		radians[i] = md_alloc(N, one_dims, FL_SIZE);
-		md_real(N, one_dims, radians[i], component);
-		md_smul(N, one_dims, radians[i], radians[i], (float)(2. * M_PI / (double)cim_dims[axis[i]]));
-	}
-
-	md_free(component);
-
 	long image_elements = 1;
 
 	for (int i = 0; i < dim; i++)
@@ -741,13 +755,16 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 	d->toeplitz = NULL;
 
 	for (int i = 0; i < 3; i++)
-		d->radians[i] = radians[i];
+		d->radians[i] = NULL;
 
 	pthread_mutex_init(&d->lock, NULL);
 	d->dim = dim;
 
-	for (int i = 0; i < 3; i++)
+	for (int i = 0; i < 3; i++) {
+
+		d->axis[i] = axis[i];
 		d->n_modes[i] = n_modes[i];
+	}
 
 	d->eps = eps;
 	d->upsampling = upsampling;
@@ -811,23 +828,33 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 		md_copy(N, bas_dims, d->host_basis, basis, CFL_SIZE);
 	}
 
-	if (NULL != weights) {
+	if (NULL != wgh_dims) {
 
 		md_copy_dims(N, d->wgh_dims, wgh_dims);
-		d->host_weights = md_alloc(N, wgh_dims, CFL_SIZE);
-		md_copy(N, wgh_dims, d->host_weights, weights, CFL_SIZE);
 		md_calc_strides(N, d->wgh_strs, wgh_dims, CFL_SIZE);
 	}
 
-	/* The side the operator is most likely to be asked for first, so that a
-	 * plan FINUFFT will not make is a decline here rather than an error in
-	 * the middle of a solve. */
-	int ret = side_build(d, device);
+	if (NULL != weights) {
 
-	if (0 != ret) {
+		d->host_weights = md_alloc(N, d->wgh_dims, CFL_SIZE);
+		md_copy(N, d->wgh_dims, d->host_weights, weights, CFL_SIZE);
+	}
 
-		nufft_fi_del(CAST_UP(PTR_PASS(d)));
-		DECLINE(ret);
+	/* An operator built against dimensions alone waits for
+	 * `nufft_update_traj`; one built over a trajectory plans the side it is
+	 * most likely to be asked for first, so that a plan FINUFFT will not
+	 * make is a decline here rather than an error in the middle of a solve. */
+	if (NULL != traj) {
+
+		install_traj(d, traj_dims, traj);
+
+		int ret = side_build(d, device);
+
+		if (0 != ret) {
+
+			nufft_fi_del(CAST_UP(PTR_PASS(d)));
+			DECLINE(ret);
+		}
 	}
 
 	d->toeplitz = toeplitz_for(N, ksp_dims, cim_dims, traj_dims, traj, wgh_dims, weights,
@@ -860,10 +887,7 @@ struct linop_s* nufft_create2(int N, const long ksp_dims[N], const long cim_dims
 	 * caller who never asked for it would otherwise get an answer an order
 	 * further from the transform, several times slower, silently. */
 	if (!allow_fallback)
-		error("bartorch: FINUFFT cannot serve this NUFFT: %s.\n"
-		      "Let BART's own gridder answer it with "
-		      "bartorch.finufft.enable(fallback=True), or take it for "
-		      "everything with bartorch.finufft.disable().\n",
+		error("bartorch: FINUFFT cannot serve this NUFFT: %s.\n",
 		      bartorch_nufft_decline_text());
 
 	count(CNT_BART);
@@ -930,12 +954,63 @@ void nufft_update_psf2(const struct linop_s* nufft, int ND, const long psf_dims[
 	bart_nufft_update_psf2(nufft, ND, psf_dims, psf_strs, psf);
 }
 
+/* `nlinv`, `moba` and the network models build their NUFFT against dimensions
+ * alone and hand the trajectory over here, once per frame of a run.  The
+ * plans belong to it, so both sides go and are made again on the next
+ * transform, over whatever else arrived with it. */
 void nufft_update_traj(const struct linop_s* nufft, int N, const long trj_dims[N], const complex float* traj, const long wgh_dims[N], const complex float* weights, const long bas_dims[N], const complex float* basis)
 {
-	if (is_ours(nufft))
-		refuse("changing a trajectory in place");
+	if (!is_ours(nufft)) {
 
-	bart_nufft_update_traj(nufft, N, trj_dims, traj, wgh_dims, weights, bas_dims, basis);
+		bart_nufft_update_traj(nufft, N, trj_dims, traj, wgh_dims, weights, bas_dims, basis);
+		return;
+	}
+
+	struct nufft_fi_s* d = CAST_DOWN(nufft_fi_s, linop_get_data(nufft));
+
+	if (N != d->N)
+		error("bartorch: a trajectory of %d axes for an operator of %d\n", N, d->N);
+
+	if (d->samples != md_calc_size(N - 1, trj_dims + 1))
+		error("bartorch: a trajectory of %ld samples for an operator of %ld\n",
+				md_calc_size(N - 1, trj_dims + 1), d->samples);
+
+	if ((NULL != weights) && !md_check_equal_dims(N, wgh_dims, d->wgh_dims, ~0UL))
+		error("bartorch: weights of a shape the operator was not built for\n");
+
+	if ((NULL != basis) && !md_check_equal_dims(N, bas_dims, d->bas_dims, ~0UL))
+		error("bartorch: a basis of a shape the operator was not built for\n");
+
+	pthread_mutex_lock(&d->lock);
+
+	side_free(d, &d->side[0]);
+	side_free(d, &d->side[1]);
+
+	install_traj(d, trj_dims, traj);
+
+	md_free(d->host_weights);
+	d->host_weights = NULL;
+
+	if (NULL != weights) {
+
+		d->host_weights = md_alloc(N, d->wgh_dims, CFL_SIZE);
+		md_copy(N, d->wgh_dims, d->host_weights, weights, CFL_SIZE);
+	}
+
+	if (NULL != basis) {
+
+		if (NULL == d->host_basis)
+			d->host_basis = md_alloc(N, d->bas_dims, CFL_SIZE);
+
+		md_copy(N, d->bas_dims, d->host_basis, basis, CFL_SIZE);
+	}
+
+	pthread_mutex_unlock(&d->lock);
+
+	/* The normal borrows BART's point spread function, which is over the
+	 * trajectory too. */
+	if (NULL != d->toeplitz)
+		bart_nufft_update_traj(d->toeplitz, N, trj_dims, traj, wgh_dims, weights, bas_dims, basis);
 }
 
 const struct operator_s* nufft_precond_create(const struct linop_s* nufft_op)

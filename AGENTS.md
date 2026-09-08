@@ -122,17 +122,19 @@ serve, naming the reason. The substitution being switched off is a reason like
 any other, which is what closes the case that used to be silent: the library
 as it starts, before anyone has mentioned FINUFFT.
 
-BART's own gridder is one call away and no closer.
-`bartorch.finufft.enable(fallback=True)` hands it whatever FINUFFT declines,
-`bartorch.finufft.disable()` gives it everything, and `enable` raises when
-`finufft` is missing, or when `cufinufft` is missing on a machine whose card
-BART would otherwise use. A test suite that leaves any of that switched over
-would carry it into the next test, so `tests/conftest.py` puts it back.
+BART's own gridder is not reachable from the package's surface at all. What is
+left of it is `_finufft.barts_own_gridder()`, a context manager the agreement
+check uses and the tests hold the substitution against; there is nothing a
+caller can pass to end up there. `configure` raises when `finufft` is missing,
+or when `cufinufft` is missing on a machine whose card BART would otherwise
+use. A test that enters that block would carry it into the next test, so
+`tests/conftest.py` puts the substitution back after every one.
 
 The operator layer says what the tools say: `LinearOperator.nufft` takes the
 weights and the subspace basis, because the normal is a point spread function
 over both and a chain could not be. Anything it cannot express is another way
-back to BART.
+back to BART, so there is no separate FINUFFT operator beside it -- one
+`nufft` that is FINUFFT's underneath, the way the tools are.
 
 **A trajectory that varies across frames is one plan, not one per frame.**
 Every axis the trajectory indexes is a sample of one transform and the rest
@@ -242,12 +244,12 @@ same 160 cube takes 2.1 s at `enable(tolerance=1e-3)` rather than 6.7 s, and
 that is what makes it fit at all. cuFINUFFT takes only two, a quarter over, or
 the heuristic; `-o 1.5` plans on the host and fails on a card.
 
-`LinearOperator.finufft` is the same transform reached without BART's tools,
-for chaining and solving in Python. It makes a plan once and reuses it, matches
-BART's sign and scaling, and goes into BART's solvers unchanged. A BART
-trajectory always carries three components, so whether a transform is two- or
-three-dimensional is decided by whether kz is used, not by the trajectory's
-shape.
+`LinearOperator.nufft` is that transform reached without BART's tools, for
+chaining and solving in Python, and it is FINUFFT's underneath like everything
+else. A BART trajectory always carries three components, so whether a
+transform is two- or three-dimensional is decided by whether kz is used, not by
+the trajectory's shape -- which is also what says how many of an image's
+trailing axes are spatial and how many are coils.
 
 **A tool keeps the card where that is safe; an operator always does.** Two
 things stand between a BART tool and the memory it was handed. The few entry
@@ -339,26 +341,37 @@ test that compares BART to BART proves nothing.
 `scripts/check_device.py` walks the device path in dependency order, each
 check independent and naming its own reason, so the first failure is the thing
 to fix. On an RTX 4060 Laptop, CUDA 12.8, all nine pass: `fft` against numpy
-to 9e-08, BART's own NUFFT against an explicit discrete Fourier sum to 1.4e-03
-and cuFINUFFT's to 5.7e-07, the device and host transforms agreeing to
-3.4e-06, and `-g` changing nothing that the device pointers had not already
-decided.
+to 1e-07, the NUFFT against an explicit discrete Fourier sum to 6.7e-04 on the
+host and 6.9e-04 on the card, the two agreeing with each other to 7.5e-04, and
+`-g` changing nothing that the device pointers had not already decided. Those
+three are the tolerance the plans are made with, not a floor anybody hit: a
+thousandth by default, and the checks are held to a small multiple of whatever
+is in force rather than to a number of their own.
 
 On a 256x256 eight-coil radial dataset of 401 spokes, best of five, `pics`
-takes 0.46 to 0.57 s on the card with the point spread function and 0.46 to
-0.53 s with the transform pair -- each inside the other's scatter -- against
-1.9 to 2.6 s and 5.0 to 5.9 s on the same machine's host. The pair is cheap
+takes 0.17 to 0.25 s on the card with the point spread function and 0.11 to
+0.28 s with the transform pair -- each inside the other's scatter -- against
+2.2 to 2.4 s and 3.1 to 3.8 s on the same machine's host. The pair is cheap
 enough on a card that halving the number of transforms stops being worth
-measuring; on the host the point spread function is still worth 2.5x. This is
-a 45 W laptop card, so a run measured cold and one measured after the clocks
-have dropped differ by more than the two normals do.
+measuring; on the host the point spread function is still worth about half the
+time. This is a 45 W laptop card, so a run measured cold and one measured
+after the clocks have dropped differ by more than the two normals do.
 
 More than one BART stream makes no difference that measurement can resolve:
-one, two and four streams reconstruct in the same half second, and the spread
-between them is smaller than the spread between repetitions of any one of
-them. What BART holds on the card is what `bartorch.cuda.use_memcache` decides
-for an operator -- 57 MB against nothing on that dataset -- and nothing at all
-for a tool, because BART's `main` clears the cache when a command ends.
+one, two and four streams reconstruct in the same sixth of a second, and the
+spread between them is smaller than the spread between repetitions of any one
+of them. What BART holds on the card is what `bartorch.cuda.use_memcache`
+decides for an operator -- 34 MB against nothing on that dataset -- and
+nothing at all for a tool, because BART's `main` clears the cache when a
+command ends.
+
+Every BART entry point that builds a NUFFT is served: `nufft` forward,
+adjoint, inverse and Toeplitz, `pics` with and without a pattern, `sqpics`,
+`nlinv`, `rtnlinv`, `moba`, `ncalib` and `LinearOperator.nufft`, on the host
+and on the card, with BART's own gridder built zero times. `nlinv` and the
+network models build theirs against dimensions alone and hand the trajectory
+over afterwards, which is why `nufft_update_traj` installs one rather than
+refusing.
 
 ## Conventions
 

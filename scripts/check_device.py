@@ -115,8 +115,8 @@ def _nufft_on_device():
 def _cufinufft():
     if not bartorch.finufft.cuda_available():
         return False, "the cufinufft wheel is not installed: pip install 'bartorch[cufinufft]'"
-    if not bartorch.finufft.enable():
-        return False, "the FINUFFT substitution declined to install itself"
+    if not bartorch.finufft.enabled():
+        return False, "the substitution did not install itself"
     if not bartorch.finufft.used_on_device():
         return False, f"the device table is empty: {bartorch.finufft.decline_reason()}"
 
@@ -130,7 +130,8 @@ def _cufinufft():
     ref = _explicit_dft(traj, image, n)
     got = fast.cpu().numpy().reshape(64, n)[:1]
     rel = _relative(got, ref)
-    return rel < 1e-4, f"rel {rel:.2e} against the explicit sum"
+    eps = bartorch.finufft.tolerance()
+    return rel < 5 * eps, f"rel {rel:.2e} against the explicit sum, at a tolerance of {eps:g}"
 
 
 @check("the device transform and the host transform agree")
@@ -142,7 +143,8 @@ def _device_matches_host():
     on_card = bt.nufft(traj, image).cpu()
     on_host = bt.nufft(traj.cpu(), image.cpu())
     rel = float((on_card - on_host).abs().max().item() / on_host.abs().max().item())
-    return rel < 1e-4, f"rel {rel:.2e}"
+    eps = bartorch.finufft.tolerance()
+    return rel < 5 * eps, f"rel {rel:.2e}, each held to a tolerance of {eps:g}"
 
 
 @check("pics runs on the card, with and without the Toeplitz normal")
