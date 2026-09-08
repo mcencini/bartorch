@@ -79,6 +79,9 @@ def render(node, name, module, path, app):
     kind = "class" if isinstance(node, ast.ClassDef) else "function"
     sig = name if kind == "class" else signature(node, name)
     doc = ast.get_docstring(node) or "No narrative docstring is present in this checkout."
+    override = Path(app.confdir) / "_docstrings" / f"{module}.{name}.txt"
+    if override.exists():
+        doc = override.read_text()
     # This prose currently sits between parameters in dispatch's docstring.
     # Move it to the summary for Napoleon, without editing runtime source.
     if module == "bartorch" and name == "dispatch":
@@ -96,6 +99,8 @@ def render(node, name, module, path, app):
     lines = [f".. py:{kind}:: {sig}", f"   :module: {module}", ""]
     lines += textwrap.indent(str(NumpyDocstring(doc, config=app.config)), "   ").splitlines()
     lines += ["", f"   Source: ``{path}:{node.lineno}``.", ""]
+    if override.exists():
+        lines += [f"   Documentation override: ``docs/_docstrings/{override.name}``.", ""]
     if kind == "class":
         methods = {n.name: n for n in node.body if isinstance(n, ast.FunctionDef)}
         for child in node.body:

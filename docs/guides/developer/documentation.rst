@@ -38,6 +38,10 @@ BART's ``help_str``, argument macros and option descriptions already feed
 ``build_tools/gen_tools.py``. That is the existing C-to-Python documentation
 pipeline; arbitrary C comments do not necessarily describe a safe Python API.
 Python overrides take precedence because they translate arguments and axes.
+Documentation-only NumPy-style supplements live in ``docs/_docstrings/`` and
+take precedence during rendering. PICS currently needs one because its initial
+string-concatenation expression is not a Python docstring. Keep these supplements
+aligned with the public signature; they do not change runtime ``help()``.
 Supplement missing units, shapes, return contracts and exceptions in NumPy-style
 wrapper docstrings during normal source development. Do not infer autograd
 support or solver guarantees from C help text.

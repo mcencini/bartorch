@@ -1,0 +1,71 @@
+Reconstruct an image with BART's parallel-imaging/compressed-sensing solver.
+
+Parameters
+----------
+kspace : torch.Tensor
+    Complex k-space in C order. For Cartesian data keep BART's coil and spatial
+    dimensions, for example ``(coils, 1, y, x)``. Missing samples are zero-filled.
+sens : torch.Tensor
+    Coil sensitivity maps in the same coil basis as the data. Preserve map-set
+    and singleton dimensions returned by ``ecalib``.
+lambda_ : float, optional
+    Regularization weight forwarded as ``-r``. ``None`` leaves BART's default.
+    For a quadratic penalty, the gallery passes ``l=2`` through extra flags.
+R : str or list of str, optional
+    BART regularizer specifications, forwarded as one or more ``-R`` options.
+    For example ``"W:7:0:0.005"`` selects a wavelet penalty. Embedded dimension
+    flags retain BART bitmask semantics; they are not Python axis indices.
+iter_ : int, optional
+    Iteration limit (``-i``); ``None`` leaves BART's default.
+step : float, optional
+    Solver step size (``-s``).
+admm_rho : float, optional
+    ADMM penalty parameter (``-u``). Solver selection and compatible options
+    follow the pinned BART command.
+cg_iter : int, optional
+    Inner conjugate-gradient iteration limit (``-C``).
+real : bool, optional
+    Request a real-valued image constraint (``-c``). Returned storage still
+    follows the tool's complex64 tensor convention. Default is ``False``.
+gpu : bool, optional
+    Forward ``-g`` to BART; requires a suitable CUDA build/device. Default is
+    ``False``. Tensor dispatch also controls device selection.
+subspace_basis : str or torch.Tensor, optional
+    Temporal basis (``-B``), supplied as a CFL basename or an in-memory tensor.
+    The current signature annotates this as ``str``, but tensor values pass
+    through to dispatch. Use ``subspace_basis=basis`` with this public wrapper;
+    passing the raw ``B`` flag as well would duplicate the keyword.
+init : str, optional
+    BART CFL basename for a warm-start image (``-W``).
+fast_est : bool, optional
+    Enable BART's eigenvalue-based step-size scaling option (``-e``).
+**extra_flags : Any
+    Additional BART flags; for example ``t=trajectory`` for a non-Cartesian
+    trajectory and ``p=pattern`` for an explicit sampling pattern. Input arrays
+    passed as flag values use the same registration route as positional inputs.
+
+Returns
+-------
+torch.Tensor
+    Reconstructed image in C order and complex64 storage. Inspect its shape;
+    singleton and map-set dimensions depend on the model. BART's internal data
+    scaling matters when comparing amplitudes against a direct inverse FFT.
+
+Raises
+------
+bartorch.BartError
+    If BART rejects the arguments or reconstruction fails.
+ImportError
+    If a required native or non-Cartesian backend cannot be loaded.
+
+Notes
+-----
+This native solve does not establish a PyTorch backward graph. A tensor return
+type is not a guarantee of differentiability through the iterations.
+
+Examples
+--------
+>>> import bartorch.tools as bt
+>>> kspace = bt.phantom([32, 32], kspace=True, ncoils=4)
+>>> maps = bt.ecalib(kspace, calib_size=16, maps=1)
+>>> image = bt.pics(kspace, maps, l=2, lambda_=0.001, iter_=30)

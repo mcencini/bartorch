@@ -18,6 +18,7 @@ C library with a small C ABI; Python reaches it through ctypes.
 | `csrc/cuda.c` | Device selection, stream ordering against the caller's stream, and BART's memory cache. Present in both builds; the CPU build reports that it has no CUDA. |
 | `csrc/host_reads.c` | The entry points BART reads element by element, answered over a host copy when a tool is on a card. |
 | `csrc/psf.c` | The three `compute_psf*` entry points, so that the adjoint transform a point spread function is comes from the substitution. |
+| `csrc/nufft_finufft.c` | ... and the normal, which stores one of those in BART's operator through `noncart/nufft_priv.h` rather than letting it grid one. |
 | `csrc/finufft.c`, `nufft_finufft.c` | FINUFFT's and cuFINUFFT's entry points, and BART's NUFFT operator built out of a pair of their plans. |
 | `csrc/compat/` | The `cblas.h`, `lapacke.h` and `fftw3.h` BART includes. |
 | `third_party/` | pocketfft and BlocksRuntime, vendored with their licenses. |
@@ -178,41 +179,46 @@ than one plan over frames, so it is always built the way BART builds it for
 `lowmem`, which also holds one set at a time.
 
 **The normal stays BART's convolution over a function computed here.**
-`nufft_create2` would compute its own from inside `nufft.c`, where the rename
-cannot reach it, so `toeplitz_for` does not ask for one: it works out the
-shape `nufft.c` wants the function in -- the image along the transformed axes,
-one set of shifts per corner of the oversampled grid, the trajectory's extent
-along the rest -- computes it with `compute_psf2`, and hands it to
-`nufft_create_normal`, which takes a function rather than making one. BART
-keeps the oversampled grid, the linear phases and the decomposition; the
-transform underneath is the substitution's like every other.
+`nufft.c` would compute its own from inside the file where the rename cannot
+reach it, so `toeplitz_for` turns that off: `conf.nopsf` is the switch
+`pics --psf_import` uses to bring a function in from outside, and with it set
+BART grids nothing. What is left is to make the function -- `compute_psf2`,
+whose transform is the substitution's -- and to store it the way the operator
+wants, which `csrc/nufft_finufft.c` does over the dimensions the operator
+worked out for itself, through `noncart/nufft_priv.h`.
 
-`nufft_create_normal` asserts that the shape agrees with the linear phases it
-would have built, which is the check that this stayed in step with `nufft.c`.
+Everything BART does with the function afterwards is still BART's, and every
+way of storing it still works and costs no gridding:
 
-Every way BART stores that function still works, and two of them still cost a
-gridding. `nufft_create_normal` takes its function through `nufft_update_psf`,
-which writes a whole complex one:
+| `--nufft-conf` | what it stores |
+| --- | --- |
+| (none), `lowmem`, `no-precomp` | the whole complex function |
+| `decomposed-psf` | a set of frequencies at a time |
+| `upper-triag-psf` | half of a Hermitian one, for a subspace |
+| `real-psf` | its real part, as floats |
+| `compress-psf` | the entries that are not zero, beside an index of where they were |
 
-| `--nufft-conf` | the normal | what it costs |
-| --- | --- | --- |
-| (none), `lowmem`, `no-precomp`, `zero-mem` | computed here | nothing |
-| `decomposed-psf` | computed here, a set of frequencies at a time | nothing |
-| `upper-triag-psf` | computed here, half of a Hermitian function | nothing |
-| `real-psf` | BART's, stored as floats | one gridding |
-| `compress-psf` | BART's, the entries that are not zero beside an index | one gridding |
-
-Those last two keep BART's operator and are counted with the declines:
 `operators_built()` returning zero for BART is the whole claim, and every
-route to one of BART's operators increments it.  A compressed function throws
-away what it decides is zero, which moves a reconstruction by about a tenth in
-BART too; that is the mode, not the substitution.
+route to one of BART's operators increments it.
+
+The mask a compressed function keeps is the one difference taken deliberately.
+BART grids the sampling pattern to find which points to keep, which is the
+footprint of its own kernel; the function itself says the same thing and is
+already computed, so the mask is where it stands above what the transform can
+tell from zero. That is a better mask than the one it replaces: a compressed
+reconstruction is 6.8e-03 from the uncompressed one here, against 1.4e-01 for
+BART's own.
+
+`zero-mem` is the exception that is not one: it is a parenthesised flag in
+BART's own help, and its Toeplitz normal does not reconstruct in BART either
+-- BART's own is nearly two from BART's own default. It is intercepted like
+the rest and nothing more is claimed for it.
 
 A^H A as one convolution against A^H A as two transforms differs by 1.2e-03 at
 a thousandth and 2.1e-06 at a millionth -- it closes with the tolerance, which
 is what says the function is the right one rather than nearly so.
 
-The entry points that read the operator's internals -- `nufft_get_psf*`,
+The entry points that read the operator's internalsThe entry points that read the operator's internals -- `nufft_get_psf*`,
 `nufft_update_*`, `nufft_precond_create` -- refuse on one of these rather than
 read the wrong struct. `pics` only reaches them for `--psf_export` and
 `--psf_import`.

@@ -31,6 +31,10 @@
 #include "num/multind.h"
 
 #include "noncart/nufft.h"
+#include "noncart/nufft_priv.h"
+
+#include "num/compress.h"
+#include "num/multiplace.h"
 
 #include "include/bartorch.h"
 
@@ -578,84 +582,114 @@ static struct nufft_conf_s barts_conf(struct nufft_conf_s conf)
  * The caller decides: `conf.toeplitz` is what `pics --no-toeplitz` and
  * `nufft -t` set, and it carries the memory the function costs.
  */
-/* The shape BART's Toeplitz normal wants its point spread function in.
+/* The function BART's Toeplitz normal convolves with, computed here and
+ * stored the way the operator wants it.
  *
- * `nufft.c` derives it from the linear phases it precomputes: the image along
- * the transformed axes, one set of shifts per corner of the oversampled grid,
- * and the trajectory's own extent along the axes the transform leaves alone.
- * `nufft_create_normal` asserts that the two agree, which is the check that
- * this stayed in step with it. */
-static int psf_shape(int N, long psf_dims[N + 1], const long cim_dims[N],
-		const long trj_dims[N], const long wgh_dims[N], const complex float* weights,
-		const long bas_dims[N], const complex float* basis, struct nufft_conf_s conf)
+ * `nufft.c` would compute one for itself, with its own gridder, from inside
+ * the file where the rename cannot reach it -- `conf.nopsf` is what stops it,
+ * and is what `pics --psf_import` uses to bring one in from outside.  What is
+ * left is to make the function and store it, which is the block this mirrors:
+ * the same `md_real` for a real one and the same `md_compress` for a
+ * compressed one, over dimensions the operator worked out for itself rather
+ * than any derived again here.
+ */
+static void install_psf(struct nufft_data* data, const complex float* traj)
 {
+	int N = data->N;
 	int ND = N + 1;
 
-	long cim[ND];
-	md_copy_dims(N, cim, cim_dims);
-	cim[N] = 1;
+	const complex float* weights = multiplace_read(data->weights, traj);
+	const complex float* basis = multiplace_read(data->basis, traj);
 
-	long img_dims[ND];
-	md_select_dims(ND, conf.flags, img_dims, cim);
+	complex float* psf = (data->conf.decomposed_psf ? compute_psf2_decomposed : compute_psf2)(N,
+			data->psf_dims, data->flags, data->trj_dims, traj,
+			data->bas_dims, basis, data->wgh_dims, weights,
+			true /* as nufft.c asks for it */, data->conf.lowmem, data->conf.upper_triag);
 
-	md_copy_dims(ND, psf_dims, img_dims);
+	long max_idx = 0;
 
-	long shifts = 1;
+	if (data->conf.compress_psf) {
 
-	if (conf.decomp)
-		for (int i = 0; i < N; i++)
-			if (MD_IS_SET(conf.flags, i) && (1 < img_dims[i]))
-				shifts *= 2;
+		/* Which entries are worth keeping.  BART grids the sampling pattern
+		 * to find them, which is the footprint of its own kernel; the
+		 * function itself says the same thing and is already here, so the
+		 * mask is where it stands above what the transform can tell from
+		 * zero. */
+		md_select_dims(ND, FFT_FLAGS, data->com_dims, data->img_dims);
 
-	psf_dims[N] = shifts;
+		complex float* mask = md_alloc_sameplace(ND, data->com_dims, CFL_SIZE, psf);
+		md_clear(ND, data->com_dims, mask, CFL_SIZE);
 
-	for (int i = 0; i < N; i++)
-		if (!MD_IS_SET(conf.flags, i))
-			psf_dims[i] = MAX(trj_dims[i], (NULL != weights) ? wgh_dims[i] : 0);
+		long psf_strs[ND];
+		long com_strs[ND];
+		md_calc_strides(ND, psf_strs, data->psf_dims, CFL_SIZE);
+		md_calc_strides(ND, com_strs, data->com_dims, CFL_SIZE);
 
-	if (NULL != basis) {
+		complex float* magnitude = md_alloc_sameplace(ND, data->psf_dims, CFL_SIZE, psf);
+		md_zabs(ND, data->psf_dims, magnitude, psf);
+		md_zmax2(ND, data->psf_dims, com_strs, mask, com_strs, mask, psf_strs, magnitude);
 
-		if (conf.upper_triag) {
+		float peak = md_znorm(ND, data->com_dims, mask);
+		md_free(magnitude);
 
-			psf_dims[6] = bas_dims[6] * (bas_dims[6] + 1) / 2;
-			psf_dims[5] = 1;
+		md_zsgreatequal(ND, data->com_dims, mask, mask,
+				(float)(bartorch_finufft_tolerance() * peak));
 
-		} else {
+		complex float* mask_cpu = md_alloc(ND, data->com_dims, CFL_SIZE);
+		md_copy(ND, data->com_dims, mask_cpu, mask, CFL_SIZE);
+		md_free(mask);
 
-			psf_dims[6] = bas_dims[6];
-			psf_dims[5] = bas_dims[6];
-		}
+		long* idx = md_alloc(ND, data->com_dims, sizeof(long));
+		max_idx = md_compress_mask_to_index(ND, data->com_dims, idx, mask_cpu);
+		md_free(mask_cpu);
+
+		multiplace_free(data->compress);
+		data->compress = multiplace_move_F(ND, data->com_dims, sizeof(long), idx);
 	}
 
-	return ND;
+	multiplace_free(data->psf);
+
+	if (data->conf.real) {
+
+		float* psf_real = md_alloc_sameplace(ND, data->psf_dims, FL_SIZE, psf);
+		md_real(ND, data->psf_dims, psf_real, psf);
+		md_free(psf);
+
+		md_calc_strides(ND, data->psf_strs, data->psf_dims, FL_SIZE);
+		data->psf = multiplace_move_F(ND, data->psf_dims, FL_SIZE, psf_real);
+
+	} else {
+
+		data->psf = multiplace_move_F(ND, data->psf_dims, CFL_SIZE, psf);
+	}
+
+	if (NULL != data->compress) {
+
+		size_t size = data->conf.real ? FL_SIZE : CFL_SIZE;
+
+		long com_psf_dims[ND];
+		md_compress_dims(ND, com_psf_dims, data->psf_dims, data->com_dims, max_idx);
+
+		complex float* com_psf = md_alloc_sameplace(ND, com_psf_dims, size, traj);
+		md_compress(ND, com_psf_dims, com_psf, data->psf_dims, multiplace_read(data->psf, traj),
+				data->com_dims, multiplace_read(data->compress, traj), size);
+
+		multiplace_free(data->psf);
+
+		md_copy_dims(ND, data->psf_dims, com_psf_dims);
+		md_calc_strides(ND, data->psf_strs, data->psf_dims, size);
+		data->psf = multiplace_move_F(ND, data->psf_dims, size, com_psf);
+	}
 }
 
-/* Whether the normal is one this can build.
+/* BART's own normal, over a function computed here.
  *
- * `nufft_create_normal` takes its function through `nufft_update_psf`, which
- * writes a whole complex one.  A real point spread function is stored as
- * floats and a compressed one as the entries that are not zero beside an
- * index of where they were, and neither is something to hand over that way.
- * Those two keep BART's operator, and BART grids once to make them.
- *
- * Everything else is served, the upper-triangular subspace function included:
- * `compute_psf2` computes that one too, and the only difference here is the
- * shape it comes back in. */
-static bool normal_is_ours(struct nufft_conf_s conf)
-{
-	return !conf.compress_psf && !conf.real;
-}
-
-/* BART's own normal operator, over a point spread function computed here.
- *
- * A^H A is a convolution, so it is one multiply against a function rather
- * than a transform each way, and `nufft.c` has the machinery for that: the
- * oversampled grid, the linear phases, the decomposition.  What it does not
- * have is a way to be handed the function from outside its own gridder --
- * `nufft_create2` would compute one for itself, from inside the file where
- * the rename cannot reach it.  `nufft_create_normal` is that way: it takes a
- * function and builds the convolution around it, so the transform underneath
- * is the substitution's like every other.
+ * A^H A is a convolution, so it is one multiply against a function rather than
+ * a transform each way, and `nufft.c` has the machinery for that: the
+ * oversampled grid, the linear phases, the decomposition, and the three ways
+ * of storing the function that make it fit.  All of that is kept.  What is not
+ * is the gridding it would do to build the function, which `nopsf` turns off
+ * and `install_psf` replaces.
  *
  * The caller decides whether there is one at all: `conf.toeplitz` is what
  * `pics --no-toeplitz` and `nufft -t` set, and it carries the memory the
@@ -675,58 +709,17 @@ static const struct linop_s* toeplitz_for(int N, const long ksp_dims[N], const l
 		return NULL;
 	}
 
-	if (!normal_is_ours(conf)) {
+	struct nufft_conf_s barts = barts_conf(conf);
+	barts.nopsf = true;
 
-		const struct linop_s* op = bart_nufft_create2(N, ksp_dims, cim_dims, traj_dims, traj,
-				wgh_dims, weights, (NULL != basis) ? bas_dims : NULL, basis, barts_conf(conf));
+	const struct linop_s* op = bart_nufft_create2(N, ksp_dims, cim_dims, traj_dims, traj,
+			wgh_dims, weights, (NULL != basis) ? bas_dims : NULL, basis, barts);
 
-		/* BART's operator, and BART grids to make its function: counted with
-		 * the declines, so that a zero there is the whole claim. */
-		count(CNT_BART);
-
-#pragma omp atomic
-		toeplitz_counters[TP_PSF]++;
-
-		return op;
-	}
-
-	/* The psf entry points take the arrays an axis longer, the way the
-	 * operator carries them. */
-	int ND = N + 1;
-
-	long psf_dims[ND];
-	psf_shape(N, psf_dims, cim_dims, traj_dims, wgh_dims, weights, bas_dims, basis, conf);
-
-	long trj[ND];
-	long wgh[ND];
-	long bas[ND];
-
-	md_copy_dims(N, trj, traj_dims);
-	md_singleton_dims(N, wgh);
-	md_singleton_dims(N, bas);
-
-	if (NULL != weights)
-		md_copy_dims(N, wgh, wgh_dims);
-
-	if (NULL != basis)
-		md_copy_dims(N, bas, bas_dims);
-
-	trj[N] = 1;
-	wgh[N] = 1;
-	bas[N] = 1;
+	struct nufft_data* data = CAST_DOWN(nufft_data, linop_get_data_nested(op));
 
 	making_psf++;
-
-	complex float* psf = (conf.decomposed_psf ? compute_psf2_decomposed : compute_psf2)(N,
-			psf_dims, conf.flags, trj, traj, bas, basis, wgh, weights,
-			true /* as nufft.c asks for it */, conf.lowmem, conf.upper_triag);
-
+	install_psf(data, traj);
 	making_psf--;
-
-	const struct linop_s* op = nufft_create_normal(N, cim_dims, ND, psf_dims, psf,
-			NULL != basis, barts_conf(conf));
-
-	md_free(psf);
 
 #pragma omp atomic
 	toeplitz_counters[TP_PSF]++;
