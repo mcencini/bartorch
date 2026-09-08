@@ -248,6 +248,16 @@ comparison to mean anything. Far below that -- sixteen spokes across a 128
 grid -- conjugate gradients wander and the difference between two
 reconstructions says more about the conditioning than about either mask.
 
+Accuracy is not what says the mask is in the right place, though: one that
+keeps the wrong points but more of them reconstructs well too. The
+compression rate is what says it, and only when both are spread with the same
+footprint. Given FINUFFT the kernel BART uses -- an upsampling of two and a
+tolerance that buys ns = 6, which covers the 3 cells BART's width of 6 at an
+oversampling of 2 does -- the two masks keep 86 and 84 per cent of a 64-grid
+of 64 spokes, 83 and 82 of a 128-grid of 128, 82 and 80 of a 128-grid of 48,
+and 86 apiece on a card. Within rounding a width to whole cells, which is
+where this one is the wider. A displaced mask would not land there.
+
 `zero-mem` is the exception that is not one: it is a parenthesised flag in
 BART's own help, and its Toeplitz normal does not reconstruct in BART either
 -- BART's own is nearly two from BART's own default. It is intercepted like

@@ -2,6 +2,8 @@
 against an explicit discrete Fourier sum and against BART's own gridder.
 """
 
+import logging
+
 import numpy as np
 import pytest
 import torch
@@ -1037,3 +1039,49 @@ def test_a_compressed_function_keeps_what_this_transform_put_there(in_tools):
         theirs = cost()
 
     assert ours < theirs, (ours, theirs)
+
+
+@requires_finufft
+def test_the_mask_lands_where_barts_does(in_tools, caplog):
+    """Given the same kernel, the two masks keep the same points.
+
+    Accuracy alone would not catch a mask that is displaced rather than
+    mis-sized: one that keeps the wrong points but more of them can still
+    reconstruct well.  The compression rate is what catches it, and it only
+    means something when both are spread with the same footprint -- BART's
+    width 6 at an oversampling of 2 covers 3 cells of the image grid, and so
+    does FINUFFT's kernel at an upsampling of 2 and a tolerance that buys
+    ns = 6.
+    """
+    n, spokes, coils = 64, 64, 2
+    traj = bt.traj(x=n, y=spokes, r=True)
+    ksp = bt.nufft(traj, bt.phantom([n, n], ncoils=coils))
+    maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
+
+    def kept():
+        caplog.clear()
+        with caplog.at_level(logging.DEBUG, logger="bartorch.bart"):
+            bartorch.set_debug_level(4)
+            try:
+                bt.pics(ksp, maps, t=traj, nufft_conf="compress-psf")
+            finally:
+                bartorch.set_debug_level(1)
+        percent = [
+            int(m.split("to")[1].strip().rstrip("%"))
+            for m in caplog.messages
+            if "Compressing PSF" in m
+        ]
+        assert percent, caplog.messages
+        return percent[0]
+
+    try:
+        _finufft.use_in_tools(True, tolerance=4.5e-6, upsampling=2.0)
+        ours = kept()
+        with _finufft.barts_own_gridder():
+            theirs = kept()
+    finally:
+        _finufft.use_in_tools(True)
+
+    # Rounding a width to whole cells leaves this one a little wider; a mask
+    # in the wrong place would not be within a few points of BART's.
+    assert abs(ours - theirs) <= 5, (ours, theirs)
