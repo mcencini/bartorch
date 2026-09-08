@@ -216,6 +216,19 @@ def used_in_tools() -> bool:
     return bool(library().bartorch_finufft_usable())
 
 
+def live_plans() -> int:
+    """FINUFFT plans made and not yet destroyed.
+
+    A plan belongs to whatever asked for one -- a transform operator, a point
+    spread function, the spreading a compressed one is masked with -- and
+    outlives none of them, so this is back at zero once the last of them has
+    been freed.
+    """
+    from bartorch._lib import library
+
+    return int(library().bartorch_finufft_live_plans())
+
+
 def decline_reason() -> str:
     """Why the last operator was BART's rather than FINUFFT's; empty if it was FINUFFT's."""
     from bartorch._lib import library

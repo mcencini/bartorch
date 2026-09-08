@@ -199,6 +199,9 @@ BARTORCH_API void bartorch_finufft_use_in_tools(int enable);
 /* Whether a transform can be served where the data is: 0 host, 1 device. */
 BARTORCH_API int bartorch_finufft_usable_on(int device);
 BARTORCH_API int bartorch_finufft_usable(void);
+/* Plans made and not yet destroyed: zero once every operator, point spread
+ * function and mask that asked for one has been freed. */
+BARTORCH_API long bartorch_finufft_live_plans(void);
 BARTORCH_API const char* bartorch_last_error(void);
 BARTORCH_API void bartorch_clear_error(void);
 BARTORCH_API int bartorch_nufft_decline_reason(void);

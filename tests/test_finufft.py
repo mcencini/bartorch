@@ -1163,3 +1163,68 @@ def test_the_toeplitz_kernel_is_the_doubled_grid_whatever_the_upsampling(in_tool
 
     cheap, careful = kernels["cheap"].numpy(), kernels["careful"].numpy()
     assert np.linalg.norm(cheap - careful) / np.linalg.norm(careful) < 5 * 1e-3
+
+
+@requires_finufft
+def test_a_plan_lives_exactly_as_long_as_what_asked_for_it(in_tools):
+    """Every plan is freed by the thing that made it, and nothing outlives it.
+
+    A plan holds its own workspace and, on a card, device memory, so one left
+    behind by an operator, by a point spread function or by the spreading a
+    compressed one is masked with would accumulate over a solve.  The count is
+    what says so: reading the process instead would say nothing, because
+    FINUFFT's own multithreaded execute retains about a kilobyte per thread on
+    every call and that swamps anything a plan costs.
+    """
+    n, spokes, coils = 32, 48, 2
+    traj = bt.traj(x=n, y=spokes, r=True)
+    image = bt.phantom([n, n], ncoils=coils)
+    ksp = bt.nufft(traj, image)
+    maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
+    x = torch.randn(1, n, n, dtype=torch.complex64)
+
+    assert _finufft.live_plans() == 0
+
+    held = LinearOperator.nufft(traj, (1, n, n), toeplitz=False)
+    held(x)
+    assert _finufft.live_plans() > 0, "an operator that has transformed holds a plan"
+    del held
+    assert _finufft.live_plans() == 0, "and gives it back when it is freed"
+
+    # A Toeplitz operator makes more of them -- the pair, the transform behind
+    # the point spread function, and one spreader per frequency set for the
+    # mask -- and each is freed where it was made.
+    LinearOperator.nufft(traj, (1, n, n), toeplitz=True).normal(x)
+    assert _finufft.live_plans() == 0
+
+    for run in (
+        lambda: bt.nufft(traj, image),
+        lambda: bt.nufft(traj, ksp, adjoint=True),
+        lambda: bt.psf(traj),
+        lambda: bt.pics(ksp, maps, t=traj),
+        lambda: bt.pics(ksp, maps, t=traj, no_toeplitz=True),
+        lambda: bt.nlinv(ksp, t=traj, iter_=3),
+    ):
+        run()
+        assert _finufft.live_plans() == 0
+
+
+@requires_finufft
+@pytest.mark.skipif(
+    not bartorch.cuda.available(), reason="no CUDA device, or the library was built without CUDA"
+)
+def test_a_device_plan_is_given_back_too(in_tools):
+    """A cuFINUFFT plan holds device memory, which is the scarcer of the two."""
+    n, spokes, coils = 32, 48, 2
+    traj = bt.traj(x=n, y=spokes, r=True).cuda()
+    ksp = bt.nufft(traj, bt.phantom([n, n], ncoils=coils).cuda())
+    maps = (torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5).cuda()
+    x = torch.randn(1, n, n, dtype=torch.complex64, device="cuda")
+
+    assert _finufft.live_plans() == 0
+
+    LinearOperator.nufft(traj, (1, n, n), toeplitz=True).normal(x)
+    assert _finufft.live_plans() == 0
+
+    bt.pics(ksp, maps, t=traj)
+    assert _finufft.live_plans() == 0

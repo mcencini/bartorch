@@ -163,6 +163,14 @@ struct bartorch_fi_plan {
 	finufft_plan_t plan;
 };
 
+/* Plans made and not yet destroyed.  A plan belongs to whatever made it -- an
+ * operator, a point spread function, the spreading a compressed one is masked
+ * with -- and outlives none of them, so this is back at zero once the last of
+ * them is gone.  That is a property worth testing, and one RSS cannot be read
+ * for: FINUFFT's own multithreaded execute retains a kilobyte per thread per
+ * call, which any measurement of the process would drown this in. */
+static long fi_live_plans;
+
 /* `spread_only` asks FINUFFT for the spreading alone -- no transform, no
  * deapodisation -- which puts the kernel's own footprint on the grid.  That is
  * what a compressed point spread function's mask is: which grid points the
@@ -209,6 +217,10 @@ int bartorch_finufft_plan(int device, int type, int dim, const int64_t n_modes[3
 	held->table = t;
 	held->plan = p;
 	*plan = held;
+
+#pragma omp atomic
+	fi_live_plans++;
+
 	return 0;
 }
 
@@ -239,4 +251,12 @@ void bartorch_finufft_free(void* plan)
 	pthread_mutex_unlock(&fi_lock);
 
 	free(p);
+
+#pragma omp atomic
+	fi_live_plans--;
+}
+
+long bartorch_finufft_live_plans(void)
+{
+	return fi_live_plans;
 }

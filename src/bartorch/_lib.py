@@ -227,6 +227,8 @@ def _bind(lib: ctypes.CDLL) -> ctypes.CDLL:
     lib.bartorch_finufft_use_in_tools.argtypes = [c.c_int]
     lib.bartorch_finufft_usable.restype = c.c_int
     lib.bartorch_finufft_usable.argtypes = []
+    lib.bartorch_finufft_live_plans.restype = c.c_long
+    lib.bartorch_finufft_live_plans.argtypes = []
     lib.bartorch_last_error.restype = c.c_char_p
     lib.bartorch_last_error.argtypes = []
     lib.bartorch_clear_error.restype = None
