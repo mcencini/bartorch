@@ -195,6 +195,10 @@ BARTORCH_API void bartorch_finufft_set_tolerance(double eps);
 BARTORCH_API double bartorch_finufft_tolerance(void);
 BARTORCH_API void bartorch_finufft_set_upsampling(double upsampling);
 BARTORCH_API double bartorch_finufft_upsampling(void);
+/* Threads a transform on the host takes; zero leaves the count to FINUFFT.
+ * bartorch_set_num_threads sets this too. */
+BARTORCH_API void bartorch_finufft_set_threads(int n);
+BARTORCH_API int bartorch_finufft_threads(void);
 BARTORCH_API void bartorch_finufft_use_in_tools(int enable);
 /* Whether a transform can be served where the data is: 0 host, 1 device. */
 BARTORCH_API int bartorch_finufft_usable_on(int device);

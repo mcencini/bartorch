@@ -151,7 +151,13 @@ def set_copy_inputs(copy: bool) -> None:
 
 
 def set_num_threads(n: int) -> None:
-    """Set the number of threads BART and its FFT use."""
+    """Set the number of threads BART, its FFT and FINUFFT use.
+
+    One number for everything in the process that threads.  FINUFFT starts
+    out choosing for itself, a thread per physical core, and
+    :func:`bartorch.finufft.set_threads` with zero puts it back to that
+    without giving BART a count of its own.
+    """
     _ensure_ready()
     library().bartorch_set_num_threads(int(n))
 

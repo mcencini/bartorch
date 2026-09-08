@@ -54,8 +54,9 @@ static struct {
 	int use_in_tools;
 	double tolerance;
 	double upsampling;
+	int threads;
 
-} fi = { .use_in_tools = 0, .tolerance = 1.e-3, .upsampling = 1.25 };
+} fi = { .use_in_tools = 0, .tolerance = 1.e-3, .upsampling = 1.25, .threads = 0 };
 
 static pthread_mutex_t fi_lock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -128,6 +129,23 @@ double bartorch_finufft_upsampling(void)
 	return fi.upsampling;
 }
 
+/* How many threads a transform on the host is given.
+ *
+ * Zero, the state this starts in, leaves the count to FINUFFT, which takes a
+ * thread per physical core.  bartorch_set_num_threads sets this along with
+ * BART's own, so one number covers the process; this is how that is undone
+ * without setting BART to a count of its own.  A card has no say in it --
+ * cuFINUFFT carries a device number where FINUFFT carries this. */
+void bartorch_finufft_set_threads(int n)
+{
+	fi.threads = (n > 0) ? n : 0;
+}
+
+int bartorch_finufft_threads(void)
+{
+	return fi.threads;
+}
+
 /* The entry points are there and the options layout is known. */
 static bool table_ready(const struct fi_table* t)
 {
@@ -187,10 +205,19 @@ int bartorch_finufft_plan(int device, int type, int dim, const int64_t n_modes[3
 
 	pthread_mutex_lock(&fi_lock);
 
-	int which = device ? bartorch_cuda_device() : 0;
-
 	t->default_opts(opts);
-	*(int*)(opts + t->off_device) = (which > 0) ? which : 0;
+
+	/* One offset, a different option on each side: the device to run on, or
+	 * the number of threads to take. */
+	if (device) {
+
+		int which = bartorch_cuda_device();
+		*(int*)(opts + t->off_device) = (which > 0) ? which : 0;
+
+	} else {
+
+		*(int*)(opts + t->off_device) = fi.threads;
+	}
 
 	if (0. != upsampling)
 		*(double*)(opts + t->off_upsampling) = upsampling;

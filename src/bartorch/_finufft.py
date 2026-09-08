@@ -286,6 +286,29 @@ def upsampling() -> float:
     return float(library().bartorch_finufft_upsampling())
 
 
+def set_threads(n: int) -> None:
+    """How many threads a transform on the host takes.
+
+    Zero, the state this starts in, leaves the count to FINUFFT, which takes
+    a thread per physical core.  :func:`bartorch.set_num_threads` sets this
+    along with BART's own count, so one number covers the process; passing
+    zero here is how that is undone without giving BART a count of its own.
+
+    A card has no say in it: cuFINUFFT carries a device number where FINUFFT
+    carries a thread count.
+    """
+    from bartorch._lib import library
+
+    library().bartorch_finufft_set_threads(int(n))
+
+
+def threads() -> int:
+    """Threads a transform on the host takes; zero means FINUFFT chooses."""
+    from bartorch._lib import library
+
+    return int(library().bartorch_finufft_threads())
+
+
 def fallback_allowed() -> bool:
     """Whether BART's own operator may answer what FINUFFT will not."""
     from bartorch._lib import library

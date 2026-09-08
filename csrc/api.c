@@ -94,6 +94,10 @@ int bartorch_get_debug_level(void)
 	return effective_debug_level();
 }
 
+/* One count for everything that threads: BART, its FFT, and the transform
+ * FINUFFT runs on the host.  FINUFFT starts out choosing for itself, and
+ * bartorch_finufft_set_threads(0) is how it is put back to that without
+ * giving BART a count of its own. */
 void bartorch_set_num_threads(int n)
 {
 	if (n < 1)
@@ -101,6 +105,7 @@ void bartorch_set_num_threads(int n)
 
 	num_set_num_threads(n);
 	bartorch_fft_set_num_threads(n);
+	bartorch_finufft_set_threads(n);
 }
 
 /* What BART last said when it failed.

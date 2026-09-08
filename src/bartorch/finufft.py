@@ -18,7 +18,9 @@ transform and several times slower, with nothing to say so.
 
 A transform is served by whichever library the data is on: FINUFFT on the
 host, cuFINUFFT on a card, which :func:`used_on_device` reports.
-:func:`configure` sets what they are planned with.
+:func:`configure` sets what they are planned with, and
+:func:`bartorch.set_num_threads` how many threads a transform on the host
+takes.
 """
 
 from bartorch._finufft import (
@@ -28,6 +30,8 @@ from bartorch._finufft import (
     normals_built,
     operators_built,
     reset_counters,
+    set_threads,
+    threads,
     tolerance,
     upsampling,
     used_on_device,
@@ -44,6 +48,8 @@ __all__ = [
     "normals_built",
     "operators_built",
     "reset_counters",
+    "set_threads",
+    "threads",
     "tolerance",
     "upsampling",
     "used_on_device",

@@ -3,6 +3,7 @@ against an explicit discrete Fourier sum and against BART's own gridder.
 """
 
 import logging
+import os
 
 import numpy as np
 import pytest
@@ -1228,3 +1229,37 @@ def test_a_device_plan_is_given_back_too(in_tools):
 
     bt.pics(ksp, maps, t=traj)
     assert _finufft.live_plans() == 0
+
+
+@requires_finufft
+def test_one_thread_count_covers_bart_and_the_transform(in_tools):
+    """``set_num_threads`` means the process, not just BART.
+
+    FINUFFT takes a thread per physical core unless it is told otherwise, so
+    a caller who has limited BART to leave room for something else would
+    otherwise still find the transform taking the whole machine.  Zero is the
+    state it starts in and the way back to it, which is why it has a setter of
+    its own: BART has no count that means "choose for me".
+    """
+    assert _finufft.threads() == 0, "FINUFFT chooses for itself until it is told"
+
+    try:
+        bartorch.set_num_threads(2)
+        assert _finufft.threads() == 2
+
+        _finufft.set_threads(0)
+        assert _finufft.threads() == 0, "and can be put back without BART losing its count"
+
+        # A transform still runs whichever way round it is set.
+        n = 32
+        traj = bt.traj(x=n, y=48, r=True)
+        image = bt.phantom([n, n]).reshape(1, n, n)
+        reference = bt.nufft(traj, image)
+
+        _finufft.set_threads(1)
+        one = bt.nufft(traj, image)
+    finally:
+        _finufft.set_threads(0)
+        bartorch.set_num_threads(os.cpu_count() or 1)
+
+    torch.testing.assert_close(one, reference, rtol=1e-4, atol=1e-5)
