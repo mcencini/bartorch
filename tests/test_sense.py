@@ -188,3 +188,35 @@ def test_the_operator_is_the_sensitivities_and_the_transform():
     torch.testing.assert_close(
         off(x).reshape(coils, 48, n, 1), bt.nufft(traj, coil_images), rtol=1e-4, atol=1e-5
     )
+
+
+@pytest.mark.skipif(
+    not bartorch.cuda.available(), reason="no CUDA device, or the library was built without CUDA"
+)
+def test_a_bank_left_on_the_host_is_brought_over_a_slab_at_a_time():
+    """The card never holds the bank, only the slab being used.
+
+    The loop already reads one slab at a time, so one slab at a time is all
+    that has to cross -- which is what lets a bank larger than the card serve
+    a reconstruction on it.  The answer has to be the one the card would give
+    if it held the whole thing.
+    """
+    n, coils = 32, 8
+    torch.manual_seed(0)
+    maps = torch.randn(coils, n, n, dtype=torch.complex64)
+    traj = bt.traj(x=n, y=48, r=True)
+    x = bt.phantom([n, n]).reshape(1, n, n)
+
+    resident = LinearOperator.sense(maps.cuda(), (coils, n, n), traj=traj.cuda())
+    staged = LinearOperator.sense(maps, (coils, n, n), traj=traj.cuda())
+
+    # A staged slab is dense where a resident one is a window on to the bank,
+    # so the sum that ends the adjoint runs in a different order and the last
+    # bit or two of it differ.  What is being checked is the arithmetic, not
+    # the order.
+    y = resident(x.cuda())
+    torch.testing.assert_close(staged(x.cuda()), y, rtol=1e-5, atol=1e-6)
+    torch.testing.assert_close(staged.adjoint(y), resident.adjoint(y), rtol=1e-4, atol=1e-5)
+    torch.testing.assert_close(
+        staged.normal(x.cuda()), resident.normal(x.cuda()), rtol=1e-4, atol=1e-5
+    )

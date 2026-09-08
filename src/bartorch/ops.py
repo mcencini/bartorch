@@ -348,6 +348,11 @@ class LinearOperator:
             Sample shape; by default the trajectory's, or the image's on a
             grid.
         kernels : bool
+            Sensitivities left on the host are brought over a slab at a time
+            when the operator is applied on a card, so the bank itself never
+            has to fit; what crosses is one slab.
+
+        kernels : bool
             Read ``sensitivities`` as kernels: the centre of each map's
             spectrum, which is all a smooth map carries.  A slab is padded
             back on to the image grid and transformed when it is needed, so a
@@ -391,7 +396,11 @@ class LinearOperator:
                 kspace_shape = (coils, *tuple(t.shape)[:-1], 1)
         kspace_shape = tuple(kspace_shape)
 
-        with _lock, _on_device(s.device):
+        # Where the operator is built follows the transform's own data, not
+        # the sensitivities: a bank left on the host is the point.
+        built_on = s.device if t is None else t.device
+
+        with _lock, _on_device(built_on):
             ptr = library().bartorch_linop_sense(
                 _dims(max_shape),
                 _dims(kspace_shape),
