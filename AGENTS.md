@@ -177,12 +177,26 @@ shifted trajectory and its own image. That is a stack of transforms rather
 than one plan over frames, so it is always built the way BART builds it for
 `lowmem`, which also holds one set at a time.
 
-What `nufft.c` computes for its own Toeplitz embedding is reached from inside
-that file and does not come here: `toeplitz_for` asks `bart_nufft_create2` for
-BART's operator and borrows its normal, and BART grids once to build the point
-spread function that normal convolves with. Moving that across needs
-`nufft_create_normal`, which takes a function rather than computing one, and
-the `psf_dims` and `flags` that `nufft_create_data` derives.
+**The normal stays BART's convolution over a function computed here.**
+`nufft_create2` would compute its own from inside `nufft.c`, where the rename
+cannot reach it, so `toeplitz_for` does not ask for one: it works out the
+shape `nufft.c` wants the function in -- the image along the transformed axes,
+one set of shifts per corner of the oversampled grid, the trajectory's extent
+along the rest -- computes it with `compute_psf2`, and hands it to
+`nufft_create_normal`, which takes a function rather than making one. BART
+keeps the oversampled grid, the linear phases and the decomposition; the
+transform underneath is the substitution's like every other.
+
+`nufft_create_normal` asserts that the shape agrees with the linear phases it
+would have built, which is the check that this stayed in step with `nufft.c`.
+A compressed, real or upper-triangular point spread function is stored inside
+the operator in a form `nufft_update_psf` does not write, so those stay BART's
+and are counted with the declines: `operators_built()` returning zero for BART
+is the whole claim, and every route to one of BART's operators increments it.
+
+A^H A as one convolution against A^H A as two transforms differs by 1.2e-03 at
+a thousandth and 2.1e-06 at a millionth -- it closes with the tolerance, which
+is what says the function is the right one rather than nearly so.
 
 The entry points that read the operator's internals -- `nufft_get_psf*`,
 `nufft_update_*`, `nufft_precond_create` -- refuse on one of these rather than

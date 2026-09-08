@@ -26,6 +26,18 @@ def _within_tolerance(got, ref):
     assert error < 5 * _finufft.tolerance(), (error, _finufft.tolerance())
 
 
+def _all_finufft(least=1):
+    """FINUFFT built every operator, and BART's gridder built none.
+
+    A tool with a Toeplitz normal builds more than one: the transform pair the
+    caller asked for, and the one transform a point spread function is made
+    from.  What matters is that none of them was BART's.
+    """
+    built, bart = _finufft.operators_built()
+    assert bart == 0, _finufft.decline_reason()
+    assert built >= least, (built, least)
+
+
 def _sides_agree(card, host):
     """Two libraries promised the same tolerance agree to about it.
 
@@ -161,7 +173,7 @@ def test_barts_nufft_tool_matches_an_explicit_dft_with_finufft_underneath(in_too
     _finufft.reset_counters()
     y = bt.nufft(traj, img)
 
-    assert _finufft.operators_built() == (1, 0), _finufft.decline_reason()
+    _all_finufft()
     ref = _dft(traj, img, n)
     _within_tolerance(y.numpy().reshape(ref.shape), ref)
 
@@ -189,7 +201,7 @@ def test_weights_multiply_the_transform_and_their_conjugate_its_adjoint(in_tools
     _finufft.reset_counters()
     y = bt.nufft(traj, img, p=weights)
 
-    assert _finufft.operators_built() == (1, 0), _finufft.decline_reason()
+    _all_finufft()
     ref = _dft(traj, img, n) * weights.numpy().reshape(spokes, n)
     _within_tolerance(y.numpy().reshape(ref.shape), ref)
 
@@ -209,7 +221,7 @@ def test_pics_reconstructs_the_same_image_either_way(in_tools):
 
     _finufft.reset_counters()
     fast = bt.pics(kspace, maps, t=traj)
-    assert _finufft.operators_built() == (1, 0), _finufft.decline_reason()
+    _all_finufft()
 
     with _finufft.barts_own_gridder():
         _finufft.reset_counters()
@@ -336,7 +348,7 @@ def test_a_trajectory_on_a_card_is_transformed_by_cufinufft(in_tools):
     y = bt.nufft(traj, image)
 
     assert y.device.type == "cuda"
-    assert _finufft.operators_built() == (1, 0), _finufft.decline_reason()
+    _all_finufft()
     ref = _dft(traj.cpu(), image.cpu(), n)
     _within_tolerance(y.cpu().numpy().reshape(ref.shape), ref)
 
@@ -359,7 +371,7 @@ def test_one_operator_serves_both_sides_of_the_bus(in_tools):
 
     _finufft.reset_counters()
     A = LinearOperator.nufft(traj, (1, n, n), toeplitz=False)
-    assert _finufft.operators_built() == (1, 0), _finufft.decline_reason()
+    _all_finufft()
 
     on_card = A(image.cuda())
     on_host = A(image)
@@ -390,7 +402,7 @@ def test_more_frames_than_a_batch_of_one_thousand_are_still_finuffts(in_tools):
     A = LinearOperator.nufft(
         traj, (frames, 1, n, n), kspace_shape=(frames, 8, n, 1), toeplitz=False
     )
-    assert _finufft.operators_built() == (1, 0), _finufft.decline_reason()
+    _all_finufft()
 
     y = A(image)
     assert y.shape[0] == frames
@@ -448,7 +460,7 @@ def test_a_subspace_adjoint_over_a_per_frame_trajectory_matches_an_explicit_sum(
 
     _finufft.reset_counters()
     x = bt.nufft(traj, y, adjoint=True, image_dims=(n, n, 1), B=basis)
-    assert _finufft.operators_built() == (1, 0), _finufft.decline_reason()
+    _all_finufft()
 
     phase = _phase_per_frame(traj, n, +1)
     data = y.numpy().reshape(frames, spokes, n)
@@ -475,7 +487,7 @@ def test_a_subspace_forward_over_a_per_frame_trajectory_matches_an_explicit_sum(
 
     _finufft.reset_counters()
     y = bt.nufft(traj, img, B=basis)
-    assert _finufft.operators_built() == (1, 0), _finufft.decline_reason()
+    _all_finufft()
 
     phase = _phase_per_frame(traj, n, -1)
     im = img.numpy().reshape(coeffs, n, n)
@@ -501,7 +513,7 @@ def test_a_subspace_adjoint_on_a_card_agrees_with_the_host(in_tools):
 
     _finufft.reset_counters()
     on_card = bt.nufft(traj.cuda(), y.cuda(), adjoint=True, image_dims=(n, n, 1), B=basis.cuda())
-    assert _finufft.operators_built() == (1, 0), _finufft.decline_reason()
+    _all_finufft()
     on_host = bt.nufft(traj, y, adjoint=True, image_dims=(n, n, 1), B=basis)
     # The two libraries agree to about 2e-3 on a grid this coarse at the
     # upsampling the substitution defaults to; on a 128 grid it is 1e-5.
@@ -565,7 +577,7 @@ def test_barts_oversampling_is_finuffts_upsampling(in_tools):
     for oversampling in (1.25, 1.5, 2.0):
         _finufft.reset_counters()
         A = LinearOperator.nufft(traj, (1, n, n), toeplitz=False, oversampling=oversampling)
-        assert _finufft.operators_built() == (1, 0), _finufft.decline_reason()
+        _all_finufft()
         got = A(img).numpy().reshape(ref.shape)
         rel = np.linalg.norm(got - ref) / np.linalg.norm(ref)
         assert rel < 1e-3, (oversampling, rel)
@@ -593,7 +605,7 @@ def test_a_kernel_width_asked_for_buys_the_accuracy_that_width_buys(in_tools):
     for width in (2.0, 3.0, 4.0):
         _finufft.reset_counters()
         A = LinearOperator.nufft(traj, (1, n, n), toeplitz=False, width=width)
-        assert _finufft.operators_built() == (1, 0), _finufft.decline_reason()
+        _all_finufft()
         got = A(img).numpy().reshape(ref.shape)
         errors[width] = np.linalg.norm(got - ref) / nref
 
@@ -620,7 +632,7 @@ def test_precision_can_be_traded_for_a_transform_that_fits():
     def error():
         _finufft.reset_counters()
         A = LinearOperator.nufft(traj, (1, n, n), toeplitz=False)
-        assert _finufft.operators_built() == (1, 0), _finufft.decline_reason()
+        _all_finufft()
         return np.linalg.norm(A(img).numpy().reshape(ref.shape) - ref) / nref
 
     try:
@@ -655,7 +667,7 @@ def test_nothing_reaches_barts_gridder_without_having_been_sent_there():
 
     _finufft.reset_counters()
     bt.nufft(traj, img)
-    assert _finufft.operators_built() == (1, 0), _finufft.decline_reason()
+    _all_finufft()
     assert not _finufft.fallback_allowed()
 
     # Something FINUFFT cannot serve, with nothing having been asked for.
@@ -688,7 +700,7 @@ def test_a_subspace_operator_needs_no_tool_and_no_fallback():
         basis=basis,
         toeplitz=False,
     )
-    assert _finufft.operators_built() == (1, 0), _finufft.decline_reason()
+    _all_finufft()
     assert not _finufft.fallback_allowed()
 
     phase = _phase_per_frame(traj, n, -1)
@@ -845,7 +857,7 @@ def test_a_point_spread_function_is_the_substituted_transforms(in_tools):
     _finufft.reset_counters()
     try:
         ours = g.psf(traj).numpy()
-        assert _finufft.operators_built() == (1, 0), _finufft.decline_reason()
+        _all_finufft()
     finally:
         _finufft.use_in_tools(True)
 
@@ -878,3 +890,56 @@ def test_every_psf_the_tool_offers_is_served(in_tools, flags):
         theirs = g.psf(traj, **flags)
 
     assert ours.shape == theirs.shape
+
+
+@requires_finufft
+def test_the_toeplitz_normal_is_the_transform_pair_it_stands_for(in_tools):
+    """A^H A as one convolution, against A^H A as two transforms.
+
+    The point spread function it convolves with is computed here now, so what
+    holds the two together is only the tolerance the transforms were planned
+    with -- and the gap closes with it, which a function that was subtly the
+    wrong one would not do.
+    """
+    torch.manual_seed(0)
+    n, spokes = 64, 96
+    traj = bt.traj(x=n, y=spokes, r=True)
+    x = torch.randn(1, n, n, dtype=torch.complex64)
+
+    errors = {}
+    try:
+        for eps, upsampling in ((1e-3, 1.25), (1e-6, 2.0)):
+            _finufft.use_in_tools(True, tolerance=eps, upsampling=upsampling)
+            A = LinearOperator.nufft(traj, (1, n, n), toeplitz=True)
+            errors[eps] = float((A.normal(x) - A.adjoint(A(x))).norm() / A.adjoint(A(x)).norm())
+    finally:
+        _finufft.use_in_tools(True)
+
+    assert errors[1e-3] < 5e-3
+    assert errors[1e-6] < 1e-5
+    assert errors[1e-6] < errors[1e-3], errors
+
+
+@requires_finufft
+def test_nothing_builds_barts_own_nufft(in_tools):
+    """The counter of BART's own operators is the whole claim.
+
+    Every route to one is counted: a decline that falls back, and a normal
+    whose point spread function BART would have to grid for itself.
+    """
+    n, spokes, coils = 32, 32, 2
+    traj = bt.traj(x=n, y=spokes, r=True)
+    img = bt.phantom([n, n], ncoils=coils)
+    ksp = bt.nufft(traj, img)
+    maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
+
+    for name, run in (
+        ("nufft", lambda: bt.nufft(traj, img)),
+        ("nufft -i", lambda: bt.nufft(traj, ksp, inverse=True, image_dims=(n, n, 1))),
+        ("pics", lambda: bt.pics(ksp, maps, t=traj)),
+        ("nlinv", lambda: bt.nlinv(ksp, t=traj, iter_=3)),
+        ("operator", lambda: LinearOperator.nufft(traj, (1, n, n), toeplitz=True)),
+    ):
+        _finufft.reset_counters()
+        run()
+        assert _finufft.operators_built()[1] == 0, (name, _finufft.decline_reason())

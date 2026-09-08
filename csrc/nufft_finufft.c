@@ -59,6 +59,12 @@ extern double bartorch_finufft_upsampling(void);
 enum { TP_PSF, TP_PAIR };
 static long toeplitz_counters[2];
 
+/* Building a point spread function needs a transform of its own, and that
+ * transform is nobody's normal: it is asked for one adjoint and freed.  While
+ * one is being made, an operator built underneath does not count as having
+ * answered a normal either way. */
+static _Thread_local int making_psf;
+
 long bartorch_toeplitz_counter(int which)
 {
 	return ((0 == which) || (1 == which)) ? toeplitz_counters[which] : -1;
@@ -154,6 +160,13 @@ struct nufft_fi_s {
 	long* wgh_dims;
 	long* wgh_strs;
 	long* bas_dims;
+	long* trj_dims;
+	long* ksp_dims;
+
+	/* What the normal is built from, for a trajectory that arrives after the
+	 * operator: a point spread function is over one, so there is none to
+	 * convolve with until there is a trajectory to make it from. */
+	struct nufft_conf_s conf;
 	long* bas_strs;
 };
 
@@ -427,6 +440,9 @@ static void nufft_fi_normal(const linop_data_t* _d, complex float* dst, const co
 {
 	struct nufft_fi_s* d = CAST_DOWN(nufft_fi_s, _d);
 
+	if (NULL == d->toeplitz)
+		error("bartorch: the normal was asked for before the trajectory arrived\n");
+
 	linop_normal_unchecked(d->toeplitz, dst, src);
 }
 
@@ -453,6 +469,8 @@ static void nufft_fi_del(const linop_data_t* _d)
 	xfree(d->wgh_dims);
 	xfree(d->wgh_strs);
 	xfree(d->bas_dims);
+	xfree(d->trj_dims);
+	xfree(d->ksp_dims);
 	xfree(d->bas_strs);
 
 	pthread_mutex_destroy(&d->lock);
@@ -560,6 +578,76 @@ static struct nufft_conf_s barts_conf(struct nufft_conf_s conf)
  * The caller decides: `conf.toeplitz` is what `pics --no-toeplitz` and
  * `nufft -t` set, and it carries the memory the function costs.
  */
+/* The shape BART's Toeplitz normal wants its point spread function in.
+ *
+ * `nufft.c` derives it from the linear phases it precomputes: the image along
+ * the transformed axes, one set of shifts per corner of the oversampled grid,
+ * and the trajectory's own extent along the axes the transform leaves alone.
+ * `nufft_create_normal` asserts that the two agree, which is the check that
+ * this stayed in step with it. */
+static int psf_shape(int N, long psf_dims[N + 1], const long cim_dims[N],
+		const long trj_dims[N], const long wgh_dims[N], const complex float* weights,
+		const long bas_dims[N], const complex float* basis, struct nufft_conf_s conf)
+{
+	int ND = N + 1;
+
+	long cim[ND];
+	md_copy_dims(N, cim, cim_dims);
+	cim[N] = 1;
+
+	long img_dims[ND];
+	md_select_dims(ND, conf.flags, img_dims, cim);
+
+	md_copy_dims(ND, psf_dims, img_dims);
+
+	long shifts = 1;
+
+	if (conf.decomp)
+		for (int i = 0; i < N; i++)
+			if (MD_IS_SET(conf.flags, i) && (1 < img_dims[i]))
+				shifts *= 2;
+
+	psf_dims[N] = shifts;
+
+	for (int i = 0; i < N; i++)
+		if (!MD_IS_SET(conf.flags, i))
+			psf_dims[i] = MAX(trj_dims[i], (NULL != weights) ? wgh_dims[i] : 0);
+
+	if (NULL != basis) {
+
+		psf_dims[6] = bas_dims[6];
+		psf_dims[5] = bas_dims[6];
+	}
+
+	return ND;
+}
+
+/* Whether the normal is one this can build.
+ *
+ * A compressed or a real point spread function is stored inside the operator
+ * in a form `nufft_update_psf` does not write, and the upper-triangular one
+ * is a different function; those stay BART's, and BART grids once to make
+ * them. */
+static bool normal_is_ours(struct nufft_conf_s conf)
+{
+	return !conf.compress_psf && !conf.real && !conf.upper_triag && conf.precomp_linphase;
+}
+
+/* BART's own normal operator, over a point spread function computed here.
+ *
+ * A^H A is a convolution, so it is one multiply against a function rather
+ * than a transform each way, and `nufft.c` has the machinery for that: the
+ * oversampled grid, the linear phases, the decomposition.  What it does not
+ * have is a way to be handed the function from outside its own gridder --
+ * `nufft_create2` would compute one for itself, from inside the file where
+ * the rename cannot reach it.  `nufft_create_normal` is that way: it takes a
+ * function and builds the convolution around it, so the transform underneath
+ * is the substitution's like every other.
+ *
+ * The caller decides whether there is one at all: `conf.toeplitz` is what
+ * `pics --no-toeplitz` and `nufft -t` set, and it carries the memory the
+ * function costs.
+ */
 static const struct linop_s* toeplitz_for(int N, const long ksp_dims[N], const long cim_dims[N],
 		const long traj_dims[N], const complex float* traj,
 		const long wgh_dims[N], const complex float* weights,
@@ -567,14 +655,65 @@ static const struct linop_s* toeplitz_for(int N, const long ksp_dims[N], const l
 {
 	if (!conf.toeplitz) {
 
+		if (0 == making_psf)
 #pragma omp atomic
-		toeplitz_counters[TP_PAIR]++;
+			toeplitz_counters[TP_PAIR]++;
 
 		return NULL;
 	}
 
-	const struct linop_s* op = bart_nufft_create2(N, ksp_dims, cim_dims, traj_dims, traj,
-			wgh_dims, weights, (NULL != basis) ? bas_dims : NULL, basis, barts_conf(conf));
+	if (!normal_is_ours(conf)) {
+
+		const struct linop_s* op = bart_nufft_create2(N, ksp_dims, cim_dims, traj_dims, traj,
+				wgh_dims, weights, (NULL != basis) ? bas_dims : NULL, basis, barts_conf(conf));
+
+		/* BART's operator, and BART grids to make its function: counted with
+		 * the declines, so that a zero there is the whole claim. */
+		count(CNT_BART);
+
+#pragma omp atomic
+		toeplitz_counters[TP_PSF]++;
+
+		return op;
+	}
+
+	/* The psf entry points take the arrays an axis longer, the way the
+	 * operator carries them. */
+	int ND = N + 1;
+
+	long psf_dims[ND];
+	psf_shape(N, psf_dims, cim_dims, traj_dims, wgh_dims, weights, bas_dims, basis, conf);
+
+	long trj[ND];
+	long wgh[ND];
+	long bas[ND];
+
+	md_copy_dims(N, trj, traj_dims);
+	md_singleton_dims(N, wgh);
+	md_singleton_dims(N, bas);
+
+	if (NULL != weights)
+		md_copy_dims(N, wgh, wgh_dims);
+
+	if (NULL != basis)
+		md_copy_dims(N, bas, bas_dims);
+
+	trj[N] = 1;
+	wgh[N] = 1;
+	bas[N] = 1;
+
+	making_psf++;
+
+	complex float* psf = (conf.decomposed_psf ? compute_psf2_decomposed : compute_psf2)(N,
+			psf_dims, conf.flags, trj, traj, bas, basis, wgh, weights,
+			true /* as nufft.c asks for it */, conf.lowmem, conf.upper_triag);
+
+	making_psf--;
+
+	const struct linop_s* op = nufft_create_normal(N, cim_dims, ND, psf_dims, psf,
+			NULL != basis, barts_conf(conf));
+
+	md_free(psf);
 
 #pragma omp atomic
 	toeplitz_counters[TP_PSF]++;
@@ -795,6 +934,11 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 	d->wgh_strs = xmalloc((size_t)N * sizeof(long));
 	d->bas_dims = xmalloc((size_t)N * sizeof(long));
 	d->bas_strs = xmalloc((size_t)N * sizeof(long));
+	d->trj_dims = xmalloc((size_t)N * sizeof(long));
+	d->ksp_dims = xmalloc((size_t)N * sizeof(long));
+	md_copy_dims(N, d->trj_dims, traj_dims);
+	md_copy_dims(N, d->ksp_dims, ksp_dims);
+	d->conf = conf;
 
 	md_copy_dims(N, d->cim_dims, cim_dims);
 	md_copy_dims(N, d->out_dims, out_dims);
@@ -867,12 +1011,13 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 		}
 	}
 
-	d->toeplitz = toeplitz_for(N, ksp_dims, cim_dims, traj_dims, traj, wgh_dims, weights,
-			bas_dims, basis, conf);
+	if (NULL != traj)
+		d->toeplitz = toeplitz_for(N, ksp_dims, cim_dims, traj_dims, traj,
+				wgh_dims, weights, bas_dims, basis, conf);
 
 	/* PTR_PASS hands the data over and clears the pointer, so what the
 	 * operator is built with is read out first. */
-	lop_fun_t normal = (NULL != d->toeplitz) ? nufft_fi_normal : NULL;
+	lop_fun_t normal = conf.toeplitz ? nufft_fi_normal : NULL;
 
 	struct linop_s* op = linop_create(N, out_dims, N, cim_dims, CAST_UP(PTR_PASS(d)),
 			nufft_fi_forward, nufft_fi_adjoint, normal, NULL, nufft_fi_del);
@@ -1017,10 +1162,18 @@ void nufft_update_traj(const struct linop_s* nufft, int N, const long trj_dims[N
 
 	pthread_mutex_unlock(&d->lock);
 
-	/* The normal borrows BART's point spread function, which is over the
-	 * trajectory too. */
-	if (NULL != d->toeplitz)
-		bart_nufft_update_traj(d->toeplitz, N, trj_dims, traj, wgh_dims, weights, bas_dims, basis);
+	/* The normal convolves with a point spread function over this
+	 * trajectory, so it is made again from the one that just arrived --
+	 * `nlinv` and the network models get here once per frame of a run. */
+	if (d->conf.toeplitz) {
+
+		if (NULL != d->toeplitz)
+			linop_free(d->toeplitz);
+
+		d->toeplitz = toeplitz_for(N, d->ksp_dims, d->cim_dims, trj_dims, traj,
+				(NULL != weights) ? wgh_dims : d->wgh_dims, weights,
+				(NULL != basis) ? bas_dims : d->bas_dims, basis, d->conf);
+	}
 }
 
 const struct operator_s* nufft_precond_create(const struct linop_s* nufft_op)

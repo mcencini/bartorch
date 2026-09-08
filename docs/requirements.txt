@@ -1,0 +1,6 @@
+# Documentation only: no torch installation or native compilation.
+sphinx>=8.1,<9
+sphinx-book-theme>=1.1,<2
+sphinx-gallery>=0.17,<0.20
+sphinx-copybutton>=0.5,<1
+matplotlib>=3.7,<4

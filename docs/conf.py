@@ -1,74 +1,66 @@
+"""Build the reference without importing torch or loading libbartorch."""
 import os
+import re
 import sys
+from pathlib import Path
 
-# Repository root is one level above docs/.  The package lives under src/ in the
-# modern src-layout; add that so Sphinx autodoc can import bartorch directly.
-sys.path.insert(0, os.path.abspath("../src"))
-sys.path.insert(0, os.path.abspath(".."))
+from sphinx_gallery.sorting import FileNameSortKey
 
+DOCS = Path(__file__).resolve().parent
+ROOT = DOCS.parent
+sys.path.insert(0, str(DOCS / "_ext"))
+sys.path.insert(0, str(ROOT / "src"))
 project = "bartorch"
 author = "bartorch contributors"
-version = "0.1.0"
-release = version
-
+copyright = "2024–2026, bartorch contributors"
+release = re.search(r'^version = "([^"]+)"', (ROOT / "pyproject.toml").read_text(), re.M)[1]
+version = release
 extensions = [
-    "sphinx.ext.autodoc",
-    "sphinx.ext.autosummary",
-    "sphinx.ext.napoleon",
-    "sphinx.ext.viewcode",
-    "sphinx.ext.intersphinx",
-    "nbsphinx",
+    "sphinx.ext.autodoc", "sphinx.ext.napoleon", "sphinx.ext.mathjax",
+    "sphinx.ext.intersphinx", "sphinx_copybutton", "sphinx_gallery.gen_gallery",
+    "bartorch_api",
 ]
-
 html_theme = "sphinx_book_theme"
-
+html_title = "bartorch"
 html_theme_options = {
     "repository_url": "https://github.com/mcencini/bartpy",
-    "use_repository_button": True,
-    "use_issues_button": True,
-    "use_edit_page_button": True,
-    "repository_branch": "main",
-    "path_to_docs": "docs",
-    "show_navbar_depth": 2,
+    "repository_branch": "main", "path_to_docs": "docs",
+    "use_repository_button": True, "use_issues_button": True,
+    "use_edit_page_button": True, "show_navbar_depth": 2,
 }
-
-# Enable intersphinx cross-references when internet access is available
-# (ReadTheDocs builds).  Disable in offline CI environments to avoid network
-# warnings that would break a -W sphinx-build invocation.
-_online = os.environ.get("READTHEDOCS") == "True"
+html_static_path = ["_static"]
+html_css_files = ["custom.css"]
+exclude_patterns = [
+    "_build", "_ext", "gallery_src", "examples", "README.rst", "Thumbs.db", ".DS_Store",
+]
 intersphinx_mapping = (
     {
         "python": ("https://docs.python.org/3", None),
         "numpy": ("https://numpy.org/doc/stable", None),
-        "torch": ("https://pytorch.org/docs/stable", None),
+        "torch": ("https://docs.pytorch.org/docs/stable", None),
     }
-    if _online
-    else {}
+    if os.environ.get("BARTORCH_DOCS_ONLINE") == "1" else {}
 )
-
-# Notebooks live in the top-level examples/ directory (symlinked as docs/examples/)
-# and are executed at build time so the rendered pages carry their outputs.
-nbsphinx_execute = "always"
-# A cell that raises renders its traceback instead of failing the build.
-nbsphinx_allow_errors = True
-
-# Raw-markdown cells with fenced code confuse the IPython lexer, and a figure
-# whose cell raised mid-way has no file behind it.
-suppress_warnings = [
-    "misc.highlighting_failure",
-    "image.not_readable",
-]
-
-# Follow symlinks so that docs/examples/ → ../examples/ is resolved correctly.
-# This is the default in Sphinx ≥ 7 but we set it explicitly for clarity.
-html_extra_path = []
-
-autodoc_typehints = "description"
-
-napoleon_google_docstring = True
 napoleon_numpy_docstring = True
-
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
-
-templates_path = ["_templates"]
-html_static_path = ["_static"]
+napoleon_google_docstring = False
+autodoc_typehints = "description"
+copybutton_prompt_text = r"\$ "
+copybutton_prompt_is_regexp = True
+# Rendering alone needs no native build; explicit execution fails on errors.
+plot_gallery = os.environ.get("BARTORCH_DOCS_EXECUTE") == "1"
+sphinx_gallery_conf = {
+    "examples_dirs": str(DOCS / "gallery_src"),
+    "gallery_dirs": "auto_examples",
+    "filename_pattern": r"/plot_",
+    "ignore_pattern": r"__init__\.py",
+    "within_subsection_order": FileNameSortKey,
+    "subsection_order": sorted,
+    "nested_sections": True,
+    "download_all_examples": True,
+    "backreferences_dir": None,
+    "doc_module": (), "reference_url": {},
+    "image_scrapers": ("matplotlib",),
+    "abort_on_example_error": True,
+    "only_warn_on_example_error": False,
+    "remove_config_comments": True,
+}

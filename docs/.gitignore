@@ -1,0 +1,5 @@
+_build/
+auto_examples/
+api/generated/
+sg_execution_times.rst
+**/sg_execution_times.rst

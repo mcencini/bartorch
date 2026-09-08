@@ -1,0 +1,4 @@
+/* Give encoding tables and signatures a comfortable reading width. */
+.bd-main .bd-content .bd-article-container { max-width: 58rem; }
+.sig { overflow-wrap: anywhere; }
+.sphx-glr-thumbcontainer { min-height: 210px; }
