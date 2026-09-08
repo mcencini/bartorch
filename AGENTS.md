@@ -201,16 +201,28 @@ way of storing it still works and costs no gridding:
 `operators_built()` returning zero for BART is the whole claim, and every
 route to one of BART's operators increments it.
 
-The mask a compressed function keeps is BART's, from BART's gridder. It has
-to be: the mask is the footprint of the kernel the entries were spread with,
-and anything measured off the function instead drops different entries than
-BART drops. `grid2_decomp` is static in `nufft.c`, so `install_psf` does what
-it does -- half the kernel width on an unoversampled grid, the shift of the
-frequency set, the half-sample an odd length carries -- around the `grid2`
-that file calls. That is the one BART gridding left, and it grids the
-sampling pattern rather than any data. Compression costs about what it costs
-in BART: 1.2e-01 from the uncompressed reconstruction here against 1.4e-01
-for BART's own.
+The mask a compressed function keeps is BART's, from BART's gridder, and that
+is the one BART gridding left. It grids the sampling pattern rather than any
+data, once per operator, and only under `--compress-psf`. `grid2_decomp` is
+static in `nufft.c`, so `install_psf` does what it does -- half the kernel
+width on an unoversampled grid, the shift of the frequency set, the
+half-sample an odd length carries -- around the `grid2` that file calls and
+exports.
+
+It cannot come off the function instead, which is the obvious thing to try.
+A transfer function is nonzero over the whole grid: the adjoint transform
+crops in image space after an oversampled FFT, which convolves in k-space,
+and the deapodisation does not undo it. Measured on a 32x32 grid of 48
+spokes, the fraction of it standing above a millionth of its peak is 100 per
+cent, for BART's own gridder and for FINUFFT alike. So the mask is not a
+question about magnitudes but about geometry -- which Cartesian frequencies
+the trajectory visited -- and spreading the pattern with the kernel answers
+exactly that. Thresholding the function keeps 99 per cent of the grid and
+compresses nothing; BART's mask keeps 89 per cent.
+
+What compression then costs is the tails outside the sampled region, which it
+discards deliberately: 1.2e-01 from the uncompressed reconstruction here,
+against 1.4e-01 for BART's own.
 
 `zero-mem` is the exception that is not one: it is a parenthesised flag in
 BART's own help, and its Toeplitz normal does not reconstruct in BART either
