@@ -1059,20 +1059,7 @@ def test_the_mask_lands_where_barts_does(in_tools, caplog):
     maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
 
     def kept():
-        caplog.clear()
-        with caplog.at_level(logging.DEBUG, logger="bartorch.bart"):
-            bartorch.set_debug_level(4)
-            try:
-                bt.pics(ksp, maps, t=traj, nufft_conf="compress-psf")
-            finally:
-                bartorch.set_debug_level(1)
-        percent = [
-            int(m.split("to")[1].strip().rstrip("%"))
-            for m in caplog.messages
-            if "Compressing PSF" in m
-        ]
-        assert percent, caplog.messages
-        return percent[0]
+        return _percent_kept(caplog, ksp, maps, traj)
 
     try:
         _finufft.use_in_tools(True, tolerance=4.5e-6, upsampling=2.0)
@@ -1085,3 +1072,52 @@ def test_the_mask_lands_where_barts_does(in_tools, caplog):
     # Rounding a width to whole cells leaves this one a little wider; a mask
     # in the wrong place would not be within a few points of BART's.
     assert abs(ours - theirs) <= 5, (ours, theirs)
+
+
+def _percent_kept(caplog, ksp, maps, traj):
+    """What fraction of the grid a compressed function keeps, off the log."""
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG, logger="bartorch.bart"):
+        bartorch.set_debug_level(4)
+        try:
+            bt.pics(ksp, maps, t=traj, nufft_conf="compress-psf")
+        finally:
+            bartorch.set_debug_level(1)
+    percent = [
+        int(m.split("to")[1].strip().rstrip("%")) for m in caplog.messages if "Compressing PSF" in m
+    ]
+    assert percent, caplog.messages
+    return percent[0]
+
+
+@requires_finufft
+def test_the_mask_is_the_width_and_not_the_upsampling(in_tools, caplog):
+    """A mask is set by its width and the geometry, and by nothing else.
+
+    Which is the thing that breaks if the function and the mask disagree about
+    where a sample lands: the upsampling sizes FINUFFT's own fine grid and has
+    nothing to say about the image grid the mask lives on, so two tolerances
+    that buy the same width off different upsamplings have to keep the same
+    points.  A tolerance of a millionth at an upsampling of two and one of a
+    thousandth at a quarter over both buy a width of four.
+    """
+    n, spokes, coils = 64, 64, 2
+    traj = bt.traj(x=n, y=spokes, r=True)
+    ksp = bt.nufft(traj, bt.phantom([n, n], ncoils=coils))
+    maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
+
+    try:
+        _finufft.use_in_tools(True, tolerance=1e-6, upsampling=2.0)
+        wide = _percent_kept(caplog, ksp, maps, traj)
+
+        _finufft.use_in_tools(True, tolerance=1e-3, upsampling=1.25)
+        cheap = _percent_kept(caplog, ksp, maps, traj)
+
+        # And narrower is narrower: a width of three keeps fewer.
+        _finufft.use_in_tools(True, tolerance=4.5e-6, upsampling=2.0)
+        narrow = _percent_kept(caplog, ksp, maps, traj)
+    finally:
+        _finufft.use_in_tools(True)
+
+    assert wide == cheap, (wide, cheap)
+    assert narrow < wide, (narrow, wide)
