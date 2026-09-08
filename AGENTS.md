@@ -229,9 +229,21 @@ BART's own help, and its Toeplitz normal does not reconstruct in BART either
 -- BART's own is nearly two from BART's own default. It is intercepted like
 the rest and nothing more is claimed for it.
 
+The normal applies no roll-off, which is what makes a function computed
+elsewhere fit it at all. `nufft.c` folds the roll-off into the linear phases
+only `if (!conf.toeplitz)`, and `toeplitz_mult` never reads `data->roll`: it
+multiplies by the phases, transforms, multiplies by the function, transforms
+back. So the whole deapodisation convention sits inside the function, put
+there by whatever computed it -- FINUFFT deapodises with the kernel it spread
+with, that lands in the function, and the transform pair beside it is the same
+library. `data->roll` survives for the forward and the adjoint, which are not
+BART's here and never run.
+
 A^H A as one convolution against A^H A as two transforms differs by 1.2e-03 at
 a thousandth and 2.1e-06 at a millionth -- it closes with the tolerance, which
-is what says the function is the right one rather than nearly so.
+is what says the function is the right one rather than nearly so. A roll-off
+that did not match would be a smooth error of order one across the field of
+view, and would not shrink when the transform is tightened.
 
 The entry points that read the operator's internalsThe entry points that read the operator's internals -- `nufft_get_psf*`,
 `nufft_update_*`, `nufft_precond_create` -- refuse on one of these rather than
