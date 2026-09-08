@@ -984,7 +984,10 @@ def test_every_way_bart_stores_a_point_spread_function_is_served(in_tools, mode)
     # Compression throws away what its mask does not cover.  The mask is
     # spread with FINUFFT's kernel, so it covers where this function has
     # signal rather than where BART's would have had it.
-    bound = 5e-2 if mode == "compress-psf" else 1e-2
+    # The decomposed one computes the function a set of frequencies at a
+    # time, so its error is the tolerance compounded over the sets rather
+    # than paid once.
+    bound = 5e-2 if mode in ("compress-psf", "decomposed-psf") else 1e-2
     assert float((out - reference).abs().max() / reference.abs().max()) < bound
 
 

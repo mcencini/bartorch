@@ -274,13 +274,42 @@ a width of four, and both keep 88 per cent of that grid. A width of three
 keeps 86 and a width of six keeps 91, so it is monotone in the width, as
 nested masks have to be. A displaced one would not land there.
 
-Only one pair can be compared against BART in a process. BART's Kaiser-Bessel
-table is a global that the first gridding fixes, and the first gridding is the
-self-check, at BART's own width of six -- a Toeplitz normal asked for any
-other width afterwards dies on `Kaiser-Bessel window initialized with
-different beta`. A transform on its own takes whatever width it is given,
-because that one is FINUFFT's alone; it is borrowing BART's operator for the
-normal that pins it.
+Only one kernel can be compared against BART, and it is BART's own. Its
+`compute_psf_nufft_conf` starts from `nufft_conf_defaults`, so it computes its
+point spread function at a width of six on a grid twice over whatever `-w` and
+`-o` say -- and its Kaiser-Bessel table is one table for the process, so any
+other width in the same command dies on `Kaiser-Bessel window initialized with
+different beta`. BART's Toeplitz path is width-six-only by its own
+construction.
+
+Which is why the operator borrowed for the normal is asked for BART's own
+grid and width and nothing else: the embedding needs the grid twice over,
+anything else sends `nufft_create2` down a chained path that is not even the
+same data underneath, and none of BART's kernel is evaluated anyway. Only the
+transforms follow what was configured, which is the point.
+
+Nothing here reuses a configuration it was not given. Six transforms in one
+process at widths of three, eight, three, the default, eight again and three
+come back at 2.0e-03, 4.0e-06, 2.0e-03, 4.6e-04, 1.4e-06 and 2.0e-03: every
+repeat is the same number to every digit.
+
+On a 64-grid of 64 spokes, what each kernel keeps and what compressing costs:
+
+| sigma / os | ns | mask width | kept, this | kept, BART | cost, this | cost, BART |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2 | 4 | 2 | 84% | 82% | 2.4e-02 | -- |
+| 2 | 6 | 3 | 86% | 84% | 1.4e-02 | 2.5e-02 |
+| 2 | 8 | 4 | 88% | 86% | 9.6e-03 | -- |
+| 1.25 | 4 | 4 | 88% | -- | 1.1e-02 | -- |
+| 1.25 | 6 | 5 | 88% | -- | 9.6e-03 | -- |
+| 1.25 | 8 | 7 | 93% | -- | 4.5e-03 | -- |
+
+Two points of grid apart at every width, which is one rounding of a width to
+whole cells and not a drift; the same to within a point on a card. BART has no
+column at a quarter over because it has no point spread function there, and
+none at a width other than six because of its own table. A tolerance for ns=8
+at an oversampling of two is below what single precision reaches, so that
+kernel is the end of the range rather than a result.
 
 `zero-mem` is the exception that is not one: it is a parenthesised flag in
 BART's own help, and its Toeplitz normal does not reconstruct in BART either

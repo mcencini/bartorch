@@ -644,8 +644,7 @@ static double fi_tolerance_for(int dim, double width, double upsampling)
  * is also what keeps the doubled grid from ever being allocated, which is the
  * whole reason the decomposition is there.
  */
-static int spread_mask(struct nufft_data* data, const complex float* traj,
-		double eps, double upsampling, long* max_idx)
+static int spread_mask(struct nufft_data* data, const complex float* traj, long* max_idx)
 {
 	int N = data->N;
 	int ND = N + 1;
@@ -732,10 +731,17 @@ static int spread_mask(struct nufft_data* data, const complex float* traj,
 	 * upsampling of one, and takes no width, so the width is asked for as
 	 * the tolerance that buys it.
 	 */
+	/* The kernel the function was spread with, which is the one the mask has
+	 * to cover.  `compute_psf2` asks for it the way any transform here does,
+	 * so it is the configured one and not the operator's: a caller's `-o` or
+	 * `-w` reaches the transform pair, and BART's own point spread function
+	 * ignores them too. */
+	double upsampling = bartorch_finufft_upsampling();
+
 	if (upsampling <= 1.)
 		upsampling = 2.;
 
-	double width = ceil((double)fi_width(dim, eps, upsampling) / upsampling);
+	double width = ceil((double)fi_width(dim, bartorch_finufft_tolerance(), upsampling) / upsampling);
 
 	if (width < 2.)
 		width = 2.;
@@ -828,7 +834,7 @@ static int spread_mask(struct nufft_data* data, const complex float* traj,
  * compressed one, over dimensions the operator worked out for itself rather
  * than any derived again here.
  */
-static void install_psf(struct nufft_data* data, const complex float* traj, double eps, double upsampling)
+static void install_psf(struct nufft_data* data, const complex float* traj)
 {
 	int N = data->N;
 	int ND = N + 1;
@@ -847,7 +853,7 @@ static void install_psf(struct nufft_data* data, const complex float* traj, doub
 
 		md_select_dims(ND, FFT_FLAGS, data->com_dims, data->img_dims);
 
-		if (0 != spread_mask(data, traj, eps, upsampling, &max_idx))
+		if (0 != spread_mask(data, traj, &max_idx))
 			error("bartorch: FINUFFT would not spread the pattern for a compressed function\n");
 	}
 
@@ -902,8 +908,7 @@ static void install_psf(struct nufft_data* data, const complex float* traj, doub
 static const struct linop_s* toeplitz_for(int N, const long ksp_dims[N], const long cim_dims[N],
 		const long traj_dims[N], const complex float* traj,
 		const long wgh_dims[N], const complex float* weights,
-		const long bas_dims[N], const complex float* basis, struct nufft_conf_s conf,
-		double eps, double upsampling)
+		const long bas_dims[N], const complex float* basis, struct nufft_conf_s conf)
 {
 	if (!conf.toeplitz) {
 
@@ -917,13 +922,27 @@ static const struct linop_s* toeplitz_for(int N, const long ksp_dims[N], const l
 	struct nufft_conf_s barts = barts_conf(conf);
 	barts.nopsf = true;
 
+	/* The oversampling of two is the grid the embedding needs, and BART
+	 * builds its machinery for that one alone: anything else sends
+	 * `nufft_create2` down its chained path, which has no normal to borrow
+	 * and is not even the same data underneath.  The kernel's upsampling is
+	 * FINUFFT's and has nothing to do with it, so it does not come here.
+	 *
+	 * The width does not come here either.  Nothing of BART's kernel is
+	 * evaluated -- the normal is a convolution, and `toeplitz_mult` reads
+	 * neither the roll-off nor the gridder -- so leaving it at BART's own
+	 * keeps the Kaiser-Bessel table, which is one table for the process,
+	 * from being asked for a second beta. */
+	barts.os = nufft_conf_defaults.os;
+	barts.width = nufft_conf_defaults.width;
+
 	const struct linop_s* op = bart_nufft_create2(N, ksp_dims, cim_dims, traj_dims, traj,
 			wgh_dims, weights, (NULL != basis) ? bas_dims : NULL, basis, barts);
 
 	struct nufft_data* data = CAST_DOWN(nufft_data, linop_get_data_nested(op));
 
 	making_psf++;
-	install_psf(data, traj, eps, upsampling);
+	install_psf(data, traj);
 	making_psf--;
 
 #pragma omp atomic
@@ -1219,7 +1238,7 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 
 	if (NULL != traj)
 		d->toeplitz = toeplitz_for(N, ksp_dims, cim_dims, traj_dims, traj,
-				wgh_dims, weights, bas_dims, basis, conf, d->eps, d->upsampling);
+				wgh_dims, weights, bas_dims, basis, conf);
 
 	/* PTR_PASS hands the data over and clears the pointer, so what the
 	 * operator is built with is read out first. */
@@ -1378,8 +1397,7 @@ void nufft_update_traj(const struct linop_s* nufft, int N, const long trj_dims[N
 
 		d->toeplitz = toeplitz_for(N, d->ksp_dims, d->cim_dims, trj_dims, traj,
 				(NULL != weights) ? wgh_dims : d->wgh_dims, weights,
-				(NULL != basis) ? bas_dims : d->bas_dims, basis, d->conf,
-				d->eps, d->upsampling);
+				(NULL != basis) ? bas_dims : d->bas_dims, basis, d->conf);
 	}
 }
 

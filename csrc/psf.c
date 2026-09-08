@@ -99,6 +99,12 @@ static struct nufft_conf_s psf_conf(bool periodic, bool lowmem, bool vptr)
 {
 	struct nufft_conf_s conf = nufft_conf_defaults;
 
+	/* Nobody asked for a grid or a width here: BART's defaults are what this
+	 * struct carries, and taking them for a request would pin the transform
+	 * at a kernel of six on a grid twice over whatever the caller configured. */
+	conf.os = 0.;
+	conf.width = 0.;
+
 	conf.periodic = periodic;
 	conf.toeplitz = false;
 	conf.lowmem = lowmem;
