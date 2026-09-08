@@ -20,10 +20,17 @@ compiled Fortran-ABI routine, never a Python callback.  In order:
 ``BARTORCH_BLAS_LIBRARY`` puts one source first: ``mkl``, ``scipy``, ``torch``,
 or the path to a shared library.  :func:`sources` reports what each routine
 resolved to.
+
+BART's FFT is filled from the same list.  It is planned through the FFTW guru
+interface and executed by MKL's DFTI where one of these sources has it, which
+on Linux and Windows is torch's own MKL and needs nothing installed; where
+none does, which is macOS, it is executed by the transform compiled into the
+library.  ``sources()["fft"]`` says which.
 """
 
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import os
 import sys
@@ -34,6 +41,7 @@ from bartorch._lib import library
 
 _keepalive: list[object] = []
 _sources: dict[str, str] = {}
+_fft_symbols: dict[str, int] = {}
 
 _PyCapsule_GetPointer = ctypes.pythonapi.PyCapsule_GetPointer
 _PyCapsule_GetPointer.restype = ctypes.c_void_p
@@ -203,11 +211,71 @@ def install() -> dict[str, str]:
         else:
             chosen[name] = "reference" if fallback[name] else "missing"
 
+    chosen["fft"] = _install_fft(providers)
+
     _sources.clear()
     _sources.update(chosen)
     return dict(chosen)
 
 
+#: The DFTI entry points BART's FFT is executed with.  All or none: a table
+#: with a hole in it would plan and then fail to transform.
+_DFTI = (
+    "DftiCreateDescriptor_s_md",
+    "DftiSetValue",
+    "DftiCommitDescriptor",
+    "DftiComputeForward",
+    "DftiComputeBackward",
+    "DftiFreeDescriptor",
+)
+
+
+def _install_fft(providers: list[_Provider]) -> str:
+    """Hand the library MKL's DFTI, if one of these sources has all of it."""
+    lib = library()
+    for provider in providers:
+        found = {name: provider.lookup(name) for name in _DFTI}
+        if any(address is None for address in found.values()):
+            continue
+        for name, address in found.items():
+            if 0 != lib.bartorch_fft_set(name.encode(), address):
+                break
+        else:
+            if lib.bartorch_fft_usable():
+                _fft_symbols.clear()
+                _fft_symbols.update(found)
+                return provider.name
+    return "built-in"
+
+
+@contextlib.contextmanager
+def built_in_fft():
+    """The compiled-in transform, for as long as the block lasts.
+
+    Not part of the package's surface.  What it is for is holding one
+    implementation against the other, which is the only way to test that the
+    description handed to DFTI is the one BART asked for: both are asked the
+    same question and the answers have to agree.  A plan already built keeps
+    its descriptor, and reaches it only while the table is filled, so this
+    takes effect on plans made before it as well as after.
+    """
+    lib = library()
+    was = bool(lib.bartorch_fft_usable())
+
+    for name in _DFTI:
+        lib.bartorch_fft_set(name.encode(), None)
+    try:
+        yield
+    finally:
+        if was:
+            for name, address in _fft_symbols.items():
+                lib.bartorch_fft_set(name.encode(), address)
+
+
 def sources() -> dict[str, str]:
-    """The library serving each BLAS and LAPACK routine, after :func:`install`."""
+    """What serves each routine after :func:`install`.
+
+    One entry per BLAS and LAPACK routine, plus ``fft`` for the transform
+    behind BART's FFT.
+    """
     return dict(_sources)

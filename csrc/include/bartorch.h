@@ -95,6 +95,20 @@ BARTORCH_API const char* bartorch_backend_name(int index);
 BARTORCH_API int bartorch_backend_has_fallback(int index);
 
 /*
+ * FFT.  BART plans through the FFTW guru interface, which is served by MKL
+ * where the process has it and by a compiled-in transform otherwise.  MKL is
+ * reached through DFTI, its own interface: the FFTW one it also publishes
+ * refuses more than one loop dimension, and BART passes one per dimension it
+ * is not transforming.  Give this the DFTI entry points, from the same
+ * library the BLAS table was filled from.
+ */
+BARTORCH_API int bartorch_fft_set(const char* symbol, void* fn);
+BARTORCH_API int bartorch_fft_usable(void);
+/* Plans built since the last reset: 0 by MKL, 1 by the built-in transform. */
+BARTORCH_API long bartorch_fft_counter(int which);
+BARTORCH_API void bartorch_fft_reset_counters(void);
+
+/*
  * Operators.  A handle wraps one BART linear or nonlinear operator.  Both
  * kinds can be built from host callbacks, in which case the host owns the
  * memory behind the callbacks' pointers for the duration of each call, and

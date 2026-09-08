@@ -56,7 +56,7 @@ void bartorch_ref_sscal(const int* n, const float* alpha, float* x, const int* i
 void bartorch_ref_cscal(const int* n, const float* alpha, float* x, const int* incx);
 void bartorch_ref_csyrk(const char* uplo, const char* trans, const int* n, const int* k, const float* alpha, const float* a, const int* lda, const float* beta, float* c, const int* ldc);
 
-/* Threads for the FFT backend, in fftw_pocketfft.cpp. */
+/* Threads for the FFT backend, in fft.cpp. */
 void bartorch_fft_set_num_threads(int n);
 int bartorch_fft_get_num_threads(void);
 

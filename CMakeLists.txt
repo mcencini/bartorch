@@ -218,7 +218,7 @@ set(BARTORCH_SOURCES
     csrc/memcfl.c
     csrc/ops.c
     csrc/ref_blas.c
-    csrc/fftw_pocketfft.cpp)
+    csrc/fft.cpp)
 
 add_library(bartorch SHARED ${BART_SOURCES} ${BARTORCH_SOURCES})
 

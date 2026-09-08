@@ -46,7 +46,7 @@ def build_info() -> str:
 
 
 def backend_sources() -> dict[str, str]:
-    """Which library serves each BLAS and LAPACK routine."""
+    """Which library serves each BLAS and LAPACK routine, and the FFT."""
     from bartorch import _backend
     from bartorch.core.graph import _ensure_ready
 

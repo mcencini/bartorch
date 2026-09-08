@@ -148,9 +148,10 @@ a pip install and nothing more.
 - Every BART translation unit is compiled unchanged from the submodule. A
   BART routine is replaced by leaving its unit out and compiling one with the
   same signatures: the in-memory array registry allocates through the host,
-  the FFTW interface is served by pocketfft, and CBLAS and LAPACKE forward to
-  a Fortran-ABI table filled at import from the compiled BLAS and LAPACK the
-  process already holds.
+  and CBLAS, LAPACKE and the FFTW interface forward to Fortran-ABI and DFTI
+  tables filled at import from the compiled BLAS, LAPACK and MKL the process
+  already holds. Where a machine has no MKL, which is macOS, the transform
+  compiled into the library serves instead.
 - BART's nested functions become Blocks under clang and heap trampolines under
   GCC 14+, so the library loads without an executable stack either way. Both
   compilers are tested in CI.

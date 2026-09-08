@@ -12,7 +12,7 @@ C library with a small C ABI; Python reaches it through ctypes.
 | `csrc/include/bartorch.h` | The C ABI. The only header a host sees. Plain C: no complex types, no variable-length arrays. |
 | `csrc/api.c` | Command execution under BART's error catcher, log capture, threads. |
 | `csrc/memcfl.c` | The in-memory array registry, replacing `bart/src/misc/memcfl.c`. Arrays BART creates come from the host's allocator callback. |
-| `csrc/fftw_pocketfft.cpp` | The FFTW guru interface BART plans with, executed by pocketfft. |
+| `csrc/fft.cpp` | The FFTW guru interface BART plans with, executed by MKL where the process has it. |
 | `csrc/backend.[ch]`, `ref_blas.c`, `cblas_shim.c`, `lapacke_shim.c` | CBLAS and LAPACKE as BART calls them, forwarded to a table of Fortran-ABI routines with reference BLAS as the fallback. |
 | `csrc/ops.c` | Operators: host callbacks as BART linops and nlops, BART's own operators as handles, least squares and Gauss-Newton. |
 | `csrc/cuda.c` | Device selection, stream ordering against the caller's stream, and BART's memory cache. Present in both builds; the CPU build reports that it has no CUDA. |
@@ -70,8 +70,17 @@ another.
 On a device none of this applies: BART calls cuBLAS directly, and it has no
 GPU LAPACK, so eigendecompositions and SVDs come back to the host table.
 
-The FFT is pocketfft on the host, the same code torch uses on CPU without MKL,
-and cuFFT on a device.
+The FFT is planned through the FFTW guru interface and executed by MKL's DFTI,
+filled from the same table, which on Linux and Windows is torch's own MKL and
+needs nothing installed. MKL's FFTW interface is not used: it refuses more than
+one loop dimension and BART passes one per dimension it is not transforming, so
+DFTI takes the transformed axes and the longest loop axis and `csrc/fft.cpp`
+walks whatever is left. It is given one thread: MKL is fast enough serially to
+beat a threaded pocketfft, and a thread team of its own is a second OpenMP
+runtime spinning against BART's, which inside a tool costs several times more
+than the transform gains. Where no source has DFTI, which is macOS, and for a
+description DFTI declines, the transform compiled into the library serves
+instead. On a device it is cuFFT, through BART's own `fft-cuda.c`.
 
 **CUDA is the same ABI.** `-DBARTORCH_CUDA=ON` compiles BART's thirteen `.cu`
 files with nvcc and links cudart, cuFFT and cuBLAS dynamically, which are the
