@@ -810,3 +810,71 @@ def test_a_tool_that_calibrates_gets_the_careful_transform(in_tools):
     # And the library is left as it was found.
     assert _finufft.tolerance() == pytest.approx(1e-3)
     assert _finufft.upsampling() == pytest.approx(1.25)
+
+
+@requires_finufft
+def test_a_point_spread_function_is_the_substituted_transforms(in_tools):
+    """A PSF is an adjoint transform of ones, and that transform is FINUFFT's.
+
+    BART reaches it through `nufft.c`'s own `nufft_create2`, which the rename
+    sends to its gridder along with everything else in that file, so
+    `csrc/psf.c` answers to the three entry points instead.  What that buys is
+    in the numbers: on the un-doubled grid BART's own PSF is two per cent from
+    the sum it is supposed to be, and this one is at its tolerance.
+    """
+    from bartorch.tools import _generated as g
+
+    n, spokes = 16, 12
+    traj = bt.traj(x=n, y=spokes, r=True)
+
+    k = traj.numpy().real.reshape(-1, 3)
+    x = np.arange(n) - n // 2
+    phase = np.exp(
+        2j
+        * np.pi
+        * (
+            k[:, 0][:, None, None] * x[None, None, :] / n
+            + k[:, 1][:, None, None] * x[None, :, None] / n
+        )
+    )
+    ref = phase.sum(axis=0)
+
+    # After configuring, not before: putting the substitution in place checks
+    # itself against BART's gridder, and builds one of each doing it.
+    _finufft.use_in_tools(True, tolerance=1e-6, upsampling=2.0)
+    _finufft.reset_counters()
+    try:
+        ours = g.psf(traj).numpy()
+        assert _finufft.operators_built() == (1, 0), _finufft.decline_reason()
+    finally:
+        _finufft.use_in_tools(True)
+
+    # Each carries its own scaling; what is compared is the function.
+    scale = np.vdot(ours, ref) / np.vdot(ours, ours)
+    assert np.linalg.norm(ours * scale - ref) / np.linalg.norm(ref) < 1e-5
+
+
+@requires_finufft
+@pytest.mark.parametrize("flags", [{}, {"oversampled": True}, {"oversampled_decomposed": True}])
+def test_every_psf_the_tool_offers_is_served(in_tools, flags):
+    """`compute_psf`, `compute_psf2` and `compute_psf2_decomposed`, one each.
+
+    The decomposed one takes a set of frequencies at a time, each with its own
+    shifted trajectory and its own image, which is a stack of transforms
+    rather than one plan over frames.
+    """
+    from bartorch.tools import _generated as g
+
+    n, spokes = 16, 12
+    traj = bt.traj(x=n, y=spokes, r=True)
+
+    _finufft.reset_counters()
+    ours = g.psf(traj, **flags)
+    built, bart = _finufft.operators_built()
+    assert bart == 0, _finufft.decline_reason()
+    assert built >= 1
+
+    with _finufft.barts_own_gridder():
+        theirs = g.psf(traj, **flags)
+
+    assert ours.shape == theirs.shape

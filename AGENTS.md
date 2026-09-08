@@ -17,6 +17,7 @@ C library with a small C ABI; Python reaches it through ctypes.
 | `csrc/ops.c` | Operators: host callbacks as BART linops and nlops, BART's own operators as handles, least squares and Gauss-Newton. |
 | `csrc/cuda.c` | Device selection, stream ordering against the caller's stream, and BART's memory cache. Present in both builds; the CPU build reports that it has no CUDA. |
 | `csrc/host_reads.c` | The entry points BART reads element by element, answered over a host copy when a tool is on a card. |
+| `csrc/psf.c` | The three `compute_psf*` entry points, so that the adjoint transform a point spread function is comes from the substitution. |
 | `csrc/finufft.c`, `nufft_finufft.c` | FINUFFT's and cuFINUFFT's entry points, and BART's NUFFT operator built out of a pair of their plans. |
 | `csrc/compat/` | The `cblas.h`, `lapacke.h` and `fftw3.h` BART includes. |
 | `third_party/` | pocketfft and BlocksRuntime, vendored with their licenses. |
@@ -154,6 +155,34 @@ a sample axis sits above a batch axis, which frames do; a buffer in the
 transform's layout stands between when it does. An image that varies along a
 sample axis is declined, because that would need a transform per frame rather
 than one plan over all of them.
+
+**A point spread function is an adjoint transform of ones.** `nufft.c` builds
+one by taking the adjoint NUFFT of ones over a doubled trajectory, and reaches
+that transform through its own `nufft_create2`, which the rename sends to
+BART's gridder along with everything else in that file. So `compute_psf`,
+`compute_psf2` and `compute_psf2_decomposed` are renamed too and `csrc/psf.c`
+answers to them: the same squared weights and basis, the same doubled grid,
+shifts and decomposition, with the transform in the middle being whichever
+`nufft_create2` answers. `nlinv`, `moba`, `rtnlinv`, `noir/model2` and the
+`psf` tool call these directly.
+
+What that is worth is in the numbers. On the un-doubled grid of a 16x16
+twelve-spoke trajectory, against the sum the function is defined by, BART's
+own point spread function is 2.5e-02 out and this one is 6.9e-07 -- its
+tolerance. On the doubled grid, where the function is properly sampled, the
+two agree to 6e-04.
+
+The decomposed one takes a set of frequencies at a time, each with its own
+shifted trajectory and its own image. That is a stack of transforms rather
+than one plan over frames, so it is always built the way BART builds it for
+`lowmem`, which also holds one set at a time.
+
+What `nufft.c` computes for its own Toeplitz embedding is reached from inside
+that file and does not come here: `toeplitz_for` asks `bart_nufft_create2` for
+BART's operator and borrows its normal, and BART grids once to build the point
+spread function that normal convolves with. Moving that across needs
+`nufft_create_normal`, which takes a function rather than computing one, and
+the `psf_dims` and `flags` that `nufft_create_data` derives.
 
 The entry points that read the operator's internals -- `nufft_get_psf*`,
 `nufft_update_*`, `nufft_precond_create` -- refuse on one of these rather than

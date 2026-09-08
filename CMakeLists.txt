@@ -214,6 +214,7 @@ set(BARTORCH_SOURCES
     csrc/finufft.c
     csrc/host_reads.c
     csrc/nufft_finufft.c
+    csrc/psf.c
     csrc/memcfl.c
     csrc/ops.c
     csrc/ref_blas.c
@@ -227,7 +228,7 @@ add_library(bartorch SHARED ${BART_SOURCES} ${BARTORCH_SOURCES})
 # callers, so every tool that builds a NUFFT goes through the substitution and
 # nufft.c's own internal uses stay with BART's operator.
 set_source_files_properties("${BART_SRC}/noncart/nufft.c" PROPERTIES
-    COMPILE_DEFINITIONS "nufft_create=bart_nufft_create;nufft_create2=bart_nufft_create2;nufft_get_psf_dims=bart_nufft_get_psf_dims;nufft_get_psf=bart_nufft_get_psf;nufft_get_psf2=bart_nufft_get_psf2;nufft_update_psf=bart_nufft_update_psf;nufft_update_psf2=bart_nufft_update_psf2;nufft_update_traj=bart_nufft_update_traj")
+    COMPILE_DEFINITIONS "nufft_create=bart_nufft_create;nufft_create2=bart_nufft_create2;nufft_get_psf_dims=bart_nufft_get_psf_dims;nufft_get_psf=bart_nufft_get_psf;nufft_get_psf2=bart_nufft_get_psf2;nufft_update_psf=bart_nufft_update_psf;nufft_update_psf2=bart_nufft_update_psf2;nufft_update_traj=bart_nufft_update_traj;compute_psf=bart_compute_psf;compute_psf2=bart_compute_psf2;compute_psf2_decomposed=bart_compute_psf2_decomposed")
 
 set_source_files_properties("${BART_SRC}/noncart/precond.c" PROPERTIES
     COMPILE_DEFINITIONS "nufft_precond_create=bart_nufft_precond_create")
