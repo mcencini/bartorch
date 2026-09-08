@@ -387,3 +387,156 @@ complex float* compute_psf2_decomposed(int N, const long psf_dims[N + 1], unsign
 
 	return psf;
 }
+
+
+/* The same function, built and kept where the card is not.
+ *
+ * `compute_psf2_decomposed` stacks the sets of frequencies into one operator
+ * and answers them together, so the whole function and the transforms behind
+ * it are on the card at once.  This walks them instead and copies each to the
+ * host as it comes, which is what lets a function larger than the card be
+ * made on it.
+ */
+complex float* bartorch_psf_to_host(int N, const long psf_dims[N + 1], unsigned long flags, const long trj_dims[N + 1], const complex float* traj,
+		const long bas_dims[N + 1], const complex float* basis, const long wgh_dims[N + 1], const complex float* weights,
+		bool periodic, bool lowmem, bool upper_triag)
+{
+	int ND = N + 1;
+
+	long ksp_dims[ND];
+	md_select_dims(ND, ~MD_BIT(0), ksp_dims, trj_dims);
+	ksp_dims[N] = psf_dims[N];
+
+	if (NULL != weights)
+		md_max_dims(ND, ~0UL, ksp_dims, ksp_dims, wgh_dims);
+
+	long sqr_bas_dims[ND];
+
+	complex float* sqr_basis = square_basis(upper_triag, ND, sqr_bas_dims, bas_dims, basis, ksp_dims);
+	complex float* sqr_weights = square_weights(ND, wgh_dims, weights);
+
+	long psf_dims2[ND];
+	md_copy_dims(ND, psf_dims2, psf_dims);
+
+	if (upper_triag) {
+
+		assert(1 == psf_dims2[5]);
+
+	} else if (NULL != sqr_basis) {
+
+		psf_dims2[6] *= psf_dims2[6];
+		psf_dims2[5] = 1;
+	}
+
+	struct nufft_conf_s conf = psf_conf(periodic, lowmem, is_vptr(traj));
+
+	long trj_dims2[ND];
+	md_copy_dims(ND, trj_dims2, trj_dims);
+	trj_dims2[N] = psf_dims2[N];
+
+	long factors[ND];
+	psf_factors(ND, flags, factors, psf_dims);
+
+	complex float tp[trj_dims2[N]][trj_dims2[0]];
+
+	for (int k = 0; k < trj_dims2[N]; k++) {
+
+		float shift[3];
+		bartorch_psf_shift(3, shift, ND, factors, k);
+
+		for (int j = 0; j < trj_dims2[0]; j++)
+			tp[k][j] = (1 != psf_dims2[j] ? 0.5 * psf_dims2[j] : 0.) + shift[j];
+	}
+
+	long sdims[ND];
+	md_select_dims(ND, MD_BIT(0) | MD_BIT(N), sdims, trj_dims2);
+
+	complex float* tshift = md_alloc_sameplace(ND, sdims, CFL_SIZE, traj);
+	md_copy(ND, sdims, tshift, &(tp[0][0]), CFL_SIZE);
+
+	complex float* traj2 = md_alloc_sameplace(ND, trj_dims2, CFL_SIZE, traj);
+	md_zadd2(ND, trj_dims2, MD_STRIDES(ND, trj_dims2, CFL_SIZE), traj2,
+			MD_STRIDES(ND, trj_dims, CFL_SIZE), traj,
+			MD_STRIDES(ND, sdims, CFL_SIZE), tshift);
+	md_free(tshift);
+
+	/* One transform per set of frequencies, stacked, which is what BART does
+	 * for `lowmem` and what this does always: each carries its own shifted
+	 * trajectory and writes its own image, and a transform whose points and
+	 * whose image both vary along an axis is not one plan.  Stacking is the
+	 * same operator either way and holds one set at a time. */
+	long ksp_dims2[ND];
+	long psf_dims3[ND];
+	long trj_dims3[ND];
+
+	md_select_dims(ND, ~MD_BIT(N), ksp_dims2, ksp_dims);
+	md_select_dims(ND, ~MD_BIT(N), psf_dims3, psf_dims2);
+	md_select_dims(ND, ~MD_BIT(N), trj_dims3, trj_dims2);
+
+	(void)lowmem;
+
+	/* The kernel the decomposition transforms: a cosine per doubled axis,
+	 * with the half-sample shift an odd length needs. */
+	complex float* kern = md_alloc_sameplace(ND, ksp_dims, CFL_SIZE, traj);
+	md_zfill(ND, ksp_dims, kern, 1. / sqrt(md_calc_size(3, psf_dims)));
+
+	for (int i = 0; i < 3; i++) {
+
+		if (1 == psf_dims[i])
+			continue;
+
+		complex float* tkern = md_alloc_sameplace(ND, ksp_dims, CFL_SIZE, traj);
+		md_copy2(ND, ksp_dims, MD_STRIDES(ND, ksp_dims, CFL_SIZE), tkern,
+				MD_STRIDES(ND, trj_dims2, CFL_SIZE), traj2 + i, CFL_SIZE);
+		md_zsmul(ND, ksp_dims, tkern, tkern, M_PI);
+		md_zcos(ND, ksp_dims, tkern, tkern);
+		md_zmul(ND, ksp_dims, kern, kern, tkern);
+		md_free(tkern);
+
+		if (0 == psf_dims[i] % 2)
+			continue;
+
+		tkern = md_alloc_sameplace(ND, ksp_dims, CFL_SIZE, traj);
+		md_copy2(ND, ksp_dims, MD_STRIDES(ND, ksp_dims, CFL_SIZE), tkern,
+				MD_STRIDES(ND, trj_dims2, CFL_SIZE), traj2 + i, CFL_SIZE);
+		md_zsmul(ND, ksp_dims, tkern, tkern, 2.i * M_PI * (psf_dims[i] / 2 - psf_dims[i] / 2.) / psf_dims[i]);
+		md_zexp(ND, ksp_dims, tkern, tkern);
+		md_zmul(ND, ksp_dims, kern, kern, tkern);
+		md_free(tkern);
+	}
+
+	/* One set of frequencies at a time, each landing on the host as it is
+	 * made.  What is on the card is one set's transform and one set's
+	 * image, never the function entire -- which for a subspace problem is
+	 * coefficients squared by sets by image, and is what a doubled grid
+	 * costs twice over while it is being built. */
+	complex float* psf = md_alloc(ND, psf_dims, CFL_SIZE);
+
+	long psf_coset = md_calc_size(ND, psf_dims3);
+	long ksp_coset = md_calc_size(ND, ksp_dims2);
+	long trj_coset = md_calc_size(ND, trj_dims3);
+
+	for (int i = 0; i < trj_dims2[N]; i++) {
+
+		struct linop_s* op = nufft_create2(ND, ksp_dims2, psf_dims3, trj_dims3,
+				traj2 + i * trj_coset, wgh_dims, sqr_weights,
+				sqr_bas_dims, sqr_basis, conf);
+
+		complex float* one = md_alloc_sameplace(ND, psf_dims3, CFL_SIZE, traj);
+
+		linop_adjoint_unchecked(op, one, kern + i * ksp_coset);
+		fft(ND, psf_dims3, conf.flags, one, one);
+
+		md_copy(ND, psf_dims3, psf + i * psf_coset, one, CFL_SIZE);
+
+		md_free(one);
+		linop_free(op);
+	}
+
+	md_free(sqr_weights);
+	md_free(sqr_basis);
+	md_free(traj2);
+	md_free(kern);
+
+	return psf;
+}

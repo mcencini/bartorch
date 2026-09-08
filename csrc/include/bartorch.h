@@ -109,6 +109,12 @@ BARTORCH_API int bartorch_backend_has_fallback(int index);
  * coils at once: larger is faster and larger, zero leaves BART its own
  * operator over every coil at once.
  */
+/* Keep a point spread function off the card and bring it over one coset at a
+ * time.  Off by default: it costs BART's low-memory normal, which walks the
+ * cosets rather than convolving them at once. */
+BARTORCH_API void bartorch_nufft_set_stream_psf(int enable);
+BARTORCH_API int bartorch_nufft_stream_psf(void);
+
 BARTORCH_API void bartorch_sense_set_coil_batch(int coils);
 BARTORCH_API int bartorch_sense_coil_batch(void);
 /* Operators built since the last reset: 0 with the coil loop, 1 as BART's
