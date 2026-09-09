@@ -32,6 +32,7 @@
 #include "num/fft.h"
 #include "num/flpmath.h"
 #include "num/multind.h"
+#include "num/compress.h"
 #include "num/shuffle.h"
 #include "num/triagmat.h"
 #include "num/vptr.h"
@@ -253,7 +254,18 @@ void bartorch_psf_shift(int NS, float shift[NS], int N, const long factors[N], i
  * The even and the odd frequencies of the doubled grid are independent, so
  * computing them separately never holds the doubled grid whole, which is what
  * makes a three-dimensional point spread function fit. */
-static complex float* psf_decomposed(bool to_host, int N, const long psf_dims[N + 1], unsigned long flags, const long trj_dims[N + 1], const complex float* traj,
+/* Where a compressed function is going, when one is asked for: the places the
+ * samples reach, and the shape it takes once only those are kept. */
+struct psf_packing {
+
+	const long* com_dims;
+	const long* idx;
+	const long* com_psf_dims;	/* the whole compressed function */
+	const long* com_psf_dims3;	/* one set of frequencies of it */
+};
+
+static complex float* psf_decomposed(bool to_host, const struct psf_packing* pack,
+		int N, const long psf_dims[N + 1], unsigned long flags, const long trj_dims[N + 1], const complex float* traj,
 		const long bas_dims[N + 1], const complex float* basis, const long wgh_dims[N + 1], const complex float* weights,
 		bool periodic, bool lowmem, bool upper_triag)
 {
@@ -340,8 +352,10 @@ static complex float* psf_decomposed(bool to_host, int N, const long psf_dims[N 
 	/* `to_host` keeps the function where the card is not: each set is made
 	 * on the card and copied out, so what is resident is one set rather
 	 * than the whole of it. */
-	complex float* psf = to_host ? md_alloc(ND, psf_dims, CFL_SIZE)
-				     : md_alloc_sameplace(ND, psf_dims, CFL_SIZE, traj);
+	const long* whole_dims = (NULL != pack) ? pack->com_psf_dims : psf_dims;
+
+	complex float* psf = to_host ? md_alloc(ND, whole_dims, CFL_SIZE)
+				     : md_alloc_sameplace(ND, whole_dims, CFL_SIZE, traj);
 
 	/* One set of frequencies at a time.
 	 *
@@ -351,7 +365,7 @@ static complex float* psf_decomposed(bool to_host, int N, const long psf_dims[N 
 	 * transform and writes into the one place the function lives.  That is
 	 * what makes computing the sets separately cost less than computing
 	 * them together rather than more. */
-	long psf_coset = md_calc_size(ND, psf_dims3);
+	long psf_coset = md_calc_size(ND, (NULL != pack) ? pack->com_psf_dims3 : psf_dims3);
 	long ksp_coset = md_calc_size(ND, ksp_dims2);
 	long trj_coset = md_calc_size(ND, trj_dims3);
 
@@ -363,16 +377,35 @@ static complex float* psf_decomposed(bool to_host, int N, const long psf_dims[N 
 	 * them all -- and making a plan is the largest allocation a build does,
 	 * more than the function it produces.  `nufft_update_traj` is what
 	 * points it somewhere else without making it again. */
-	struct linop_s* op = nufft_create2(ND, ksp_dims2, psf_dims3, trj_dims3, traj2,
-			wgh_dims, sqr_weights, sqr_bas_dims, sqr_basis, conf);
+	/* And one coefficient of the function at a time.
+	 *
+	 * A subspace function is a matrix at every frequency, and answering the
+	 * whole matrix at once means an image for every entry of it live
+	 * together: at 256^3 with four coefficients that is ten images where
+	 * one would do.  Each entry is its own gridding of the samples weighted
+	 * by its own pair of basis coefficients, so the transform is built for
+	 * one and pointed at each pair in turn -- the same retargeting the sets
+	 * use, since a basis is something `nufft_update_traj` replaces. */
+	long one_dims[ND];
+	long one_bas_dims[ND];
+
+	md_copy_dims(ND, one_dims, psf_dims3);
+	md_copy_dims(ND, one_bas_dims, sqr_bas_dims);
+
+	long pairs = psf_dims3[COEFF_DIM];
+
+	one_dims[COEFF_DIM] = 1;
+	one_bas_dims[COEFF_DIM] = 1;
+
+	long pair_stride = md_calc_size(ND, one_dims);
+	long basis_stride = (NULL == sqr_basis) ? 0 : md_calc_size(ND, one_bas_dims);
+
+	struct linop_s* op = nufft_create2(ND, ksp_dims2, one_dims, trj_dims3, traj2,
+			wgh_dims, sqr_weights, one_bas_dims, sqr_basis, conf);
 
 	for (int i = 0; i < trj_dims2[N]; i++) {
 
 		const complex float* traj_i = traj2 + i * trj_coset;
-
-		if (0 < i)
-			nufft_update_traj(op, ND, trj_dims3, traj_i,
-					wgh_dims, sqr_weights, sqr_bas_dims, sqr_basis);
 
 		complex float* kern = md_alloc_sameplace(ND, ksp_dims2, CFL_SIZE, traj);
 		md_zfill(ND, ksp_dims2, kern, 1. / sqrt(md_calc_size(3, psf_dims)));
@@ -402,19 +435,43 @@ static complex float* psf_decomposed(bool to_host, int N, const long psf_dims[N 
 			md_free(tkern);
 		}
 
-		if (to_host) {
+		/* What is whole at any moment is one entry of the matrix over
+		 * one set of frequencies: one image, gridded, transformed, and
+		 * -- where a compressed function was asked for -- reduced to the
+		 * places the samples reach before the next one is made. */
+		long out_pair_stride = (NULL != pack) ? md_calc_size(ND, pack->com_psf_dims3) / pairs
+						     : pair_stride;
 
-			complex float* one = md_alloc_sameplace(ND, psf_dims3, CFL_SIZE, traj);
+		for (long q = 0; q < pairs; q++) {
+
+			nufft_update_traj(op, ND, trj_dims3, traj_i, wgh_dims, sqr_weights,
+					one_bas_dims, (NULL == sqr_basis) ? NULL : sqr_basis + q * basis_stride);
+
+			complex float* one = md_alloc_sameplace(ND, one_dims, CFL_SIZE, traj);
 
 			linop_adjoint_unchecked(op, one, kern);
-			fft(ND, psf_dims3, conf.flags, one, one);
-			md_copy(ND, psf_dims3, psf + i * psf_coset, one, CFL_SIZE);
+			fft(ND, one_dims, conf.flags, one, one);
 
-			md_free(one);
+			complex float* out = psf + i * psf_coset + q * out_pair_stride;
 
-		} else {
+			if (NULL != pack) {
 
-			linop_adjoint_unchecked(op, psf + i * psf_coset, kern);
+				long one_com[ND];
+				md_copy_dims(ND, one_com, pack->com_psf_dims3);
+				one_com[COEFF_DIM] = 1;
+
+				complex float* packed = md_alloc_sameplace(ND, one_com, CFL_SIZE, traj);
+				md_compress(ND, one_com, packed, one_dims, one, pack->com_dims, pack->idx, CFL_SIZE);
+				md_free(one);
+
+				md_copy(ND, one_com, out, packed, CFL_SIZE);
+				md_free(packed);
+
+			} else {
+
+				md_copy(ND, one_dims, out, one, CFL_SIZE);
+				md_free(one);
+			}
 		}
 
 		md_free(kern);
@@ -422,8 +479,7 @@ static complex float* psf_decomposed(bool to_host, int N, const long psf_dims[N 
 
 	linop_free(op);
 
-	if (!to_host)
-		fft(ND, psf_dims, conf.flags, psf, psf);
+
 
 	md_free(sqr_weights);
 	md_free(sqr_basis);
@@ -436,7 +492,7 @@ complex float* compute_psf2_decomposed(int N, const long psf_dims[N + 1], unsign
 		const long bas_dims[N + 1], const complex float* basis, const long wgh_dims[N + 1], const complex float* weights,
 		bool periodic, bool lowmem, bool upper_triag)
 {
-	return psf_decomposed(false, N, psf_dims, flags, trj_dims, traj, bas_dims, basis,
+	return psf_decomposed(false, NULL, N, psf_dims, flags, trj_dims, traj, bas_dims, basis,
 			wgh_dims, weights, periodic, lowmem, upper_triag);
 }
 
@@ -444,8 +500,12 @@ complex float* compute_psf2_decomposed(int N, const long psf_dims[N + 1], unsign
  * frequencies but the one being made is ever resident. */
 complex float* bartorch_psf_to_host(int N, const long psf_dims[N + 1], unsigned long flags, const long trj_dims[N + 1], const complex float* traj,
 		const long bas_dims[N + 1], const complex float* basis, const long wgh_dims[N + 1], const complex float* weights,
-		bool periodic, bool lowmem, bool upper_triag)
+		bool periodic, bool lowmem, bool upper_triag,
+		const long com_dims[N + 1], const long* idx,
+		const long com_psf_dims[N + 1], const long com_psf_dims3[N + 1])
 {
-	return psf_decomposed(true, N, psf_dims, flags, trj_dims, traj, bas_dims, basis,
-			wgh_dims, weights, periodic, lowmem, upper_triag);
+	struct psf_packing pack = { com_dims, idx, com_psf_dims, com_psf_dims3 };
+
+	return psf_decomposed(true, (NULL != idx) ? &pack : NULL, N, psf_dims, flags, trj_dims, traj,
+			bas_dims, basis, wgh_dims, weights, periodic, lowmem, upper_triag);
 }

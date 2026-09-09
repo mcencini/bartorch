@@ -63,7 +63,9 @@ extern complex float* bartorch_psf_to_host(int N, const long psf_dims[N + 1], un
 		const long trj_dims[N + 1], const complex float* traj,
 		const long bas_dims[N + 1], const complex float* basis,
 		const long wgh_dims[N + 1], const complex float* weights,
-		bool periodic, bool lowmem, bool upper_triag);
+		bool periodic, bool lowmem, bool upper_triag,
+		const long com_dims[N + 1], const long* idx,
+		const long com_psf_dims[N + 1], const long com_psf_dims3[N + 1]);
 
 /* Provided by finufft.c, which owns the FINUFFT entry points. */
 extern int bartorch_finufft_plan(int device, int type, int dim, const int64_t n_modes[3],
@@ -1384,24 +1386,14 @@ static void install_psf(struct nufft_data* data, const complex float* traj, comp
 	 * comes out real decides where it is built. */
 	bool store_real = data->conf.real || basis_is_real(ND, data->bas_dims, basis);
 
-	/* Streamed, the function is made a set of frequencies at a time and
-	 * kept on the host: neither it nor any set but the one being made is
-	 * ever resident.  A compressed function is not served that way.
-	 *
-	 */
+	/* Streamed, the function is made an entry at a time and kept on the
+	 * host: neither it nor any entry but the one being made is ever
+	 * resident. */
 	bool stream = (NULL != to_host) && stream_psf_enabled
 		&& (0 != bartorch_on_device(traj));
 
-
-	complex float* psf = stream
-		? bartorch_psf_to_host(N, data->psf_dims, data->flags, data->trj_dims, traj,
-				data->bas_dims, basis, data->wgh_dims, weights,
-				true, data->conf.lowmem, data->conf.upper_triag)
-		: (data->conf.decomposed_psf ? compute_psf2_decomposed : compute_psf2)(N,
-				data->psf_dims, data->flags, data->trj_dims, traj,
-				data->bas_dims, basis, data->wgh_dims, weights,
-				true /* as nufft.c asks for it */, data->conf.lowmem, data->conf.upper_triag);
-
+	/* The places the samples reach.  Worked out before the function is
+	 * built, because an entry is compressed as it is made. */
 	long max_idx = 0;
 
 	if (data->conf.compress_psf) {
@@ -1411,6 +1403,28 @@ static void install_psf(struct nufft_data* data, const complex float* traj, comp
 		if (0 != spread_mask(data, traj, &max_idx))
 			error("bartorch: FINUFFT would not spread the pattern for a compressed function\n");
 	}
+
+	long com_psf_dims[ND];
+	long com_psf_dims3[ND];
+	const long* idx = NULL;
+
+	if (stream && (NULL != data->compress)) {
+
+		md_compress_dims(ND, com_psf_dims, data->psf_dims, data->com_dims, max_idx);
+		md_select_dims(ND, ~MD_BIT(N), com_psf_dims3, com_psf_dims);
+		idx = multiplace_read(data->compress, traj);
+	}
+
+
+	complex float* psf = stream
+		? bartorch_psf_to_host(N, data->psf_dims, data->flags, data->trj_dims, traj,
+				data->bas_dims, basis, data->wgh_dims, weights,
+				true, data->conf.lowmem, data->conf.upper_triag,
+				data->com_dims, idx, com_psf_dims, com_psf_dims3)
+		: (data->conf.decomposed_psf ? compute_psf2_decomposed : compute_psf2)(N,
+				data->psf_dims, data->flags, data->trj_dims, traj,
+				data->bas_dims, basis, data->wgh_dims, weights,
+				true /* as nufft.c asks for it */, data->conf.lowmem, data->conf.upper_triag);
 
 	multiplace_free(data->psf);
 
