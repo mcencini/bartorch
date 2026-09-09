@@ -1429,7 +1429,7 @@ def test_the_function_can_be_kept_off_the_card_and_brought_over_in_sets(in_tools
     kspace = bt.nufft(traj, image)
     bank = maps.reshape(1, coils, 1, n, n)
 
-    assert lib.bartorch_nufft_stream_psf(), "it is what happens unless it is turned off"
+    assert not lib.bartorch_nufft_stream_psf(), "it is asked for, not assumed"
 
     was = lib.bartorch_nufft_stream_psf()
     try:

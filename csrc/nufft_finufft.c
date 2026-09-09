@@ -43,6 +43,7 @@
 
 #include "num/compress.h"
 #include "num/multiplace.h"
+#include "num/triagmat.h"
 #include "num/gpuops.h"
 
 #include "include/bartorch.h"
@@ -493,15 +494,17 @@ static void stream_wait(void) { }
 /* Whether the function is kept off the card and brought over a set of
  * frequencies at a time.
  *
- * On, because the function is the largest thing a three-dimensional subspace
- * reconstruction holds and this is what decides whether one fits: on 96^3
- * with eight coils it is 198 MB against 364, and against 576 for a function
- * built whole.  What it costs is BART's low-memory normal, which walks the
- * sets rather than convolving them at once -- about a fifth more time.
+ * Off, for now.  It is a large win where it applies -- on 96^3 with eight
+ * coils, 198 MB against 364 and against 576 for a function built whole, and
+ * with the fused multiply below about half the time -- but a subspace problem
+ * whose basis is real is held 1e-03 from BART's own normal, which is more than
+ * the thousandth the transform is computed to and is not yet understood.  The
+ * scalar case and a complex basis are held to 1e-06 either way.  Until that is
+ * run down this is asked for rather than assumed.
  *
  * It applies only where there is a card to keep the function off; on the host
  * it would be copies to no purpose, so the trajectory's side decides. */
-static int stream_psf_enabled = 1;
+static int stream_psf_enabled;
 
 void bartorch_nufft_set_stream_psf(int enable)
 {
@@ -587,6 +590,100 @@ static void use_coset(struct nufft_fi_s* d)
 	t->linphase = multiplace_move_wrapper(ND, lph_dims, CFL_SIZE, d->linphase_slot);
 }
 
+/* One set of frequencies, convolved and added to what is there.
+ *
+ * This is `toeplitz_mult_lowmem` without the two things that cost a pass over
+ * the coil images: it accumulates into the answer rather than clearing it, so
+ * the caller needs no second image to add up, and it multiplies the function
+ * in place where the shape allows.  Every number is BART's -- the same
+ * `md_zmul2`, the same transform, the same contraction against the upper
+ * triangle -- and the arrangements it does not cover go back to BART's own.
+ */
+static bool fused_coset(struct nufft_fi_s* d, complex float* dst, const complex float* src)
+{
+	struct nufft_data* t = d->toeplitz_data;
+
+	/* A compressed function is scattered and gathered around the multiply,
+	 * which is BART's to do. */
+	if (NULL != t->compress)
+		return false;
+
+	const complex float* linphase = multiplace_read(t->linphase, src);
+	const void* psf = multiplace_read(t->psf, src);
+
+	if ((NULL == linphase) || (NULL == psf))
+		return false;
+
+	complex float* grid = md_alloc_sameplace(t->N, t->cim_dims, CFL_SIZE, dst);
+
+	md_zmul2(t->N, t->cim_dims, t->cim_strs, grid, t->cim_strs, src, t->img_strs, linphase);
+
+	linop_forward(t->cfft_op, t->N, t->cim_dims, grid, t->N, t->cim_dims, grid);
+
+	/* Without a basis the function is a diagonal and multiplies in place;
+	 * with one it is a matrix at every frequency and the contraction needs
+	 * somewhere to land. */
+	bool contracts = !md_check_equal_dims(t->N, t->cim_dims, t->ciT_dims, ~0UL);
+
+	if (!contracts) {
+
+		if (t->conf.real)
+			md_mul2(t->N, MD_REAL_DIMS(t->N, t->cim_dims),
+					MD_REAL_STRS(t->N, t->cim_strs, FL_SIZE), (float*)grid,
+					MD_REAL_STRS(t->N, t->cim_strs, FL_SIZE), (float*)grid,
+					MD_REAL_STRS(t->N, t->psf_strs, 0), (const float*)psf);
+		else
+			md_zmul2(t->N, t->cim_dims, t->cim_strs, grid, t->cim_strs, grid, t->psf_strs, psf);
+
+	} else {
+
+		long max_dims[t->N];
+		md_max_dims(t->N, ~0UL, max_dims, t->ciT_dims, t->cim_dims);
+
+		long ciT_strs[t->N];
+		md_calc_strides(t->N, ciT_strs, t->ciT_dims, CFL_SIZE);
+
+		long cim_strs[t->N];
+		md_calc_strides(t->N, cim_strs, t->cim_dims, CFL_SIZE);
+
+		complex float* out = md_alloc_sameplace(t->N, t->ciT_dims, CFL_SIZE, dst);
+
+		if (t->conf.real) {
+
+			if (t->conf.upper_triag)
+				md_tenmul_upper_triag2(6, 7, t->N + 1, MD_REAL_DIMS(t->N, max_dims),
+						MD_REAL_STRS(t->N, ciT_strs, FL_SIZE), (float*)out,
+						MD_REAL_STRS(t->N, cim_strs, FL_SIZE), (float*)grid,
+						MD_REAL_DIMS(t->N, t->psf_dims),
+						MD_REAL_STRS(t->N, t->psf_strs, 0), (const float*)psf);
+			else
+				md_tenmul2(t->N + 1, MD_REAL_DIMS(t->N, max_dims),
+						MD_REAL_STRS(t->N, ciT_strs, FL_SIZE), (float*)out,
+						MD_REAL_STRS(t->N, cim_strs, FL_SIZE), (float*)grid,
+						MD_REAL_STRS(t->N, t->psf_strs, 0), (const float*)psf);
+
+		} else {
+
+			if (t->conf.upper_triag)
+				md_ztenmul_upper_triag(5, 6, t->N, t->ciT_dims, out, t->cim_dims, grid, t->psf_dims, psf);
+			else
+				md_ztenmul(t->N, t->ciT_dims, out, t->cim_dims, grid, t->psf_dims, psf);
+		}
+
+		md_free(grid);
+		grid = out;
+	}
+
+	linop_adjoint(t->cfft_op, t->N, t->cim_dims, grid, t->N, t->cim_dims, grid);
+
+	/* Into the answer, not over it: this is what the second image was for. */
+	md_zfmacc2(t->N, t->cim_dims, t->cim_strs, dst, t->cim_strs, grid, t->img_strs, linphase);
+
+	md_free(grid);
+
+	return true;
+}
+
 static void nufft_fi_normal(const linop_data_t* _d, complex float* dst, const complex float* src)
 {
 	struct nufft_fi_s* d = CAST_DOWN(nufft_fi_s, _d);
@@ -605,7 +702,7 @@ static void nufft_fi_normal(const linop_data_t* _d, complex float* dst, const co
 	/* BART clears its output and accumulates the sets into it; driving one
 	 * at a time means accumulating them here instead.  Swapping what the
 	 * operator points at is not something two applications can do at once. */
-	complex float* part = md_alloc_sameplace(t->N, t->cim_dims, CFL_SIZE, dst);
+	complex float* part = NULL;
 
 	pthread_mutex_lock(&d->lock);
 
@@ -632,6 +729,12 @@ static void nufft_fi_normal(const linop_data_t* _d, complex float* dst, const co
 	for (int i = 0; i < d->cosets; i++) {
 
 		fetch_coset(d, i);
+
+		if (fused_coset(d, dst, src))
+			continue;
+
+		if (NULL == part)
+			part = md_alloc_sameplace(t->N, t->cim_dims, CFL_SIZE, dst);
 
 		linop_normal_unchecked(d->toeplitz, part, src);
 		md_zadd(t->N, t->cim_dims, dst, dst, part);
@@ -1170,12 +1273,27 @@ static void install_psf(struct nufft_data* data, const complex float* traj, comp
 	const complex float* weights = multiplace_read(data->weights, traj);
 	const complex float* basis = multiplace_read(data->basis, traj);
 
+	/* A function with nothing in its imaginary part is stored as floats,
+	 * which halves it; the basis is what says whether there is anything
+	 * there.  It is asked before the function is built, because whether it
+	 * comes out real decides where it is built. */
+	bool store_real = data->conf.real || basis_is_real(ND, data->bas_dims, basis);
+
 	/* Streamed, the function is made a set of frequencies at a time and
 	 * kept on the host: neither it nor any set but the one being made is
-	 * ever resident.  A compressed function is not served that way, so it
-	 * is built where it always was. */
+	 * ever resident.  A compressed function is not served that way.
+	 *
+	 * Neither is a real function contracted against the coefficients: held
+	 * against BART's own normal that comes out 3.4e-03 apart, more than the
+	 * thousandth the transform is computed to, and the cause is not yet
+	 * known -- BART's own low-memory normal is itself 6.6e-04 from its
+	 * whole-function one on that path, so there is something to understand
+	 * before either is trusted. */
+	bool contracts = !md_check_equal_dims(N, data->cim_dims, data->ciT_dims, ~0UL);
+
 	bool stream = (NULL != to_host) && stream_psf_enabled
-		&& (0 != bartorch_on_device(traj)) && !data->conf.compress_psf;
+		&& (0 != bartorch_on_device(traj)) && !data->conf.compress_psf
+		&& !(store_real && contracts);
 
 	complex float* psf = stream
 		? bartorch_psf_to_host(N, data->psf_dims, data->flags, data->trj_dims, traj,
@@ -1198,24 +1316,6 @@ static void install_psf(struct nufft_data* data, const complex float* traj, comp
 
 	multiplace_free(data->psf);
 
-	/* A function with nothing in its imaginary part is stored as floats,
-	 * which halves it.  Whether it has anything there is decided by the
-	 * basis, not by looking at the function: a real sample spread with a
-	 * real-valued kernel and scattered onto a grid gives a real grid, so
-	 * the sampling term is real whatever the trajectory, and the function
-	 * `U^H diag(m) U` is real whenever `U` is.
-	 *
-	 * The function as it is built does not look real -- a trajectory whose
-	 * samples do not come in pairs transforms to something a tenth
-	 * imaginary.  That is an artefact of how it is made rather than
-	 * anything the operator has: the function is Hermitian about its
-	 * centre, the grid is of even length and holds -N without its partner
-	 * +N, and the unpaired end leaks.  Taking the real part is the
-	 * projection back onto what the function already is, so a basis that
-	 * says the function is real is better evidence than the function is.
-	 */
-	bool store_real = data->conf.real || basis_is_real(ND, data->bas_dims, basis);
-
 	if (store_real) {
 
 		float* psf_real = md_alloc_sameplace(ND, data->psf_dims, FL_SIZE, psf);
@@ -1232,7 +1332,10 @@ static void install_psf(struct nufft_data* data, const complex float* traj, comp
 	if (stream) {
 
 		/* The sets are put where BART looks for them one at a time, so
-		 * nothing is installed here. */
+		 * nothing is installed here -- but what was freed above has to
+		 * stop being pointed at, or an arrangement that turns out not to
+		 * be streamable after all reads it. */
+		data->psf = NULL;
 		*to_host = psf;
 		return;
 	}
@@ -1360,7 +1463,17 @@ static const struct linop_s* toeplitz_for(int N, const long ksp_dims[N], const l
 	 * of: without a precomputed phase the shift is worked out from the set
 	 * BART thinks it is on, which is always the first once it is told it
 	 * has one. */
-	if (stream_psf_enabled && (0 != bartorch_on_device(traj))) {
+	/* Only where the function will actually be streamed.  BART's low-memory
+	 * normal is not its whole-function one to the last digit -- on a real
+	 * function contracted against the coefficients the two are 6.6e-04
+	 * apart -- so asking for it where it buys nothing would move a
+	 * reconstruction for no reason.  What decides is what `install_psf`
+	 * decides: a real function contracted against a basis is left alone,
+	 * and a basis that is real is what makes the function real. */
+	bool will_stream = stream_psf_enabled && (0 != bartorch_on_device(traj))
+		&& !((NULL != basis) && basis_is_real(N, bas_dims, basis));
+
+	if (will_stream) {
 
 		barts.lowmem = true;
 		barts.precomp_linphase = true;
