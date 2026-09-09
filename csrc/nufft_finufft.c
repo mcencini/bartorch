@@ -600,11 +600,6 @@ static bool fused_coset(struct nufft_fi_s* d, complex float* dst, const complex 
 {
 	struct nufft_data* t = d->toeplitz_data;
 
-	/* A compressed function is scattered and gathered around the multiply,
-	 * which is BART's to do. */
-	if (NULL != t->compress)
-		return false;
-
 	const complex float* linphase = multiplace_read(t->linphase, src);
 	const void* psf = multiplace_read(t->psf, src);
 
@@ -617,33 +612,58 @@ static bool fused_coset(struct nufft_fi_s* d, complex float* dst, const complex 
 
 	linop_forward(t->cfft_op, t->N, t->cim_dims, grid, t->N, t->cim_dims, grid);
 
+	/* A compressed function is only the places the samples reach, so what
+	 * multiplies it is gathered down to those places and scattered back. */
+	long cim_dims[t->N];
+	long ciT_dims[t->N];
+
+	md_copy_dims(t->N, cim_dims, t->cim_dims);
+	md_copy_dims(t->N, ciT_dims, t->ciT_dims);
+
+	if (NULL != t->compress) {
+
+		md_copy_dims(3, cim_dims, t->psf_dims);
+		md_copy_dims(3, ciT_dims, t->psf_dims);
+
+		const long* idx = multiplace_read(t->compress, grid);
+
+		complex float* packed = md_alloc_sameplace(t->N, cim_dims, CFL_SIZE, grid);
+		md_compress(t->N, cim_dims, packed, t->cim_dims, grid, t->com_dims, idx, CFL_SIZE);
+
+		md_free(grid);
+		grid = packed;
+	}
+
 	/* Without a basis the function is a diagonal and multiplies in place;
 	 * with one it is a matrix at every frequency and the contraction needs
 	 * somewhere to land. */
-	bool contracts = !md_check_equal_dims(t->N, t->cim_dims, t->ciT_dims, ~0UL);
+	bool contracts = !md_check_equal_dims(t->N, cim_dims, ciT_dims, ~0UL);
 
 	if (!contracts) {
 
+		long cim_strs[t->N];
+		md_calc_strides(t->N, cim_strs, cim_dims, CFL_SIZE);
+
 		if (t->conf.real)
-			md_mul2(t->N, MD_REAL_DIMS(t->N, t->cim_dims),
-					MD_REAL_STRS(t->N, t->cim_strs, FL_SIZE), (float*)grid,
-					MD_REAL_STRS(t->N, t->cim_strs, FL_SIZE), (float*)grid,
+			md_mul2(t->N, MD_REAL_DIMS(t->N, cim_dims),
+					MD_REAL_STRS(t->N, cim_strs, FL_SIZE), (float*)grid,
+					MD_REAL_STRS(t->N, cim_strs, FL_SIZE), (float*)grid,
 					MD_REAL_STRS(t->N, t->psf_strs, 0), (const float*)psf);
 		else
-			md_zmul2(t->N, t->cim_dims, t->cim_strs, grid, t->cim_strs, grid, t->psf_strs, psf);
+			md_zmul2(t->N, cim_dims, cim_strs, grid, cim_strs, grid, t->psf_strs, psf);
 
 	} else {
 
 		long max_dims[t->N];
-		md_max_dims(t->N, ~0UL, max_dims, t->ciT_dims, t->cim_dims);
+		md_max_dims(t->N, ~0UL, max_dims, ciT_dims, cim_dims);
 
 		long ciT_strs[t->N];
-		md_calc_strides(t->N, ciT_strs, t->ciT_dims, CFL_SIZE);
+		md_calc_strides(t->N, ciT_strs, ciT_dims, CFL_SIZE);
 
 		long cim_strs[t->N];
-		md_calc_strides(t->N, cim_strs, t->cim_dims, CFL_SIZE);
+		md_calc_strides(t->N, cim_strs, cim_dims, CFL_SIZE);
 
-		complex float* out = md_alloc_sameplace(t->N, t->ciT_dims, CFL_SIZE, dst);
+		complex float* out = md_alloc_sameplace(t->N, ciT_dims, CFL_SIZE, dst);
 
 		if (t->conf.real) {
 
@@ -662,13 +682,25 @@ static bool fused_coset(struct nufft_fi_s* d, complex float* dst, const complex 
 		} else {
 
 			if (t->conf.upper_triag)
-				md_ztenmul_upper_triag(5, 6, t->N, t->ciT_dims, out, t->cim_dims, grid, t->psf_dims, psf);
+				md_ztenmul_upper_triag(5, 6, t->N, ciT_dims, out, cim_dims, grid, t->psf_dims, psf);
 			else
-				md_ztenmul(t->N, t->ciT_dims, out, t->cim_dims, grid, t->psf_dims, psf);
+				md_ztenmul(t->N, ciT_dims, out, cim_dims, grid, t->psf_dims, psf);
 		}
 
 		md_free(grid);
 		grid = out;
+	}
+
+	if (NULL != t->compress) {
+
+		const long* idx = multiplace_read(t->compress, grid);
+
+		complex float* spread = md_alloc_sameplace(t->N, t->cim_dims, CFL_SIZE, grid);
+		md_clear(t->N, t->cim_dims, spread, CFL_SIZE);
+		md_decompress(t->N, t->cim_dims, spread, cim_dims, grid, t->com_dims, idx, NULL, CFL_SIZE);
+
+		md_free(grid);
+		grid = spread;
 	}
 
 	linop_adjoint(t->cfft_op, t->N, t->cim_dims, grid, t->N, t->cim_dims, grid);
@@ -1282,7 +1314,7 @@ static void install_psf(struct nufft_data* data, const complex float* traj, comp
 	 *
 	 */
 	bool stream = (NULL != to_host) && stream_psf_enabled
-		&& (0 != bartorch_on_device(traj)) && !data->conf.compress_psf;
+		&& (0 != bartorch_on_device(traj));
 
 
 	complex float* psf = stream
@@ -1296,7 +1328,7 @@ static void install_psf(struct nufft_data* data, const complex float* traj, comp
 
 	long max_idx = 0;
 
-	if (data->conf.compress_psf && !stream) {
+	if (data->conf.compress_psf) {
 
 		md_select_dims(ND, FFT_FLAGS, data->com_dims, data->img_dims);
 
@@ -1319,6 +1351,30 @@ static void install_psf(struct nufft_data* data, const complex float* traj, comp
 		data->conf.real = true;
 	}
 
+	/* Only the places the samples reach are kept.  The function is
+	 * compressed where it lies -- on the host when it is going to be
+	 * streamed off one, on the card otherwise -- so what crosses per set is
+	 * the compressed set. */
+	if (NULL != data->compress) {
+
+		size_t size = store_real ? FL_SIZE : CFL_SIZE;
+
+		long com_psf_dims[ND];
+		md_compress_dims(ND, com_psf_dims, data->psf_dims, data->com_dims, max_idx);
+
+		complex float* com_psf = stream ? md_alloc(ND, com_psf_dims, size)
+						: md_alloc_sameplace(ND, com_psf_dims, size, traj);
+
+		md_compress(ND, com_psf_dims, com_psf, data->psf_dims, psf,
+				data->com_dims, multiplace_read(data->compress, com_psf), size);
+
+		md_free(psf);
+		psf = com_psf;
+
+		md_copy_dims(ND, data->psf_dims, com_psf_dims);
+		md_calc_strides(ND, data->psf_strs, data->psf_dims, size);
+	}
+
 	if (stream) {
 
 		/* The sets are put where BART looks for them one at a time, so
@@ -1331,24 +1387,6 @@ static void install_psf(struct nufft_data* data, const complex float* traj, comp
 	}
 
 	data->psf = multiplace_move_F(ND, data->psf_dims, store_real ? FL_SIZE : CFL_SIZE, psf);
-
-	if (NULL != data->compress) {
-
-		size_t size = data->conf.real ? FL_SIZE : CFL_SIZE;
-
-		long com_psf_dims[ND];
-		md_compress_dims(ND, com_psf_dims, data->psf_dims, data->com_dims, max_idx);
-
-		complex float* com_psf = md_alloc_sameplace(ND, com_psf_dims, size, traj);
-		md_compress(ND, com_psf_dims, com_psf, data->psf_dims, multiplace_read(data->psf, traj),
-				data->com_dims, multiplace_read(data->compress, traj), size);
-
-		multiplace_free(data->psf);
-
-		md_copy_dims(ND, data->psf_dims, com_psf_dims);
-		md_calc_strides(ND, data->psf_strs, data->psf_dims, size);
-		data->psf = multiplace_move_F(ND, data->psf_dims, size, com_psf);
-	}
 }
 
 /* BART's own normal, over a function computed here.
