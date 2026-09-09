@@ -1413,6 +1413,9 @@ def test_the_function_can_be_kept_off_the_card_and_brought_over_in_sets(in_tools
     swaps the one it has for each in turn, which is its own arithmetic over a
     function that was never resident.  It is the decomposed function either
     way, so that is what it is held against.
+
+    On the host there is no card to keep it off, so this only differs on one:
+    what the test pins there is that turning it on changes nothing.
     """
     from bartorch.tools import _generated as g
 
@@ -1426,14 +1429,17 @@ def test_the_function_can_be_kept_off_the_card_and_brought_over_in_sets(in_tools
     kspace = bt.nufft(traj, image)
     bank = maps.reshape(1, coils, 1, n, n)
 
-    assert not lib.bartorch_nufft_stream_psf(), "it is off until it is asked for"
+    assert lib.bartorch_nufft_stream_psf(), "it is what happens unless it is turned off"
 
-    reference = g.pics(kspace, bank, t=traj, i=25, nufft_conf="decomposed-psf")
+    was = lib.bartorch_nufft_stream_psf()
     try:
-        lib.bartorch_nufft_set_stream_psf(1)
-        streamed = g.pics(kspace, bank, t=traj, i=25)
-    finally:
         lib.bartorch_nufft_set_stream_psf(0)
+        reference = g.pics(kspace, bank, t=traj, i=25, nufft_conf="decomposed-psf")
+
+        lib.bartorch_nufft_set_stream_psf(1)
+        streamed = g.pics(kspace, bank, t=traj, i=25, nufft_conf="decomposed-psf")
+    finally:
+        lib.bartorch_nufft_set_stream_psf(was)
 
     scale = float(reference.abs().max())
     assert float((streamed - reference).abs().max()) / scale < 1e-5
