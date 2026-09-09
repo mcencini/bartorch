@@ -295,6 +295,13 @@ static void drive_slabs(const struct sense_s* d, const void* ref, slab_fn fn, vo
 
 					fn(d, c, slab[turn % 2], mstrs, ctx);
 
+					/* The barrier below waits for the host,
+					 * not the card, and the next turn fills
+					 * the buffer this one is still reading:
+					 * what has been asked of the card has
+					 * to have happened before then. */
+					stream_wait();
+
 				} else if (next < d->coils) {
 
 					fetch_slab(d, next, slab[(turn + 1) % 2]);

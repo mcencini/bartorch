@@ -950,7 +950,31 @@ static void install_psf(struct nufft_data* data, const complex float* traj)
 
 	multiplace_free(data->psf);
 
-	if (data->conf.real) {
+	/* A function with nothing in its imaginary part is stored as floats,
+	 * which halves it.  Whether it has anything there is a question about
+	 * this trajectory and this basis rather than about the caller's
+	 * intent, so it is asked rather than declared: `--real-psf` only ever
+	 * threw the imaginary part away, and throwing away something that was
+	 * not zero is a quietly wrong reconstruction. */
+	bool store_real = data->conf.real;
+
+	if (!store_real) {
+
+		complex float* imag = md_alloc_sameplace(ND, data->psf_dims, CFL_SIZE, psf);
+		md_zimag(ND, data->psf_dims, imag, psf);
+
+		float whole = md_znorm(ND, data->psf_dims, psf);
+		float part = md_znorm(ND, data->psf_dims, imag);
+
+		md_free(imag);
+
+		store_real = (0. == whole) || (part <= 1.e-6 * whole);
+
+		debug_printf(DP_DEBUG1, "PSF imaginary part is %g of it; stored as %s\n",
+				(0. == whole) ? 0. : part / whole, store_real ? "floats" : "complex");
+	}
+
+	if (store_real) {
 
 		float* psf_real = md_alloc_sameplace(ND, data->psf_dims, FL_SIZE, psf);
 		md_real(ND, data->psf_dims, psf_real, psf);
@@ -958,6 +982,9 @@ static void install_psf(struct nufft_data* data, const complex float* traj)
 
 		md_calc_strides(ND, data->psf_strs, data->psf_dims, FL_SIZE);
 		data->psf = multiplace_move_F(ND, data->psf_dims, FL_SIZE, psf_real);
+
+		/* What is stored is what the multiply has to read. */
+		data->conf.real = true;
 
 	} else {
 
@@ -1026,6 +1053,12 @@ static const struct linop_s* toeplitz_for(int N, const long ksp_dims[N], const l
 	 * from being asked for a second beta. */
 	barts.os = nufft_conf_defaults.os;
 	barts.width = nufft_conf_defaults.width;
+
+	/* A subspace function is a Gram matrix at every frequency, so it is
+	 * Hermitian and its upper triangle is the whole of it.  Storing that
+	 * is exact, and a quarter of a rank-eight problem's peak. */
+	if (NULL != basis)
+		barts.upper_triag = true;
 
 	const struct linop_s* op = bart_nufft_create2(N, ksp_dims, cim_dims, traj_dims, traj,
 			wgh_dims, weights, (NULL != basis) ? bas_dims : NULL, basis, barts);

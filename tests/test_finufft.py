@@ -1263,3 +1263,110 @@ def test_one_thread_count_covers_bart_and_the_transform(in_tools):
         bartorch.set_num_threads(os.cpu_count() or 1)
 
     torch.testing.assert_close(one, reference, rtol=1e-4, atol=1e-5)
+
+
+@requires_finufft
+def test_a_function_with_no_imaginary_part_is_stored_without_one(in_tools):
+    """Half the memory, for free, wherever the function allows it.
+
+    A scalar point spread function is the transform of an autocorrelation, so
+    it is real and storing it as floats loses nothing.  BART's ``--real-psf``
+    only ever threw the imaginary part away without asking whether there was
+    one, so this asks: what the flag would do is now what happens by itself,
+    and asking for it changes nothing.
+    """
+    n, coils = 32, 4
+    torch.manual_seed(0)
+    traj = bt.traj(x=n, y=48, r=True)
+    maps = torch.randn(coils, n, n, dtype=torch.complex64)
+    maps = maps / maps.abs().pow(2).sum(0, keepdim=True).sqrt()
+    image = (bt.phantom([n, n])[None] * maps).reshape(coils, 1, n, n)
+    kspace = bt.nufft(traj, image)
+
+    from bartorch.tools import _generated as g
+
+    automatic = g.pics(kspace, maps.reshape(1, coils, 1, n, n), t=traj, i=20)
+    asked_for = g.pics(kspace, maps.reshape(1, coils, 1, n, n), t=traj, i=20, nufft_conf="real-psf")
+
+    # Asking for it sets the flag before the function is built and this
+    # converts one that was built complex, so the two round differently; what
+    # is being checked is that both threw the same nothing away.
+    scale = float(asked_for.abs().max())
+    assert float((automatic - asked_for).abs().max()) / scale < 1e-4
+
+
+@requires_finufft
+@pytest.mark.parametrize("basis_is", ["real", "imaginary"])
+def test_a_subspace_function_over_symmetric_sampling_is_real_too(in_tools, basis_is):
+    """What decides is the sampling, not only the basis.
+
+    A frame that sees a symmetric set of spokes has a real transfer function,
+    and a real basis carries that through the Gram matrix; a purely imaginary
+    basis carries it through as well, because ``conj(i a) (i b)`` is ``a b``.
+    So both are stored as floats, and asking for that changes nothing.
+    """
+    from bartorch.tools import _generated as g
+
+    n, coils, frames, coeffs, spokes = 32, 4, 8, 3, 16
+    torch.manual_seed(0)
+
+    # Every frame sees the whole spoke set, which is symmetric.
+    traj = bt.traj(x=n, y=spokes, r=True).unsqueeze(0).repeat(frames, 1, 1, 1)[:, None, None]
+    basis = torch.zeros(coeffs, frames, 1, 1, 1, 1, 1, dtype=torch.complex64)
+    values = torch.randn(coeffs, frames)
+    basis[..., 0, 0, 0, 0, 0] = values if basis_is == "real" else 1j * values
+
+    k = torch.randn(frames, 1, coils, spokes, n, 1, dtype=torch.complex64)
+    maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
+
+    automatic = g.pics(k, maps, t=traj, B=basis, i=20)
+    asked_for = g.pics(k, maps, t=traj, B=basis, i=20, nufft_conf="real-psf")
+
+    scale = float(asked_for.abs().max())
+    assert float((automatic - asked_for).abs().max()) / scale < 1e-4
+
+
+@requires_finufft
+def test_a_subspace_function_keeps_an_imaginary_part_it_really_has(in_tools):
+    """Sampling that is not symmetric per frame leaves one, and it is kept.
+
+    Each frame here sees its own subset of spokes, so its transfer function is
+    complex and so is the Gram matrix over it.  Throwing that away is an
+    approximation -- a small one, but not one to make on the caller's behalf.
+    """
+    from bartorch.tools import _generated as g
+
+    n, coils, frames, coeffs, spokes = 32, 4, 6, 3, 8
+    traj, basis = _subspace(n, spokes, frames, coeffs)
+    torch.manual_seed(0)
+    k = torch.randn(frames, 1, coils, spokes, n, 1, dtype=torch.complex64)
+    maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
+
+    kept = g.pics(k, maps, t=traj, B=basis, i=20)
+    thrown = g.pics(k, maps, t=traj, B=basis, i=20, nufft_conf="real-psf")
+
+    scale = float(kept.abs().max())
+    assert float((kept - thrown).abs().max()) / scale > 1e-5, (
+        "the imaginary part was discarded by default, which it must not be"
+    )
+
+
+@requires_finufft
+def test_a_subspace_function_is_stored_as_its_upper_triangle(in_tools):
+    """A Gram matrix is Hermitian, so its upper triangle is the whole of it.
+
+    Storing only that is exact rather than an approximation, which is why it
+    needs no asking for -- so asking has to change nothing.
+    """
+    from bartorch.tools import _generated as g
+
+    n, coils, frames, coeffs, spokes = 32, 4, 6, 3, 8
+    traj, basis = _subspace(n, spokes, frames, coeffs)
+    torch.manual_seed(0)
+    k = torch.randn(frames, 1, coils, spokes, n, 1, dtype=torch.complex64)
+    maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
+
+    automatic = g.pics(k, maps, t=traj, B=basis, i=20)
+    asked_for = g.pics(k, maps, t=traj, B=basis, i=20, nufft_conf="upper-triag-psf")
+
+    torch.testing.assert_close(automatic, asked_for, rtol=1e-4, atol=1e-6)

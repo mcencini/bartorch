@@ -77,6 +77,7 @@ def test_an_operator_applies_on_the_device():
 
 @requires_cuda
 def test_more_than_one_stream_can_be_asked_for():
+    was = bartorch.cuda.streams()
     bartorch.cuda.set_streams(2)
     try:
         x = torch.randn(4, 32, dtype=torch.complex64, device="cuda")
@@ -84,7 +85,7 @@ def test_more_than_one_stream_can_be_asked_for():
             bt.fft(x, axes=-1).cpu(), bt.fft(x.cpu(), axes=-1), rtol=1e-4, atol=1e-4
         )
     finally:
-        bartorch.cuda.set_streams(1)
+        bartorch.cuda.set_streams(was)
 
 
 @requires_cuda
