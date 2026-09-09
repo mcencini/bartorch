@@ -713,6 +713,75 @@ static bool fused_coset(struct nufft_fi_s* d, complex float* dst, const complex 
 	return true;
 }
 
+/* Driving the sets from outside.
+ *
+ * The function crosses once for each set that is used, so what decides the
+ * traffic is how often a set is used: with the coils outside and the sets
+ * inside, every coil brings the whole function over again.  These let the
+ * caller put the sets outside instead -- one set, then every coil against it
+ * -- so the function crosses once for an application rather than once for
+ * each coil.  On eight coils that is eight times less over the bus.
+ *
+ * The operator holds one slot, so the sets have to be walked one at a time and
+ * nothing else may swap what it points at meanwhile: `begin` takes the lock
+ * and `end` gives it back.
+ */
+int bartorch_nufft_cosets(const struct linop_s* op)
+{
+	if (!is_ours(op))
+		return 0;
+
+	struct nufft_fi_s* d = CAST_DOWN(nufft_fi_s, linop_get_data(op));
+
+	return (NULL == d->psf_host) ? 0 : d->cosets;
+}
+
+static void coset_begin(struct nufft_fi_s* d, const void* ref)
+{
+	pthread_mutex_lock(&d->lock);
+
+	if (NULL == d->psf_slot)
+		open_slots(d, ref);
+
+	use_coset(d);
+}
+
+/* The set that is loaded, convolved with `src` and added to `dst`. */
+static void coset_normal(struct nufft_fi_s* d, complex float* dst, const complex float* src)
+{
+	if (fused_coset(d, dst, src))
+		return;
+
+	struct nufft_data* t = d->toeplitz_data;
+
+	complex float* part = md_alloc_sameplace(t->N, t->cim_dims, CFL_SIZE, dst);
+
+	linop_normal_unchecked(d->toeplitz, part, src);
+	md_zadd(t->N, t->cim_dims, dst, dst, part);
+
+	md_free(part);
+}
+
+void bartorch_nufft_coset_begin(const struct linop_s* op, const void* ref)
+{
+	coset_begin(CAST_DOWN(nufft_fi_s, linop_get_data(op)), ref);
+}
+
+void bartorch_nufft_coset_use(const struct linop_s* op, int i)
+{
+	fetch_coset(CAST_DOWN(nufft_fi_s, linop_get_data(op)), i);
+}
+
+void bartorch_nufft_coset_normal(const struct linop_s* op, complex float* dst, const complex float* src)
+{
+	coset_normal(CAST_DOWN(nufft_fi_s, linop_get_data(op)), dst, src);
+}
+
+void bartorch_nufft_coset_end(const struct linop_s* op)
+{
+	pthread_mutex_unlock(&CAST_DOWN(nufft_fi_s, linop_get_data(op))->lock);
+}
+
 static void nufft_fi_normal(const linop_data_t* _d, complex float* dst, const complex float* src)
 {
 	struct nufft_fi_s* d = CAST_DOWN(nufft_fi_s, _d);
@@ -726,52 +795,24 @@ static void nufft_fi_normal(const linop_data_t* _d, complex float* dst, const co
 		return;
 	}
 
+	/* Nobody put the sets outside, so they are walked here.  The fetch is
+	 * not put on a stream of its own: what would be overlapped is BART's
+	 * own arithmetic, which threads, and a region of two makes that
+	 * threading nested -- measured at 96^3 with eight coils, 6.48 s against
+	 * 2.75 s to save 8 MB of 210. */
 	struct nufft_data* t = d->toeplitz_data;
 
-	/* BART clears its output and accumulates the sets into it; driving one
-	 * at a time means accumulating them here instead.  Swapping what the
-	 * operator points at is not something two applications can do at once. */
-	complex float* part = NULL;
-
-	pthread_mutex_lock(&d->lock);
-
-	if (NULL == d->psf_slot)
-		open_slots(d, dst);
+	coset_begin(d, dst);
 
 	md_clear(t->N, t->cim_dims, dst, CFL_SIZE);
-
-	/* The sets are brought over one at a time, and the fetch is not put on
-	 * a stream of its own.
-	 *
-	 * It could be: the copy and the convolution would then run at once, as
-	 * they do where a slab of sensitivities is fetched.  But what is being
-	 * overlapped there is a transform on the card, and what is being
-	 * overlapped here is BART's own arithmetic, which threads.  Putting it
-	 * inside a region of two makes that threading nested, and nested it
-	 * does not happen -- measured at 96^3 with eight coils, a region of two
-	 * costs 6.48 s against 2.75 s and saves 8 MB of 210.  So the copy is
-	 * issued on the stream the arithmetic is already on, where it is
-	 * asynchronous and the next turn waits for no more than it must.
-	 */
-	use_coset(d);
 
 	for (int i = 0; i < d->cosets; i++) {
 
 		fetch_coset(d, i);
-
-		if (fused_coset(d, dst, src))
-			continue;
-
-		if (NULL == part)
-			part = md_alloc_sameplace(t->N, t->cim_dims, CFL_SIZE, dst);
-
-		linop_normal_unchecked(d->toeplitz, part, src);
-		md_zadd(t->N, t->cim_dims, dst, dst, part);
+		coset_normal(d, dst, src);
 	}
 
 	pthread_mutex_unlock(&d->lock);
-
-	md_free(part);
 }
 
 static void nufft_fi_del(const linop_data_t* _d)

@@ -52,6 +52,15 @@
 
 #include "include/bartorch.h"
 
+/* Provided by nufft_finufft.c, which holds the function a normal convolves
+ * with.  A streamed function crosses once for each set that is used, so the
+ * sets belong outside the coils rather than inside them. */
+extern int bartorch_nufft_cosets(const struct linop_s* op);
+extern void bartorch_nufft_coset_begin(const struct linop_s* op, const void* ref);
+extern void bartorch_nufft_coset_use(const struct linop_s* op, int i);
+extern void bartorch_nufft_coset_normal(const struct linop_s* op, complex float* dst, const complex float* src);
+extern void bartorch_nufft_coset_end(const struct linop_s* op);
+
 extern struct linop_s* bart_sense_init(unsigned long shared_img_flags, const long max_dims[DIMS],
 		unsigned long sens_flags, const complex float* sens);
 
@@ -364,6 +373,27 @@ static void normal_slab(const struct sense_s* d, long coil, const complex float*
 	md_zfmacc2(DIMS, d->slab_dims, d->img_strs, c->dst, d->cim_strs, c->nrm, mstrs, map);
 }
 
+/* One coil against the set that is loaded.
+ *
+ * The set is already where the transform will look for it, so what this costs
+ * is the coil: its sensitivities on, the convolution, and its sensitivities
+ * off into the answer.  Clearing what the convolution accumulates into is a
+ * pass over the coil images, which is what walking the sets outside costs --
+ * against the whole function crossing again, which is what it saves. */
+static void normal_slab_coset(const struct sense_s* d, long coil, const complex float* map,
+		const long* mstrs, void* _c)
+{
+	(void)coil;
+	struct slab_ctx* c = _c;
+
+	md_ztenmul2(DIMS, d->slab_dims, d->cim_strs, c->cim, d->img_strs, c->src, mstrs, map);
+
+	md_clear(DIMS, d->cim_dims, c->nrm, CFL_SIZE);
+	bartorch_nufft_coset_normal(d->slab, c->nrm, c->cim);
+
+	md_zfmacc2(DIMS, d->slab_dims, d->img_strs, c->dst, d->cim_strs, c->nrm, mstrs, map);
+}
+
 static void sense_forward(const linop_data_t* _d, complex float* dst, const complex float* src)
 {
 	const auto d = CAST_DOWN(sense_s, _d);
@@ -416,7 +446,28 @@ static void sense_normal(const linop_data_t* _d, complex float* dst, const compl
 
 	md_clear(DIMS, d->img_dims, dst, CFL_SIZE);
 
-	drive_slabs(d, dst, normal_slab, &c);
+	/* A function held off the card crosses once for each set that is used.
+	 * With the coils outside and the sets inside, every coil brings the
+	 * whole of it over again; with the sets outside it crosses once for the
+	 * application.  On eight coils that is eight times less over the bus. */
+	int cosets = bartorch_nufft_cosets(d->slab);
+
+	if (0 == cosets) {
+
+		drive_slabs(d, dst, normal_slab, &c);
+
+	} else {
+
+		bartorch_nufft_coset_begin(d->slab, dst);
+
+		for (int i = 0; i < cosets; i++) {
+
+			bartorch_nufft_coset_use(d->slab, i);
+			drive_slabs(d, dst, normal_slab_coset, &c);
+		}
+
+		bartorch_nufft_coset_end(d->slab);
+	}
 
 	md_free(c.nrm);
 	md_free(c.cim);
