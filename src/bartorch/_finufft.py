@@ -276,13 +276,19 @@ def overlap_psf(enable: bool = True) -> None:
 
     The crossing goes on a stream of its own, ordered against BART's by events
     rather than by a second host thread, which would make BART's own threading
-    nested.  It costs a second slot on the card -- 62 MB of a 128^3 problem
-    over four coefficients -- and page-locks the function on the host, which is
-    itself not free: locking 515 MB takes about two seconds.
+    nested.  The function is page-locked on the host, because an asynchronous
+    copy out of pageable memory is not one.
 
-    So it pays where a solve does enough iterations to repay that, and where
-    the crossing is a large part of what a normal spends its time in.  Off
-    unless asked for.
+    It costs a second slot on the card, and a slot is one set of frequencies:
+    62 MB of a 128^3 problem over four coefficients, against 1026 MB for the
+    problem, and it grows with the set as everything else does.  What it buys
+    is the crossing, which is most of what is left in a normal once the
+    function is compressed: 25.6 s against 27.2 s over forty-five iterations
+    of that problem, and nothing either way over five.
+
+    Off unless asked for.  Six per cent of the card for six per cent of the
+    time is a trade whose sides are the same size, and the card is the one
+    that ends a reconstruction when it runs out.
     """
     from bartorch._lib import library
 

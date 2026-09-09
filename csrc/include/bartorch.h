@@ -123,9 +123,10 @@ BARTORCH_API void bartorch_nufft_set_compress_psf(int enable);
 BARTORCH_API int bartorch_nufft_compress_psf(void);
 
 /* Bring the set of frequencies that will be wanted next over while the card
- * convolves the one it has.  It costs a second slot on the card and page-locks
- * the function on the host, so it pays only where the crossing is a large part
- * of what a normal spends its time in. */
+ * convolves the one it has.  It costs a second slot on the card, which is one
+ * set of frequencies, and page-locks the function on the host; what it buys is
+ * the crossing, which is most of what is left in a normal once the function is
+ * compressed. */
 BARTORCH_API void bartorch_nufft_set_overlap_psf(int enable);
 BARTORCH_API int bartorch_nufft_overlap_psf(void);
 
