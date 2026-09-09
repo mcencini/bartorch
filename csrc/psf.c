@@ -357,9 +357,22 @@ static complex float* psf_decomposed(bool to_host, int N, const long psf_dims[N 
 
 	(void)ksp_coset;
 
+	/* One transform for every set of frequencies, pointed at each in turn.
+	 *
+	 * The sets differ only in where their samples sit, so one plan serves
+	 * them all -- and making a plan is the largest allocation a build does,
+	 * more than the function it produces.  `nufft_update_traj` is what
+	 * points it somewhere else without making it again. */
+	struct linop_s* op = nufft_create2(ND, ksp_dims2, psf_dims3, trj_dims3, traj2,
+			wgh_dims, sqr_weights, sqr_bas_dims, sqr_basis, conf);
+
 	for (int i = 0; i < trj_dims2[N]; i++) {
 
 		const complex float* traj_i = traj2 + i * trj_coset;
+
+		if (0 < i)
+			nufft_update_traj(op, ND, trj_dims3, traj_i,
+					wgh_dims, sqr_weights, sqr_bas_dims, sqr_basis);
 
 		complex float* kern = md_alloc_sameplace(ND, ksp_dims2, CFL_SIZE, traj);
 		md_zfill(ND, ksp_dims2, kern, 1. / sqrt(md_calc_size(3, psf_dims)));
@@ -389,9 +402,6 @@ static complex float* psf_decomposed(bool to_host, int N, const long psf_dims[N 
 			md_free(tkern);
 		}
 
-		struct linop_s* op = nufft_create2(ND, ksp_dims2, psf_dims3, trj_dims3,
-				traj_i, wgh_dims, sqr_weights, sqr_bas_dims, sqr_basis, conf);
-
 		if (to_host) {
 
 			complex float* one = md_alloc_sameplace(ND, psf_dims3, CFL_SIZE, traj);
@@ -407,9 +417,10 @@ static complex float* psf_decomposed(bool to_host, int N, const long psf_dims[N 
 			linop_adjoint_unchecked(op, psf + i * psf_coset, kern);
 		}
 
-		linop_free(op);
 		md_free(kern);
 	}
+
+	linop_free(op);
 
 	if (!to_host)
 		fft(ND, psf_dims, conf.flags, psf, psf);

@@ -336,6 +336,41 @@ static int side_build(struct nufft_fi_s* d, int which)
 	return 0;
 }
 
+/* The same plans, pointed at a trajectory that has changed.
+ *
+ * Making a plan is the largest allocation this operator does -- more than the
+ * function a normal ends up convolving with -- and a trajectory that arrives
+ * later has the same number of samples on the same grid, which is what a plan
+ * is made for.  So the points are replaced and the plan is kept, which is what
+ * `setpts` is for. */
+static int side_retarget(struct nufft_fi_s* d, int which)
+{
+	struct fi_side* s = &d->side[which];
+
+	if (NULL == s->forward_plan)
+		return 0;
+
+	long one[1] = { d->samples };
+
+	for (int i = 0; i < d->dim; i++)
+		md_copy(1, one, s->coord[i], d->radians[i], FL_SIZE);
+
+	if ((NULL != s->weights) && (NULL != d->host_weights))
+		md_copy(d->N, d->wgh_dims, s->weights, d->host_weights, CFL_SIZE);
+
+	if ((NULL != s->basis) && (NULL != d->host_basis))
+		md_copy(d->N, d->bas_dims, s->basis, d->host_basis, CFL_SIZE);
+
+	if (   (0 != bartorch_finufft_setpts(s->forward_plan, d->samples, s->coord[0], s->coord[1], s->coord[2]))
+	    || (0 != bartorch_finufft_setpts(s->adjoint_plan, d->samples, s->coord[0], s->coord[1], s->coord[2]))) {
+
+		side_free(d, s);
+		return 13;
+	}
+
+	return 0;
+}
+
 /* The side `ptr` is on, built if this is the first transform there.
  *
  * A side is built once and never rebuilt, so what this returns stays good
@@ -1977,9 +2012,6 @@ void nufft_update_traj(const struct linop_s* nufft, int N, const long trj_dims[N
 
 	pthread_mutex_lock(&d->lock);
 
-	side_free(d, &d->side[0]);
-	side_free(d, &d->side[1]);
-
 	install_traj(d, trj_dims, traj);
 
 	md_free(d->host_weights);
@@ -1998,6 +2030,10 @@ void nufft_update_traj(const struct linop_s* nufft, int N, const long trj_dims[N
 
 		md_copy(N, d->bas_dims, d->host_basis, basis, CFL_SIZE);
 	}
+
+	/* The plans are kept and pointed at the new samples. */
+	side_retarget(d, 0);
+	side_retarget(d, 1);
 
 	pthread_mutex_unlock(&d->lock);
 
