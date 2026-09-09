@@ -1060,6 +1060,7 @@ static const struct linop_s* toeplitz_for(int N, const long ksp_dims[N], const l
 	if (NULL != basis)
 		barts.upper_triag = true;
 
+
 	const struct linop_s* op = bart_nufft_create2(N, ksp_dims, cim_dims, traj_dims, traj,
 			wgh_dims, weights, (NULL != basis) ? bas_dims : NULL, basis, barts);
 

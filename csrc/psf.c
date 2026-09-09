@@ -25,6 +25,7 @@
 #include <stdbool.h>
 
 #include "misc/misc.h"
+#include "misc/debug.h"
 #include "misc/mri.h"
 #include "misc/version.h"
 
@@ -328,62 +329,76 @@ complex float* compute_psf2_decomposed(int N, const long psf_dims[N + 1], unsign
 	md_select_dims(ND, ~MD_BIT(N), psf_dims3, psf_dims2);
 	md_select_dims(ND, ~MD_BIT(N), trj_dims3, trj_dims2);
 
-	struct linop_s* op = nufft_create2(ND, ksp_dims2, psf_dims3, trj_dims3, traj2,
-			wgh_dims, sqr_weights, sqr_bas_dims, sqr_basis, conf);
-
-	for (int i = 1; i < trj_dims2[N]; i++)
-		op = linop_stack_FF(N, N, op, nufft_create2(ND, ksp_dims2, psf_dims3, trj_dims3,
-				traj2 + i * md_calc_size(ND, trj_dims3), wgh_dims, sqr_weights,
-				sqr_bas_dims, sqr_basis, conf));
-
 	(void)lowmem;
-
-	op = linop_reshape_in_F(op, ND, psf_dims);
-
-	md_free(sqr_weights);
-	md_free(sqr_basis);
 
 	/* The kernel the decomposition transforms: a cosine per doubled axis,
 	 * with the half-sample shift an odd length needs. */
-	complex float* kern = md_alloc_sameplace(ND, ksp_dims, CFL_SIZE, traj);
-	md_zfill(ND, ksp_dims, kern, 1. / sqrt(md_calc_size(3, psf_dims)));
-
-	for (int i = 0; i < 3; i++) {
-
-		if (1 == psf_dims[i])
-			continue;
-
-		complex float* tkern = md_alloc_sameplace(ND, ksp_dims, CFL_SIZE, traj);
-		md_copy2(ND, ksp_dims, MD_STRIDES(ND, ksp_dims, CFL_SIZE), tkern,
-				MD_STRIDES(ND, trj_dims2, CFL_SIZE), traj2 + i, CFL_SIZE);
-		md_zsmul(ND, ksp_dims, tkern, tkern, M_PI);
-		md_zcos(ND, ksp_dims, tkern, tkern);
-		md_zmul(ND, ksp_dims, kern, kern, tkern);
-		md_free(tkern);
-
-		if (0 == psf_dims[i] % 2)
-			continue;
-
-		tkern = md_alloc_sameplace(ND, ksp_dims, CFL_SIZE, traj);
-		md_copy2(ND, ksp_dims, MD_STRIDES(ND, ksp_dims, CFL_SIZE), tkern,
-				MD_STRIDES(ND, trj_dims2, CFL_SIZE), traj2 + i, CFL_SIZE);
-		md_zsmul(ND, ksp_dims, tkern, tkern, 2.i * M_PI * (psf_dims[i] / 2 - psf_dims[i] / 2.) / psf_dims[i]);
-		md_zexp(ND, ksp_dims, tkern, tkern);
-		md_zmul(ND, ksp_dims, kern, kern, tkern);
-		md_free(tkern);
-	}
-
-	md_free(traj2);
-
+/* The kernel one set of frequencies transforms against: a cosine per doubled
+ * axis, with the half-sample shift an odd length needs.  Built for the set
+ * that is about to be used rather than for all of them at once, which is what
+ * keeps the samples of every set off the card together. */
 	complex float* psf = md_alloc_sameplace(ND, psf_dims, CFL_SIZE, traj);
 
-	linop_adjoint_unchecked(op, psf, kern);
+	/* One set of frequencies at a time.
+	 *
+	 * Stacking them into one operator and answering them together is the
+	 * same arithmetic, and puts every set's transform on the card at once
+	 * along with the whole function; taking them in turn holds one set's
+	 * transform and writes into the one place the function lives.  That is
+	 * what makes computing the sets separately cost less than computing
+	 * them together rather than more. */
+	long psf_coset = md_calc_size(ND, psf_dims3);
+	long ksp_coset = md_calc_size(ND, ksp_dims2);
+	long trj_coset = md_calc_size(ND, trj_dims3);
 
-	md_free(kern);
+	(void)ksp_coset;
+
+	for (int i = 0; i < trj_dims2[N]; i++) {
+
+		const complex float* traj_i = traj2 + i * trj_coset;
+
+		complex float* kern = md_alloc_sameplace(ND, ksp_dims2, CFL_SIZE, traj);
+		md_zfill(ND, ksp_dims2, kern, 1. / sqrt(md_calc_size(3, psf_dims)));
+
+		for (int j = 0; j < 3; j++) {
+
+			if (1 == psf_dims[j])
+				continue;
+
+			complex float* tkern = md_alloc_sameplace(ND, ksp_dims2, CFL_SIZE, traj);
+			md_copy2(ND, ksp_dims2, MD_STRIDES(ND, ksp_dims2, CFL_SIZE), tkern,
+					MD_STRIDES(ND, trj_dims3, CFL_SIZE), traj_i + j, CFL_SIZE);
+			md_zsmul(ND, ksp_dims2, tkern, tkern, M_PI);
+			md_zcos(ND, ksp_dims2, tkern, tkern);
+			md_zmul(ND, ksp_dims2, kern, kern, tkern);
+			md_free(tkern);
+
+			if (0 == psf_dims[j] % 2)
+				continue;
+
+			tkern = md_alloc_sameplace(ND, ksp_dims2, CFL_SIZE, traj);
+			md_copy2(ND, ksp_dims2, MD_STRIDES(ND, ksp_dims2, CFL_SIZE), tkern,
+					MD_STRIDES(ND, trj_dims3, CFL_SIZE), traj_i + j, CFL_SIZE);
+			md_zsmul(ND, ksp_dims2, tkern, tkern, 2.i * M_PI * (psf_dims[j] / 2 - psf_dims[j] / 2.) / psf_dims[j]);
+			md_zexp(ND, ksp_dims2, tkern, tkern);
+			md_zmul(ND, ksp_dims2, kern, kern, tkern);
+			md_free(tkern);
+		}
+
+		struct linop_s* op = nufft_create2(ND, ksp_dims2, psf_dims3, trj_dims3,
+				traj_i, wgh_dims, sqr_weights, sqr_bas_dims, sqr_basis, conf);
+
+		linop_adjoint_unchecked(op, psf + i * psf_coset, kern);
+
+		linop_free(op);
+		md_free(kern);
+	}
 
 	fft(ND, psf_dims, conf.flags, psf, psf);
 
-	linop_free(op);
+	md_free(sqr_weights);
+	md_free(sqr_basis);
+	md_free(traj2);
 
 	return psf;
 }
