@@ -35,6 +35,7 @@ from bartorch._cuda import (
     free_memory,
     ordered,
     set_streams,
+    streams,
     use_memcache,
 )
 
@@ -46,5 +47,6 @@ __all__ = [
     "free_memory",
     "ordered",
     "set_streams",
+    "streams",
     "use_memcache",
 ]

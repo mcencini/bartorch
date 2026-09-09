@@ -23,6 +23,7 @@ __all__ = [
     "free_memory",
     "ordered",
     "set_streams",
+    "streams",
     "use_memcache",
 ]
 
@@ -53,6 +54,16 @@ def device() -> int:
 def free_memory() -> int:
     """Free device memory in bytes, or -1 when there is no device."""
     return int(library().bartorch_cuda_free_memory())
+
+
+def streams() -> int:
+    """How many streams BART runs its work on.
+
+    One by default.  A second is what lets an operator fetch the slab it will
+    need next while the card is busy with this one, so the crossing costs
+    nothing; more than two buys nothing here, because there is one fetch.
+    """
+    return int(library().bartorch_cuda_get_streams())
 
 
 def set_streams(n: int) -> None:

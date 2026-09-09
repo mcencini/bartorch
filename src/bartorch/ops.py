@@ -350,7 +350,10 @@ class LinearOperator:
         kernels : bool
             Sensitivities left on the host are brought over a slab at a time
             when the operator is applied on a card, so the bank itself never
-            has to fit; what crosses is one slab.
+            has to fit; what crosses is one slab.  Given a second stream --
+            ``bartorch.cuda.set_streams(2)``, one by default -- the slab after
+            next is fetched while this one is worked on, which hides the
+            crossing behind the arithmetic.
 
         kernels : bool
             Read ``sensitivities`` as kernels: the centre of each map's

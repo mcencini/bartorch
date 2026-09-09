@@ -27,6 +27,10 @@
 #include <complex.h>
 #include <stdbool.h>
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 #include "misc/debug.h"
 #include "misc/misc.h"
 #include "misc/mri.h"
@@ -39,6 +43,8 @@
 
 #include "linops/linop.h"
 #include "linops/someops.h"
+
+#include "num/gpuops.h"
 
 #include "noncart/nufft.h"
 
@@ -148,10 +154,7 @@ static long slab_at(long stride, long coil)
 /* Whether a slab has to be brought to where the arithmetic is.
  *
  * A bank left on the host is a bank the card never holds: the loop already
- * reads one slab at a time, so one slab at a time is all that has to cross.
- * What that costs is a transfer of the slab against the arithmetic of the
- * slab, which for anything but the smallest problem is the smaller of the
- * two. */
+ * reads one slab at a time, so one slab at a time is all that has to cross. */
 static bool staged(const struct sense_s* d, const void* ref)
 {
 	return (NULL == d->kernels)
@@ -159,64 +162,52 @@ static bool staged(const struct sense_s* d, const void* ref)
 		&& (0 != bartorch_on_device(ref));
 }
 
-/* The sensitivities this slab needs, and the strides to read them with.
- *
- * Held densely beside the arithmetic they are already there and are read
- * where they lie.  Held on the host they are brought over a slab at a time.
- * Held as kernels they are made here: the slab's kernels are laid out, padded
- * back on to the image grid and transformed, which is the map they were taken
- * from with everything above the kernel's own band removed. */
-static const complex float* slab_sens(const struct sense_s* d, long coil, complex float* scratch,
-		const long** strs)
+/* Whether a slab has to be put together at all, rather than read where it
+ * lies: kernels have to be inflated, a bank on the host brought over. */
+static bool assembled(const struct sense_s* d, const void* ref)
 {
-	*strs = (NULL == scratch) ? d->map_strs : d->slab_map_strs;
+	return (NULL != d->kernels) || staged(d, ref);
+}
+
+/* A slab's worth of sensitivities, made or fetched into `into`.
+ *
+ * Kernels are laid out, padded back on to the image grid and transformed,
+ * which is the map they were taken from with everything above the kernel's
+ * own band removed.  A bank on the host is copied across as it stands. */
+static void fetch_slab(const struct sense_s* d, long coil, complex float* into)
+{
+	long mdims[DIMS];
+	md_copy_dims(DIMS, mdims, d->map_dims);
+	mdims[COIL_DIM] = d->batch;
 
 	if (NULL == d->kernels) {
 
-		const complex float* map = d->maps + slab_at(d->map_slab_offset, coil);
-
-		if (NULL == scratch)
-			return map;
-
-		long mdims[DIMS];
-		md_copy_dims(DIMS, mdims, d->map_dims);
-		mdims[COIL_DIM] = d->batch;
-
-		md_copy2(DIMS, mdims, d->slab_map_strs, scratch, d->map_strs, map, CFL_SIZE);
-
-		return scratch;
+		md_copy2(DIMS, mdims, d->slab_map_strs, into, d->map_strs,
+				d->maps + slab_at(d->map_slab_offset, coil), CFL_SIZE);
+		return;
 	}
 
 	long kdims[DIMS];
 	md_copy_dims(DIMS, kdims, d->kern_dims);
 	kdims[COIL_DIM] = d->batch;
 
-	long mdims[DIMS];
-	md_copy_dims(DIMS, mdims, d->map_dims);
-	mdims[COIL_DIM] = d->batch;
-
 	long kstrs[DIMS];
 	md_calc_strides(DIMS, kstrs, kdims, CFL_SIZE);
 
-	complex float* k = md_alloc_sameplace(DIMS, kdims, CFL_SIZE, scratch);
+	complex float* k = md_alloc_sameplace(DIMS, kdims, CFL_SIZE, into);
 
 	md_copy2(DIMS, kdims, kstrs, k, d->kern_strs,
 			d->kernels + slab_at(d->kern_slab_offset, coil), CFL_SIZE);
 
-	md_resize_center(DIMS, mdims, scratch, kdims, k, CFL_SIZE);
+	md_resize_center(DIMS, mdims, into, kdims, k, CFL_SIZE);
 	md_free(k);
 
-	ifftuc(DIMS, mdims, FFT_FLAGS, scratch, scratch);
-
-	return scratch;
+	ifftuc(DIMS, mdims, FFT_FLAGS, into, into);
 }
 
-/* A slab's worth of sensitivities, when they have to be made or fetched. */
-static complex float* sens_scratch(const struct sense_s* d, const void* ref)
+/* Somewhere to put a slab, when one has to be put together. */
+static complex float* slab_buffer(const struct sense_s* d, const void* ref)
 {
-	if ((NULL == d->kernels) && !staged(d, ref))
-		return NULL;
-
 	long mdims[DIMS];
 	md_copy_dims(DIMS, mdims, d->map_dims);
 	mdims[COIL_DIM] = d->batch;
@@ -224,58 +215,182 @@ static complex float* sens_scratch(const struct sense_s* d, const void* ref)
 	return md_alloc_sameplace(DIMS, mdims, CFL_SIZE, ref);
 }
 
+/* Streams, where there are any.  BART hands every `md_` call the stream of
+ * the OpenMP thread that issued it, so what decides whether a fetch and the
+ * arithmetic can run at once is how many streams BART was asked for. */
+#ifdef USE_CUDA
+static int stream_count(void) { return cuda_set_stream_level(); }
+static void stream_wait(void) { cuda_sync_stream(); }
+#else
+static int stream_count(void) { return 1; }
+static void stream_wait(void) { }
+#endif
+
+/* What one slab does, whichever way the operator is being applied. */
+typedef void (*slab_fn)(const struct sense_s* d, long coil, const complex float* map,
+		const long* mstrs, void* ctx);
+
+/* Walk the coils a slab at a time, putting the next one together while the
+ * current one is worked on.
+ *
+ * A slab that has to be assembled is the only thing there is to overlap: a
+ * region of two threads puts the fetch on one stream and the arithmetic on
+ * another, and the card does both at once.  The thread that fetches waits on
+ * its own stream before the region closes, so what the next turn reads is
+ * there; the region's own barrier does the rest.  Two buffers are enough
+ * because a turn reads one while the other is being filled.
+ *
+ * With the sensitivities already beside the arithmetic there is nothing to
+ * hide, and the loop reads them where they lie. */
+static void drive_slabs(const struct sense_s* d, const void* ref, slab_fn fn, void* ctx)
+{
+	if (!assembled(d, ref)) {
+
+		for (long c = 0; c < d->coils; c += d->batch)
+			fn(d, c, d->maps + slab_at(d->map_slab_offset, c), d->map_strs, ctx);
+
+		return;
+	}
+
+	complex float* slab[2] = { slab_buffer(d, ref), NULL };
+	const long* mstrs = d->slab_map_strs;
+
+	bool overlap = (1 < stream_count()) && (d->batch < d->coils);
+
+	if (overlap) {
+
+		slab[1] = slab_buffer(d, ref);
+		overlap = (NULL != slab[1]);
+	}
+
+	fetch_slab(d, 0, slab[0]);
+
+	if (!overlap) {
+
+		fn(d, 0, slab[0], mstrs, ctx);
+
+		for (long c = d->batch; c < d->coils; c += d->batch) {
+
+			fetch_slab(d, c, slab[0]);
+			fn(d, c, slab[0], mstrs, ctx);
+		}
+
+	} else {
+
+		int turn = 0;
+
+		for (long c = 0; c < d->coils; c += d->batch, turn++) {
+
+			long next = c + d->batch;
+
+			/* Armed here rather than once: BART forgets which
+			 * level owns the streams as soon as anything asks for
+			 * one from below it, and the fetch of the first slab
+			 * does exactly that. */
+			(void)stream_count();
+
+#pragma omp parallel num_threads(2)
+			{
+				if (0 == omp_get_thread_num()) {
+
+					fn(d, c, slab[turn % 2], mstrs, ctx);
+
+				} else if (next < d->coils) {
+
+					fetch_slab(d, next, slab[(turn + 1) % 2]);
+					stream_wait();
+				}
+			}
+		}
+	}
+
+	md_free(slab[1]);
+	md_free(slab[0]);
+}
+
+/* Each way of applying the operator, as what it does to one slab. */
+struct slab_ctx {
+
+	complex float* dst;
+	const complex float* src;
+	complex float* cim;
+	complex float* out;	/* the samples a slab answers, forward and adjoint */
+	complex float* nrm;	/* what the normal convolves, per slab */
+};
+
+static void forward_slab(const struct sense_s* d, long coil, const complex float* map,
+		const long* mstrs, void* _c)
+{
+	struct slab_ctx* c = _c;
+
+	md_ztenmul2(DIMS, d->slab_dims, d->cim_strs, c->cim, d->img_strs, c->src, mstrs, map);
+
+	linop_forward(d->slab, DIMS, d->out_dims, c->out, DIMS, d->cim_dims, c->cim);
+
+	md_copy2(DIMS, d->out_dims, d->full_out_strs, c->dst + slab_at(d->out_slab_offset, coil),
+			d->out_strs, c->out, CFL_SIZE);
+}
+
+static void adjoint_slab(const struct sense_s* d, long coil, const complex float* map,
+		const long* mstrs, void* _c)
+{
+	struct slab_ctx* c = _c;
+
+	md_copy2(DIMS, d->out_dims, d->out_strs, c->out,
+			d->full_out_strs, c->src + slab_at(d->out_slab_offset, coil), CFL_SIZE);
+
+	linop_adjoint(d->slab, DIMS, d->cim_dims, c->cim, DIMS, d->out_dims, c->out);
+
+	md_zfmacc2(DIMS, d->slab_dims, d->img_strs, c->dst, d->cim_strs, c->cim, mstrs, map);
+}
+
+static void normal_slab(const struct sense_s* d, long coil, const complex float* map,
+		const long* mstrs, void* _c)
+{
+	(void)coil;
+	struct slab_ctx* c = _c;
+
+	md_ztenmul2(DIMS, d->slab_dims, d->cim_strs, c->cim, d->img_strs, c->src, mstrs, map);
+
+	linop_normal_unchecked(d->slab, c->nrm, c->cim);
+
+	md_zfmacc2(DIMS, d->slab_dims, d->img_strs, c->dst, d->cim_strs, c->nrm, mstrs, map);
+}
+
 static void sense_forward(const linop_data_t* _d, complex float* dst, const complex float* src)
 {
 	const auto d = CAST_DOWN(sense_s, _d);
 
-	complex float* cim = md_alloc_sameplace(DIMS, d->cim_dims, CFL_SIZE, dst);
-	complex float* out = md_alloc_sameplace(DIMS, d->out_dims, CFL_SIZE, dst);
-	complex float* sens = sens_scratch(d, dst);
+	struct slab_ctx c = {
 
-	for (long c = 0; c < d->coils; c += d->batch) {
+		.dst = dst, .src = src,
+		.cim = md_alloc_sameplace(DIMS, d->cim_dims, CFL_SIZE, dst),
+		.out = md_alloc_sameplace(DIMS, d->out_dims, CFL_SIZE, dst),
+	};
 
-		const long* mstrs;
-		const complex float* map = slab_sens(d, c, sens, &mstrs);
+	drive_slabs(d, dst, forward_slab, &c);
 
-		md_ztenmul2(DIMS, d->slab_dims, d->cim_strs, cim, d->img_strs, src, mstrs, map);
-
-		linop_forward(d->slab, DIMS, d->out_dims, out, DIMS, d->cim_dims, cim);
-
-		md_copy2(DIMS, d->out_dims, d->full_out_strs, dst + slab_at(d->out_slab_offset, c),
-				d->out_strs, out, CFL_SIZE);
-	}
-
-	md_free(sens);
-	md_free(out);
-	md_free(cim);
+	md_free(c.out);
+	md_free(c.cim);
 }
 
 static void sense_adjoint(const linop_data_t* _d, complex float* dst, const complex float* src)
 {
 	const auto d = CAST_DOWN(sense_s, _d);
 
-	complex float* cim = md_alloc_sameplace(DIMS, d->cim_dims, CFL_SIZE, dst);
-	complex float* out = md_alloc_sameplace(DIMS, d->out_dims, CFL_SIZE, dst);
-	complex float* sens = sens_scratch(d, dst);
+	struct slab_ctx c = {
+
+		.dst = dst, .src = src,
+		.cim = md_alloc_sameplace(DIMS, d->cim_dims, CFL_SIZE, dst),
+		.out = md_alloc_sameplace(DIMS, d->out_dims, CFL_SIZE, dst),
+	};
 
 	md_clear(DIMS, d->img_dims, dst, CFL_SIZE);
 
-	for (long c = 0; c < d->coils; c += d->batch) {
+	drive_slabs(d, dst, adjoint_slab, &c);
 
-		md_copy2(DIMS, d->out_dims, d->out_strs, out,
-				d->full_out_strs, src + slab_at(d->out_slab_offset, c), CFL_SIZE);
-
-		linop_adjoint(d->slab, DIMS, d->cim_dims, cim, DIMS, d->out_dims, out);
-
-		const long* mstrs;
-		const complex float* map = slab_sens(d, c, sens, &mstrs);
-
-		md_zfmacc2(DIMS, d->slab_dims, d->img_strs, dst, d->cim_strs, cim, mstrs, map);
-	}
-
-	md_free(sens);
-	md_free(out);
-	md_free(cim);
+	md_free(c.out);
+	md_free(c.cim);
 }
 
 /* A^H A, which is where the memory goes: a non-Cartesian transform answers
@@ -285,27 +400,19 @@ static void sense_normal(const linop_data_t* _d, complex float* dst, const compl
 {
 	const auto d = CAST_DOWN(sense_s, _d);
 
-	complex float* cim = md_alloc_sameplace(DIMS, d->cim_dims, CFL_SIZE, dst);
-	complex float* nrm = md_alloc_sameplace(DIMS, d->cim_dims, CFL_SIZE, dst);
-	complex float* sens = sens_scratch(d, dst);
+	struct slab_ctx c = {
+
+		.dst = dst, .src = src,
+		.cim = md_alloc_sameplace(DIMS, d->cim_dims, CFL_SIZE, dst),
+		.nrm = md_alloc_sameplace(DIMS, d->cim_dims, CFL_SIZE, dst),
+	};
 
 	md_clear(DIMS, d->img_dims, dst, CFL_SIZE);
 
-	for (long c = 0; c < d->coils; c += d->batch) {
+	drive_slabs(d, dst, normal_slab, &c);
 
-		const long* mstrs;
-		const complex float* map = slab_sens(d, c, sens, &mstrs);
-
-		md_ztenmul2(DIMS, d->slab_dims, d->cim_strs, cim, d->img_strs, src, mstrs, map);
-
-		linop_normal_unchecked(d->slab, nrm, cim);
-
-		md_zfmacc2(DIMS, d->slab_dims, d->img_strs, dst, d->cim_strs, nrm, mstrs, map);
-	}
-
-	md_free(sens);
-	md_free(nrm);
-	md_free(cim);
+	md_free(c.nrm);
+	md_free(c.cim);
 }
 
 static void sense_del(const linop_data_t* _d)

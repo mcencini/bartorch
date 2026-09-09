@@ -220,3 +220,38 @@ def test_a_bank_left_on_the_host_is_brought_over_a_slab_at_a_time():
     torch.testing.assert_close(
         staged.normal(x.cuda()), resident.normal(x.cuda()), rtol=1e-4, atol=1e-5
     )
+
+
+@pytest.mark.skipif(
+    not bartorch.cuda.available(), reason="no CUDA device, or the library was built without CUDA"
+)
+def test_fetching_a_slab_alongside_the_arithmetic_changes_nothing():
+    """With a stream to spare, the next slab is fetched while this one is used.
+
+    BART hands every ``md_`` call the stream of the OpenMP thread that issued
+    it, so a region of two puts the fetch on one stream and the arithmetic on
+    another.  What that must not change is the answer -- so it is held against
+    the same operator driven with one stream, and against one whose bank was
+    on the card all along.
+    """
+    n, coils = 32, 8
+    torch.manual_seed(0)
+    maps = torch.randn(coils, n, n, dtype=torch.complex64)
+    traj = bt.traj(x=n, y=48, r=True).cuda()
+    x = bt.phantom([n, n]).reshape(1, n, n).cuda()
+
+    was = bartorch.cuda.streams()
+    try:
+        resident = LinearOperator.sense(maps.cuda(), (coils, n, n), traj=traj)
+        reference = resident.normal(x)
+
+        bartorch.cuda.set_streams(1)
+        one = LinearOperator.sense(maps, (coils, n, n), traj=traj).normal(x)
+
+        bartorch.cuda.set_streams(2)
+        two = LinearOperator.sense(maps, (coils, n, n), traj=traj).normal(x)
+    finally:
+        bartorch.cuda.set_streams(was)
+
+    torch.testing.assert_close(one, reference, rtol=1e-4, atol=1e-5)
+    torch.testing.assert_close(two, one, rtol=1e-4, atol=1e-5)
