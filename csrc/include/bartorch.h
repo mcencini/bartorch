@@ -122,6 +122,30 @@ BARTORCH_API int bartorch_nufft_stream_psf(void);
 BARTORCH_API void bartorch_nufft_set_compress_psf(int enable);
 BARTORCH_API int bartorch_nufft_compress_psf(void);
 
+/* Bring the set of frequencies that will be wanted next over while the card
+ * convolves the one it has.  It costs a second slot on the card and page-locks
+ * the function on the host, so it pays only where the crossing is a large part
+ * of what a normal spends its time in. */
+BARTORCH_API void bartorch_nufft_set_overlap_psf(int enable);
+BARTORCH_API int bartorch_nufft_overlap_psf(void);
+
+/* Host memory a copy engine can read directly, so an asynchronous copy out of
+ * it is one.  Ordinary memory when it is not asked for, or where there is no
+ * card: page-locking is not free, and only a crossing that overlaps something
+ * repays it. */
+BARTORCH_API void* bartorch_host_alloc(long size, int pinned);
+BARTORCH_API void bartorch_host_free(void* ptr);
+
+/* A stream of its own for bringing a function over, so the set that will be
+ * wanted next crosses while the card convolves the one it has.  Two slots:
+ * `copy` fills one once the card has released it, `wait` holds BART's stream
+ * until it has arrived, `release` says BART is done reading it. */
+BARTORCH_API int bartorch_cuda_stage_open(void** stage);
+BARTORCH_API void bartorch_cuda_stage_close(void* stage);
+BARTORCH_API int bartorch_cuda_stage_copy(void* stage, int slot, void* dst, const void* src, long size);
+BARTORCH_API int bartorch_cuda_stage_wait(void* stage, int slot);
+BARTORCH_API int bartorch_cuda_stage_release(void* stage, int slot);
+
 BARTORCH_API void bartorch_sense_set_coil_batch(int coils);
 BARTORCH_API int bartorch_sense_coil_batch(void);
 /* Operators built since the last reset: 0 with the coil loop, 1 as BART's

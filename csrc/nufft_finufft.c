@@ -208,8 +208,10 @@ struct nufft_fi_s {
 	struct nufft_data* toeplitz_data;
 	complex float* psf_host;
 	complex float* linphase_host;
-	void* psf_slot;			/* where a set lands, made once */
-	complex float* linphase_slot;
+	void* psf_slot[2];		/* where a set lands */
+	complex float* linphase_slot[2];
+	void* stage;			/* the stream a set crosses on */
+	int slot;			/* the one BART is pointed at */
 	long psf_coset;			/* elements in one set of the function */
 	long linphase_coset;
 	size_t psf_size;		/* a real function is stored as floats */
@@ -549,6 +551,19 @@ static int stream_psf_enabled = 1;
 /* Whether only the places the samples reach are kept. */
 static int compress_psf_enabled = 1;
 
+/* Whether a set crosses while the one before it is convolved. */
+static int overlap_psf_enabled = 0;
+
+void bartorch_nufft_set_overlap_psf(int enable)
+{
+	overlap_psf_enabled = (0 != enable);
+}
+
+int bartorch_nufft_overlap_psf(void)
+{
+	return overlap_psf_enabled;
+}
+
 void bartorch_nufft_set_compress_psf(int enable)
 {
 	compress_psf_enabled = (0 != enable);
@@ -588,19 +603,43 @@ static void open_slots(struct nufft_fi_s* d, const void* ref)
 	md_copy_dims(ND, lph_dims, t->lph_dims);
 	lph_dims[t->N] = 1;
 
-	/* One slot is enough.  The copy that fills it for the next turn is
-	 * issued on the stream the convolution is already on, and a stream
-	 * keeps what it was given in order, so it cannot overtake the read it
-	 * follows. */
-	d->psf_slot = md_alloc_sameplace(ND, psf_dims, d->psf_size, ref);
-	d->linphase_slot = md_alloc_sameplace(ND, lph_dims, CFL_SIZE, ref);
+	/* Two slots, so the set that will be wanted next crosses while the card
+	 * convolves the one it has.  The crossing goes on a stream of its own,
+	 * ordered against BART's by events; where there is no such stream to be
+	 * had it is an ordinary copy into the slot, and the second slot simply
+	 * goes unused ahead of time. */
+	if (!overlap_psf_enabled || (0 != bartorch_cuda_stage_open(&d->stage)))
+		d->stage = NULL;
+
+	for (int i = 0; i < ((NULL != d->stage) ? 2 : 1); i++) {
+
+		d->psf_slot[i] = md_alloc_sameplace(ND, psf_dims, d->psf_size, ref);
+		d->linphase_slot[i] = md_alloc_sameplace(ND, lph_dims, CFL_SIZE, ref);
+	}
+
+	d->slot = 0;
 }
 
-/* Bring one set of frequencies over, into the slot given. */
-static void fetch_coset(struct nufft_fi_s* d, int i)
+static void use_coset(struct nufft_fi_s* d);
+
+/* Start a set's crossing into a slot. */
+static void issue_coset(struct nufft_fi_s* d, int i, int slot)
 {
 	struct nufft_data* t = d->toeplitz_data;
 	int ND = t->N + 1;
+
+	long psf_bytes = d->psf_coset * (long)d->psf_size;
+	long lph_bytes = d->linphase_coset * (long)CFL_SIZE;
+
+	const char* psf_src = (const char*)d->psf_host + (size_t)i * (size_t)psf_bytes;
+	const complex float* lph_src = d->linphase_host + (long)i * d->linphase_coset;
+
+	if (NULL != d->stage) {
+
+		bartorch_cuda_stage_copy(d->stage, slot, d->psf_slot[slot], psf_src, psf_bytes);
+		bartorch_cuda_stage_copy(d->stage, slot, d->linphase_slot[slot], lph_src, lph_bytes);
+		return;
+	}
 
 	long psf_dims[ND];
 	md_copy_dims(ND, psf_dims, t->psf_dims);
@@ -610,12 +649,38 @@ static void fetch_coset(struct nufft_fi_s* d, int i)
 	md_copy_dims(ND, lph_dims, t->lph_dims);
 	lph_dims[t->N] = 1;
 
-	md_copy(ND, psf_dims, d->psf_slot,
-			(const char*)d->psf_host + (size_t)i * (size_t)d->psf_coset * d->psf_size,
-			d->psf_size);
+	md_copy(ND, psf_dims, d->psf_slot[slot], psf_src, d->psf_size);
+	md_copy(ND, lph_dims, d->linphase_slot[slot], lph_src, CFL_SIZE);
+}
 
-	md_copy(ND, lph_dims, d->linphase_slot,
-			d->linphase_host + (long)i * d->linphase_coset, CFL_SIZE);
+/* Bring one set of frequencies over, into the slot given. */
+static void fetch_coset(struct nufft_fi_s* d, int i)
+{
+	if (NULL == d->stage) {
+
+		issue_coset(d, i, 0);
+		d->slot = 0;
+		use_coset(d);
+		return;
+	}
+
+	int cur = i & 1;
+
+	/* The first set has nobody ahead of it to have started it. */
+	if (0 == i)
+		issue_coset(d, 0, cur);
+
+	/* Started now, so that it crosses while this one is convolved.  A slot
+	 * is only overwritten once the card has said it is done reading it,
+	 * which is what the release at the end of a convolution says. */
+	if (i + 1 < d->cosets)
+		issue_coset(d, i + 1, cur ^ 1);
+
+	bartorch_cuda_stage_wait(d->stage, cur);
+
+	d->slot = cur;
+
+	use_coset(d);
 }
 
 /* Point BART at the slot a set has landed in. */
@@ -635,12 +700,96 @@ static void use_coset(struct nufft_fi_s* d)
 	if (NULL != t->psf)
 		multiplace_free(t->psf);
 
-	t->psf = multiplace_move_wrapper(ND, psf_dims, d->psf_size, d->psf_slot);
+	t->psf = multiplace_move_wrapper(ND, psf_dims, d->psf_size, d->psf_slot[d->slot]);
 
 	if (NULL != t->linphase)
 		multiplace_free(t->linphase);
 
-	t->linphase = multiplace_move_wrapper(ND, lph_dims, CFL_SIZE, d->linphase_slot);
+	t->linphase = multiplace_move_wrapper(ND, lph_dims, CFL_SIZE, d->linphase_slot[d->slot]);
+}
+
+/* How many gathered locations are contracted at once.
+ *
+ * The coefficients at a location meet only each other, so the bank need not be
+ * contracted whole -- and whole, the answer stands beside the question, each
+ * of them the gathered spectrum's size.  A chunk is contracted into a buffer
+ * that holds a chunk and copied back over itself, which leaves a chunk beside
+ * the bank instead of a second bank.  Large enough that a kernel over it has
+ * work: a quarter of a million locations is a million entries at rank four.
+ */
+enum { CONTRACT_CHUNK = 1 << 18 };
+
+static void contract_bank(struct nufft_data* t, const void* psf,
+		const long bank_dims[], const long ciT_dims[], complex float* bank)
+{
+	int N = t->N;
+
+	long locations = bank_dims[0];
+	long chunk = MIN(locations, (long)CONTRACT_CHUNK);
+
+	long bank_strs[N];
+	long ciT_strs[N];
+
+	md_calc_strides(N, bank_strs, bank_dims, CFL_SIZE);
+	md_calc_strides(N, ciT_strs, ciT_dims, CFL_SIZE);
+
+	long in_dims[N];
+	long out_dims[N];
+
+	md_copy_dims(N, in_dims, bank_dims);
+	md_copy_dims(N, out_dims, ciT_dims);
+
+	in_dims[0] = chunk;
+	out_dims[0] = chunk;
+
+	complex float* out = md_alloc_sameplace(N, out_dims, CFL_SIZE, bank);
+
+	for (long start = 0; start < locations; start += chunk) {
+
+		long here = MIN(chunk, locations - start);
+
+		in_dims[0] = here;
+		out_dims[0] = here;
+
+		long out_strs[N];
+		md_calc_strides(N, out_strs, out_dims, CFL_SIZE);
+
+		long max_dims[N];
+		md_max_dims(N, ~0UL, max_dims, out_dims, in_dims);
+
+		complex float* in = bank + start;
+		const void* mat = (const char*)psf + (size_t)start * (size_t)t->psf_strs[0];
+
+		if (t->conf.real) {
+
+			if (t->conf.upper_triag)
+				md_tenmul_upper_triag2(6, 7, N + 1, MD_REAL_DIMS(N, max_dims),
+						MD_REAL_STRS(N, out_strs, FL_SIZE), (float*)out,
+						MD_REAL_STRS(N, bank_strs, FL_SIZE), (const float*)in,
+						MD_REAL_DIMS(N, t->psf_dims),
+						MD_REAL_STRS(N, t->psf_strs, 0), (const float*)mat);
+			else
+				md_tenmul2(N + 1, MD_REAL_DIMS(N, max_dims),
+						MD_REAL_STRS(N, out_strs, FL_SIZE), (float*)out,
+						MD_REAL_STRS(N, bank_strs, FL_SIZE), (const float*)in,
+						MD_REAL_STRS(N, t->psf_strs, 0), (const float*)mat);
+
+		} else {
+
+			if (t->conf.upper_triag)
+				md_ztenmul_upper_triag2(5, 6, N, max_dims,
+						out_strs, out, bank_strs, in,
+						t->psf_dims, t->psf_strs, mat);
+			else
+				md_ztenmul2(N, max_dims, out_strs, out, bank_strs, in,
+						t->psf_strs, mat);
+		}
+
+		/* Back over the question it answered. */
+		md_copy2(N, out_dims, ciT_strs, bank + start, out_strs, out, CFL_SIZE);
+	}
+
+	md_free(out);
 }
 
 /* The function against the spectrum, wherever the spectrum lies.
@@ -772,7 +921,10 @@ static void packed_coset(struct nufft_fi_s* d, complex float* dst, const complex
 					t->com_dims, idx, CFL_SIZE);
 		}
 
-		bank = multiply_transfer(t, psf, bank_dims, ciT_bank_dims, bank);
+		if (md_check_equal_dims(N, bank_dims, ciT_bank_dims, ~0UL))
+			bank = multiply_transfer(t, psf, bank_dims, ciT_bank_dims, bank);
+		else
+			contract_bank(t, psf, bank_dims, ciT_bank_dims, bank);
 
 		for (long r = 0; r < out_coeffs; r++) {
 
@@ -862,17 +1014,20 @@ static void coset_begin(struct nufft_fi_s* d, const void* ref)
 {
 	pthread_mutex_lock(&d->lock);
 
-	if (NULL == d->psf_slot)
+	if (NULL == d->psf_slot[0])
 		open_slots(d, ref);
-
-	use_coset(d);
 }
 
 /* The set that is loaded, convolved with `src` and added to `dst`. */
 static void coset_normal(struct nufft_fi_s* d, complex float* dst, const complex float* src)
 {
-	if (fused_coset(d, dst, src))
+	if (fused_coset(d, dst, src)) {
+
+		if (NULL != d->stage)
+			bartorch_cuda_stage_release(d->stage, d->slot);
+
 		return;
+	}
 
 	struct nufft_data* t = d->toeplitz_data;
 
@@ -882,6 +1037,9 @@ static void coset_normal(struct nufft_fi_s* d, complex float* dst, const complex
 	md_zadd(t->N, t->cim_dims, dst, dst, part);
 
 	md_free(part);
+
+	if (NULL != d->stage)
+		bartorch_cuda_stage_release(d->stage, d->slot);
 }
 
 void bartorch_nufft_coset_begin(const struct linop_s* op, const void* ref)
@@ -952,11 +1110,16 @@ static void nufft_fi_del(const linop_data_t* _d)
 
 	md_free(d->host_weights);
 	md_free(d->host_basis);
-	md_free(d->psf_host);
-	md_free(d->linphase_host);
+	bartorch_host_free(d->psf_host);
+	bartorch_host_free(d->linphase_host);
 
-	md_free(d->psf_slot);
-	md_free(d->linphase_slot);
+	bartorch_cuda_stage_close(d->stage);
+
+	for (int i = 0; i < 2; i++) {
+
+		md_free(d->psf_slot[i]);
+		md_free(d->linphase_slot[i]);
+	}
 
 	if (NULL != d->vol_fft)
 		linop_free(d->vol_fft);
@@ -1528,9 +1691,17 @@ static void install_psf(struct nufft_data* data, const complex float* traj, comp
 
 	if (store_real) {
 
-		float* psf_real = md_alloc_sameplace(ND, data->psf_dims, FL_SIZE, psf);
+		float* psf_real = stream
+			? bartorch_host_alloc(md_calc_size(ND, data->psf_dims) * (long)FL_SIZE, overlap_psf_enabled)
+			: md_alloc_sameplace(ND, data->psf_dims, FL_SIZE, psf);
+
 		md_real(ND, data->psf_dims, psf_real, psf);
-		md_free(psf);
+
+		if (stream)
+			bartorch_host_free(psf);
+		else
+			md_free(psf);
+
 		psf = (complex float*)psf_real;
 
 		md_calc_strides(ND, data->psf_strs, data->psf_dims, FL_SIZE);
@@ -1550,8 +1721,7 @@ static void install_psf(struct nufft_data* data, const complex float* traj, comp
 		long com_psf_dims[ND];
 		md_compress_dims(ND, com_psf_dims, data->psf_dims, data->com_dims, max_idx);
 
-		complex float* com_psf = stream ? md_alloc(ND, com_psf_dims, size)
-						: md_alloc_sameplace(ND, com_psf_dims, size, traj);
+		complex float* com_psf = md_alloc_sameplace(ND, com_psf_dims, size, traj);
 
 		md_compress(ND, com_psf_dims, com_psf, data->psf_dims, psf,
 				data->com_dims, multiplace_read(data->compress, com_psf), size);
@@ -1604,7 +1774,7 @@ static void stream_psf(struct nufft_fi_s* d)
 
 	if (NULL == t->linphase) {
 
-		md_free(d->psf_host);
+		bartorch_host_free(d->psf_host);
 		d->psf_host = NULL;
 		return;
 	}
@@ -1614,14 +1784,14 @@ static void stream_psf(struct nufft_fi_s* d)
 
 	if ((cosets < 2) || (t->psf_dims[t->N] != cosets)) {
 
-		md_free(d->psf_host);
+		bartorch_host_free(d->psf_host);
 		d->psf_host = NULL;
 		return;
 	}
 
 	const complex float* lph = multiplace_read(t->linphase, d->radians[0]);
 
-	d->linphase_host = md_alloc(ND, t->lph_dims, CFL_SIZE);
+	d->linphase_host = bartorch_host_alloc(md_calc_size(ND, t->lph_dims) * (long)CFL_SIZE, overlap_psf_enabled);
 	md_copy(ND, t->lph_dims, d->linphase_host, lph, CFL_SIZE);
 
 	d->psf_coset = md_calc_size(t->N, t->psf_dims);
@@ -1900,8 +2070,14 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 	d->cosets = 0;
 	d->vol_fft = NULL;
 
-	d->psf_slot = NULL;
-	d->linphase_slot = NULL;
+	d->stage = NULL;
+	d->slot = 0;
+
+	for (int i = 0; i < 2; i++) {
+
+		d->psf_slot[i] = NULL;
+		d->linphase_slot[i] = NULL;
+	}
 
 	for (int i = 0; i < 3; i++)
 		d->radians[i] = NULL;
@@ -2172,15 +2348,22 @@ void nufft_update_traj(const struct linop_s* nufft, int N, const long trj_dims[N
 		if (NULL != d->toeplitz)
 			linop_free(d->toeplitz);
 
-		md_free(d->psf_host);
-		md_free(d->linphase_host);
+		bartorch_host_free(d->psf_host);
+		bartorch_host_free(d->linphase_host);
 		d->psf_host = NULL;
 		d->linphase_host = NULL;
 
-		md_free(d->psf_slot);
-		md_free(d->linphase_slot);
-		d->psf_slot = NULL;
-		d->linphase_slot = NULL;
+		bartorch_cuda_stage_close(d->stage);
+		d->stage = NULL;
+		d->slot = 0;
+
+		for (int i = 0; i < 2; i++) {
+
+			md_free(d->psf_slot[i]);
+			md_free(d->linphase_slot[i]);
+			d->psf_slot[i] = NULL;
+			d->linphase_slot[i] = NULL;
+		}
 
 		d->toeplitz = toeplitz_for(N, d->ksp_dims, d->cim_dims, trj_dims, traj,
 				(NULL != weights) ? wgh_dims : d->wgh_dims, weights,

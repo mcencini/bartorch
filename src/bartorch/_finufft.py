@@ -271,6 +271,31 @@ def compressing_psf() -> bool:
     return bool(library().bartorch_nufft_compress_psf())
 
 
+def overlap_psf(enable: bool = True) -> None:
+    """Bring a set of frequencies over while the one before it is convolved.
+
+    The crossing goes on a stream of its own, ordered against BART's by events
+    rather than by a second host thread, which would make BART's own threading
+    nested.  It costs a second slot on the card -- 62 MB of a 128^3 problem
+    over four coefficients -- and page-locks the function on the host, which is
+    itself not free: locking 515 MB takes about two seconds.
+
+    So it pays where a solve does enough iterations to repay that, and where
+    the crossing is a large part of what a normal spends its time in.  Off
+    unless asked for.
+    """
+    from bartorch._lib import library
+
+    library().bartorch_nufft_set_overlap_psf(int(bool(enable)))
+
+
+def overlapping_psf() -> bool:
+    """Whether a set crosses while the one before it is convolved."""
+    from bartorch._lib import library
+
+    return bool(library().bartorch_nufft_overlap_psf())
+
+
 def live_plans() -> int:
     """FINUFFT plans made and not yet destroyed.
 

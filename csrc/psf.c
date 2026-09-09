@@ -24,6 +24,8 @@
 #include <math.h>
 #include <stdbool.h>
 
+#include "include/bartorch.h"
+
 #include "misc/misc.h"
 #include "misc/debug.h"
 #include "misc/mri.h"
@@ -354,8 +356,12 @@ static complex float* psf_decomposed(bool to_host, const struct psf_packing* pac
 	 * than the whole of it. */
 	const long* whole_dims = (NULL != pack) ? pack->com_psf_dims : psf_dims;
 
-	complex float* psf = to_host ? md_alloc(ND, whole_dims, CFL_SIZE)
-				     : md_alloc_sameplace(ND, whole_dims, CFL_SIZE, traj);
+	/* Page-locked where it is going to be streamed off the host, which is
+	 * what lets the copy engine read it without the driver staging it. */
+	complex float* psf = to_host
+		? bartorch_host_alloc(md_calc_size(ND, whole_dims) * (long)CFL_SIZE,
+			bartorch_nufft_overlap_psf())
+		: md_alloc_sameplace(ND, whole_dims, CFL_SIZE, traj);
 
 	/* One set of frequencies at a time.
 	 *

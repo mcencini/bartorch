@@ -1490,3 +1490,39 @@ def test_a_compressed_subspace_function_is_gathered_a_coefficient_at_a_time(in_t
 
     scale = float(whole.abs().max())
     assert float((gathered - whole).abs().max()) / scale < 1e-3
+
+
+@requires_finufft
+@requires_cuda
+def test_a_set_crossing_while_another_is_convolved_answers_the_same(in_tools):
+    """Two slots and a stream of their own compute what one slot does.
+
+    The set that will be wanted next crosses while the card convolves the one
+    it has, which is a second slot and a stream ordered against BART's by
+    events.  What it must not change is the answer: a slot is only overwritten
+    once the card has said it has finished reading it, and getting that wrong
+    would convolve against a set half replaced.
+    """
+    from bartorch.tools import _generated as g
+
+    n, spokes, frames, coeffs, coils = 24, 96, 4, 3, 2
+    traj, basis = _subspace(n, spokes, frames, coeffs)
+    traj = traj.cuda()
+    basis = basis.cuda()
+
+    torch.manual_seed(0)
+    k = torch.randn(frames, 1, coils, spokes, n, 1, dtype=torch.complex64).cuda()
+    maps = (torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5).cuda()
+
+    assert not _finufft.overlapping_psf(), "it is asked for, not assumed"
+
+    one_slot = g.pics(k, maps, t=traj, B=basis, i=5)
+
+    try:
+        _finufft.overlap_psf(True)
+        overlapped = g.pics(k, maps, t=traj, B=basis, i=5)
+    finally:
+        _finufft.overlap_psf(False)
+
+    scale = float(one_slot.abs().max())
+    assert float((overlapped - one_slot).abs().max()) / scale < 1e-5

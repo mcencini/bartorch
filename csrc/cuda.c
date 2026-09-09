@@ -13,6 +13,7 @@
  * already queued, and the caller waits on what BART leaves behind.
  */
 #include <stdbool.h>
+#include <stdlib.h>
 
 #include "include/bartorch.h"
 
@@ -157,6 +158,154 @@ int bartorch_cuda_signal_stream(void* stream)
 	return ret;
 }
 
+/* Host memory a copy can leave the card's own engine to fetch.
+ *
+ * An asynchronous copy out of pageable memory is not one: the driver stages it
+ * through a buffer of its own and the call blocks while it does, so nothing
+ * overlaps.  Page-locked memory is what the engine can read directly, and it
+ * is what the function a normal is streamed from is kept in.  Where there is
+ * no card, or where the card will not lock that much, it is ordinary
+ * memory. */
+void* bartorch_host_alloc(long size, int pinned)
+{
+	if (0 >= size)
+		return NULL;
+
+	if (pinned && (-1 != current_device)) {
+
+		void* ptr = NULL;
+
+		if (cudaSuccess == cudaMallocHost(&ptr, (size_t)size))
+			return ptr;
+
+		cudaGetLastError();
+	}
+
+	return xmalloc((size_t)size);
+}
+
+void bartorch_host_free(void* ptr)
+{
+	if (NULL == ptr)
+		return;
+
+	struct cudaPointerAttributes attr;
+
+	if ((cudaSuccess == cudaPointerGetAttributes(&attr, ptr))
+			&& (cudaMemoryTypeHost == attr.type)) {
+
+		cudaFreeHost(ptr);
+		return;
+	}
+
+	cudaGetLastError();
+	xfree(ptr);
+}
+
+/* A stream of its own for bringing the function over.
+ *
+ * BART takes its stream from the OpenMP thread it is on, so a copy issued
+ * from the thread that is about to convolve lands on the stream that will
+ * convolve and cannot run beside it.  This is a stream nothing else uses,
+ * ordered against BART's by events alone -- which is what lets the set that
+ * will be wanted next cross while the card works on the one it has, without
+ * the second host thread that would make BART's own threading nested.
+ *
+ * Two slots, so `filled` says a slot has arrived and `freed` says the card has
+ * finished reading it; a copy waits for the second before overwriting.  One of
+ * these belongs to each operator that streams, because the slots it names are
+ * that operator's.
+ */
+struct bartorch_stage {
+
+	cudaStream_t stream;
+	cudaEvent_t filled[2];
+	cudaEvent_t freed[2];
+};
+
+int bartorch_cuda_stage_open(void** stage)
+{
+	if ((NULL == stage) || (-1 == current_device))
+		return -1;
+
+	struct bartorch_stage* s = xmalloc(sizeof *s);
+
+	if (cudaSuccess != cudaStreamCreateWithFlags(&s->stream, cudaStreamNonBlocking)) {
+
+		xfree(s);
+		return -1;
+	}
+
+	for (int i = 0; i < 2; i++)
+		if ((cudaSuccess != cudaEventCreateWithFlags(&s->filled[i], cudaEventDisableTiming))
+				|| (cudaSuccess != cudaEventCreateWithFlags(&s->freed[i], cudaEventDisableTiming))) {
+
+			cudaStreamDestroy(s->stream);
+			xfree(s);
+			return -1;
+		}
+
+	*stage = s;
+	return 0;
+}
+
+void bartorch_cuda_stage_close(void* stage)
+{
+	if (NULL == stage)
+		return;
+
+	struct bartorch_stage* s = stage;
+
+	cudaStreamSynchronize(s->stream);
+
+	for (int i = 0; i < 2; i++) {
+
+		cudaEventDestroy(s->filled[i]);
+		cudaEventDestroy(s->freed[i]);
+	}
+
+	cudaStreamDestroy(s->stream);
+	xfree(s);
+}
+
+/* Start a slot's crossing, once the card has finished reading what is in it. */
+int bartorch_cuda_stage_copy(void* stage, int slot, void* dst, const void* src, long size)
+{
+	if ((NULL == stage) || (0 > slot) || (1 < slot))
+		return -1;
+
+	struct bartorch_stage* s = stage;
+
+	if (   (cudaSuccess != cudaStreamWaitEvent(s->stream, s->freed[slot], 0))
+	    || (cudaSuccess != cudaMemcpyAsync(dst, src, (size_t)size, cudaMemcpyHostToDevice, s->stream))
+	    || (cudaSuccess != cudaEventRecord(s->filled[slot], s->stream)))
+		return -1;
+
+	return 0;
+}
+
+/* Hold BART's stream until a slot has arrived. */
+int bartorch_cuda_stage_wait(void* stage, int slot)
+{
+	if ((NULL == stage) || (0 > slot) || (1 < slot))
+		return -1;
+
+	struct bartorch_stage* s = stage;
+
+	return (cudaSuccess == cudaStreamWaitEvent(cuda_get_stream(), s->filled[slot], 0)) ? 0 : -1;
+}
+
+/* Say that everything BART has queued so far has finished with a slot. */
+int bartorch_cuda_stage_release(void* stage, int slot)
+{
+	if ((NULL == stage) || (0 > slot) || (1 < slot))
+		return -1;
+
+	struct bartorch_stage* s = stage;
+
+	return (cudaSuccess == cudaEventRecord(s->freed[slot], cuda_get_stream())) ? 0 : -1;
+}
+
 int bartorch_on_device(const void* ptr)
 {
 	return cuda_ondevice(ptr) ? 1 : 0;
@@ -201,6 +350,14 @@ int bartorch_cuda_get_streams(void) { return 0; }
 int bartorch_cuda_use_memcache(int enable) { (void)enable; return -1; }
 int bartorch_cuda_wait_for_stream(void* stream) { (void)stream; return -1; }
 int bartorch_cuda_signal_stream(void* stream) { (void)stream; return -1; }
+void* bartorch_host_alloc(long size, int pinned) { (void)pinned; return (0 < size) ? xmalloc((size_t)size) : NULL; }
+void bartorch_host_free(void* ptr) { if (NULL != ptr) xfree(ptr); }
+int bartorch_cuda_stage_open(void** stage) { (void)stage; return -1; }
+void bartorch_cuda_stage_close(void* stage) { (void)stage; }
+int bartorch_cuda_stage_copy(void* stage, int slot, void* dst, const void* src, long size)
+{ (void)stage; (void)slot; (void)dst; (void)src; (void)size; return -1; }
+int bartorch_cuda_stage_wait(void* stage, int slot) { (void)stage; (void)slot; return -1; }
+int bartorch_cuda_stage_release(void* stage, int slot) { (void)stage; (void)slot; return -1; }
 long bartorch_cuda_free_memory(void) { return -1; }
 
 #endif
