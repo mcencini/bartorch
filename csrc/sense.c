@@ -26,6 +26,7 @@
  */
 #include <complex.h>
 #include <stdbool.h>
+#include <stdlib.h>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -59,6 +60,10 @@ extern int bartorch_nufft_cosets(const struct linop_s* op);
 extern void bartorch_nufft_coset_begin(const struct linop_s* op, const void* ref);
 extern void bartorch_nufft_coset_use(const struct linop_s* op, int i);
 extern void bartorch_nufft_coset_normal(const struct linop_s* op, complex float* dst, const complex float* src);
+extern int bartorch_nufft_coset_folds(const struct linop_s* op);
+extern void bartorch_nufft_coset_normal_sense(const struct linop_s* op,
+		complex float* dst, const complex float* src,
+		const long map_strs[], const complex float* map);
 extern void bartorch_nufft_coset_end(const struct linop_s* op);
 
 extern struct linop_s* bart_sense_init(unsigned long shared_img_flags, const long max_dims[DIMS],
@@ -74,6 +79,20 @@ extern const struct linop_s* bart_sense_nc_init(const long max_dims[DIMS], const
 /* How many coils a slab holds.  Zero leaves the operators as BART builds
  * them, every coil at once, which is the fastest and the largest. */
 static int coil_batch = 1;
+
+/* Whether the sensitivity is applied inside the transform rather than by
+ * making a coil image to multiply it into and another for the answer. */
+static int fold_maps = 1;
+
+void bartorch_sense_set_fold_maps(int enable)
+{
+	fold_maps = (0 != enable);
+}
+
+int bartorch_sense_fold_maps(void)
+{
+	return fold_maps;
+}
 
 /* Operators built since the last reset: with the coil loop, and as BART's own
  * chain because this could not serve them. */
@@ -394,6 +413,22 @@ static void normal_slab_coset(const struct sense_s* d, long coil, const complex 
 	md_zfmacc2(DIMS, d->slab_dims, d->img_strs, c->dst, d->cim_strs, c->nrm, mstrs, map);
 }
 
+/* The same, with the sensitivity folded into the transform.
+ *
+ * What the transform does with it is multiply a coefficient by the map as it
+ * reads it and by the map's conjugate as it writes it, so neither the coil
+ * image the map would have been multiplied into nor the one the answer would
+ * have landed in is ever made.  At 256^3 over four coefficients each of those
+ * is half a gigabyte. */
+static void normal_slab_folded(const struct sense_s* d, long coil, const complex float* map,
+		const long* mstrs, void* _c)
+{
+	(void)coil;
+	struct slab_ctx* c = _c;
+
+	bartorch_nufft_coset_normal_sense(d->slab, c->dst, c->src, mstrs, map);
+}
+
 static void sense_forward(const linop_data_t* _d, complex float* dst, const complex float* src)
 {
 	const auto d = CAST_DOWN(sense_s, _d);
@@ -437,20 +472,26 @@ static void sense_normal(const linop_data_t* _d, complex float* dst, const compl
 {
 	const auto d = CAST_DOWN(sense_s, _d);
 
-	struct slab_ctx c = {
-
-		.dst = dst, .src = src,
-		.cim = md_alloc_sameplace(DIMS, d->cim_dims, CFL_SIZE, dst),
-		.nrm = md_alloc_sameplace(DIMS, d->cim_dims, CFL_SIZE, dst),
-	};
-
-	md_clear(DIMS, d->img_dims, dst, CFL_SIZE);
-
 	/* A function held off the card crosses once for each set that is used.
 	 * With the coils outside and the sets inside, every coil brings the
 	 * whole of it over again; with the sets outside it crosses once for the
 	 * application.  On eight coils that is eight times less over the bus. */
 	int cosets = bartorch_nufft_cosets(d->slab);
+
+	/* Folded, the two coil images are not needed at all.  It takes a
+	 * transform that reads and writes a coefficient at a time, and one map
+	 * per coil rather than a set of them to contract. */
+	bool folds = (0 != cosets) && (0 != bartorch_nufft_coset_folds(d->slab))
+			&& (1 == d->slab_dims[MAPS_DIM]) && fold_maps;
+
+	struct slab_ctx c = {
+
+		.dst = dst, .src = src,
+		.cim = folds ? NULL : md_alloc_sameplace(DIMS, d->cim_dims, CFL_SIZE, dst),
+		.nrm = folds ? NULL : md_alloc_sameplace(DIMS, d->cim_dims, CFL_SIZE, dst),
+	};
+
+	md_clear(DIMS, d->img_dims, dst, CFL_SIZE);
 
 	if (0 == cosets) {
 
@@ -463,14 +504,17 @@ static void sense_normal(const linop_data_t* _d, complex float* dst, const compl
 		for (int i = 0; i < cosets; i++) {
 
 			bartorch_nufft_coset_use(d->slab, i);
-			drive_slabs(d, dst, normal_slab_coset, &c);
+			drive_slabs(d, dst, folds ? normal_slab_folded : normal_slab_coset, &c);
 		}
 
 		bartorch_nufft_coset_end(d->slab);
 	}
 
-	md_free(c.nrm);
-	md_free(c.cim);
+	if (NULL != c.nrm)
+		md_free(c.nrm);
+
+	if (NULL != c.cim)
+		md_free(c.cim);
 }
 
 static void sense_del(const linop_data_t* _d)

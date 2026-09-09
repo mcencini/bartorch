@@ -1526,3 +1526,47 @@ def test_a_set_crossing_while_another_is_convolved_answers_the_same(in_tools):
 
     scale = float(one_slot.abs().max())
     assert float((overlapped - one_slot).abs().max()) / scale < 1e-5
+
+
+@requires_finufft
+@requires_cuda
+def test_a_sensitivity_folded_into_the_transform_answers_the_same(in_tools):
+    """A SENSE normal need not make coil images to carry the sensitivity.
+
+    Beside the transform it makes two of them for every slab: one to multiply
+    the map into and one for the answer to land in.  A transform that reads and
+    writes a coefficient at a time takes the map itself, on as a coefficient is
+    read and conjugated as it is written, and neither is made -- 1.13 GiB of a
+    224^3 problem over four coefficients.  What it must not change is the
+    answer, and it does not: the two differ by what the gridding's summation
+    order differs by.
+
+    The trajectory is sparse enough that the function is compressed, which is
+    the arrangement that reads a coefficient at a time and so the only one that
+    folds.
+    """
+    from bartorch.tools import _generated as g
+
+    n, spokes, frames, coeffs, coils = 32, 24, 4, 3, 2
+    traj, basis = _subspace(n, spokes, frames, coeffs)
+    traj = traj.cuda()
+    basis = basis.cuda()
+
+    torch.manual_seed(0)
+    k = torch.randn(frames, 1, coils, spokes, n, 1, dtype=torch.complex64).cuda()
+    maps = torch.randn(1, coils, 1, n, n, dtype=torch.complex64)
+    maps = (maps / maps.abs().pow(2).sum(1, keepdim=True).sqrt()).cuda()
+
+    assert bartorch.fold_maps(), "it is what happens unless it is turned off"
+
+    try:
+        bartorch.set_fold_maps(False)
+        beside = g.pics(k, maps, t=traj, B=basis, i=5)
+
+        bartorch.set_fold_maps(True)
+        folded = g.pics(k, maps, t=traj, B=basis, i=5)
+    finally:
+        bartorch.set_fold_maps(True)
+
+    scale = float(beside.abs().max())
+    assert float((folded - beside).abs().max()) / scale < 1e-5

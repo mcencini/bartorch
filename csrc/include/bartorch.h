@@ -149,6 +149,12 @@ BARTORCH_API int bartorch_cuda_stage_release(void* stage, int slot);
 
 BARTORCH_API void bartorch_sense_set_coil_batch(int coils);
 BARTORCH_API int bartorch_sense_coil_batch(void);
+
+/* Apply the sensitivity inside the transform, rather than making a coil image
+ * to multiply it into and another for the answer to land in.  On by default,
+ * wherever the transform reads and writes a coefficient at a time. */
+BARTORCH_API void bartorch_sense_set_fold_maps(int enable);
+BARTORCH_API int bartorch_sense_fold_maps(void);
 /* Operators built since the last reset: 0 with the coil loop, 1 as BART's
  * own chain because the arrangement could not be sliced. */
 BARTORCH_API long bartorch_sense_counter(int which);

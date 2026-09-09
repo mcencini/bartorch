@@ -248,6 +248,10 @@ def _bind(lib: ctypes.CDLL) -> ctypes.CDLL:
     lib.bartorch_nufft_overlap_psf.argtypes = []
     lib.bartorch_sense_set_coil_batch.restype = None
     lib.bartorch_sense_set_coil_batch.argtypes = [c.c_int]
+    lib.bartorch_sense_set_fold_maps.restype = None
+    lib.bartorch_sense_set_fold_maps.argtypes = [c.c_int]
+    lib.bartorch_sense_fold_maps.restype = c.c_int
+    lib.bartorch_sense_fold_maps.argtypes = []
     lib.bartorch_sense_coil_batch.restype = c.c_int
     lib.bartorch_sense_coil_batch.argtypes = []
     lib.bartorch_sense_counter.restype = c.c_long

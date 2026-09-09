@@ -247,6 +247,30 @@ def coil_batch() -> int:
     return int(library().bartorch_sense_coil_batch())
 
 
+def set_fold_maps(enable: bool = True) -> None:
+    """Apply the sensitivity inside the transform rather than beside it.
+
+    A SENSE normal otherwise makes two coil images for every slab: one to
+    multiply the map into, and one for the transform's answer to land in.  A
+    transform that reads and writes one coefficient at a time can take the map
+    itself -- on as a coefficient is read, conjugated as it is written -- and
+    then neither is made.  At 256^3 over four coefficients each of them is half
+    a gigabyte; at 224^3 over four, turning this off costs 1.13 GiB.
+
+    On by default, and it applies only where the transform works a coefficient
+    at a time, which is the gathered arrangement a compressed function uses.
+    Elsewhere the coil images are made as before.
+    """
+    _ensure_ready()
+    library().bartorch_sense_set_fold_maps(int(bool(enable)))
+
+
+def fold_maps() -> bool:
+    """Whether the sensitivity is applied inside the transform."""
+    _ensure_ready()
+    return bool(library().bartorch_sense_fold_maps())
+
+
 def set_num_threads(n: int) -> None:
     """Set the number of threads BART, its FFT and FINUFFT use.
 

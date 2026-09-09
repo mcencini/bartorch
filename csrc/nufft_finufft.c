@@ -868,7 +868,8 @@ static complex float* multiply_transfer(struct nufft_data* t, const void* psf,
  * function contracts them, so a coil's are gathered before any is multiplied.
  */
 static void packed_coset(struct nufft_fi_s* d, complex float* dst, const complex float* src,
-		const complex float* linphase, const void* psf)
+		const complex float* linphase, const void* psf,
+		const long map_strs[], const complex float* map)
 {
 	struct nufft_data* t = d->toeplitz_data;
 	int N = t->N;
@@ -895,17 +896,27 @@ static void packed_coset(struct nufft_fi_s* d, complex float* dst, const complex
 	long coeffs = md_calc_size(N, bank_dims) / locations;
 	long out_coeffs = md_calc_size(N, ciT_bank_dims) / locations;
 
-	/* Where a coil's coefficient sits in the spectrum.  Counted here rather
-	 * than read off `cim_strs`, which carries a zero for every axis of one
-	 * and so cannot be walked. */
-	long coil_step = md_calc_size(3, t->cim_dims);
-	long rest_step = coil_step * t->cim_dims[3];
+	/* Where a coil's coefficient sits in what is read and written.  Counted
+	 * here rather than read off `cim_strs`, which carries a zero for every
+	 * axis of one and so cannot be walked.
+	 *
+	 * With the sensitivity folded in, what is read and written is the image
+	 * rather than a coil image: it has no coil axis, every coil accumulates
+	 * into the same one, and the map is what tells them apart. */
+	long vol = md_calc_size(3, t->cim_dims);
+
+	long coil_step = (NULL == map) ? vol : 0;
+	long rest_step = (NULL == map) ? vol * t->cim_dims[3] : vol;
+
+	long map_coil_step = (NULL == map) ? 0 : map_strs[3] / (long)CFL_SIZE;
 
 	const long* idx = multiplace_read(t->compress, dst);
 
 	complex float* volume = md_alloc_sameplace(N, t->img_dims, CFL_SIZE, dst);
 
 	for (long c = 0; c < coils; c++) {
+
+		const complex float* m = (NULL == map) ? NULL : map + c * map_coil_step;
 
 		complex float* bank = md_alloc_sameplace(N, bank_dims, CFL_SIZE, dst);
 
@@ -914,6 +925,10 @@ static void packed_coset(struct nufft_fi_s* d, complex float* dst, const complex
 			md_zmul2(N, t->img_dims, t->img_strs, volume,
 					t->img_strs, src + c * coil_step + r * rest_step,
 					t->img_strs, linphase);
+
+			if (NULL != m)
+				md_zmul2(N, t->img_dims, t->img_strs, volume,
+						t->img_strs, volume, map_strs, m);
 
 			linop_forward(d->vol_fft, N, t->img_dims, volume, N, t->img_dims, volume);
 
@@ -934,6 +949,10 @@ static void packed_coset(struct nufft_fi_s* d, complex float* dst, const complex
 
 			linop_adjoint(d->vol_fft, N, t->img_dims, volume, N, t->img_dims, volume);
 
+			if (NULL != m)
+				md_zmulc2(N, t->img_dims, t->img_strs, volume,
+						t->img_strs, volume, map_strs, m);
+
 			md_zfmacc2(N, t->img_dims, t->img_strs, dst + c * coil_step + r * rest_step,
 					t->img_strs, volume, t->img_strs, linphase);
 		}
@@ -953,7 +972,8 @@ static void packed_coset(struct nufft_fi_s* d, complex float* dst, const complex
  * `md_zmul2`, the same transform, the same contraction against the upper
  * triangle -- and the arrangements it does not cover go back to BART's own.
  */
-static bool fused_coset(struct nufft_fi_s* d, complex float* dst, const complex float* src)
+static bool fused_coset(struct nufft_fi_s* d, complex float* dst, const complex float* src,
+		const long map_strs[], const complex float* map)
 {
 	struct nufft_data* t = d->toeplitz_data;
 
@@ -965,9 +985,14 @@ static bool fused_coset(struct nufft_fi_s* d, complex float* dst, const complex 
 
 	if (NULL != t->compress) {
 
-		packed_coset(d, dst, src, linphase, psf);
+		packed_coset(d, dst, src, linphase, psf, map_strs, map);
 		return true;
 	}
+
+	/* Only the gathered arrangement folds a sensitivity in; the rest is the
+	 * coil image the caller made, so there is nothing to fold. */
+	if (NULL != map)
+		return false;
 
 	complex float* grid = md_alloc_sameplace(t->N, t->cim_dims, CFL_SIZE, dst);
 
@@ -1019,15 +1044,18 @@ static void coset_begin(struct nufft_fi_s* d, const void* ref)
 }
 
 /* The set that is loaded, convolved with `src` and added to `dst`. */
-static void coset_normal(struct nufft_fi_s* d, complex float* dst, const complex float* src)
+static void coset_normal(struct nufft_fi_s* d, complex float* dst, const complex float* src,
+		const long map_strs[], const complex float* map)
 {
-	if (fused_coset(d, dst, src)) {
+	if (fused_coset(d, dst, src, map_strs, map)) {
 
 		if (NULL != d->stage)
 			bartorch_cuda_stage_release(d->stage, d->slot);
 
 		return;
 	}
+
+	assert(NULL == map);
 
 	struct nufft_data* t = d->toeplitz_data;
 
@@ -1054,7 +1082,36 @@ void bartorch_nufft_coset_use(const struct linop_s* op, int i)
 
 void bartorch_nufft_coset_normal(const struct linop_s* op, complex float* dst, const complex float* src)
 {
-	coset_normal(CAST_DOWN(nufft_fi_s, linop_get_data(op)), dst, src);
+	coset_normal(CAST_DOWN(nufft_fi_s, linop_get_data(op)), dst, src, NULL, NULL);
+}
+
+/* Whether a set can be convolved with the sensitivity folded in.
+ *
+ * Only the gathered arrangement can: it reads a coefficient of one coil at a
+ * time and writes one at a time, so the map goes on as a coefficient is read
+ * and comes off as it is written.  The arrangements that work over a whole
+ * coil image at once have nowhere to put it. */
+int bartorch_nufft_coset_folds(const struct linop_s* op)
+{
+	struct nufft_fi_s* d = CAST_DOWN(nufft_fi_s, linop_get_data(op));
+
+	if ((NULL == d->psf_host) || (NULL == d->toeplitz_data))
+		return 0;
+
+	return (NULL != d->toeplitz_data->compress) ? 1 : 0;
+}
+
+/* The set convolved with a coil's image, added to the caller's image, with the
+ * sensitivity applied on the way in and taken off on the way out.
+ *
+ * Otherwise the caller holds two coil images -- one to multiply the map into
+ * and one for the answer to land in -- and at 256^3 over four coefficients
+ * each of those is half a gigabyte.  Folded in here neither is made. */
+void bartorch_nufft_coset_normal_sense(const struct linop_s* op,
+		complex float* dst, const complex float* src,
+		const long map_strs[], const complex float* map)
+{
+	coset_normal(CAST_DOWN(nufft_fi_s, linop_get_data(op)), dst, src, map_strs, map);
 }
 
 void bartorch_nufft_coset_end(const struct linop_s* op)
@@ -1089,7 +1146,7 @@ static void nufft_fi_normal(const linop_data_t* _d, complex float* dst, const co
 	for (int i = 0; i < d->cosets; i++) {
 
 		fetch_coset(d, i);
-		coset_normal(d, dst, src);
+		coset_normal(d, dst, src, NULL, NULL);
 	}
 
 	pthread_mutex_unlock(&d->lock);
