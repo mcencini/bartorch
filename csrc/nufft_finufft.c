@@ -546,6 +546,21 @@ static void stream_wait(void) { }
  * it would be copies to no purpose, so the trajectory's side decides. */
 static int stream_psf_enabled = 1;
 
+/* Whether only the places the samples reach are kept: below zero the shape
+ * decides, zero never, above zero always.  An arrangement that asked for it
+ * outright gets it whatever this says. */
+static int compress_psf_mode = -1;
+
+void bartorch_nufft_set_compress_psf(int mode)
+{
+	compress_psf_mode = (0 == mode) ? 0 : ((0 < mode) ? 1 : -1);
+}
+
+int bartorch_nufft_compress_psf(void)
+{
+	return compress_psf_mode;
+}
+
 void bartorch_nufft_set_stream_psf(int enable)
 {
 	stream_psf_enabled = (0 != enable);
@@ -1660,6 +1675,20 @@ static const struct linop_s* toeplitz_for(int N, const long ksp_dims[N], const l
 	 * is exact, and a quarter of a rank-eight problem's peak. */
 	if (NULL != basis)
 		barts.upper_triag = true;
+
+	/* Keeping only where the samples reach costs an index over the grid --
+	 * one long a point, whatever the function is -- and gives back the part
+	 * of the function that lies outside them.  A scalar function is one
+	 * real volume a set, four bytes a point against the index's eight, so
+	 * there is nothing there to give back; a subspace one is a triangle of
+	 * volumes, ten of them at rank four, and the index is paid for several
+	 * times over.  So it is a subspace default and a scalar option, and
+	 * only where there is a pattern to spread, which is what says where the
+	 * samples reached. */
+	if (!barts.compress_psf && (NULL != weights)
+			&& ((0 < compress_psf_mode)
+				|| ((0 > compress_psf_mode) && (NULL != basis))))
+		barts.compress_psf = true;
 
 	/* Streaming needs the normal that walks the sets rather than the one
 	 * that convolves them at once, and a linear phase it can be handed one

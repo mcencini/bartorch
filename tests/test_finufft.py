@@ -1477,8 +1477,16 @@ def test_a_compressed_subspace_function_is_gathered_a_coefficient_at_a_time(in_t
     k = torch.randn(frames, 1, coils, spokes, n, 1, dtype=torch.complex64).cuda()
     maps = (torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5).cuda()
 
-    whole = g.pics(k, maps, t=traj, B=basis, i=5, nufft_conf="decomposed-psf")
-    gathered = g.pics(k, maps, t=traj, B=basis, i=5, nufft_conf="compress-psf")
+    assert _finufft.compressing_psf() is None, "the shape decides unless it is told"
+
+    try:
+        _finufft.compress_psf(False)
+        whole = g.pics(k, maps, t=traj, B=basis, i=5)
+
+        _finufft.compress_psf(True)
+        gathered = g.pics(k, maps, t=traj, B=basis, i=5)
+    finally:
+        _finufft.compress_psf(None)
 
     scale = float(whole.abs().max())
     assert float((gathered - whole).abs().max()) / scale < 1e-3

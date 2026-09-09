@@ -229,7 +229,7 @@ def stream_psf(enable: bool = True) -> None:
     It costs BART's low-memory normal, which walks the sets rather than
     convolving them at once.  On a 96^3 problem with eight coils that is
     364 MB and 2.0 s against 210 MB and 2.4 s -- two fifths of the memory for
-    a fifth more time.  A compressed function is not served this way.
+    a fifth more time.
     """
     from bartorch._lib import library
 
@@ -241,6 +241,36 @@ def streaming_psf() -> bool:
     from bartorch._lib import library
 
     return bool(library().bartorch_nufft_stream_psf())
+
+
+def compress_psf(mode: bool | None = None) -> None:
+    """Keep only the places the samples reach of the function.
+
+    A compressed function costs an index over the grid -- one ``long`` a
+    point, whatever the function is -- and gives back the part of the function
+    that lies outside the samples.  A scalar function is one real volume a set
+    of frequencies, four bytes a point against the index's eight, so there is
+    nothing there to give back; a subspace one is a triangle of volumes, ten
+    of them at rank four, and the index is paid for several times over.
+
+    ``None``, which is how it starts, lets the shape decide on that argument:
+    a subspace function is compressed and a scalar one is not.  ``True``
+    compresses either, ``False`` neither.  Compression drops what the samples
+    never reached, which is what makes it smaller, so it is not exact: on a
+    24^3 subspace problem it moves the reconstruction by 2e-04 of its
+    largest value.
+    """
+    from bartorch._lib import library
+
+    library().bartorch_nufft_set_compress_psf(-1 if mode is None else (1 if mode else 0))
+
+
+def compressing_psf() -> bool | None:
+    """Whether only the places the samples reach are kept, or None for the shape."""
+    from bartorch._lib import library
+
+    mode = library().bartorch_nufft_compress_psf()
+    return None if mode < 0 else bool(mode)
 
 
 def live_plans() -> int:

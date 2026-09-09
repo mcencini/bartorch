@@ -110,11 +110,18 @@ BARTORCH_API int bartorch_backend_has_fallback(int index);
  * operator over every coil at once.
  */
 /* Keep the function a Toeplitz normal convolves with off the card, and bring
- * it over one set of frequencies at a time.  Off by default: it costs BART's
+ * it over one set of frequencies at a time.  On by default: it costs BART's
  * low-memory normal, which walks the sets rather than convolving them at
  * once. */
 BARTORCH_API void bartorch_nufft_set_stream_psf(int enable);
 BARTORCH_API int bartorch_nufft_stream_psf(void);
+
+/* Keep only the places the samples reach.  Below zero the shape decides -- a
+ * subspace function, whose triangle of volumes a set pays several times over
+ * for the index the grid costs, and not a scalar one, which cannot.  Zero
+ * never, above zero always. */
+BARTORCH_API void bartorch_nufft_set_compress_psf(int mode);
+BARTORCH_API int bartorch_nufft_compress_psf(void);
 
 BARTORCH_API void bartorch_sense_set_coil_batch(int coils);
 BARTORCH_API int bartorch_sense_coil_batch(void);
