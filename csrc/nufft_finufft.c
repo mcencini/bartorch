@@ -12,6 +12,10 @@
  * varies across frames, or no FINUFFT at all.
  */
 #include <complex.h>
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 #include <float.h>
 #include <math.h>
 #include <pthread.h>
@@ -39,6 +43,7 @@
 
 #include "num/compress.h"
 #include "num/multiplace.h"
+#include "num/gpuops.h"
 
 #include "include/bartorch.h"
 
@@ -53,6 +58,11 @@ extern const struct operator_s* bart_nufft_precond_create(const struct linop_s* 
 
 /* Provided by psf.c, which computes the function this convolves with. */
 extern void bartorch_psf_shift(int NS, float shift[NS], int N, const long factors[N], int idx);
+extern complex float* bartorch_psf_to_host(int N, const long psf_dims[N + 1], unsigned long flags,
+		const long trj_dims[N + 1], const complex float* traj,
+		const long bas_dims[N + 1], const complex float* basis,
+		const long wgh_dims[N + 1], const complex float* weights,
+		bool periodic, bool lowmem, bool upper_triag);
 
 /* Provided by finufft.c, which owns the FINUFFT entry points. */
 extern int bartorch_finufft_plan(int device, int type, int dim, const int64_t n_modes[3],
@@ -179,6 +189,27 @@ struct nufft_fi_s {
 	 * convolve with until there is a trajectory to make it from. */
 	struct nufft_conf_s conf;
 	long* bas_strs;
+
+	/* The function the normal convolves with, kept where the card is not.
+	 *
+	 * `toeplitz_mult_lowmem` reads it as one array and takes the set of
+	 * frequencies it wants out of it, so BART brings the whole function
+	 * over the first time a normal is applied on a card -- and for a
+	 * subspace problem that function is coefficients by sets by image,
+	 * which is the one thing in a three-dimensional reconstruction that
+	 * does not fit.  So the loop over sets is driven from here instead:
+	 * BART is left believing it has one, and the one it has is swapped for
+	 * each in turn.  The arithmetic is still its own.
+	 */
+	struct nufft_data* toeplitz_data;
+	complex float* psf_host;
+	complex float* linphase_host;
+	void* psf_slot[2];		/* where a set lands, made once */
+	complex float* linphase_slot[2];
+	long psf_coset;			/* elements in one set of the function */
+	long linphase_coset;
+	size_t psf_size;		/* a real function is stored as floats */
+	int cosets;
 };
 
 static DEF_TYPEID(nufft_fi_s);
@@ -447,6 +478,106 @@ static void nufft_fi_adjoint(const linop_data_t* _d, complex float* dst, const c
 	md_zsmul(d->N, d->cim_dims, dst, dst, d->scale);
 }
 
+/* Streams, where there are any.  BART hands every `md_` call the stream of
+ * the OpenMP thread that issued it, and forgets which level owns them as soon
+ * as anything asks for one from below, so this is armed just before a region
+ * rather than once. */
+#ifdef USE_CUDA
+static int stream_count(void) { return cuda_set_stream_level(); }
+static void stream_wait(void) { cuda_sync_stream(); }
+#else
+static int stream_count(void) { return 1; }
+static void stream_wait(void) { }
+#endif
+
+/* Whether the function is kept off the card and brought over a set of
+ * frequencies at a time.  Off by default: it costs BART's low-memory normal,
+ * which walks the sets rather than convolving them at once. */
+static int stream_psf_enabled;
+
+void bartorch_nufft_set_stream_psf(int enable)
+{
+	stream_psf_enabled = (0 != enable);
+}
+
+int bartorch_nufft_stream_psf(void)
+{
+	return stream_psf_enabled;
+}
+
+/* Where a set of frequencies lands, made once and written into thereafter.
+ *
+ * `multiplace_move_wrapper` leaves the array where it is handed and does not
+ * free it, so these stay ours: what happens per set is one copy across rather
+ * than an allocation, a copy and a free.  There are two of each because the
+ * next set is fetched while this one is used. */
+static void open_slots(struct nufft_fi_s* d, const void* ref)
+{
+	struct nufft_data* t = d->toeplitz_data;
+	int ND = t->N + 1;
+
+	long psf_dims[ND];
+	md_copy_dims(ND, psf_dims, t->psf_dims);
+	psf_dims[t->N] = 1;
+
+	long lph_dims[ND];
+	md_copy_dims(ND, lph_dims, t->lph_dims);
+	lph_dims[t->N] = 1;
+
+	for (int i = 0; i < 2; i++) {
+
+		d->psf_slot[i] = md_alloc_sameplace(ND, psf_dims, d->psf_size, ref);
+		d->linphase_slot[i] = md_alloc_sameplace(ND, lph_dims, CFL_SIZE, ref);
+	}
+}
+
+/* Bring one set of frequencies over, into the slot given. */
+static void fetch_coset(struct nufft_fi_s* d, int i, int slot)
+{
+	struct nufft_data* t = d->toeplitz_data;
+	int ND = t->N + 1;
+
+	long psf_dims[ND];
+	md_copy_dims(ND, psf_dims, t->psf_dims);
+	psf_dims[t->N] = 1;
+
+	long lph_dims[ND];
+	md_copy_dims(ND, lph_dims, t->lph_dims);
+	lph_dims[t->N] = 1;
+
+	md_copy(ND, psf_dims, d->psf_slot[slot],
+			(const char*)d->psf_host + (size_t)i * (size_t)d->psf_coset * d->psf_size,
+			d->psf_size);
+
+	md_copy(ND, lph_dims, d->linphase_slot[slot],
+			d->linphase_host + (long)i * d->linphase_coset, CFL_SIZE);
+}
+
+/* Point BART at the slot a set has landed in. */
+static void use_coset(struct nufft_fi_s* d, int slot)
+{
+	struct nufft_data* t = d->toeplitz_data;
+	int ND = t->N + 1;
+
+	long psf_dims[ND];
+	md_copy_dims(ND, psf_dims, t->psf_dims);
+	psf_dims[t->N] = 1;
+
+	long lph_dims[ND];
+	md_copy_dims(ND, lph_dims, t->lph_dims);
+	lph_dims[t->N] = 1;
+
+	if (NULL != t->psf)
+		multiplace_free(t->psf);
+
+	t->psf = multiplace_move_wrapper(ND, psf_dims, d->psf_size, d->psf_slot[slot]);
+
+	if (NULL != t->linphase)
+		multiplace_free(t->linphase);
+
+	t->linphase = multiplace_move_wrapper(ND, lph_dims, CFL_SIZE, d->linphase_slot[slot]);
+}
+
 static void nufft_fi_normal(const linop_data_t* _d, complex float* dst, const complex float* src)
 {
 	struct nufft_fi_s* d = CAST_DOWN(nufft_fi_s, _d);
@@ -454,7 +585,55 @@ static void nufft_fi_normal(const linop_data_t* _d, complex float* dst, const co
 	if (NULL == d->toeplitz)
 		error("bartorch: the normal was asked for before the trajectory arrived\n");
 
-	linop_normal_unchecked(d->toeplitz, dst, src);
+	if (NULL == d->psf_host) {
+
+		linop_normal_unchecked(d->toeplitz, dst, src);
+		return;
+	}
+
+	struct nufft_data* t = d->toeplitz_data;
+
+	/* BART clears its output and accumulates the sets into it; driving one
+	 * at a time means accumulating them here instead.  Swapping what the
+	 * operator points at is not something two applications can do at once. */
+	complex float* part = md_alloc_sameplace(t->N, t->cim_dims, CFL_SIZE, dst);
+
+	pthread_mutex_lock(&d->lock);
+
+	if (NULL == d->psf_slot[0])
+		open_slots(d, dst);
+
+	md_clear(t->N, t->cim_dims, dst, CFL_SIZE);
+
+	/* The sets are brought over one at a time, and the fetch is not put on
+	 * a stream of its own.
+	 *
+	 * It could be: the copy and the convolution would then run at once, as
+	 * they do where a slab of sensitivities is fetched.  But what is being
+	 * overlapped there is a transform on the card, and what is being
+	 * overlapped here is BART's own arithmetic, which threads.  Putting it
+	 * inside a region of two makes that threading nested, and nested it
+	 * does not happen -- measured at 96^3 with eight coils, a region of two
+	 * costs 6.48 s against 2.75 s and saves 8 MB of 210.  So the copy is
+	 * issued on the stream the arithmetic is already on, where it is
+	 * asynchronous and the next turn waits for no more than it must.
+	 */
+	fetch_coset(d, 0, 0);
+
+	for (int i = 0; i < d->cosets; i++) {
+
+		use_coset(d, i % 2);
+
+		linop_normal_unchecked(d->toeplitz, part, src);
+		md_zadd(t->N, t->cim_dims, dst, dst, part);
+
+		if (i + 1 < d->cosets)
+			fetch_coset(d, i + 1, (i + 1) % 2);
+	}
+
+	pthread_mutex_unlock(&d->lock);
+
+	md_free(part);
 }
 
 static void nufft_fi_del(const linop_data_t* _d)
@@ -472,6 +651,15 @@ static void nufft_fi_del(const linop_data_t* _d)
 
 	md_free(d->host_weights);
 	md_free(d->host_basis);
+	md_free(d->psf_host);
+	md_free(d->linphase_host);
+
+	for (int i = 0; i < 2; i++) {
+
+		md_free(d->psf_slot[i]);
+		md_free(d->linphase_slot[i]);
+	}
+
 	xfree(d->cim_dims);
 	xfree(d->out_dims);
 	xfree(d->out_strs);
@@ -971,7 +1159,7 @@ static bool basis_is_real(int N, const long bas_dims[N], const complex float* ba
 	return real;
 }
 
-static void install_psf(struct nufft_data* data, const complex float* traj)
+static void install_psf(struct nufft_data* data, const complex float* traj, complex float** to_host)
 {
 	int N = data->N;
 	int ND = N + 1;
@@ -979,14 +1167,24 @@ static void install_psf(struct nufft_data* data, const complex float* traj)
 	const complex float* weights = multiplace_read(data->weights, traj);
 	const complex float* basis = multiplace_read(data->basis, traj);
 
-	complex float* psf = (data->conf.decomposed_psf ? compute_psf2_decomposed : compute_psf2)(N,
-			data->psf_dims, data->flags, data->trj_dims, traj,
-			data->bas_dims, basis, data->wgh_dims, weights,
-			true /* as nufft.c asks for it */, data->conf.lowmem, data->conf.upper_triag);
+	/* Streamed, the function is made a set of frequencies at a time and
+	 * kept on the host: neither it nor any set but the one being made is
+	 * ever resident.  A compressed function is not served that way, so it
+	 * is built where it always was. */
+	bool stream = (NULL != to_host) && stream_psf_enabled && !data->conf.compress_psf;
+
+	complex float* psf = stream
+		? bartorch_psf_to_host(N, data->psf_dims, data->flags, data->trj_dims, traj,
+				data->bas_dims, basis, data->wgh_dims, weights,
+				true, data->conf.lowmem, data->conf.upper_triag)
+		: (data->conf.decomposed_psf ? compute_psf2_decomposed : compute_psf2)(N,
+				data->psf_dims, data->flags, data->trj_dims, traj,
+				data->bas_dims, basis, data->wgh_dims, weights,
+				true /* as nufft.c asks for it */, data->conf.lowmem, data->conf.upper_triag);
 
 	long max_idx = 0;
 
-	if (data->conf.compress_psf) {
+	if (data->conf.compress_psf && !stream) {
 
 		md_select_dims(ND, FFT_FLAGS, data->com_dims, data->img_dims);
 
@@ -1019,17 +1217,23 @@ static void install_psf(struct nufft_data* data, const complex float* traj)
 		float* psf_real = md_alloc_sameplace(ND, data->psf_dims, FL_SIZE, psf);
 		md_real(ND, data->psf_dims, psf_real, psf);
 		md_free(psf);
+		psf = (complex float*)psf_real;
 
 		md_calc_strides(ND, data->psf_strs, data->psf_dims, FL_SIZE);
-		data->psf = multiplace_move_F(ND, data->psf_dims, FL_SIZE, psf_real);
 
 		/* What is stored is what the multiply has to read. */
 		data->conf.real = true;
-
-	} else {
-
-		data->psf = multiplace_move_F(ND, data->psf_dims, CFL_SIZE, psf);
 	}
+
+	if (stream) {
+
+		/* The sets are put where BART looks for them one at a time, so
+		 * nothing is installed here. */
+		*to_host = psf;
+		return;
+	}
+
+	data->psf = multiplace_move_F(ND, data->psf_dims, store_real ? FL_SIZE : CFL_SIZE, psf);
 
 	if (NULL != data->compress) {
 
@@ -1063,10 +1267,57 @@ static void install_psf(struct nufft_data* data, const complex float* traj)
  * `pics --no-toeplitz` and `nufft -t` set, and it carries the memory the
  * function costs.
  */
+/* Take the function off the card.
+ *
+ * What is left behind is BART's operator believing it has a single set of
+ * frequencies, so one call to its normal does one of them; the loop that walks
+ * them is the caller's.  Only the plainest arrangement is taken. */
+static void stream_psf(struct nufft_fi_s* d)
+{
+	if (!stream_psf_enabled || (NULL == d->toeplitz) || (NULL == d->psf_host))
+		return;
+
+	struct nufft_data* t = CAST_DOWN(nufft_data, linop_get_data_nested(d->toeplitz));
+
+	if (NULL == t->linphase) {
+
+		md_free(d->psf_host);
+		d->psf_host = NULL;
+		return;
+	}
+
+	int ND = t->N + 1;
+	int cosets = (int)t->lph_dims[t->N];
+
+	if ((cosets < 2) || (t->psf_dims[t->N] != cosets)) {
+
+		md_free(d->psf_host);
+		d->psf_host = NULL;
+		return;
+	}
+
+	const complex float* lph = multiplace_read(t->linphase, d->radians[0]);
+
+	d->linphase_host = md_alloc(ND, t->lph_dims, CFL_SIZE);
+	md_copy(ND, t->lph_dims, d->linphase_host, lph, CFL_SIZE);
+
+	d->psf_coset = md_calc_size(t->N, t->psf_dims);
+	d->linphase_coset = md_calc_size(t->N, t->lph_dims);
+	d->psf_size = t->conf.real ? FL_SIZE : CFL_SIZE;
+	d->cosets = cosets;
+	d->toeplitz_data = t;
+
+	/* One set is all BART is told it has, so its own loop runs once. */
+	t->lph_dims[t->N] = 1;
+
+	debug_printf(DP_DEBUG1, "Streaming the function: %d sets of %ld\n", cosets, d->psf_coset);
+}
+
 static const struct linop_s* toeplitz_for(int N, const long ksp_dims[N], const long cim_dims[N],
 		const long traj_dims[N], const complex float* traj,
 		const long wgh_dims[N], const complex float* weights,
-		const long bas_dims[N], const complex float* basis, struct nufft_conf_s conf)
+		const long bas_dims[N], const complex float* basis, struct nufft_conf_s conf,
+		complex float** to_host)
 {
 	if (!conf.toeplitz) {
 
@@ -1100,6 +1351,17 @@ static const struct linop_s* toeplitz_for(int N, const long ksp_dims[N], const l
 	if (NULL != basis)
 		barts.upper_triag = true;
 
+	/* Streaming needs the normal that walks the sets rather than the one
+	 * that convolves them at once, and a linear phase it can be handed one
+	 * of: without a precomputed phase the shift is worked out from the set
+	 * BART thinks it is on, which is always the first once it is told it
+	 * has one. */
+	if (stream_psf_enabled) {
+
+		barts.lowmem = true;
+		barts.precomp_linphase = true;
+	}
+
 
 	const struct linop_s* op = bart_nufft_create2(N, ksp_dims, cim_dims, traj_dims, traj,
 			wgh_dims, weights, (NULL != basis) ? bas_dims : NULL, basis, barts);
@@ -1107,7 +1369,7 @@ static const struct linop_s* toeplitz_for(int N, const long ksp_dims[N], const l
 	struct nufft_data* data = CAST_DOWN(nufft_data, linop_get_data_nested(op));
 
 	making_psf++;
-	install_psf(data, traj);
+	install_psf(data, traj, to_host);
 	making_psf--;
 
 #pragma omp atomic
@@ -1292,6 +1554,16 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 
 	memset(&d->side, 0, sizeof d->side);
 	d->toeplitz = NULL;
+	d->toeplitz_data = NULL;
+	d->psf_host = NULL;
+	d->linphase_host = NULL;
+	d->cosets = 0;
+
+	for (int i = 0; i < 2; i++) {
+
+		d->psf_slot[i] = NULL;
+		d->linphase_slot[i] = NULL;
+	}
 
 	for (int i = 0; i < 3; i++)
 		d->radians[i] = NULL;
@@ -1403,7 +1675,8 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 
 	if (NULL != traj)
 		d->toeplitz = toeplitz_for(N, ksp_dims, cim_dims, traj_dims, traj,
-				wgh_dims, weights, bas_dims, basis, conf);
+				wgh_dims, weights, bas_dims, basis, conf, &d->psf_host);
+		stream_psf(d);
 
 	/* PTR_PASS hands the data over and clears the pointer, so what the
 	 * operator is built with is read out first. */
@@ -1560,9 +1833,23 @@ void nufft_update_traj(const struct linop_s* nufft, int N, const long trj_dims[N
 		if (NULL != d->toeplitz)
 			linop_free(d->toeplitz);
 
+		md_free(d->psf_host);
+		md_free(d->linphase_host);
+		d->psf_host = NULL;
+		d->linphase_host = NULL;
+
+		for (int i = 0; i < 2; i++) {
+
+			md_free(d->psf_slot[i]);
+			md_free(d->linphase_slot[i]);
+			d->psf_slot[i] = NULL;
+			d->linphase_slot[i] = NULL;
+		}
+
 		d->toeplitz = toeplitz_for(N, d->ksp_dims, d->cim_dims, trj_dims, traj,
 				(NULL != weights) ? wgh_dims : d->wgh_dims, weights,
-				(NULL != basis) ? bas_dims : d->bas_dims, basis, d->conf);
+				(NULL != basis) ? bas_dims : d->bas_dims, basis, d->conf, &d->psf_host);
+		stream_psf(d);
 	}
 }
 

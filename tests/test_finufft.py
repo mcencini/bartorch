@@ -12,6 +12,7 @@ import torch
 import bartorch
 import bartorch.tools as bt
 from bartorch import _finufft
+from bartorch._lib import library
 from bartorch.ops import LinearOperator
 
 requires_finufft = pytest.mark.skipif(not _finufft.available(), reason="finufft is not installed")
@@ -1400,3 +1401,39 @@ def test_a_subspace_function_is_stored_as_its_upper_triangle(in_tools):
     asked_for = g.pics(k, maps, t=traj, B=basis, i=20, nufft_conf="upper-triag-psf")
 
     torch.testing.assert_close(automatic, asked_for, rtol=1e-4, atol=1e-6)
+
+
+@requires_finufft
+def test_the_function_can_be_kept_off_the_card_and_brought_over_in_sets(in_tools):
+    """One set of frequencies crosses at a time, and the answer does not change.
+
+    BART reads the function as one array and takes the set it wants out of it,
+    so it brings the whole of it over the first time a normal is applied.
+    Driving the loop from here leaves BART believing it has a single set and
+    swaps the one it has for each in turn, which is its own arithmetic over a
+    function that was never resident.  It is the decomposed function either
+    way, so that is what it is held against.
+    """
+    from bartorch.tools import _generated as g
+
+    lib = library()
+    n, coils = 32, 4
+    torch.manual_seed(0)
+    maps = torch.randn(coils, n, n, dtype=torch.complex64)
+    maps = maps / maps.abs().pow(2).sum(0, keepdim=True).sqrt()
+    image = (bt.phantom([n, n])[None] * maps).reshape(coils, 1, n, n)
+    traj = bt.traj(x=n, y=48, r=True)
+    kspace = bt.nufft(traj, image)
+    bank = maps.reshape(1, coils, 1, n, n)
+
+    assert not lib.bartorch_nufft_stream_psf(), "it is off until it is asked for"
+
+    reference = g.pics(kspace, bank, t=traj, i=25, nufft_conf="decomposed-psf")
+    try:
+        lib.bartorch_nufft_set_stream_psf(1)
+        streamed = g.pics(kspace, bank, t=traj, i=25)
+    finally:
+        lib.bartorch_nufft_set_stream_psf(0)
+
+    scale = float(reference.abs().max())
+    assert float((streamed - reference).abs().max()) / scale < 1e-5

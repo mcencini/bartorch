@@ -253,7 +253,7 @@ void bartorch_psf_shift(int NS, float shift[NS], int N, const long factors[N], i
  * The even and the odd frequencies of the doubled grid are independent, so
  * computing them separately never holds the doubled grid whole, which is what
  * makes a three-dimensional point spread function fit. */
-complex float* compute_psf2_decomposed(int N, const long psf_dims[N + 1], unsigned long flags, const long trj_dims[N + 1], const complex float* traj,
+static complex float* psf_decomposed(bool to_host, int N, const long psf_dims[N + 1], unsigned long flags, const long trj_dims[N + 1], const complex float* traj,
 		const long bas_dims[N + 1], const complex float* basis, const long wgh_dims[N + 1], const complex float* weights,
 		bool periodic, bool lowmem, bool upper_triag)
 {
@@ -337,7 +337,11 @@ complex float* compute_psf2_decomposed(int N, const long psf_dims[N + 1], unsign
  * axis, with the half-sample shift an odd length needs.  Built for the set
  * that is about to be used rather than for all of them at once, which is what
  * keeps the samples of every set off the card together. */
-	complex float* psf = md_alloc_sameplace(ND, psf_dims, CFL_SIZE, traj);
+	/* `to_host` keeps the function where the card is not: each set is made
+	 * on the card and copied out, so what is resident is one set rather
+	 * than the whole of it. */
+	complex float* psf = to_host ? md_alloc(ND, psf_dims, CFL_SIZE)
+				     : md_alloc_sameplace(ND, psf_dims, CFL_SIZE, traj);
 
 	/* One set of frequencies at a time.
 	 *
@@ -388,17 +392,49 @@ complex float* compute_psf2_decomposed(int N, const long psf_dims[N + 1], unsign
 		struct linop_s* op = nufft_create2(ND, ksp_dims2, psf_dims3, trj_dims3,
 				traj_i, wgh_dims, sqr_weights, sqr_bas_dims, sqr_basis, conf);
 
-		linop_adjoint_unchecked(op, psf + i * psf_coset, kern);
+		if (to_host) {
+
+			complex float* one = md_alloc_sameplace(ND, psf_dims3, CFL_SIZE, traj);
+
+			linop_adjoint_unchecked(op, one, kern);
+			fft(ND, psf_dims3, conf.flags, one, one);
+			md_copy(ND, psf_dims3, psf + i * psf_coset, one, CFL_SIZE);
+
+			md_free(one);
+
+		} else {
+
+			linop_adjoint_unchecked(op, psf + i * psf_coset, kern);
+		}
 
 		linop_free(op);
 		md_free(kern);
 	}
 
-	fft(ND, psf_dims, conf.flags, psf, psf);
+	if (!to_host)
+		fft(ND, psf_dims, conf.flags, psf, psf);
 
 	md_free(sqr_weights);
 	md_free(sqr_basis);
 	md_free(traj2);
 
 	return psf;
+}
+
+complex float* compute_psf2_decomposed(int N, const long psf_dims[N + 1], unsigned long flags, const long trj_dims[N + 1], const complex float* traj,
+		const long bas_dims[N + 1], const complex float* basis, const long wgh_dims[N + 1], const complex float* weights,
+		bool periodic, bool lowmem, bool upper_triag)
+{
+	return psf_decomposed(false, N, psf_dims, flags, trj_dims, traj, bas_dims, basis,
+			wgh_dims, weights, periodic, lowmem, upper_triag);
+}
+
+/* The same function, left where the card is not: neither it nor any set of
+ * frequencies but the one being made is ever resident. */
+complex float* bartorch_psf_to_host(int N, const long psf_dims[N + 1], unsigned long flags, const long trj_dims[N + 1], const complex float* traj,
+		const long bas_dims[N + 1], const complex float* basis, const long wgh_dims[N + 1], const complex float* weights,
+		bool periodic, bool lowmem, bool upper_triag)
+{
+	return psf_decomposed(true, N, psf_dims, flags, trj_dims, traj, bas_dims, basis,
+			wgh_dims, weights, periodic, lowmem, upper_triag);
 }

@@ -216,6 +216,33 @@ def used_in_tools() -> bool:
     return bool(library().bartorch_finufft_usable())
 
 
+def stream_psf(enable: bool = True) -> None:
+    """Keep the function a Toeplitz normal convolves with off the card.
+
+    BART reads it as one array and takes the set of frequencies it wants out
+    of it, so it brings the whole of it over the first time a normal is
+    applied -- and for a subspace problem that function is coefficients by
+    sets by image, which is what a three-dimensional reconstruction cannot
+    fit.  Asked for this, the loop over sets is driven here instead: BART is
+    left believing it has one, and the one it has is brought over in turn.
+
+    It costs BART's low-memory normal, which walks the sets rather than
+    convolving them at once.  On a 96^3 problem with eight coils that is
+    364 MB and 2.0 s against 210 MB and 2.4 s -- two fifths of the memory for
+    a fifth more time.  A compressed function is not served this way.
+    """
+    from bartorch._lib import library
+
+    library().bartorch_nufft_set_stream_psf(int(bool(enable)))
+
+
+def streaming_psf() -> bool:
+    """Whether the function is being kept off the card."""
+    from bartorch._lib import library
+
+    return bool(library().bartorch_nufft_stream_psf())
+
+
 def live_plans() -> int:
     """FINUFFT plans made and not yet destroyed.
 
