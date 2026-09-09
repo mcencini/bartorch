@@ -1653,6 +1653,41 @@ static void install_psf(struct nufft_data* data, const complex float* traj, comp
 
 		if (0 != spread_mask(data, traj, &max_idx))
 			error("bartorch: FINUFFT would not spread the pattern for a compressed function\n");
+
+		/* Kept only where it is worth keeping.
+		 *
+		 * What compression gives back is the part of the function the
+		 * samples never reached: a fraction 1 - f of every entry the
+		 * function holds at a frequency, which is one for a scalar
+		 * function and the triangle's worth for a subspace one.  What
+		 * it costs is an index over the grid, one long a point, whether
+		 * it gives back anything or not.  So it earns its place when
+		 *
+		 *	(1 - f) * entries * element > sizeof(long)
+		 *
+		 * A scalar function never clears it -- one real volume a set is
+		 * four bytes a point against the index's eight -- and a
+		 * subspace one clears it easily: ten entries at rank four need
+		 * only a fifth of the grid to go unreached.  A three-
+		 * dimensional radial trajectory leaves the corners of the cube
+		 * outside its ball, which is a fraction 1 - pi/6 of it before
+		 * the spreading kernel's width is added back. */
+		long grid = md_calc_size(ND, data->com_dims);
+		long entries = md_calc_size(N, data->psf_dims) / md_calc_size(3, data->psf_dims);
+		size_t element = store_real ? FL_SIZE : CFL_SIZE;
+
+		double dropped = 1. - (double)max_idx / (double)grid;
+
+		if (dropped * (double)entries * (double)element <= (double)sizeof(long)) {
+
+			debug_printf(DP_DEBUG1, "Not compressing: %.0f%% of the grid is reached\n",
+					100. * max_idx / grid);
+
+			multiplace_free(data->compress);
+			data->compress = NULL;
+			data->conf.compress_psf = false;
+			max_idx = 0;
+		}
 	}
 
 	long com_psf_dims[ND];
