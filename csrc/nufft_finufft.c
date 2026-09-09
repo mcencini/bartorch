@@ -30,6 +30,7 @@
 #include "misc/types.h"
 
 #include "linops/linop.h"
+#include "linops/someops.h"
 
 #include "num/flpmath.h"
 #include "num/init.h"
@@ -213,6 +214,11 @@ struct nufft_fi_s {
 	long linphase_coset;
 	size_t psf_size;		/* a real function is stored as floats */
 	int cosets;
+
+	/* The transform of one volume, which is what a compressed function
+	 * works a coefficient at a time against.  BART's own is over every
+	 * coil and coefficient at once. */
+	struct linop_s* vol_fft;
 };
 
 static DEF_TYPEID(nufft_fi_s);
@@ -624,6 +630,155 @@ static void use_coset(struct nufft_fi_s* d)
 	t->linphase = multiplace_move_wrapper(ND, lph_dims, CFL_SIZE, d->linphase_slot);
 }
 
+/* The function against the spectrum, wherever the spectrum lies.
+ *
+ * Without a basis the function is a diagonal and multiplies in place; with one
+ * it is a matrix at every frequency and the contraction needs somewhere to
+ * land, so what comes back may not be what went in. */
+static complex float* multiply_transfer(struct nufft_data* t, const void* psf,
+		const long cim_dims[], const long ciT_dims[], complex float* grid)
+{
+	int N = t->N;
+
+	if (md_check_equal_dims(N, cim_dims, ciT_dims, ~0UL)) {
+
+		long cim_strs[N];
+		md_calc_strides(N, cim_strs, cim_dims, CFL_SIZE);
+
+		if (t->conf.real)
+			md_mul2(N, MD_REAL_DIMS(N, cim_dims),
+					MD_REAL_STRS(N, cim_strs, FL_SIZE), (float*)grid,
+					MD_REAL_STRS(N, cim_strs, FL_SIZE), (float*)grid,
+					MD_REAL_STRS(N, t->psf_strs, 0), (const float*)psf);
+		else
+			md_zmul2(N, cim_dims, cim_strs, grid, cim_strs, grid, t->psf_strs, psf);
+
+		return grid;
+	}
+
+	long max_dims[N];
+	md_max_dims(N, ~0UL, max_dims, ciT_dims, cim_dims);
+
+	long ciT_strs[N];
+	md_calc_strides(N, ciT_strs, ciT_dims, CFL_SIZE);
+
+	long cim_strs[N];
+	md_calc_strides(N, cim_strs, cim_dims, CFL_SIZE);
+
+	complex float* out = md_alloc_sameplace(N, ciT_dims, CFL_SIZE, grid);
+
+	if (t->conf.real) {
+
+		if (t->conf.upper_triag)
+			md_tenmul_upper_triag2(6, 7, N + 1, MD_REAL_DIMS(N, max_dims),
+					MD_REAL_STRS(N, ciT_strs, FL_SIZE), (float*)out,
+					MD_REAL_STRS(N, cim_strs, FL_SIZE), (float*)grid,
+					MD_REAL_DIMS(N, t->psf_dims),
+					MD_REAL_STRS(N, t->psf_strs, 0), (const float*)psf);
+		else
+			md_tenmul2(N + 1, MD_REAL_DIMS(N, max_dims),
+					MD_REAL_STRS(N, ciT_strs, FL_SIZE), (float*)out,
+					MD_REAL_STRS(N, cim_strs, FL_SIZE), (float*)grid,
+					MD_REAL_STRS(N, t->psf_strs, 0), (const float*)psf);
+
+	} else {
+
+		if (t->conf.upper_triag)
+			md_ztenmul_upper_triag(5, 6, N, ciT_dims, out, cim_dims, grid, t->psf_dims, psf);
+		else
+			md_ztenmul(N, ciT_dims, out, cim_dims, grid, t->psf_dims, psf);
+	}
+
+	md_free(grid);
+
+	return out;
+}
+
+/* The set convolved with `src`, added to `dst`, against a compressed function.
+ *
+ * A compressed function has values only where the samples reach, so what
+ * multiplies it is the spectrum gathered down to those places -- and gathering
+ * is what makes it worth keeping the spectrum nowhere else.  One volume is
+ * transformed and gathered at a time, so what is resident is one volume and
+ * the gathered coefficients of one coil, rather than every coil and
+ * coefficient at full size.  Coils are independent until the sum that ends
+ * them, so they are taken one at a time; coefficients are not, because the
+ * function contracts them, so a coil's are gathered before any is multiplied.
+ */
+static void packed_coset(struct nufft_fi_s* d, complex float* dst, const complex float* src,
+		const complex float* linphase, const void* psf)
+{
+	struct nufft_data* t = d->toeplitz_data;
+	int N = t->N;
+
+	if (NULL == d->vol_fft)
+		d->vol_fft = linop_fft_create(N, t->img_dims, t->flags | t->conf.cfft);
+
+	/* The spectrum of one coil, gathered: the places the samples reach on
+	 * the first axis, the coefficients on the axis the function contracts. */
+	long bank_dims[N];
+	long ciT_bank_dims[N];
+	long one_bank_dims[N];
+
+	md_select_dims(N, ~MD_BIT(3), bank_dims, t->cim_dims);
+	md_select_dims(N, ~MD_BIT(3), ciT_bank_dims, t->ciT_dims);
+
+	md_copy_dims(3, bank_dims, t->psf_dims);
+	md_copy_dims(3, ciT_bank_dims, t->psf_dims);
+
+	md_select_dims(N, MD_BIT(0), one_bank_dims, bank_dims);
+
+	long locations = bank_dims[0];
+	long coils = t->cim_dims[3];
+	long coeffs = md_calc_size(N, bank_dims) / locations;
+	long out_coeffs = md_calc_size(N, ciT_bank_dims) / locations;
+
+	/* Where a coil's coefficient sits in the spectrum.  Counted here rather
+	 * than read off `cim_strs`, which carries a zero for every axis of one
+	 * and so cannot be walked. */
+	long coil_step = md_calc_size(3, t->cim_dims);
+	long rest_step = coil_step * t->cim_dims[3];
+
+	const long* idx = multiplace_read(t->compress, dst);
+
+	complex float* volume = md_alloc_sameplace(N, t->img_dims, CFL_SIZE, dst);
+
+	for (long c = 0; c < coils; c++) {
+
+		complex float* bank = md_alloc_sameplace(N, bank_dims, CFL_SIZE, dst);
+
+		for (long r = 0; r < coeffs; r++) {
+
+			md_zmul2(N, t->img_dims, t->img_strs, volume,
+					t->img_strs, src + c * coil_step + r * rest_step,
+					t->img_strs, linphase);
+
+			linop_forward(d->vol_fft, N, t->img_dims, volume, N, t->img_dims, volume);
+
+			md_compress(N, one_bank_dims, bank + r * locations, t->img_dims, volume,
+					t->com_dims, idx, CFL_SIZE);
+		}
+
+		bank = multiply_transfer(t, psf, bank_dims, ciT_bank_dims, bank);
+
+		for (long r = 0; r < out_coeffs; r++) {
+
+			md_clear(N, t->img_dims, volume, CFL_SIZE);
+			md_decompress(N, t->img_dims, volume, one_bank_dims, bank + r * locations,
+					t->com_dims, idx, NULL, CFL_SIZE);
+
+			linop_adjoint(d->vol_fft, N, t->img_dims, volume, N, t->img_dims, volume);
+
+			md_zfmacc2(N, t->img_dims, t->img_strs, dst + c * coil_step + r * rest_step,
+					t->img_strs, volume, t->img_strs, linphase);
+		}
+
+		md_free(bank);
+	}
+
+	md_free(volume);
+}
+
 /* One set of frequencies, convolved and added to what is there.
  *
  * This is `toeplitz_mult_lowmem` without the two things that cost a pass over
@@ -643,102 +798,19 @@ static bool fused_coset(struct nufft_fi_s* d, complex float* dst, const complex 
 	if ((NULL == linphase) || (NULL == psf))
 		return false;
 
+	if (NULL != t->compress) {
+
+		packed_coset(d, dst, src, linphase, psf);
+		return true;
+	}
+
 	complex float* grid = md_alloc_sameplace(t->N, t->cim_dims, CFL_SIZE, dst);
 
 	md_zmul2(t->N, t->cim_dims, t->cim_strs, grid, t->cim_strs, src, t->img_strs, linphase);
 
 	linop_forward(t->cfft_op, t->N, t->cim_dims, grid, t->N, t->cim_dims, grid);
 
-	/* A compressed function is only the places the samples reach, so what
-	 * multiplies it is gathered down to those places and scattered back. */
-	long cim_dims[t->N];
-	long ciT_dims[t->N];
-
-	md_copy_dims(t->N, cim_dims, t->cim_dims);
-	md_copy_dims(t->N, ciT_dims, t->ciT_dims);
-
-	if (NULL != t->compress) {
-
-		md_copy_dims(3, cim_dims, t->psf_dims);
-		md_copy_dims(3, ciT_dims, t->psf_dims);
-
-		const long* idx = multiplace_read(t->compress, grid);
-
-		complex float* packed = md_alloc_sameplace(t->N, cim_dims, CFL_SIZE, grid);
-		md_compress(t->N, cim_dims, packed, t->cim_dims, grid, t->com_dims, idx, CFL_SIZE);
-
-		md_free(grid);
-		grid = packed;
-	}
-
-	/* Without a basis the function is a diagonal and multiplies in place;
-	 * with one it is a matrix at every frequency and the contraction needs
-	 * somewhere to land. */
-	bool contracts = !md_check_equal_dims(t->N, cim_dims, ciT_dims, ~0UL);
-
-	if (!contracts) {
-
-		long cim_strs[t->N];
-		md_calc_strides(t->N, cim_strs, cim_dims, CFL_SIZE);
-
-		if (t->conf.real)
-			md_mul2(t->N, MD_REAL_DIMS(t->N, cim_dims),
-					MD_REAL_STRS(t->N, cim_strs, FL_SIZE), (float*)grid,
-					MD_REAL_STRS(t->N, cim_strs, FL_SIZE), (float*)grid,
-					MD_REAL_STRS(t->N, t->psf_strs, 0), (const float*)psf);
-		else
-			md_zmul2(t->N, cim_dims, cim_strs, grid, cim_strs, grid, t->psf_strs, psf);
-
-	} else {
-
-		long max_dims[t->N];
-		md_max_dims(t->N, ~0UL, max_dims, ciT_dims, cim_dims);
-
-		long ciT_strs[t->N];
-		md_calc_strides(t->N, ciT_strs, ciT_dims, CFL_SIZE);
-
-		long cim_strs[t->N];
-		md_calc_strides(t->N, cim_strs, cim_dims, CFL_SIZE);
-
-		complex float* out = md_alloc_sameplace(t->N, ciT_dims, CFL_SIZE, dst);
-
-		if (t->conf.real) {
-
-			if (t->conf.upper_triag)
-				md_tenmul_upper_triag2(6, 7, t->N + 1, MD_REAL_DIMS(t->N, max_dims),
-						MD_REAL_STRS(t->N, ciT_strs, FL_SIZE), (float*)out,
-						MD_REAL_STRS(t->N, cim_strs, FL_SIZE), (float*)grid,
-						MD_REAL_DIMS(t->N, t->psf_dims),
-						MD_REAL_STRS(t->N, t->psf_strs, 0), (const float*)psf);
-			else
-				md_tenmul2(t->N + 1, MD_REAL_DIMS(t->N, max_dims),
-						MD_REAL_STRS(t->N, ciT_strs, FL_SIZE), (float*)out,
-						MD_REAL_STRS(t->N, cim_strs, FL_SIZE), (float*)grid,
-						MD_REAL_STRS(t->N, t->psf_strs, 0), (const float*)psf);
-
-		} else {
-
-			if (t->conf.upper_triag)
-				md_ztenmul_upper_triag(5, 6, t->N, ciT_dims, out, cim_dims, grid, t->psf_dims, psf);
-			else
-				md_ztenmul(t->N, ciT_dims, out, cim_dims, grid, t->psf_dims, psf);
-		}
-
-		md_free(grid);
-		grid = out;
-	}
-
-	if (NULL != t->compress) {
-
-		const long* idx = multiplace_read(t->compress, grid);
-
-		complex float* spread = md_alloc_sameplace(t->N, t->cim_dims, CFL_SIZE, grid);
-		md_clear(t->N, t->cim_dims, spread, CFL_SIZE);
-		md_decompress(t->N, t->cim_dims, spread, cim_dims, grid, t->com_dims, idx, NULL, CFL_SIZE);
-
-		md_free(grid);
-		grid = spread;
-	}
+	grid = multiply_transfer(t, psf, t->cim_dims, t->ciT_dims, grid);
 
 	linop_adjoint(t->cfft_op, t->N, t->cim_dims, grid, t->N, t->cim_dims, grid);
 
@@ -872,6 +944,9 @@ static void nufft_fi_del(const linop_data_t* _d)
 
 	md_free(d->psf_slot);
 	md_free(d->linphase_slot);
+
+	if (NULL != d->vol_fft)
+		linop_free(d->vol_fft);
 
 	xfree(d->cim_dims);
 	xfree(d->out_dims);
@@ -1388,17 +1463,9 @@ static void install_psf(struct nufft_data* data, const complex float* traj, comp
 
 	/* Streamed, the function is made an entry at a time and kept on the
 	 * host: neither it nor any entry but the one being made is ever
-	 * resident.
-	 *
-	 * Not a compressed one.  Compressing each entry as it is made is the
-	 * right shape -- it is what stops the function and its compressed copy
-	 * being whole at once -- but the streamed path built that way faults,
-	 * and the fault is not yet found.  Compressed and resident is correct
-	 * and is what happens; compression is not a default in any case,
-	 * because on a trajectory that reaches three fifths of the grid it
-	 * costs more than it saves. */
+	 * resident. */
 	bool stream = (NULL != to_host) && stream_psf_enabled
-		&& (0 != bartorch_on_device(traj)) && !data->conf.compress_psf;
+		&& (0 != bartorch_on_device(traj));
 
 	/* The places the samples reach.  Worked out before the function is
 	 * built, because an entry is compressed as it is made. */
@@ -1436,6 +1503,16 @@ static void install_psf(struct nufft_data* data, const complex float* traj, comp
 
 	multiplace_free(data->psf);
 
+	/* Built compressed, the function came back compressed, and that is the
+	 * shape everything after this works in. */
+	bool packed = (NULL != idx);
+
+	if (packed) {
+
+		md_copy_dims(ND, data->psf_dims, com_psf_dims);
+		md_calc_strides(ND, data->psf_strs, data->psf_dims, CFL_SIZE);
+	}
+
 	if (store_real) {
 
 		float* psf_real = md_alloc_sameplace(ND, data->psf_dims, FL_SIZE, psf);
@@ -1449,11 +1526,11 @@ static void install_psf(struct nufft_data* data, const complex float* traj, comp
 		data->conf.real = true;
 	}
 
-	/* Only the places the samples reach are kept.  The function is
-	 * compressed where it lies -- on the host when it is going to be
-	 * streamed off one, on the card otherwise -- so what crosses per set is
-	 * the compressed set. */
-	if (NULL != data->compress) {
+	/* Only the places the samples reach are kept.  A resident function is
+	 * reduced here, once it is whole; a streamed one was reduced an entry
+	 * at a time as it was built, so that neither it nor its compressed copy
+	 * is ever whole at once. */
+	if (!packed && (NULL != data->compress)) {
 
 		size_t size = store_real ? FL_SIZE : CFL_SIZE;
 
@@ -1794,6 +1871,7 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 	d->psf_host = NULL;
 	d->linphase_host = NULL;
 	d->cosets = 0;
+	d->vol_fft = NULL;
 
 	d->psf_slot = NULL;
 	d->linphase_slot = NULL;

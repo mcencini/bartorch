@@ -16,6 +16,9 @@ from bartorch._lib import library
 from bartorch.ops import LinearOperator
 
 requires_finufft = pytest.mark.skipif(not _finufft.available(), reason="finufft is not installed")
+requires_cuda = pytest.mark.skipif(
+    not bartorch.cuda.available(), reason="no CUDA device, or the library was built without CUDA"
+)
 
 
 def _within_tolerance(got, ref):
@@ -1449,3 +1452,33 @@ def test_the_function_can_be_kept_off_the_card_and_brought_over_in_sets(in_tools
 
     scale = float(reference.abs().max())
     assert float((streamed - reference).abs().max()) / scale < 1e-5
+
+
+@requires_finufft
+@requires_cuda
+def test_a_compressed_subspace_function_is_gathered_a_coefficient_at_a_time(in_tools):
+    """Gathering the spectrum is what makes a compressed function worth having.
+
+    A compressed function has values only where the samples reach, so the
+    spectrum that multiplies it is gathered down to those places.  One volume
+    is transformed and gathered at a time, so a coil's coefficients are
+    resident only in their gathered form, which is what makes the compressed
+    function cost less than the whole one rather than more.  What it computes
+    is the whole function's normal, less whatever the samples never reached.
+    """
+    from bartorch.tools import _generated as g
+
+    n, spokes, frames, coeffs, coils = 24, 96, 4, 3, 2
+    traj, basis = _subspace(n, spokes, frames, coeffs)
+    traj = traj.cuda()
+    basis = basis.cuda()
+
+    torch.manual_seed(0)
+    k = torch.randn(frames, 1, coils, spokes, n, 1, dtype=torch.complex64).cuda()
+    maps = (torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5).cuda()
+
+    whole = g.pics(k, maps, t=traj, B=basis, i=5, nufft_conf="decomposed-psf")
+    gathered = g.pics(k, maps, t=traj, B=basis, i=5, nufft_conf="compress-psf")
+
+    scale = float(whole.abs().max())
+    assert float((gathered - whole).abs().max()) / scale < 1e-3
