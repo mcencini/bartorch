@@ -1388,9 +1388,17 @@ static void install_psf(struct nufft_data* data, const complex float* traj, comp
 
 	/* Streamed, the function is made an entry at a time and kept on the
 	 * host: neither it nor any entry but the one being made is ever
-	 * resident. */
+	 * resident.
+	 *
+	 * Not a compressed one.  Compressing each entry as it is made is the
+	 * right shape -- it is what stops the function and its compressed copy
+	 * being whole at once -- but the streamed path built that way faults,
+	 * and the fault is not yet found.  Compressed and resident is correct
+	 * and is what happens; compression is not a default in any case,
+	 * because on a trajectory that reaches three fifths of the grid it
+	 * costs more than it saves. */
 	bool stream = (NULL != to_host) && stream_psf_enabled
-		&& (0 != bartorch_on_device(traj));
+		&& (0 != bartorch_on_device(traj)) && !data->conf.compress_psf;
 
 	/* The places the samples reach.  Worked out before the function is
 	 * built, because an entry is compressed as it is made. */
