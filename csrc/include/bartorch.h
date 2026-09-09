@@ -116,11 +116,10 @@ BARTORCH_API int bartorch_backend_has_fallback(int index);
 BARTORCH_API void bartorch_nufft_set_stream_psf(int enable);
 BARTORCH_API int bartorch_nufft_stream_psf(void);
 
-/* Keep only the places the samples reach.  Below zero the shape decides -- a
- * subspace function, whose triangle of volumes a set pays several times over
- * for the index the grid costs, and not a scalar one, which cannot.  Zero
- * never, above zero always. */
-BARTORCH_API void bartorch_nufft_set_compress_psf(int mode);
+/* Keep only the places the samples reach of the function a Toeplitz normal
+ * convolves with.  On by default, wherever there is a pattern to say where
+ * they reached. */
+BARTORCH_API void bartorch_nufft_set_compress_psf(int enable);
 BARTORCH_API int bartorch_nufft_compress_psf(void);
 
 BARTORCH_API void bartorch_sense_set_coil_batch(int coils);

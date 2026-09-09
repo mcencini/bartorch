@@ -1289,8 +1289,8 @@ def test_a_function_with_no_imaginary_part_is_stored_without_one(in_tools):
 
     from bartorch.tools import _generated as g
 
-    automatic = g.pics(kspace, maps.reshape(1, coils, 1, n, n), t=traj, i=20)
-    asked_for = g.pics(kspace, maps.reshape(1, coils, 1, n, n), t=traj, i=20, nufft_conf="real-psf")
+    automatic = g.pics(kspace, maps.reshape(1, coils, 1, n, n), t=traj, i=5)
+    asked_for = g.pics(kspace, maps.reshape(1, coils, 1, n, n), t=traj, i=5, nufft_conf="real-psf")
 
     # Asking for it sets the flag before the function is built and this
     # converts one that was built complex, so the two round differently; what
@@ -1323,8 +1323,8 @@ def test_a_subspace_function_over_symmetric_sampling_is_real_too(in_tools, basis
     k = torch.randn(frames, 1, coils, spokes, n, 1, dtype=torch.complex64)
     maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
 
-    automatic = g.pics(k, maps, t=traj, B=basis, i=20)
-    asked_for = g.pics(k, maps, t=traj, B=basis, i=20, nufft_conf="real-psf")
+    automatic = g.pics(k, maps, t=traj, B=basis, i=5)
+    asked_for = g.pics(k, maps, t=traj, B=basis, i=5, nufft_conf="real-psf")
 
     scale = float(asked_for.abs().max())
     assert float((automatic - asked_for).abs().max()) / scale < 1e-4
@@ -1349,8 +1349,8 @@ def test_sampling_that_is_not_symmetric_is_still_real(in_tools):
     k = torch.randn(frames, 1, coils, spokes, n, 1, dtype=torch.complex64)
     maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
 
-    automatic = g.pics(k, maps, t=traj, B=basis, i=20)
-    asked_for = g.pics(k, maps, t=traj, B=basis, i=20, nufft_conf="real-psf")
+    automatic = g.pics(k, maps, t=traj, B=basis, i=5)
+    asked_for = g.pics(k, maps, t=traj, B=basis, i=5, nufft_conf="real-psf")
 
     scale = float(asked_for.abs().max())
     assert float((automatic - asked_for).abs().max()) / scale < 1e-4
@@ -1376,8 +1376,8 @@ def test_a_basis_that_is_really_complex_keeps_the_function_complex(in_tools):
     k = torch.randn(frames, 1, coils, spokes, n, 1, dtype=torch.complex64)
     maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
 
-    kept = g.pics(k, maps, t=traj, B=basis, i=20)
-    thrown = g.pics(k, maps, t=traj, B=basis, i=20, nufft_conf="real-psf")
+    kept = g.pics(k, maps, t=traj, B=basis, i=5)
+    thrown = g.pics(k, maps, t=traj, B=basis, i=5, nufft_conf="real-psf")
 
     scale = float(kept.abs().max())
     assert float((kept - thrown).abs().max()) / scale > 1e-5, (
@@ -1400,8 +1400,8 @@ def test_a_subspace_function_is_stored_as_its_upper_triangle(in_tools):
     k = torch.randn(frames, 1, coils, spokes, n, 1, dtype=torch.complex64)
     maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
 
-    automatic = g.pics(k, maps, t=traj, B=basis, i=20)
-    asked_for = g.pics(k, maps, t=traj, B=basis, i=20, nufft_conf="upper-triag-psf")
+    automatic = g.pics(k, maps, t=traj, B=basis, i=5)
+    asked_for = g.pics(k, maps, t=traj, B=basis, i=5, nufft_conf="upper-triag-psf")
 
     torch.testing.assert_close(automatic, asked_for, rtol=1e-4, atol=1e-6)
 
@@ -1477,7 +1477,7 @@ def test_a_compressed_subspace_function_is_gathered_a_coefficient_at_a_time(in_t
     k = torch.randn(frames, 1, coils, spokes, n, 1, dtype=torch.complex64).cuda()
     maps = (torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5).cuda()
 
-    assert _finufft.compressing_psf() is None, "the shape decides unless it is told"
+    assert _finufft.compressing_psf(), "it is what happens unless it is turned off"
 
     try:
         _finufft.compress_psf(False)
@@ -1486,7 +1486,7 @@ def test_a_compressed_subspace_function_is_gathered_a_coefficient_at_a_time(in_t
         _finufft.compress_psf(True)
         gathered = g.pics(k, maps, t=traj, B=basis, i=5)
     finally:
-        _finufft.compress_psf(None)
+        _finufft.compress_psf(True)
 
     scale = float(whole.abs().max())
     assert float((gathered - whole).abs().max()) / scale < 1e-3

@@ -546,19 +546,17 @@ static void stream_wait(void) { }
  * it would be copies to no purpose, so the trajectory's side decides. */
 static int stream_psf_enabled = 1;
 
-/* Whether only the places the samples reach are kept: below zero the shape
- * decides, zero never, above zero always.  An arrangement that asked for it
- * outright gets it whatever this says. */
-static int compress_psf_mode = -1;
+/* Whether only the places the samples reach are kept. */
+static int compress_psf_enabled = 1;
 
-void bartorch_nufft_set_compress_psf(int mode)
+void bartorch_nufft_set_compress_psf(int enable)
 {
-	compress_psf_mode = (0 == mode) ? 0 : ((0 < mode) ? 1 : -1);
+	compress_psf_enabled = (0 != enable);
 }
 
 int bartorch_nufft_compress_psf(void)
 {
-	return compress_psf_mode;
+	return compress_psf_enabled;
 }
 
 void bartorch_nufft_set_stream_psf(int enable)
@@ -1676,18 +1674,18 @@ static const struct linop_s* toeplitz_for(int N, const long ksp_dims[N], const l
 	if (NULL != basis)
 		barts.upper_triag = true;
 
-	/* Keeping only where the samples reach costs an index over the grid --
-	 * one long a point, whatever the function is -- and gives back the part
-	 * of the function that lies outside them.  A scalar function is one
-	 * real volume a set, four bytes a point against the index's eight, so
-	 * there is nothing there to give back; a subspace one is a triangle of
-	 * volumes, ten of them at rank four, and the index is paid for several
-	 * times over.  So it is a subspace default and a scalar option, and
-	 * only where there is a pattern to spread, which is what says where the
-	 * samples reached. */
-	if (!barts.compress_psf && (NULL != weights)
-			&& ((0 < compress_psf_mode)
-				|| ((0 > compress_psf_mode) && (NULL != basis))))
+	/* The doubled grid a set of frequencies decomposes is what a
+	 * three-dimensional function cannot afford: computed whole it is 2^d
+	 * images at once for every entry of the matrix, and computed a set at a
+	 * time it is never allocated at all.  The sets are the same either way,
+	 * and they are what the function is brought over in. */
+	barts.decomposed_psf = true;
+
+	/* Keeping only where the samples reach: the function loses the part
+	 * that lies outside the samples, and what crosses the bus for every set
+	 * loses it too.  It costs an index over the grid, which is why it needs
+	 * a pattern -- that is what says where the samples reached. */
+	if (compress_psf_enabled && (NULL != weights))
 		barts.compress_psf = true;
 
 	/* Streaming needs the normal that walks the sets rather than the one

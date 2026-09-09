@@ -243,34 +243,32 @@ def streaming_psf() -> bool:
     return bool(library().bartorch_nufft_stream_psf())
 
 
-def compress_psf(mode: bool | None = None) -> None:
+def compress_psf(enable: bool = True) -> None:
     """Keep only the places the samples reach of the function.
 
-    A compressed function costs an index over the grid -- one ``long`` a
-    point, whatever the function is -- and gives back the part of the function
-    that lies outside the samples.  A scalar function is one real volume a set
-    of frequencies, four bytes a point against the index's eight, so there is
-    nothing there to give back; a subspace one is a triangle of volumes, ten
-    of them at rank four, and the index is paid for several times over.
+    A compressed function is the part of the function the samples reached,
+    which is also all that crosses the bus for every set of frequencies it is
+    brought over in.  It costs an index over the grid -- one ``long`` a point,
+    whatever the function is -- so on a scalar function, which is one real
+    volume a set, the index costs more than the compression gives back; on a
+    subspace function, which is a triangle of volumes, it is paid for several
+    times over.
 
-    ``None``, which is how it starts, lets the shape decide on that argument:
-    a subspace function is compressed and a scalar one is not.  ``True``
-    compresses either, ``False`` neither.  Compression drops what the samples
-    never reached, which is what makes it smaller, so it is not exact: on a
-    24^3 subspace problem it moves the reconstruction by 2e-04 of its
-    largest value.
+    It needs a pattern, which is what says where the samples reached, and
+    without one the function is kept whole.  Compression drops what the
+    samples never reached, so it is not exact: on a 24^3 subspace problem it
+    moves the reconstruction by 2e-04 of its largest value.
     """
     from bartorch._lib import library
 
-    library().bartorch_nufft_set_compress_psf(-1 if mode is None else (1 if mode else 0))
+    library().bartorch_nufft_set_compress_psf(int(bool(enable)))
 
 
-def compressing_psf() -> bool | None:
-    """Whether only the places the samples reach are kept, or None for the shape."""
+def compressing_psf() -> bool:
+    """Whether only the places the samples reach are kept."""
     from bartorch._lib import library
 
-    mode = library().bartorch_nufft_compress_psf()
-    return None if mode < 0 else bool(mode)
+    return bool(library().bartorch_nufft_compress_psf())
 
 
 def live_plans() -> int:
