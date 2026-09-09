@@ -925,6 +925,52 @@ static int spread_mask(struct nufft_data* data, const complex float* traj, long*
  * compressed one, over dimensions the operator worked out for itself rather
  * than any derived again here.
  */
+/* Whether a basis leaves the function real.
+ *
+ * `U^H diag(m) U` is real when `U` is, and a basis that is real once turned
+ * through a single angle is as good: the angle appears as `conj(e^{it}) e^{it}`
+ * and cancels.  A basis is small enough to ask about on the host, and the
+ * angle is half the argument of the sum of its squares -- which is `e^{2it}`
+ * times something real when there is one angle to find. */
+static bool basis_is_real(int N, const long bas_dims[N], const complex float* basis)
+{
+	if (NULL == basis)
+		return true;
+
+	long size = md_calc_size(N, bas_dims);
+
+	complex float* host = md_alloc(N, bas_dims, CFL_SIZE);
+	md_copy(N, bas_dims, host, basis, CFL_SIZE);
+
+	complex float squares = 0.;
+	double energy = 0.;
+
+	for (long i = 0; i < size; i++) {
+
+		squares += host[i] * host[i];
+		energy += (double)crealf(host[i]) * crealf(host[i]) + (double)cimagf(host[i]) * cimagf(host[i]);
+	}
+
+	complex float turn = (0. == cabsf(squares)) ? 1. : conjf(csqrtf(squares / cabsf(squares)));
+
+	double left = 0.;
+
+	for (long i = 0; i < size; i++) {
+
+		float part = cimagf(host[i] * turn);
+		left += (double)part * part;
+	}
+
+	md_free(host);
+
+	bool real = (0. == energy) || (left <= 1.e-12 * energy);
+
+	debug_printf(DP_DEBUG1, "Basis is %sreal, %g of it left after one turn\n",
+			real ? "" : "not ", (0. == energy) ? 0. : sqrt(left / energy));
+
+	return real;
+}
+
 static void install_psf(struct nufft_data* data, const complex float* traj)
 {
 	int N = data->N;
@@ -951,28 +997,22 @@ static void install_psf(struct nufft_data* data, const complex float* traj)
 	multiplace_free(data->psf);
 
 	/* A function with nothing in its imaginary part is stored as floats,
-	 * which halves it.  Whether it has anything there is a question about
-	 * this trajectory and this basis rather than about the caller's
-	 * intent, so it is asked rather than declared: `--real-psf` only ever
-	 * threw the imaginary part away, and throwing away something that was
-	 * not zero is a quietly wrong reconstruction. */
-	bool store_real = data->conf.real;
-
-	if (!store_real) {
-
-		complex float* imag = md_alloc_sameplace(ND, data->psf_dims, CFL_SIZE, psf);
-		md_zimag(ND, data->psf_dims, imag, psf);
-
-		float whole = md_znorm(ND, data->psf_dims, psf);
-		float part = md_znorm(ND, data->psf_dims, imag);
-
-		md_free(imag);
-
-		store_real = (0. == whole) || (part <= 1.e-6 * whole);
-
-		debug_printf(DP_DEBUG1, "PSF imaginary part is %g of it; stored as %s\n",
-				(0. == whole) ? 0. : part / whole, store_real ? "floats" : "complex");
-	}
+	 * which halves it.  Whether it has anything there is decided by the
+	 * basis, not by looking at the function: a real sample spread with a
+	 * real-valued kernel and scattered onto a grid gives a real grid, so
+	 * the sampling term is real whatever the trajectory, and the function
+	 * `U^H diag(m) U` is real whenever `U` is.
+	 *
+	 * The function as it is built does not look real -- a trajectory whose
+	 * samples do not come in pairs transforms to something a tenth
+	 * imaginary.  That is an artefact of how it is made rather than
+	 * anything the operator has: the function is Hermitian about its
+	 * centre, the grid is of even length and holds -N without its partner
+	 * +N, and the unpaired end leaks.  Taking the real part is the
+	 * projection back onto what the function already is, so a basis that
+	 * says the function is real is better evidence than the function is.
+	 */
+	bool store_real = data->conf.real || basis_is_real(ND, data->bas_dims, basis);
 
 	if (store_real) {
 

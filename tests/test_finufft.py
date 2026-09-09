@@ -1327,12 +1327,15 @@ def test_a_subspace_function_over_symmetric_sampling_is_real_too(in_tools, basis
 
 
 @requires_finufft
-def test_a_subspace_function_keeps_an_imaginary_part_it_really_has(in_tools):
-    """Sampling that is not symmetric per frame leaves one, and it is kept.
+def test_sampling_that_is_not_symmetric_is_still_real(in_tools):
+    """What decides is the basis, not whether the samples come in pairs.
 
-    Each frame here sees its own subset of spokes, so its transfer function is
-    complex and so is the Gram matrix over it.  Throwing that away is an
-    approximation -- a small one, but not one to make on the caller's behalf.
+    A real sample spread with a real-valued kernel and scattered onto a grid
+    gives a real grid, so the sampling term is real whatever the trajectory.
+    The function as it is built does not look it -- samples that do not come
+    in pairs leave a tenth of it imaginary -- but that is an artefact of the
+    grid being of even length and holding one end without its partner, and
+    taking the real part is the projection back onto what the function is.
     """
     from bartorch.tools import _generated as g
 
@@ -1342,12 +1345,39 @@ def test_a_subspace_function_keeps_an_imaginary_part_it_really_has(in_tools):
     k = torch.randn(frames, 1, coils, spokes, n, 1, dtype=torch.complex64)
     maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
 
+    automatic = g.pics(k, maps, t=traj, B=basis, i=20)
+    asked_for = g.pics(k, maps, t=traj, B=basis, i=20, nufft_conf="real-psf")
+
+    scale = float(asked_for.abs().max())
+    assert float((automatic - asked_for).abs().max()) / scale < 1e-4
+
+
+@requires_finufft
+def test_a_basis_that_is_really_complex_keeps_the_function_complex(in_tools):
+    """One angle over the whole basis cancels; different angles do not.
+
+    ``conj(U_i) U_j`` carries ``exp(i(t_j - t_i))``, which is one only when
+    every component turns through the same angle.  A basis that does not is a
+    function with an imaginary part of its own, and it is kept.
+    """
+    from bartorch.tools import _generated as g
+
+    n, coils, frames, coeffs, spokes = 32, 4, 6, 3, 8
+    traj, _ = _subspace(n, spokes, frames, coeffs)
+    torch.manual_seed(0)
+
+    basis = torch.zeros(coeffs, frames, 1, 1, 1, 1, 1, dtype=torch.complex64)
+    basis[..., 0, 0, 0, 0, 0] = torch.randn(coeffs, frames) + 1j * torch.randn(coeffs, frames)
+
+    k = torch.randn(frames, 1, coils, spokes, n, 1, dtype=torch.complex64)
+    maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
+
     kept = g.pics(k, maps, t=traj, B=basis, i=20)
     thrown = g.pics(k, maps, t=traj, B=basis, i=20, nufft_conf="real-psf")
 
     scale = float(kept.abs().max())
     assert float((kept - thrown).abs().max()) / scale > 1e-5, (
-        "the imaginary part was discarded by default, which it must not be"
+        "a complex basis leaves the function complex, and that must be kept"
     )
 
 
