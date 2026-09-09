@@ -494,17 +494,14 @@ static void stream_wait(void) { }
 /* Whether the function is kept off the card and brought over a set of
  * frequencies at a time.
  *
- * Off, for now.  It is a large win where it applies -- on 96^3 with eight
- * coils, 198 MB against 364 and against 576 for a function built whole, and
- * with the fused multiply below about half the time -- but a subspace problem
- * whose basis is real is held 1e-03 from BART's own normal, which is more than
- * the thousandth the transform is computed to and is not yet understood.  The
- * scalar case and a complex basis are held to 1e-06 either way.  Until that is
- * run down this is asked for rather than assumed.
+ * On, because the function is the largest thing a three-dimensional subspace
+ * reconstruction holds and this is what decides whether one fits: on 96^3 with
+ * eight coils it is 190 MB against 364, and against 576 for a function built
+ * whole.  With the fused multiply below it costs nothing in time.
  *
  * It applies only where there is a card to keep the function off; on the host
  * it would be copies to no purpose, so the trajectory's side decides. */
-static int stream_psf_enabled;
+static int stream_psf_enabled = 1;
 
 void bartorch_nufft_set_stream_psf(int enable)
 {
@@ -1283,17 +1280,10 @@ static void install_psf(struct nufft_data* data, const complex float* traj, comp
 	 * kept on the host: neither it nor any set but the one being made is
 	 * ever resident.  A compressed function is not served that way.
 	 *
-	 * Neither is a real function contracted against the coefficients: held
-	 * against BART's own normal that comes out 3.4e-03 apart, more than the
-	 * thousandth the transform is computed to, and the cause is not yet
-	 * known -- BART's own low-memory normal is itself 6.6e-04 from its
-	 * whole-function one on that path, so there is something to understand
-	 * before either is trusted. */
-	bool contracts = !md_check_equal_dims(N, data->cim_dims, data->ciT_dims, ~0UL);
-
+	 */
 	bool stream = (NULL != to_host) && stream_psf_enabled
-		&& (0 != bartorch_on_device(traj)) && !data->conf.compress_psf
-		&& !(store_real && contracts);
+		&& (0 != bartorch_on_device(traj)) && !data->conf.compress_psf;
+
 
 	complex float* psf = stream
 		? bartorch_psf_to_host(N, data->psf_dims, data->flags, data->trj_dims, traj,
@@ -1463,17 +1453,10 @@ static const struct linop_s* toeplitz_for(int N, const long ksp_dims[N], const l
 	 * of: without a precomputed phase the shift is worked out from the set
 	 * BART thinks it is on, which is always the first once it is told it
 	 * has one. */
-	/* Only where the function will actually be streamed.  BART's low-memory
-	 * normal is not its whole-function one to the last digit -- on a real
-	 * function contracted against the coefficients the two are 6.6e-04
-	 * apart -- so asking for it where it buys nothing would move a
-	 * reconstruction for no reason.  What decides is what `install_psf`
-	 * decides: a real function contracted against a basis is left alone,
-	 * and a basis that is real is what makes the function real. */
-	bool will_stream = stream_psf_enabled && (0 != bartorch_on_device(traj))
-		&& !((NULL != basis) && basis_is_real(N, bas_dims, basis));
-
-	if (will_stream) {
+	/* Only where the function will actually be streamed: asking for the
+	 * low-memory normal where it buys nothing would walk the sets for no
+	 * reason. */
+	if (stream_psf_enabled && (0 != bartorch_on_device(traj))) {
 
 		barts.lowmem = true;
 		barts.precomp_linphase = true;

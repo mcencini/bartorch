@@ -1416,6 +1416,12 @@ def test_the_function_can_be_kept_off_the_card_and_brought_over_in_sets(in_tools
 
     On the host there is no card to keep it off, so this only differs on one:
     what the test pins there is that turning it on changes nothing.
+
+    Few iterations on purpose.  A reconstruction is not reproducible to the
+    last bit -- the gridding sums in whatever order the threads finish -- and
+    conjugate gradients amplify that, from about 1e-06 after one iteration to
+    1e-04 after twenty-five.  A comparison between two ways of computing the
+    same operator has to sit below that, not above it.
     """
     from bartorch.tools import _generated as g
 
@@ -1429,15 +1435,15 @@ def test_the_function_can_be_kept_off_the_card_and_brought_over_in_sets(in_tools
     kspace = bt.nufft(traj, image)
     bank = maps.reshape(1, coils, 1, n, n)
 
-    assert not lib.bartorch_nufft_stream_psf(), "it is asked for, not assumed"
+    assert lib.bartorch_nufft_stream_psf(), "it is what happens unless it is turned off"
 
     was = lib.bartorch_nufft_stream_psf()
     try:
         lib.bartorch_nufft_set_stream_psf(0)
-        reference = g.pics(kspace, bank, t=traj, i=25, nufft_conf="decomposed-psf")
+        reference = g.pics(kspace, bank, t=traj, i=5, nufft_conf="decomposed-psf")
 
         lib.bartorch_nufft_set_stream_psf(1)
-        streamed = g.pics(kspace, bank, t=traj, i=25, nufft_conf="decomposed-psf")
+        streamed = g.pics(kspace, bank, t=traj, i=5, nufft_conf="decomposed-psf")
     finally:
         lib.bartorch_nufft_set_stream_psf(was)
 
