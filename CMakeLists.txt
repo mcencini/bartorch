@@ -221,6 +221,10 @@ set(BARTORCH_SOURCES
     csrc/ref_blas.c
     csrc/fft.cpp)
 
+if(BARTORCH_CUDA)
+    list(APPEND BARTORCH_SOURCES csrc/kernels.cu)
+endif()
+
 add_library(bartorch SHARED ${BART_SOURCES} ${BARTORCH_SOURCES})
 
 # BART's NUFFT operator keeps its implementation under another name, so

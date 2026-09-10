@@ -577,6 +577,16 @@ static void sense_normal(const linop_data_t* _d, complex float* dst, const compl
 
 	off_card(d->img_dims, (complex float*)src, src_on, false);
 	off_card(d->img_dims, dst, dst_on, true);
+
+	/* BART keeps every block it frees for the next application, which
+	 * serves the hundreds of transform workspaces an application asks for
+	 * -- and leaves the card holding, between applications, whatever the
+	 * last one freed.  For a caller whose arrays are on the host the card
+	 * holds the operator and nothing else, so the cache is handed back. */
+#ifdef USE_CUDA
+	if (crosses(src))
+		cuda_memcache_clear();
+#endif
 }
 
 static void sense_del(const linop_data_t* _d)
