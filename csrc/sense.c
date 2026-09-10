@@ -585,7 +585,7 @@ static void sense_normal(const linop_data_t* _d, complex float* dst, const compl
 	 * holds the operator and nothing else, so the cache is handed back. */
 #ifdef USE_CUDA
 	if (crosses(src))
-		cuda_memcache_clear();
+		bartorch_cuda_memcache_clear_all();
 #endif
 }
 

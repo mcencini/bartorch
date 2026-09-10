@@ -254,6 +254,8 @@ BARTORCH_API int bartorch_cuda_device(void);
 BARTORCH_API int bartorch_cuda_set_streams(int n);
 BARTORCH_API int bartorch_cuda_get_streams(void);
 BARTORCH_API int bartorch_cuda_use_memcache(int enable);
+/* Hand every stream's cache of freed device blocks back to the driver. */
+BARTORCH_API void bartorch_cuda_memcache_clear_all(void);
 BARTORCH_API int bartorch_cuda_wait_for_stream(void* stream);
 BARTORCH_API int bartorch_cuda_signal_stream(void* stream);
 BARTORCH_API long bartorch_cuda_free_memory(void);

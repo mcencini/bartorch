@@ -26,6 +26,10 @@
 #include "num/gpuops.h"
 #include "num/mem.h"
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 /* mem.c's flag, which mem.h does not declare. */
 extern bool memcache;
 #include "num/init.h"
@@ -103,13 +107,33 @@ int bartorch_cuda_get_streams(void)
 	return cuda_num_streams;
 }
 
+/* Empty the cache of every stream.
+ *
+ * BART keeps a cache per stream and `cuda_memcache_clear` empties the current
+ * stream's alone -- and a block freed inside a parallel region went to the
+ * cache of the thread that freed it, which from outside the region is not the
+ * current stream.  So the clear is made from outside, and then once from each
+ * thread of a region with the stream level armed, which is every stream a
+ * region here can have freed on. */
+void bartorch_cuda_memcache_clear_all(void)
+{
+	cuda_memcache_clear();
+
+	int streams = cuda_set_stream_level();
+
+	if (1 < streams) {
+#pragma omp parallel num_threads(streams)
+		cuda_memcache_clear();
+	}
+}
+
 /* Off is both of BART's flags.  `cuda_memcache_off` sets the one in gpuops.c,
  * but whether a freed block is kept is decided by the one in mem.c, which
  * only `memcache_off` changes -- so the cache is emptied and then nothing more
  * is put in it. */
 int bartorch_cuda_use_memcache(int enable)
 {
-	cuda_memcache_clear();
+	bartorch_cuda_memcache_clear_all();
 
 	if (!enable) {
 
@@ -363,6 +387,7 @@ static void bartorch_streams_default(void)
 int bartorch_cuda_set_streams(int n) { (void)n; return -1; }
 int bartorch_cuda_get_streams(void) { return 0; }
 int bartorch_cuda_use_memcache(int enable) { (void)enable; return -1; }
+void bartorch_cuda_memcache_clear_all(void) { }
 int bartorch_cuda_wait_for_stream(void* stream) { (void)stream; return -1; }
 int bartorch_cuda_signal_stream(void* stream) { (void)stream; return -1; }
 void* bartorch_host_alloc(long size, int pinned) { (void)pinned; return (0 < size) ? xmalloc((size_t)size) : NULL; }

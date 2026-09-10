@@ -320,13 +320,15 @@ def test_an_operator_on_a_card_takes_and_returns_host_arrays():
     x = torch.randn(on_card.ishape, dtype=torch.complex64)
     y = torch.randn(on_card.oshape, dtype=torch.complex64)
 
-    for name, got, want in (
-        ("forward", from_host(x), on_card(x.cuda())),
-        ("adjoint", from_host.adjoint(y), on_card.adjoint(y.cuda())),
-        ("normal", from_host.normal(x), on_card.normal(x.cuda())),
+    # The adjoint grids with atomic adds, so two of them differ in summation
+    # order at about 1e-06; the forward and the normal reproduce exactly.
+    for name, got, want, tol in (
+        ("forward", from_host(x), on_card(x.cuda()), (1e-5, 1e-6)),
+        ("adjoint", from_host.adjoint(y), on_card.adjoint(y.cuda()), (1e-4, 1e-5)),
+        ("normal", from_host.normal(x), on_card.normal(x.cuda()), (1e-5, 1e-6)),
     ):
         assert got.device.type == "cpu", name
-        torch.testing.assert_close(got, want.cpu(), rtol=1e-5, atol=1e-6, msg=name)
+        torch.testing.assert_close(got, want.cpu(), rtol=tol[0], atol=tol[1], msg=name)
 
     solved = from_host.lstsq(y, maxiter=5)
     assert solved.device.type == "cpu"
