@@ -161,6 +161,8 @@ BARTORCH_API int bartorch_cuda_stage_release(void* stage, int slot);
 /* A copy between the card and pageable host memory through two page-locked
  * buffers, so it runs near the bus's rate even into pages never touched. */
 BARTORCH_API int bartorch_cuda_copy_pageable(void* dst, const void* src, long size);
+BARTORCH_API void* bartorch_host_prefault_begin(void* ptr, long size);
+BARTORCH_API void bartorch_host_prefault_end(void* handle);
 
 /* Page-lock, and release, host memory that already exists. */
 BARTORCH_API int bartorch_cuda_host_register(void* ptr, long size);

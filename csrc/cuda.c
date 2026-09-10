@@ -12,13 +12,73 @@
  * an event in each direction: BART's streams wait on what the caller has
  * already queued, and the caller waits on what BART leaves behind.
  */
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "include/bartorch.h"
 
 #include "misc/misc.h"
+
+/* The pages of a host array faulted in on a thread of its own.
+ *
+ * An array a caller has just made has no pages yet, and the first write to
+ * each is a fault: copying a 512 MiB image into a fresh tensor takes 250 ms
+ * here, against 44 ms into one already written.  An operator whose result
+ * lands in host memory starts this as it starts the card and joins it before
+ * the copy, so each page is written once -- with the value it holds -- while
+ * the card computes what will land there. */
+struct prefault {
+
+	pthread_t thread;
+	volatile char* ptr;
+	long size;
+};
+
+static void* prefault_run(void* arg)
+{
+	struct prefault* p = arg;
+	long page = sysconf(_SC_PAGESIZE);
+
+	for (long i = 0; i < p->size; i += page)
+		p->ptr[i] = p->ptr[i];
+
+	p->ptr[p->size - 1] = p->ptr[p->size - 1];
+
+	return NULL;
+}
+
+void* bartorch_host_prefault_begin(void* ptr, long size)
+{
+	if ((NULL == ptr) || (0 >= size))
+		return NULL;
+
+	struct prefault* p = xmalloc(sizeof *p);
+
+	p->ptr = ptr;
+	p->size = size;
+
+	if (0 != pthread_create(&p->thread, NULL, prefault_run, p)) {
+
+		xfree(p);
+		return NULL;
+	}
+
+	return p;
+}
+
+void bartorch_host_prefault_end(void* handle)
+{
+	if (NULL == handle)
+		return;
+
+	struct prefault* p = handle;
+
+	pthread_join(p->thread, NULL);
+	xfree(p);
+}
 
 #ifdef USE_CUDA
 

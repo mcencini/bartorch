@@ -530,6 +530,9 @@ static void sense_adjoint(const linop_data_t* _d, complex float* dst, const comp
 
 	complex float* dst_on = onto_card(d->img_dims, dst, false);
 
+	/* The caller's pages are faulted in while the card works (cuda.c). */
+	void* faulting = (dst_on != dst) ? bartorch_host_prefault_begin(dst, md_calc_size(DIMS, d->img_dims) * (long)CFL_SIZE) : NULL;
+
 	struct slab_ctx c = {
 
 		.dst = dst_on, .src = src,
@@ -544,6 +547,7 @@ static void sense_adjoint(const linop_data_t* _d, complex float* dst, const comp
 	md_free(c.out);
 	md_free(c.cim);
 
+	bartorch_host_prefault_end(faulting);
 	off_card(d->img_dims, dst, dst_on, true);
 
 #ifdef USE_CUDA
@@ -578,6 +582,9 @@ static void sense_normal(const linop_data_t* _d, complex float* dst, const compl
 	complex float* src_on = onto_card(d->img_dims, src, true);
 	complex float* dst_on = onto_card(d->img_dims, dst, false);
 
+	/* The caller's pages are faulted in while the card works (cuda.c). */
+	void* faulting = (dst_on != dst) ? bartorch_host_prefault_begin(dst, md_calc_size(DIMS, d->img_dims) * (long)CFL_SIZE) : NULL;
+
 	struct slab_ctx c = {
 
 		.dst = dst_on, .src = src_on,
@@ -611,6 +618,7 @@ static void sense_normal(const linop_data_t* _d, complex float* dst, const compl
 		md_free(c.cim);
 
 	off_card(d->img_dims, (complex float*)src, src_on, false);
+	bartorch_host_prefault_end(faulting);
 	off_card(d->img_dims, dst, dst_on, true);
 
 	/* BART keeps every block it frees for the next application, which

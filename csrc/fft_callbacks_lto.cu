@@ -16,13 +16,17 @@
 
 #include "coset.cuh"
 
+/* The phase at offset `off`, found in 32-bit arithmetic: a 64-bit division per
+ * point costs the inverse transform about 1.1 ms of 6.6 at 256^3, and a volume
+ * has callbacks only if it has fewer than 2^32 points (fft_callbacks.cu). */
 __device__ static inline cuFloatComplex phase_of(const struct coset_info* c, unsigned long long off, bool conj)
 {
-	long i = (long)off;
-	long x = i % c->phase.dims[0];
-	long yz = i / c->phase.dims[0];
+	unsigned int i = (unsigned int)off;
+	unsigned int nx = (unsigned int)c->phase.dims[0];
+	unsigned int ny = (unsigned int)c->phase.dims[1];
+	unsigned int yz = i / nx;
 
-	return phase_at(c->phase, x, yz % c->phase.dims[1], yz / c->phase.dims[1], conj);
+	return phase_at(c->phase, (long)(i - yz * nx), (long)(yz % ny), (long)(yz / ny), conj);
 }
 
 __device__ cufftComplex bartorch_load_in(void* in, unsigned long long off, void* info, void* shared)

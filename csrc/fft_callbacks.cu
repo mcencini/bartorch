@@ -17,6 +17,7 @@
 #include <dlfcn.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #include <cuda_runtime_api.h>
 #include <cufftXt.h>
@@ -101,6 +102,10 @@ extern "C" struct bartorch_cb_fft* bartorch_cb_fft_create(const long dims[3])
 			n[rank++] = (int)dims[i];
 
 	if (0 == rank)
+		return NULL;
+
+	/* The callbacks index the volume in 32 bits. */
+	if (dims[0] * dims[1] * dims[2] > (long)UINT32_MAX)
 		return NULL;
 
 	struct bartorch_cb_fft* p = (struct bartorch_cb_fft*)xmalloc(sizeof *p);
