@@ -433,6 +433,7 @@ static void drive_slabs(const struct sense_s* d, const void* ref, slab_fn fn, vo
 		 * and the fetch of the first slab does exactly that. */
 		(void)stream_count();
 
+#ifdef _OPENMP
 #pragma omp parallel num_threads(2)
 		{
 			if (0 == omp_get_thread_num()) {
@@ -451,6 +452,20 @@ static void drive_slabs(const struct sense_s* d, const void* ref, slab_fn fn, vo
 				stream_wait();
 			}
 		}
+#else
+		/* No second thread to fetch on, so the fetch follows the
+		 * arithmetic rather than running beside it.  The buffers still
+		 * alternate, so the walk is the same walk; only the overlap it
+		 * was arranged for is gone. */
+		fn(d, c, w->buf[b], mstrs, last, ctx);
+		stream_wait();
+
+		if (0 <= next) {
+
+			fetch_slab(d, next, w->buf[b ^ 1]);
+			stream_wait();
+		}
+#endif
 
 		if (0 <= next) {
 
