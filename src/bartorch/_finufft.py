@@ -332,6 +332,30 @@ def releasing_transforms() -> bool:
     return bool(library().bartorch_nufft_release_transforms())
 
 
+def fft_callbacks(enable: bool = True) -> None:
+    """Run the passes around each volume's transform inside the transform.
+
+    A streamed, compressed set is convolved a volume at a time, and each
+    volume's forward and inverse transform come with passes of their own: the
+    set's phase and the coil's sensitivity on the way in and the gather after
+    it, the scatter before the inverse and the conjugates and the sum after
+    it.  cuFFT links callbacks into its kernels, so each pass becomes part of a
+    read or a write the transform makes anyway.  Linking them in takes cuFFT's
+    LTO callbacks and nvJitLink beside it; where either is missing the passes
+    run on their own.  On unless turned off.
+    """
+    from bartorch._lib import library
+
+    library().bartorch_nufft_set_fft_callbacks(int(bool(enable)))
+
+
+def using_fft_callbacks() -> bool:
+    """Whether the passes around a volume's transform run inside it where they can."""
+    from bartorch._lib import library
+
+    return bool(library().bartorch_nufft_fft_callbacks())
+
+
 def live_plans() -> int:
     """FINUFFT plans made and not yet destroyed.
 
@@ -384,6 +408,13 @@ def functions_compressed() -> int:
     from bartorch._lib import library
 
     return int(library().bartorch_toeplitz_counter(2))
+
+
+def sets_through_callbacks() -> int:
+    """Sets convolved with the passes inside cuFFT's transforms since the counters were reset."""
+    from bartorch._lib import library
+
+    return int(library().bartorch_toeplitz_counter(3))
 
 
 def reset_counters() -> None:

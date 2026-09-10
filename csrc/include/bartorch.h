@@ -138,6 +138,8 @@ BARTORCH_API int bartorch_nufft_overlap_psf(void);
 BARTORCH_API void bartorch_nufft_set_contraction_kernel(int enable);
 BARTORCH_API void bartorch_nufft_set_release_transforms(int enable);
 BARTORCH_API int bartorch_nufft_release_transforms(void);
+BARTORCH_API void bartorch_nufft_set_fft_callbacks(int enable);
+BARTORCH_API int bartorch_nufft_fft_callbacks(void);
 
 /* Host memory a copy engine can read directly, so an asynchronous copy out of
  * it is one.  Ordinary memory when it is not asked for, or where there is no

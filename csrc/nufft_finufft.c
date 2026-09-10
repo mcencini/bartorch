@@ -46,6 +46,11 @@
 #include "num/multiplace.h"
 #include "num/triagmat.h"
 #include "num/gpuops.h"
+
+/* csrc/fft_callbacks.cu: a volume's transform pair with the passes around it
+ * run inside it. */
+struct bartorch_cb_fft;
+
 #ifdef USE_CUDA
 #include "noncart/gpu_grid.h"
 
@@ -54,9 +59,18 @@ extern void bartorch_cuda_phase_map_in(int N, const long dims[], const float shi
 		complex float* dst, const complex float* src, const complex float* map);
 extern void bartorch_cuda_phase_map_out(int N, const long dims[], const float shift[3], float scale,
 		complex float* dst, const complex float* src, const complex float* map);
-extern void bartorch_cuda_gather(long L, const int* kept, complex float* dst, const complex float* src);
+extern void bartorch_cuda_gather(long V, const unsigned int* mask, const int* prefix, complex float* dst, const complex float* src);
 extern int bartorch_cuda_contract_upper_real(long L, int R, complex float* bank, const float* mat);
-extern void bartorch_cuda_scatter(long V, long L, const int* kept, complex float* dst, const complex float* src);
+extern void bartorch_cuda_scatter(long V, const unsigned int* mask, const int* prefix, complex float* dst, const complex float* src);
+
+extern struct bartorch_cb_fft* bartorch_cb_fft_create(const long dims[3]);
+extern void bartorch_cb_fft_free(struct bartorch_cb_fft* p);
+extern void bartorch_cb_fft_forward(struct bartorch_cb_fft* p, int N, const long dims[],
+		const float shift[3], float scale, const unsigned int* mask, const int* prefix,
+		complex float* bank, complex float* volume, const complex float* src, const complex float* map);
+extern void bartorch_cb_fft_inverse(struct bartorch_cb_fft* p, int N, const long dims[],
+		const float shift[3], float scale, const unsigned int* mask, const int* prefix,
+		complex float* dst, complex float* volume, const complex float* bank, const complex float* map);
 #endif
 
 #include "include/bartorch.h"
@@ -92,9 +106,11 @@ extern double bartorch_finufft_upsampling(void);
 /* ------------------------------------------------------------------------ */
 
 /* Normal operators built since the last reset, so a test can say that a
- * solve ran on a point spread function rather than on the transform pair. */
-enum { TP_PSF, TP_PAIR, TP_COMPRESSED };
-static long toeplitz_counters[3];
+ * solve ran on a point spread function rather than on the transform pair;
+ * the functions among them that were compressed; and the sets convolved
+ * with the passes run inside cuFFT's transforms. */
+enum { TP_PSF, TP_PAIR, TP_COMPRESSED, TP_CALLBACKS, TP_COUNTERS };
+static long toeplitz_counters[TP_COUNTERS];
 
 /* Building a point spread function needs a transform of its own, and that
  * transform is nobody's normal: it is asked for one adjoint and freed.  While
@@ -104,14 +120,13 @@ static _Thread_local int making_psf;
 
 long bartorch_toeplitz_counter(int which)
 {
-	return ((0 <= which) && (which <= TP_COMPRESSED)) ? toeplitz_counters[which] : -1;
+	return ((0 <= which) && (which < TP_COUNTERS)) ? toeplitz_counters[which] : -1;
 }
 
 void bartorch_toeplitz_reset_counters(void)
 {
-	toeplitz_counters[TP_PSF] = 0;
-	toeplitz_counters[TP_PAIR] = 0;
-	toeplitz_counters[TP_COMPRESSED] = 0;
+	for (int i = 0; i < TP_COUNTERS; i++)
+		toeplitz_counters[i] = 0;
 }
 
 /* One side of the bus: the pair of plans FINUFFT holds there, the coordinates
@@ -230,15 +245,21 @@ struct nufft_fi_s {
 	size_t psf_size;		/* a real function is stored as floats */
 	int cosets;
 
-	/* The places the samples reach, as a list of grid positions on the
-	 * card: what a gather reads instead of a map over the whole grid. */
-	int* kept;
-	long kept_n;
+	/* The places the samples reach, on the card, as coset.cuh reads them:
+	 * a bit per grid point and a count per word of bits. */
+	unsigned int* kept_mask;
+	int* kept_prefix;
 
 	/* The transform of one volume, which is what a compressed function
 	 * works a coefficient at a time against.  BART's own is over every
 	 * coil and coefficient at once. */
 	struct linop_s* vol_fft;
+
+	/* The same transform with the passes around it run inside it, made the
+	 * first time a set is convolved; NULL where cuFFT cannot link them in,
+	 * and then `vol_fft` and the passes serve. */
+	struct bartorch_cb_fft* cb_fft;
+	bool cb_tried;
 };
 
 static DEF_TYPEID(nufft_fi_s);
@@ -1021,13 +1042,56 @@ static void slot_read(struct nufft_fi_s* d, bool last)
 	d->slot_set[0] = next;
 }
 
+/* Whether the passes around a volume's transform run inside it, as cuFFT
+ * callbacks, where cuFFT can link them in. */
+static int fft_callbacks_enabled = 1;
+
+void bartorch_nufft_set_fft_callbacks(int enable)
+{
+	fft_callbacks_enabled = (0 != enable);
+}
+
+int bartorch_nufft_fft_callbacks(void)
+{
+	return fft_callbacks_enabled;
+}
+
+/* The operator's transform pair with the passes inside it, where it can have
+ * one: every axis of the volume longer than one is among the first three,
+ * and transformed. */
+static struct bartorch_cb_fft* callbacks_for(struct nufft_fi_s* d)
+{
+	if (!fft_callbacks_enabled)
+		return NULL;
+
+	if (!d->cb_tried) {
+
+		d->cb_tried = true;
+
+#ifdef USE_CUDA
+		const struct nufft_data* t = d->toeplitz_data;
+		unsigned long flags = t->flags | t->conf.cfft;
+		bool covered = true;
+
+		for (int i = 0; i < t->N; i++)
+			if (1 < t->img_dims[i])
+				covered = covered && (i < 3) && MD_IS_SET(flags, i);
+
+		if (covered)
+			d->cb_fft = bartorch_cb_fft_create(t->img_dims);
+#endif
+	}
+
+	return d->cb_fft;
+}
+
 /* Down to the places the samples reach, and back up with zeros elsewhere. */
-static void gather(const struct nufft_fi_s* d, complex float* dst, const complex float* src)
+static void gather(const struct nufft_fi_s* d, long grid, complex float* dst, const complex float* src)
 {
 #ifdef USE_CUDA
-	bartorch_cuda_gather(d->kept_n, d->kept, dst, src);
+	bartorch_cuda_gather(grid, d->kept_mask, d->kept_prefix, dst, src);
 #else
-	(void)d; (void)dst; (void)src;
+	(void)d; (void)grid; (void)dst; (void)src;
 	error("bartorch: a streamed set is convolved on a card\n");
 #endif
 }
@@ -1035,11 +1099,65 @@ static void gather(const struct nufft_fi_s* d, complex float* dst, const complex
 static void scatter(const struct nufft_fi_s* d, long grid, complex float* dst, const complex float* src)
 {
 #ifdef USE_CUDA
-	bartorch_cuda_scatter(grid, d->kept_n, d->kept, dst, src);
+	bartorch_cuda_scatter(grid, d->kept_mask, d->kept_prefix, dst, src);
 #else
 	(void)d; (void)grid; (void)dst; (void)src;
 	error("bartorch: a streamed set is convolved on a card\n");
 #endif
+}
+
+/* A coefficient into the gathered spectrum: the phase and the sensitivity on,
+ * the transform, the gather. */
+static void coefficient_in(struct nufft_fi_s* d, struct bartorch_cb_fft* cb, const float shift[3],
+		complex float* bank, complex float* volume, const complex float* src, const complex float* map)
+{
+	struct nufft_data* t = d->toeplitz_data;
+	int N = t->N;
+	long grid = md_calc_size(3, t->img_dims);
+
+#ifdef USE_CUDA
+	if (NULL != cb) {
+
+		bartorch_cb_fft_forward(cb, N, t->img_dims, shift, 1.f / sqrtf((float)grid),
+				d->kept_mask, d->kept_prefix, bank, volume, src, map);
+		return;
+	}
+#else
+	(void)cb;
+#endif
+
+	apply_phase_map(t, shift, volume, src, map, false);
+
+	linop_forward(d->vol_fft, N, t->img_dims, volume, N, t->img_dims, volume);
+
+	gather(d, grid, bank, volume);
+}
+
+/* And out of it: the scatter, the inverse, the conjugates of both, and the
+ * sum into `dst`. */
+static void coefficient_out(struct nufft_fi_s* d, struct bartorch_cb_fft* cb, const float shift[3],
+		complex float* dst, complex float* volume, const complex float* bank, const complex float* map)
+{
+	struct nufft_data* t = d->toeplitz_data;
+	int N = t->N;
+	long grid = md_calc_size(3, t->img_dims);
+
+#ifdef USE_CUDA
+	if (NULL != cb) {
+
+		bartorch_cb_fft_inverse(cb, N, t->img_dims, shift, 1.f / sqrtf((float)grid),
+				d->kept_mask, d->kept_prefix, dst, volume, bank, map);
+		return;
+	}
+#else
+	(void)cb;
+#endif
+
+	scatter(d, grid, volume, bank);
+
+	linop_adjoint(d->vol_fft, N, t->img_dims, volume, N, t->img_dims, volume);
+
+	apply_phase_map(t, shift, dst, volume, map, true);
 }
 
 /* The set convolved with `src`, added to `dst`, against a compressed function.
@@ -1052,6 +1170,10 @@ static void scatter(const struct nufft_fi_s* d, long grid, complex float* dst, c
  * coefficient at full size.  Coils are independent until the sum that ends
  * them, so they are taken one at a time; coefficients are not, because the
  * function contracts them, so a coil's are gathered before any is multiplied.
+ *
+ * Around each transform are the passes that put the phase and the sensitivity
+ * on and gather, and that scatter and take them off; where cuFFT can run them
+ * inside the transforms, they run there.
  */
 static void packed_coset(struct nufft_fi_s* d, complex float* dst, const complex float* src,
 		const void* psf, const long map_strs[], const complex float* map, bool last)
@@ -1062,7 +1184,9 @@ static void packed_coset(struct nufft_fi_s* d, complex float* dst, const complex
 	float shift[3];
 	coset_shift(d, shift);
 
-	if (NULL == d->vol_fft)
+	struct bartorch_cb_fft* cb = callbacks_for(d);
+
+	if ((NULL == cb) && (NULL == d->vol_fft))
 		d->vol_fft = linop_fft_create(N, t->img_dims, t->flags | t->conf.cfft);
 
 	/* The spectrum of one coil, gathered: the places the samples reach on
@@ -1098,8 +1222,6 @@ static void packed_coset(struct nufft_fi_s* d, complex float* dst, const complex
 
 	long map_coil_step = (NULL == map) ? 0 : map_strs[3] / (long)CFL_SIZE;
 
-	long grid = md_calc_size(3, t->img_dims);
-
 	complex float* volume = md_alloc_sameplace(N, t->img_dims, CFL_SIZE, dst);
 
 	for (long c = 0; c < coils; c++) {
@@ -1108,14 +1230,8 @@ static void packed_coset(struct nufft_fi_s* d, complex float* dst, const complex
 
 		complex float* bank = md_alloc_sameplace(N, bank_dims, CFL_SIZE, dst);
 
-		for (long r = 0; r < coeffs; r++) {
-
-			apply_phase_map(t, shift, volume, src + c * coil_step + r * rest_step, m, false);
-
-			linop_forward(d->vol_fft, N, t->img_dims, volume, N, t->img_dims, volume);
-
-			gather(d, bank + r * locations, volume);
-		}
+		for (long r = 0; r < coeffs; r++)
+			coefficient_in(d, cb, shift, bank + r * locations, volume, src + c * coil_step + r * rest_step, m);
 
 		if (md_check_equal_dims(N, bank_dims, ciT_bank_dims, ~0UL))
 			bank = multiply_transfer(t, psf, bank_dims, ciT_bank_dims, bank);
@@ -1124,19 +1240,16 @@ static void packed_coset(struct nufft_fi_s* d, complex float* dst, const complex
 
 		slot_read(d, last && (c == coils - 1));
 
-		for (long r = 0; r < out_coeffs; r++) {
-
-			scatter(d, grid, volume, bank + r * locations);
-
-			linop_adjoint(d->vol_fft, N, t->img_dims, volume, N, t->img_dims, volume);
-
-			apply_phase_map(t, shift, dst + c * coil_step + r * rest_step, volume, m, true);
-		}
+		for (long r = 0; r < out_coeffs; r++)
+			coefficient_out(d, cb, shift, dst + c * coil_step + r * rest_step, volume, bank + r * locations, m);
 
 		md_free(bank);
 	}
 
 	md_free(volume);
+
+	if (NULL != cb)
+		toeplitz_counters[TP_CALLBACKS]++;
 }
 
 /* One set of frequencies, convolved and added to what is there.
@@ -1158,7 +1271,7 @@ static bool fused_coset(struct nufft_fi_s* d, complex float* dst, const complex 
 	if (NULL == psf)
 		return false;
 
-	if (NULL != d->kept) {
+	if (NULL != d->kept_mask) {
 
 		packed_coset(d, dst, src, psf, map_strs, map, last);
 		return true;
@@ -1264,7 +1377,7 @@ int bartorch_nufft_coset_folds(const struct linop_s* op)
 	if ((NULL == d->psf_host) || (NULL == d->toeplitz_data))
 		return 0;
 
-	return (NULL != d->kept) ? 1 : 0;
+	return (NULL != d->kept_mask) ? 1 : 0;
 }
 
 /* The set convolved with a coil's image, added to the caller's image, with the
@@ -1341,11 +1454,15 @@ static void nufft_fi_del(const linop_data_t* _d)
 	for (int i = 0; i < 2; i++)
 		md_free(d->psf_slot[i]);
 
-	if (NULL != d->kept)
-		md_free(d->kept);
+	md_free(d->kept_mask);
+	md_free(d->kept_prefix);
 
 	if (NULL != d->vol_fft)
 		linop_free(d->vol_fft);
+
+#ifdef USE_CUDA
+	bartorch_cb_fft_free(d->cb_fft);
+#endif
 
 	xfree(d->cim_dims);
 	xfree(d->out_dims);
@@ -2051,7 +2168,7 @@ static void stream_psf(struct nufft_fi_s* d)
 	d->psf_registered = (0 == bartorch_cuda_host_register(d->psf_host,
 				(long)cosets * d->psf_coset * (long)d->psf_size));
 
-	/* A compressed function is gathered against through a list of the
+	/* A compressed function is gathered against through a mask of the
 	 * places the samples reach, made once from the map they were found
 	 * with; the map, one long per grid point, is let go. */
 	if (NULL != t->compress) {
@@ -2061,29 +2178,38 @@ static void stream_psf(struct nufft_fi_s* d)
 		long grid = md_calc_size(ND, t->com_dims);
 		const long* map = multiplace_read(t->compress, d->radians[0]);
 
+		long wdims[1] = { (grid + 31) / 32 };
+
+		unsigned int* mask = xmalloc((size_t)wdims[0] * sizeof(unsigned int));
+		int* prefix = xmalloc((size_t)wdims[0] * sizeof(int));
+
 		long n = 0;
 
-		for (long i = 0; i < grid; i++)
-			if (0 <= map[i])
-				n++;
+		for (long w = 0; w < wdims[0]; w++) {
 
-		int* list = xmalloc((size_t)n * sizeof(int));
+			unsigned int bits = 0;
 
-		for (long i = 0, j = 0; i < grid; i++)
-			if (0 <= map[i])
-				list[j++] = (int)i;
+			for (long b = 0; (b < 32) && (w * 32 + b < grid); b++)
+				if (0 <= map[w * 32 + b])
+					bits |= 1u << b;
 
-		long ldims[1] = { n };
+			mask[w] = bits;
+			prefix[w] = (int)n;
+			n += __builtin_popcount(bits);
+		}
 
 #ifdef USE_CUDA
-		d->kept = md_alloc_gpu(1, ldims, sizeof(int));
+		d->kept_mask = md_alloc_gpu(1, wdims, sizeof(unsigned int));
+		d->kept_prefix = md_alloc_gpu(1, wdims, sizeof(int));
 #else
-		d->kept = md_alloc(1, ldims, sizeof(int));
+		d->kept_mask = md_alloc(1, wdims, sizeof(unsigned int));
+		d->kept_prefix = md_alloc(1, wdims, sizeof(int));
 #endif
-		md_copy(1, ldims, d->kept, list, sizeof(int));
-		d->kept_n = n;
+		md_copy(1, wdims, d->kept_mask, mask, sizeof(unsigned int));
+		md_copy(1, wdims, d->kept_prefix, prefix, sizeof(int));
 
-		xfree(list);
+		xfree(mask);
+		xfree(prefix);
 
 		multiplace_free(t->compress);
 		t->compress = NULL;
@@ -2393,8 +2519,10 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 	d->slot_set[1] = -1;
 	d->coset = 0;
 	d->psf_registered = false;
-	d->kept = NULL;
-	d->kept_n = 0;
+	d->kept_mask = NULL;
+	d->kept_prefix = NULL;
+	d->cb_fft = NULL;
+	d->cb_tried = false;
 
 	for (int i = 0; i < 2; i++)
 		d->psf_slot[i] = NULL;
@@ -2675,11 +2803,11 @@ void nufft_update_traj(const struct linop_s* nufft, int N, const long trj_dims[N
 		d->stage = NULL;
 		d->slot = 0;
 
-		if (NULL != d->kept)
-			md_free(d->kept);
+		md_free(d->kept_mask);
+		md_free(d->kept_prefix);
 
-		d->kept = NULL;
-		d->kept_n = 0;
+		d->kept_mask = NULL;
+		d->kept_prefix = NULL;
 
 		for (int i = 0; i < 2; i++) {
 

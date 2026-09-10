@@ -222,7 +222,34 @@ set(BARTORCH_SOURCES
     csrc/fft.cpp)
 
 if(BARTORCH_CUDA)
-    list(APPEND BARTORCH_SOURCES csrc/kernels.cu)
+    list(APPEND BARTORCH_SOURCES csrc/kernels.cu csrc/fft_callbacks.cu)
+
+    # The passes around a volume's transform, which cuFFT links into the
+    # transform when a plan is made (csrc/fft_callbacks.cu).  It takes them as
+    # LTO-IR at run time, so csrc/fft_callbacks_lto.cu is compiled to that
+    # alone and embedded in the library as an array.
+    set(_lto_src "${CMAKE_CURRENT_SOURCE_DIR}/csrc/fft_callbacks_lto.cu")
+    set(_lto_bin "${CMAKE_CURRENT_BINARY_DIR}/fft_callbacks_lto.fatbin")
+    set(_lto_hdr "${CMAKE_CURRENT_BINARY_DIR}/fft_callbacks_lto.h")
+    set(_lto_arch "")
+    foreach(_a ${BARTORCH_CUDA_ARCHITECTURES})
+        list(APPEND _lto_arch "-gencode=arch=compute_${_a},code=lto_${_a}")
+    endforeach()
+    set(_lto_ccbin "")
+    if(CMAKE_CUDA_HOST_COMPILER)
+        set(_lto_ccbin -ccbin "${CMAKE_CUDA_HOST_COMPILER}")
+    endif()
+    add_custom_command(
+        OUTPUT "${_lto_hdr}"
+        COMMAND "${CMAKE_CUDA_COMPILER}" ${_lto_ccbin} -std=c++17 -dc -fatbin ${_lto_arch}
+                -I "${CMAKE_CURRENT_SOURCE_DIR}/csrc" -o "${_lto_bin}" "${_lto_src}"
+        COMMAND "${CMAKE_COMMAND}" "-DIN=${_lto_bin}" "-DOUT=${_lto_hdr}"
+                -DNAME=bartorch_fft_callbacks_lto
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/build_tools/embed.cmake"
+        DEPENDS "${_lto_src}" "${CMAKE_CURRENT_SOURCE_DIR}/csrc/coset.cuh"
+                "${CMAKE_CURRENT_SOURCE_DIR}/build_tools/embed.cmake"
+        VERBATIM)
+    list(APPEND BARTORCH_SOURCES "${_lto_hdr}")
 endif()
 
 add_library(bartorch SHARED ${BART_SOURCES} ${BARTORCH_SOURCES})
@@ -262,7 +289,8 @@ target_include_directories(bartorch PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/pocketfft"
     "${BART_SRC}"
     "${BART_GEN}"
-    "${BART_GEN}/misc")
+    "${BART_GEN}/misc"
+    "${CMAKE_CURRENT_BINARY_DIR}")
 
 target_compile_definitions(bartorch PRIVATE
     USE_LOG_BACKEND
@@ -282,7 +310,7 @@ if(BARTORCH_CUDA)
     set_target_properties(bartorch PROPERTIES
         CUDA_ARCHITECTURES "${BARTORCH_CUDA_ARCH_SPEC}")
     target_link_libraries(bartorch PRIVATE
-        CUDA::cudart CUDA::cufft CUDA::cublas)
+        CUDA::cudart CUDA::cufft CUDA::cublas ${CMAKE_DL_LIBS})
     # The runtime libraries live beside torch in the nvidia wheels; torch
     # loads them before this library, and the rpath covers a bare import.
     set_property(TARGET bartorch APPEND PROPERTY INSTALL_RPATH

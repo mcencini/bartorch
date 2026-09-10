@@ -1617,6 +1617,54 @@ def test_a_transform_asked_for_after_the_normal_plans_again(in_tools):
 
 @requires_finufft
 @requires_cuda
+@pytest.mark.parametrize("dims", [2, 3])
+def test_the_passes_inside_the_transforms_answer_as_the_passes_on_their_own(in_tools, dims):
+    """cuFFT's callbacks compute what the passes around the transforms do.
+
+    Around each volume's transform a streamed set puts the phase and the
+    sensitivity on and gathers, and scatters and takes them off.  Run inside
+    cuFFT's transforms or on their own, the normals agree to rounding, and the
+    image the normal is applied to is left as it was.
+    """
+    from bartorch.ops import LinearOperator
+
+    n, spokes, frames, coeffs, coils = (32, 24, 4, 3, 2) if dims == 2 else (24, 48, 4, 3, 2)
+    read = n // 2
+    three = {"flag_3": True} if dims == 3 else {}
+    traj = bt.traj(x=read, y=spokes * frames, r=True, **three).reshape(frames, spokes, read, 3)[:, None, None]
+    basis = torch.zeros(coeffs, frames, 1, 1, 1, 1, 1, dtype=torch.complex64)
+    for c in range(coeffs):
+        basis[c, :, 0, 0, 0, 0, 0] = torch.cos(torch.pi * c * (torch.arange(frames) + 0.5) / frames)
+
+    torch.manual_seed(0)
+    shape = (coils,) + (n,) * dims
+    maps = torch.randn(shape, dtype=torch.complex64)
+    maps = maps / maps.abs().pow(2).sum(0, keepdim=True).sqrt()
+
+    compressed = _finufft.functions_compressed()
+    A = LinearOperator.sense(maps.cuda(), shape, traj=traj.cuda(), basis=basis.cuda())
+    assert _finufft.functions_compressed() > compressed, "the function was compressed"
+
+    x = torch.randn(A.ishape, dtype=torch.complex64, device="cuda")
+    kept = x.clone()
+
+    try:
+        _finufft.fft_callbacks(False)
+        before = _finufft.sets_through_callbacks()
+        separate = A.normal(x)
+        assert _finufft.sets_through_callbacks() == before, "the passes ran on their own"
+        _finufft.fft_callbacks(True)
+        inside = A.normal(x)
+    finally:
+        _finufft.fft_callbacks(True)
+
+    assert _finufft.sets_through_callbacks() > before, "the passes ran inside the transforms"
+    assert torch.equal(x, kept), "the image was left as it was"
+    assert float((inside - separate).abs().max() / separate.abs().max()) < 1e-5
+
+
+@requires_finufft
+@requires_cuda
 def test_the_contraction_kernel_is_barts_contraction(in_tools):
     """The in-place contraction computes what BART's upper-triangular one does.
 

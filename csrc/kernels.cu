@@ -6,12 +6,9 @@
  * conjugates of both and added to the answer.  BART applies the phase in one
  * pass and the sensitivity in another, and each pass over a 256^3 volume
  * reads and writes it whole.  These do both in one: three streams over the
- * volume on the way in, four on the way out.
- *
- * The phase is the one `cuda_apply_linphases_3D` computes -- the same shift,
- * the same centring, the same fftmod folded in and the same scale -- so a
- * coefficient that goes through here goes through what BART's precomputed
- * phases would have applied.
+ * volume on the way in, four on the way out.  Where cuFFT can run them
+ * inside the transforms (fft_callbacks.cu) they run there, and these serve
+ * where it cannot.
  */
 #include <cuda_runtime_api.h>
 #include <cuComplex.h>
@@ -23,65 +20,7 @@
 #include "num/gpukrnls_misc.h"
 #include "num/gpuops.h"
 
-struct phase_conf {
-
-	long dims[3];
-	long tot;
-	long batch;
-	float shifts[3];
-	float cn;
-	float scale;
-};
-
-static struct phase_conf phase_setup(int N, const long dims[], const float shift[3], float scale)
-{
-	struct phase_conf c;
-
-	c.cn = 0.f;
-	c.tot = 1;
-	c.scale = scale;
-
-	for (int n = 0; n < 3; n++) {
-
-		float s = shift[n];
-
-		if (1 < dims[n])
-			s += (float)(dims[n] / 2. - dims[n] / 2);
-
-		c.shifts[n] = 2. * M_PI * s / (float)dims[n];
-		c.cn -= c.shifts[n] * (float)dims[n] / 2.f;
-
-		c.dims[n] = dims[n];
-		c.tot *= dims[n];
-
-		long centre = dims[n] / 2;
-		double half = (double)centre / (double)dims[n];
-
-		c.shifts[n] += 2. * M_PI * half;
-		c.cn -= 2. * M_PI * half * (double)centre / 2.;
-	}
-
-	c.batch = 1;
-
-	for (int n = 3; n < N; n++)
-		c.batch *= dims[n];
-
-	return c;
-}
-
-__device__ static inline cuFloatComplex phase_at(const struct phase_conf& c, long x, long y, long z, bool conj)
-{
-	float val = c.cn + x * c.shifts[0] + y * c.shifts[1] + z * c.shifts[2];
-
-	if (conj)
-		val = -val;
-
-	float si;
-	float co;
-	sincosf(val, &si, &co);
-
-	return make_cuFloatComplex(c.scale * co, c.scale * si);
-}
+#include "coset.cuh"
 
 /* dst = src * map * phase */
 __global__ static void kern_phase_map_in(struct phase_conf c, cuFloatComplex* dst,
@@ -157,29 +96,36 @@ extern "C" void bartorch_cuda_phase_map_out(int N, const long dims[], const floa
 	CUDA_KERNEL_ERROR;
 }
 
-/* Gather and scatter over the places the samples reach.
- *
- * `kept` lists the grid positions that are kept, in grid order, one int per
- * kept point -- against one long per grid point for the map BART gathers
- * with, which a gather reads whole.  A scatter puts zeros everywhere else,
- * which is what the transform that follows it needs to see there.
- */
-__global__ static void kern_gather(long L, const int* kept, cuFloatComplex* dst, const cuFloatComplex* src)
+/* Gather and scatter over the places the samples reach, found through the
+ * mask and counts of coset.cuh.  A scatter writes zeros everywhere else, which
+ * is what the transform that follows it needs to see there. */
+__global__ static void kern_gather(long V, const unsigned int* mask, const int* prefix,
+		cuFloatComplex* dst, const cuFloatComplex* src)
 {
 	long start = threadIdx.x + (long)blockDim.x * blockIdx.x;
 	long stride = (long)blockDim.x * gridDim.x;
 
-	for (long j = start; j < L; j += stride)
-		dst[j] = src[kept[j]];
+	for (long i = start; i < V; i += stride) {
+
+		long j = kept_at(mask, prefix, i);
+
+		if (0 <= j)
+			dst[j] = src[i];
+	}
 }
 
-__global__ static void kern_scatter(long L, const int* kept, cuFloatComplex* dst, const cuFloatComplex* src)
+__global__ static void kern_scatter(long V, const unsigned int* mask, const int* prefix,
+		cuFloatComplex* dst, const cuFloatComplex* src)
 {
 	long start = threadIdx.x + (long)blockDim.x * blockIdx.x;
 	long stride = (long)blockDim.x * gridDim.x;
 
-	for (long j = start; j < L; j += stride)
-		dst[kept[j]] = src[j];
+	for (long i = start; i < V; i += stride) {
+
+		long j = kept_at(mask, prefix, i);
+
+		dst[i] = (0 <= j) ? src[j] : make_cuFloatComplex(0.f, 0.f);
+	}
 }
 
 static dim3 grid_for(long n)
@@ -189,18 +135,18 @@ static dim3 grid_for(long n)
 	return dim3((unsigned int)((blocks < 65535) ? blocks : 65535));
 }
 
-extern "C" void bartorch_cuda_gather(long L, const int* kept, _Complex float* dst, const _Complex float* src)
+extern "C" void bartorch_cuda_gather(long V, const unsigned int* mask, const int* prefix,
+		_Complex float* dst, const _Complex float* src)
 {
-	kern_gather<<<grid_for(L), 256, 0, cuda_get_stream()>>>(L, kept, (cuFloatComplex*)dst, (const cuFloatComplex*)src);
+	kern_gather<<<grid_for(V), 256, 0, cuda_get_stream()>>>(V, mask, prefix, (cuFloatComplex*)dst, (const cuFloatComplex*)src);
 
 	CUDA_KERNEL_ERROR;
 }
 
-extern "C" void bartorch_cuda_scatter(long V, long L, const int* kept, _Complex float* dst, const _Complex float* src)
+extern "C" void bartorch_cuda_scatter(long V, const unsigned int* mask, const int* prefix,
+		_Complex float* dst, const _Complex float* src)
 {
-	CUDA_ERROR(cudaMemsetAsync(dst, 0, (size_t)V * sizeof(cuFloatComplex), cuda_get_stream()));
-
-	kern_scatter<<<grid_for(L), 256, 0, cuda_get_stream()>>>(L, kept, (cuFloatComplex*)dst, (const cuFloatComplex*)src);
+	kern_scatter<<<grid_for(V), 256, 0, cuda_get_stream()>>>(V, mask, prefix, (cuFloatComplex*)dst, (const cuFloatComplex*)src);
 
 	CUDA_KERNEL_ERROR;
 }
