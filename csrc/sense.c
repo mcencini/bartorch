@@ -25,6 +25,7 @@
  * those go back to BART's own chain, which the rename leaves reachable.
  */
 #include <complex.h>
+#include <math.h>
 #include <stdbool.h>
 #include <stdlib.h>
 
@@ -65,6 +66,12 @@ extern void bartorch_nufft_coset_normal_sense(const struct linop_s* op,
 		complex float* dst, const complex float* src,
 		const long map_strs[], const complex float* map, int last);
 extern void bartorch_nufft_coset_end(const struct linop_s* op);
+
+#ifdef USE_CUDA
+/* csrc/kernels.cu: a volume times BART's inverse fftmod along its first three axes. */
+extern void bartorch_cuda_modulate(const long dims[3], long rest, const long grid[3], const long off[3],
+		float scale, complex float* x);
+#endif
 
 extern struct linop_s* bart_sense_init(unsigned long shared_img_flags, const long max_dims[DIMS],
 		unsigned long sens_flags, const complex float* sens);
@@ -238,6 +245,38 @@ static void fetch_slab(const struct sense_s* d, long coil, complex float* into)
 	long sdims[DIMS];
 	md_copy_dims(DIMS, sdims, kdims);
 
+	/* Each axis's centred unitary transform is a modulation, a transform, the
+	 * modulation again and a scale, and all of it but the transform is
+	 * diagonal.  On a card the diagonal parts are taken out of the loop: the
+	 * modulations before the transforms go on the kernel, a few samples
+	 * across, and the ones after go on with the scales in one pass over the
+	 * map at the end -- where the last axis alone would otherwise make three
+	 * passes over the whole grid. */
+	bool modulated = false;
+	long grid[3];
+	long off[3];
+	float scale = 1.f;
+
+#ifdef USE_CUDA
+	modulated = cuda_ondevice(into) && (md_calc_size(3, mdims) < (1L << 31));
+
+	for (int a = 0; a < 3; a++) {
+
+		bool fft = MD_IS_SET(FFT_FLAGS, a) && (1 < mdims[a]);
+
+		grid[a] = fft ? mdims[a] : 1;
+		off[a] = labs(mdims[a] / 2 - kdims[a] / 2);
+
+		if (fft)
+			scale /= sqrtf((float)mdims[a]);
+
+		modulated = modulated && (kdims[a] <= mdims[a]);
+	}
+
+	if (modulated)
+		bartorch_cuda_modulate(kdims, md_calc_size(DIMS - 3, kdims + 3), grid, off, 1.f, k);
+#endif
+
 	complex float* cur = k;
 
 	for (int a = 0; a < 3; a++) {
@@ -251,14 +290,32 @@ static void fetch_slab(const struct sense_s* d, long coil, complex float* into)
 		md_resize_center(DIMS, ndims, next, sdims, cur, CFL_SIZE);
 		md_free(cur);
 
-		if (MD_IS_SET(FFT_FLAGS, a) && (1 < ndims[a]))
-			ifftuc(DIMS, ndims, MD_BIT(a), next, next);
+		if (MD_IS_SET(FFT_FLAGS, a) && (1 < ndims[a])) {
+
+			if (modulated)
+				ifft(DIMS, ndims, MD_BIT(a), next, next);
+			else
+				ifftuc(DIMS, ndims, MD_BIT(a), next, next);
+		}
 
 		cur = next;
 		md_copy_dims(DIMS, sdims, ndims);
 	}
 
 	assert(md_check_equal_dims(DIMS, sdims, mdims, ~0UL));
+
+#ifdef USE_CUDA
+	if (modulated) {
+
+		long zero[3] = { 0, 0, 0 };
+
+		bartorch_cuda_modulate(mdims, md_calc_size(DIMS - 3, mdims + 3), grid, zero, scale, into);
+	}
+#else
+	(void)grid;
+	(void)off;
+	(void)scale;
+#endif
 }
 
 /* Somewhere to put a slab, when one has to be put together. */

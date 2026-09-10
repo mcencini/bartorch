@@ -362,3 +362,29 @@ def test_a_three_dimensional_kernel_bank_applies_as_the_maps_it_stands_for():
     compact = LinearOperator.sense(kernels, (coils, n, n, n), kernels=True)
 
     torch.testing.assert_close(compact(x), dense(x), rtol=1e-4, atol=1e-5)
+
+
+@pytest.mark.skipif(
+    not bartorch.cuda.available(), reason="no CUDA device, or the library was built without CUDA"
+)
+@pytest.mark.parametrize("n, size", [(16, 6), (20, 7), (15, 5)])
+def test_a_kernel_bank_inflated_on_a_card_is_the_maps_it_stands_for(n, size):
+    """On a card the modulations come out of the loop, and the maps do not change.
+
+    Each axis's centred transform modulates before and after it; the card puts
+    the ones before on the kernel and the ones after, with the scale, on the
+    map in one pass.  Held against the maps on a grid that is a multiple of
+    eight, one that is not, and an odd one, with an odd kernel among them.
+    """
+    coils = 3
+    torch.manual_seed(0)
+    kernels = torch.randn(coils, size, size, size, dtype=torch.complex64)
+    maps = bartorch.kernels_to_maps(kernels, (n, n, n))
+    x = torch.randn(1, n, n, n, dtype=torch.complex64)
+
+    dense = LinearOperator.sense(maps, (coils, n, n, n))
+    compact = LinearOperator.sense(kernels.cuda(), (coils, n, n, n), kernels=True)
+
+    y = dense(x)
+    torch.testing.assert_close(compact(x.cuda()).cpu(), y, rtol=1e-4, atol=1e-5)
+    torch.testing.assert_close(compact.adjoint(y.cuda()).cpu(), dense.adjoint(y), rtol=1e-4, atol=1e-5)

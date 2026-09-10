@@ -151,6 +151,66 @@ extern "C" void bartorch_cuda_scatter(long V, const unsigned int* mask, const in
 	CUDA_KERNEL_ERROR;
 }
 
+/* BART's inverse fftmod at index `j` of an axis `n` long: exp(-2 pi i r), with
+ * r the fractional part of (j - c/2) c / n and c = n/2.  Kept in integers --
+ * (2j - c) c modulo 2n -- so that the quarter turns BART writes out exactly
+ * come out exact here too. */
+__device__ static inline cuFloatComplex ifftmod_at(int n, int j)
+{
+	if (n <= 1)
+		return make_cuFloatComplex(1.f, 0.f);
+
+	int c = n / 2;
+	int num = ((2 * j - c) * c) % (2 * n);
+
+	if (num < 0)
+		num += 2 * n;
+
+	float si;
+	float co;
+	sincospif(-(float)num / (float)n, &si, &co);
+
+	return make_cuFloatComplex(co, si);
+}
+
+/* `x` times `scale` and, along each of the first three axes, the inverse
+ * fftmod of an axis `grid[a]` long at the array's own index plus `off[a]`:
+ * what the centred transforms of a padded kernel put on around their
+ * transforms.  Every axis after the third is a batch the same factor
+ * multiplies. */
+__global__ static void kern_modulate(unsigned int d0, unsigned int d1, unsigned int d2, long rest,
+		int g0, int g1, int g2, int o0, int o1, int o2, float scale, cuFloatComplex* x)
+{
+	unsigned int vol = d0 * d1 * d2;
+	unsigned int start = threadIdx.x + blockDim.x * blockIdx.x;
+	unsigned int stride = blockDim.x * gridDim.x;
+
+	for (unsigned int i = start; i < vol; i += stride) {
+
+		unsigned int bc = i / d0;
+
+		cuFloatComplex f = cuCmulf(ifftmod_at(g0, (int)(i - bc * d0) + o0),
+				cuCmulf(ifftmod_at(g1, (int)(bc % d1) + o1), ifftmod_at(g2, (int)(bc / d1) + o2)));
+
+		f = make_cuFloatComplex(scale * f.x, scale * f.y);
+
+		for (long r = 0; r < rest; r++)
+			x[i + r * vol] = cuCmulf(x[i + r * vol], f);
+	}
+}
+
+extern "C" void bartorch_cuda_modulate(const long dims[3], long rest, const long grid[3], const long off[3],
+		float scale, _Complex float* x)
+{
+	long vol = dims[0] * dims[1] * dims[2];
+
+	kern_modulate<<<grid_for(vol), 256, 0, cuda_get_stream()>>>((unsigned int)dims[0], (unsigned int)dims[1],
+			(unsigned int)dims[2], rest, (int)grid[0], (int)grid[1], (int)grid[2],
+			(int)off[0], (int)off[1], (int)off[2], scale, (cuFloatComplex*)x);
+
+	CUDA_KERNEL_ERROR;
+}
+
 /* A coil's gathered coefficients contracted, in place, against a real
  * function kept as the upper triangle of a symmetric matrix.
  *
