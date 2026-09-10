@@ -66,7 +66,7 @@ extern complex float* bartorch_psf_to_host(int N, const long psf_dims[N + 1], un
 		const long wgh_dims[N + 1], const complex float* weights,
 		bool periodic, bool lowmem, bool upper_triag,
 		const long com_dims[N + 1], const long* idx,
-		const long com_psf_dims[N + 1], const long com_psf_dims3[N + 1]);
+		const long com_psf_dims[N + 1], const long com_psf_dims3[N + 1], int real);
 
 /* Provided by finufft.c, which owns the FINUFFT entry points. */
 extern int bartorch_finufft_plan(int device, int type, int dim, const int64_t n_modes[3],
@@ -1811,7 +1811,7 @@ static void install_psf(struct nufft_data* data, const complex float* traj, comp
 		? bartorch_psf_to_host(N, data->psf_dims, data->flags, data->trj_dims, traj,
 				data->bas_dims, basis, data->wgh_dims, weights,
 				true, data->conf.lowmem, data->conf.upper_triag,
-				data->com_dims, idx, com_psf_dims, com_psf_dims3)
+				data->com_dims, idx, com_psf_dims, com_psf_dims3, store_real ? 1 : 0)
 		: (data->conf.decomposed_psf ? compute_psf2_decomposed : compute_psf2)(N,
 				data->psf_dims, data->flags, data->trj_dims, traj,
 				data->bas_dims, basis, data->wgh_dims, weights,
@@ -1831,18 +1831,15 @@ static void install_psf(struct nufft_data* data, const complex float* traj, comp
 
 	if (store_real) {
 
-		float* psf_real = stream
-			? bartorch_host_alloc(md_calc_size(ND, data->psf_dims) * (long)FL_SIZE, overlap_psf_enabled)
-			: md_alloc_sameplace(ND, data->psf_dims, FL_SIZE, psf);
+		/* A streamed function was made real as it was built, an entry at
+		 * a time; a resident one is made real here, whole. */
+		if (!stream) {
 
-		md_real(ND, data->psf_dims, psf_real, psf);
-
-		if (stream)
-			bartorch_host_free(psf);
-		else
+			float* psf_real = md_alloc_sameplace(ND, data->psf_dims, FL_SIZE, psf);
+			md_real(ND, data->psf_dims, psf_real, psf);
 			md_free(psf);
-
-		psf = (complex float*)psf_real;
+			psf = (complex float*)psf_real;
+		}
 
 		md_calc_strides(ND, data->psf_strs, data->psf_dims, FL_SIZE);
 

@@ -32,6 +32,7 @@
 #include "misc/version.h"
 
 #include "num/fft.h"
+#include "num/filter.h"
 #include "num/flpmath.h"
 #include "num/multind.h"
 #include "num/compress.h"
@@ -266,11 +267,13 @@ struct psf_packing {
 	const long* com_psf_dims3;	/* one set of frequencies of it */
 };
 
-static complex float* psf_decomposed(bool to_host, const struct psf_packing* pack,
+static complex float* psf_decomposed(bool to_host, bool real_out, const struct psf_packing* pack,
 		int N, const long psf_dims[N + 1], unsigned long flags, const long trj_dims[N + 1], const complex float* traj,
 		const long bas_dims[N + 1], const complex float* basis, const long wgh_dims[N + 1], const complex float* weights,
 		bool periodic, bool lowmem, bool upper_triag)
 {
+	assert(to_host || !real_out);
+
 	int ND = N + 1;
 
 	long ksp_dims[ND];
@@ -318,28 +321,6 @@ static complex float* psf_decomposed(bool to_host, const struct psf_packing* pac
 			tp[k][j] = (1 != psf_dims2[j] ? 0.5 * psf_dims2[j] : 0.) + shift[j];
 	}
 
-	long sdims[ND];
-	md_select_dims(ND, MD_BIT(0) | MD_BIT(N), sdims, trj_dims2);
-
-	/* The trajectory is shifted for one set at a time.  Shifted for all of
-	 * them at once it is a copy of the trajectory per set -- eight in three
-	 * dimensions, all resident while one is read. */
-	complex float* tshift = md_alloc_sameplace(ND, sdims, CFL_SIZE, traj);
-	md_copy(ND, sdims, tshift, &(tp[0][0]), CFL_SIZE);
-
-	long one_sdims[ND];
-	md_select_dims(ND, MD_BIT(0), one_sdims, sdims);
-
-	long trj_dims1[ND];
-	md_select_dims(ND, ~MD_BIT(N), trj_dims1, trj_dims2);
-
-	complex float* traj_set = md_alloc_sameplace(ND, trj_dims1, CFL_SIZE, traj);
-
-	/* One transform per set of frequencies, stacked, which is what BART does
-	 * for `lowmem` and what this does always: each carries its own shifted
-	 * trajectory and writes its own image, and a transform whose points and
-	 * whose image both vary along an axis is not one plan.  Stacking is the
-	 * same operator either way and holds one set at a time. */
 	long ksp_dims2[ND];
 	long psf_dims3[ND];
 	long trj_dims3[ND];
@@ -350,52 +331,29 @@ static complex float* psf_decomposed(bool to_host, const struct psf_packing* pac
 
 	(void)lowmem;
 
-	/* The kernel the decomposition transforms: a cosine per doubled axis,
-	 * with the half-sample shift an odd length needs. */
-/* The kernel one set of frequencies transforms against: a cosine per doubled
- * axis, with the half-sample shift an odd length needs.  Built for the set
- * that is about to be used rather than for all of them at once, which is what
- * keeps the samples of every set off the card together. */
-	/* `to_host` keeps the function where the card is not: each set is made
-	 * on the card and copied out, so what is resident is one set rather
-	 * than the whole of it. */
+	/* `to_host` keeps the function where the card is not: each entry is
+	 * made on the card and copied out, so what is resident is one entry
+	 * rather than the whole of it.  Page-locked where it is going to be
+	 * streamed off the host, which is what lets the copy engine read it
+	 * without the driver staging it.  A real function is made real here,
+	 * an entry at a time, so what crosses is half of what it would be. */
 	const long* whole_dims = (NULL != pack) ? pack->com_psf_dims : psf_dims;
+	size_t out_size = real_out ? FL_SIZE : CFL_SIZE;
 
-	/* Page-locked where it is going to be streamed off the host, which is
-	 * what lets the copy engine read it without the driver staging it. */
 	complex float* psf = to_host
-		? bartorch_host_alloc(md_calc_size(ND, whole_dims) * (long)CFL_SIZE,
+		? bartorch_host_alloc(md_calc_size(ND, whole_dims) * (long)out_size,
 			bartorch_nufft_overlap_psf())
 		: md_alloc_sameplace(ND, whole_dims, CFL_SIZE, traj);
 
-	/* One set of frequencies at a time.
-	 *
-	 * Stacking them into one operator and answering them together is the
-	 * same arithmetic, and puts every set's transform on the card at once
-	 * along with the whole function; taking them in turn holds one set's
-	 * transform and writes into the one place the function lives.  That is
-	 * what makes computing the sets separately cost less than computing
-	 * them together rather than more. */
 	long psf_coset = md_calc_size(ND, (NULL != pack) ? pack->com_psf_dims3 : psf_dims3);
-	long ksp_coset = md_calc_size(ND, ksp_dims2);
 
-	(void)ksp_coset;
-
-	/* One transform for every set of frequencies, pointed at each in turn.
-	 *
-	 * The sets differ only in where their samples sit, so one plan serves
-	 * them all -- and making a plan is the largest allocation a build does,
-	 * more than the function it produces.  `nufft_update_traj` is what
-	 * points it somewhere else without making it again. */
-	/* And one coefficient of the function at a time.
+	/* One coefficient of the function at a time.
 	 *
 	 * A subspace function is a matrix at every frequency, and answering the
 	 * whole matrix at once means an image for every entry of it live
 	 * together: at 256^3 with four coefficients that is ten images where
 	 * one would do.  Each entry is its own gridding of the samples weighted
-	 * by its own pair of basis coefficients, so the transform is built for
-	 * one and pointed at each pair in turn -- the same retargeting the sets
-	 * use, since a basis is something `nufft_update_traj` replaces. */
+	 * by its own pair of basis coefficients. */
 	long one_dims[ND];
 	long one_bas_dims[ND];
 
@@ -409,23 +367,53 @@ static complex float* psf_decomposed(bool to_host, const struct psf_packing* pac
 
 	long pair_stride = md_calc_size(ND, one_dims);
 	long basis_stride = (NULL == sqr_basis) ? 0 : md_calc_size(ND, one_bas_dims);
+	long out_pair_stride = (NULL != pack) ? md_calc_size(ND, pack->com_psf_dims3) / pairs : pair_stride;
 
-	md_zadd2(ND, trj_dims1, MD_STRIDES(ND, trj_dims1, CFL_SIZE), traj_set,
-			MD_STRIDES(ND, trj_dims, CFL_SIZE), traj,
-			MD_STRIDES(ND, one_sdims, CFL_SIZE), tshift);
+	/* One transform for the whole function, over the trajectory as it is,
+	 * with neither weights nor basis: both are per-sample factors and go
+	 * into what it transforms.  Every set is a shift of the same positions,
+	 * and a shift of the positions is a linear phase on what the transform
+	 * produces -- so the points are set once and each set applies its
+	 * phase.  Setting the points is the costly step: it sorts every
+	 * sample. */
+	struct linop_s* op = nufft_create2(ND, ksp_dims2, one_dims, trj_dims3, traj,
+			NULL, NULL, NULL, NULL, conf);
 
-	struct linop_s* op = nufft_create2(ND, ksp_dims2, one_dims, trj_dims3, traj_set,
-			wgh_dims, sqr_weights, one_bas_dims, sqr_basis, conf);
+	long kstrs[ND];
+	long tstrs[ND];
+
+	md_calc_strides(ND, kstrs, ksp_dims2, CFL_SIZE);
+	md_calc_strides(ND, tstrs, trj_dims3, CFL_SIZE);
+
+	bool on_device = (0 != bartorch_on_device(traj));
+
+	complex float* kern = md_alloc_sameplace(ND, ksp_dims2, CFL_SIZE, traj);
+	complex float* kern_q = (NULL == sqr_basis) ? kern : md_alloc_sameplace(ND, ksp_dims2, CFL_SIZE, traj);
+	complex float* tkern = md_alloc_sameplace(ND, ksp_dims2, CFL_SIZE, traj);
+	complex float* one = md_alloc_sameplace(ND, one_dims, CFL_SIZE, traj);
+
+	/* The phase is made where `linear_phase` runs and brought over. */
+	complex float* ramp_h = md_alloc(ND, one_dims, CFL_SIZE);
+	complex float* ramp = on_device ? md_alloc_sameplace(ND, one_dims, CFL_SIZE, traj) : ramp_h;
+
+	long one_com[ND];
+
+	if (NULL != pack) {
+
+		md_copy_dims(ND, one_com, pack->com_psf_dims3);
+		one_com[COEFF_DIM] = 1;
+	}
+
+	const long* made_dims = (NULL != pack) ? one_com : one_dims;
+
+	complex float* packed = (NULL != pack) ? md_alloc_sameplace(ND, one_com, CFL_SIZE, traj) : NULL;
+	float* packed_real = real_out ? md_alloc_sameplace(ND, made_dims, FL_SIZE, traj) : NULL;
 
 	for (int i = 0; i < trj_dims2[N]; i++) {
 
-		md_zadd2(ND, trj_dims1, MD_STRIDES(ND, trj_dims1, CFL_SIZE), traj_set,
-				MD_STRIDES(ND, trj_dims, CFL_SIZE), traj,
-				MD_STRIDES(ND, one_sdims, CFL_SIZE), tshift + i * one_sdims[0]);
-
-		const complex float* traj_i = traj_set;
-
-		complex float* kern = md_alloc_sameplace(ND, ksp_dims2, CFL_SIZE, traj);
+		/* The kernel one set of frequencies transforms against: a cosine
+		 * per doubled axis of the set's shifted positions, with the
+		 * half-sample shift an odd length needs. */
 		md_zfill(ND, ksp_dims2, kern, 1. / sqrt(md_calc_size(3, psf_dims)));
 
 		for (int j = 0; j < 3; j++) {
@@ -433,76 +421,93 @@ static complex float* psf_decomposed(bool to_host, const struct psf_packing* pac
 			if (1 == psf_dims[j])
 				continue;
 
-			complex float* tkern = md_alloc_sameplace(ND, ksp_dims2, CFL_SIZE, traj);
-			md_copy2(ND, ksp_dims2, MD_STRIDES(ND, ksp_dims2, CFL_SIZE), tkern,
-					MD_STRIDES(ND, trj_dims3, CFL_SIZE), traj_i + j, CFL_SIZE);
+			md_copy2(ND, ksp_dims2, kstrs, tkern, tstrs, traj + j, CFL_SIZE);
+			md_zsadd(ND, ksp_dims2, tkern, tkern, tp[i][j]);
 			md_zsmul(ND, ksp_dims2, tkern, tkern, M_PI);
 			md_zcos(ND, ksp_dims2, tkern, tkern);
 			md_zmul(ND, ksp_dims2, kern, kern, tkern);
-			md_free(tkern);
 
 			if (0 == psf_dims[j] % 2)
 				continue;
 
-			tkern = md_alloc_sameplace(ND, ksp_dims2, CFL_SIZE, traj);
-			md_copy2(ND, ksp_dims2, MD_STRIDES(ND, ksp_dims2, CFL_SIZE), tkern,
-					MD_STRIDES(ND, trj_dims3, CFL_SIZE), traj_i + j, CFL_SIZE);
+			md_copy2(ND, ksp_dims2, kstrs, tkern, tstrs, traj + j, CFL_SIZE);
+			md_zsadd(ND, ksp_dims2, tkern, tkern, tp[i][j]);
 			md_zsmul(ND, ksp_dims2, tkern, tkern, 2.i * M_PI * (psf_dims[j] / 2 - psf_dims[j] / 2.) / psf_dims[j]);
 			md_zexp(ND, ksp_dims2, tkern, tkern);
 			md_zmul(ND, ksp_dims2, kern, kern, tkern);
-			md_free(tkern);
 		}
+
+		if (NULL != sqr_weights)
+			md_zmulc2(ND, ksp_dims2, kstrs, kern, kstrs, kern,
+					MD_STRIDES(ND, wgh_dims, CFL_SIZE), sqr_weights);
+
+		/* The set's shift, as the phase it is on the transform's output. */
+		float pos[ND];
+
+		for (int n = 0; n < ND; n++)
+			pos[n] = ((n < 3) && (1 != one_dims[n])) ? crealf(tp[i][n]) : 0.f;
+
+		linear_phase(ND, one_dims, pos, ramp_h);
+
+		if (ramp != ramp_h)
+			md_copy(ND, one_dims, ramp, ramp_h, CFL_SIZE);
 
 		/* What is whole at any moment is one entry of the matrix over
 		 * one set of frequencies: one image, gridded, transformed, and
 		 * -- where a compressed function was asked for -- reduced to the
 		 * places the samples reach before the next one is made. */
-		long out_pair_stride = (NULL != pack) ? md_calc_size(ND, pack->com_psf_dims3) / pairs
-						     : pair_stride;
-
 		for (long q = 0; q < pairs; q++) {
 
-			nufft_update_traj(op, ND, trj_dims3, traj_i, wgh_dims, sqr_weights,
-					one_bas_dims, (NULL == sqr_basis) ? NULL : sqr_basis + q * basis_stride);
+			if (NULL != sqr_basis)
+				md_zmulc2(ND, ksp_dims2, kstrs, kern_q, kstrs, kern,
+						MD_STRIDES(ND, one_bas_dims, CFL_SIZE), sqr_basis + q * basis_stride);
 
-			complex float* one = md_alloc_sameplace(ND, one_dims, CFL_SIZE, traj);
-
-			linop_adjoint_unchecked(op, one, kern);
+			linop_adjoint_unchecked(op, one, kern_q);
+			md_zmul(ND, one_dims, one, one, ramp);
 			fft(ND, one_dims, conf.flags, one, one);
 
-			complex float* out = psf + i * psf_coset + q * out_pair_stride;
+			const void* made = one;
 
 			if (NULL != pack) {
 
-				long one_com[ND];
-				md_copy_dims(ND, one_com, pack->com_psf_dims3);
-				one_com[COEFF_DIM] = 1;
-
-				complex float* packed = md_alloc_sameplace(ND, one_com, CFL_SIZE, traj);
 				md_compress(ND, one_com, packed, one_dims, one, pack->com_dims, pack->idx, CFL_SIZE);
-				md_free(one);
-
-				md_copy(ND, one_com, out, packed, CFL_SIZE);
-				md_free(packed);
-
-			} else {
-
-				md_copy(ND, one_dims, out, one, CFL_SIZE);
-				md_free(one);
+				made = packed;
 			}
-		}
 
-		md_free(kern);
+			if (real_out) {
+
+				md_real(ND, made_dims, packed_real, made);
+				made = packed_real;
+			}
+
+			void* out = (char*)psf + (size_t)(i * psf_coset + q * out_pair_stride) * out_size;
+
+			md_copy(ND, made_dims, out, made, out_size);
+		}
 	}
 
 	linop_free(op);
 
+	if (NULL != packed_real)
+		md_free(packed_real);
 
+	if (NULL != packed)
+		md_free(packed);
+
+	if (ramp != ramp_h)
+		md_free(ramp);
+
+	md_free(ramp_h);
+	md_free(one);
+	md_free(tkern);
+
+	if (kern_q != kern)
+		md_free(kern_q);
+
+	md_free(kern);
 
 	md_free(sqr_weights);
 	md_free(sqr_basis);
-	md_free(traj_set);
-	md_free(tshift);
 
 	return psf;
 }
@@ -511,7 +516,7 @@ complex float* compute_psf2_decomposed(int N, const long psf_dims[N + 1], unsign
 		const long bas_dims[N + 1], const complex float* basis, const long wgh_dims[N + 1], const complex float* weights,
 		bool periodic, bool lowmem, bool upper_triag)
 {
-	return psf_decomposed(false, NULL, N, psf_dims, flags, trj_dims, traj, bas_dims, basis,
+	return psf_decomposed(false, false, NULL, N, psf_dims, flags, trj_dims, traj, bas_dims, basis,
 			wgh_dims, weights, periodic, lowmem, upper_triag);
 }
 
@@ -521,10 +526,10 @@ complex float* bartorch_psf_to_host(int N, const long psf_dims[N + 1], unsigned 
 		const long bas_dims[N + 1], const complex float* basis, const long wgh_dims[N + 1], const complex float* weights,
 		bool periodic, bool lowmem, bool upper_triag,
 		const long com_dims[N + 1], const long* idx,
-		const long com_psf_dims[N + 1], const long com_psf_dims3[N + 1])
+		const long com_psf_dims[N + 1], const long com_psf_dims3[N + 1], int real)
 {
 	struct psf_packing pack = { com_dims, idx, com_psf_dims, com_psf_dims3 };
 
-	return psf_decomposed(true, (NULL != idx) ? &pack : NULL, N, psf_dims, flags, trj_dims, traj,
+	return psf_decomposed(true, (0 != real), (NULL != idx) ? &pack : NULL, N, psf_dims, flags, trj_dims, traj,
 			bas_dims, basis, wgh_dims, weights, periodic, lowmem, upper_triag);
 }
