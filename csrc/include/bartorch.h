@@ -133,6 +133,9 @@ BARTORCH_API int bartorch_nufft_overlap_psf(void);
 /* Let the device's transform pair go at the first normal: with a Toeplitz
  * function built a normal reads neither the plans nor the points, and a
  * transform asked for afterwards plans again.  On by default. */
+/* Whether a real upper-triangular contraction runs in bartorch's kernel or in
+ * BART's, which is kept to be held against. */
+BARTORCH_API void bartorch_nufft_set_contraction_kernel(int enable);
 BARTORCH_API void bartorch_nufft_set_release_transforms(int enable);
 BARTORCH_API int bartorch_nufft_release_transforms(void);
 
@@ -152,6 +155,14 @@ BARTORCH_API void bartorch_cuda_stage_close(void* stage);
 BARTORCH_API int bartorch_cuda_stage_copy(void* stage, int slot, void* dst, const void* src, long size);
 BARTORCH_API int bartorch_cuda_stage_wait(void* stage, int slot);
 BARTORCH_API int bartorch_cuda_stage_release(void* stage, int slot);
+
+/* A copy between the card and pageable host memory through two page-locked
+ * buffers, so it runs near the bus's rate even into pages never touched. */
+BARTORCH_API int bartorch_cuda_copy_pageable(void* dst, const void* src, long size);
+
+/* Page-lock, and release, host memory that already exists. */
+BARTORCH_API int bartorch_cuda_host_register(void* ptr, long size);
+BARTORCH_API void bartorch_cuda_host_unregister(void* ptr);
 
 BARTORCH_API void bartorch_sense_set_coil_batch(int coils);
 BARTORCH_API int bartorch_sense_coil_batch(void);

@@ -298,6 +298,16 @@ def overlapping_psf() -> bool:
     return bool(library().bartorch_nufft_overlap_psf())
 
 
+def _contraction_kernel(enable: bool = True) -> None:
+    """Whether a real upper-triangular contraction runs in bartorch's kernel or BART's.
+
+    BART's is kept to be held against: the two compute the same thing.
+    """
+    from bartorch._lib import library
+
+    library().bartorch_nufft_set_contraction_kernel(int(bool(enable)))
+
+
 def release_transforms(enable: bool = True) -> None:
     """Let the device's transform pair go at the first normal.
 

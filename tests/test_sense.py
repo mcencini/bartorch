@@ -330,6 +330,10 @@ def test_an_operator_on_a_card_takes_and_returns_host_arrays():
         assert got.device.type == "cpu", name
         torch.testing.assert_close(got, want.cpu(), rtol=tol[0], atol=tol[1], msg=name)
 
+    reused = torch.empty(on_card.ishape, dtype=torch.complex64)
+    assert from_host.normal(x, out=reused) is reused
+    torch.testing.assert_close(reused, on_card.normal(x.cuda()).cpu(), rtol=1e-5, atol=1e-6)
+
     solved = from_host.lstsq(y, maxiter=5)
     assert solved.device.type == "cpu"
     torch.testing.assert_close(
@@ -344,3 +348,17 @@ def test_an_operator_on_a_card_takes_and_returns_host_arrays():
     after, _ = torch.cuda.mem_get_info()
     bartorch.cuda.use_memcache(True)
     assert after >= before - (16 << 20), "a normal left nothing of the caller's on the card"
+
+
+def test_a_three_dimensional_kernel_bank_applies_as_the_maps_it_stands_for():
+    """Inflated an axis at a time, a kernel is the map it stands for in 3D too."""
+    n, coils, size = 16, 3, 6
+    torch.manual_seed(0)
+    kernels = torch.randn(coils, size, size, size, dtype=torch.complex64)
+    maps = bartorch.kernels_to_maps(kernels, (n, n, n))
+    x = torch.randn(1, n, n, n, dtype=torch.complex64)
+
+    dense = LinearOperator.sense(maps, (coils, n, n, n))
+    compact = LinearOperator.sense(kernels, (coils, n, n, n), kernels=True)
+
+    torch.testing.assert_close(compact(x), dense(x), rtol=1e-4, atol=1e-5)

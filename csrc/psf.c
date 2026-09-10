@@ -333,16 +333,15 @@ static complex float* psf_decomposed(bool to_host, bool real_out, const struct p
 
 	/* `to_host` keeps the function where the card is not: each entry is
 	 * made on the card and copied out, so what is resident is one entry
-	 * rather than the whole of it.  Page-locked where it is going to be
-	 * streamed off the host, which is what lets the copy engine read it
-	 * without the driver staging it.  A real function is made real here,
-	 * an entry at a time, so what crosses is half of what it would be. */
+	 * rather than the whole of it.  It is page-locked once it is whole,
+	 * which is far cheaper than allocating it page-locked.  A real function
+	 * is made real here, an entry at a time, so what crosses is half of what
+	 * it would be. */
 	const long* whole_dims = (NULL != pack) ? pack->com_psf_dims : psf_dims;
 	size_t out_size = real_out ? FL_SIZE : CFL_SIZE;
 
 	complex float* psf = to_host
-		? bartorch_host_alloc(md_calc_size(ND, whole_dims) * (long)out_size,
-			bartorch_nufft_overlap_psf())
+		? bartorch_host_alloc(md_calc_size(ND, whole_dims) * (long)out_size, 0)
 		: md_alloc_sameplace(ND, whole_dims, CFL_SIZE, traj);
 
 	long psf_coset = md_calc_size(ND, (NULL != pack) ? pack->com_psf_dims3 : psf_dims3);

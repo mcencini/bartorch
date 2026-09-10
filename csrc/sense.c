@@ -59,11 +59,11 @@
 extern int bartorch_nufft_cosets(const struct linop_s* op);
 extern void bartorch_nufft_coset_begin(const struct linop_s* op, const void* ref);
 extern void bartorch_nufft_coset_use(const struct linop_s* op, int i);
-extern void bartorch_nufft_coset_normal(const struct linop_s* op, complex float* dst, const complex float* src);
+extern void bartorch_nufft_coset_normal(const struct linop_s* op, complex float* dst, const complex float* src, int last);
 extern int bartorch_nufft_coset_folds(const struct linop_s* op);
 extern void bartorch_nufft_coset_normal_sense(const struct linop_s* op,
 		complex float* dst, const complex float* src,
-		const long map_strs[], const complex float* map);
+		const long map_strs[], const complex float* map, int last);
 extern void bartorch_nufft_coset_end(const struct linop_s* op);
 
 extern struct linop_s* bart_sense_init(unsigned long shared_img_flags, const long max_dims[DIMS],
@@ -228,10 +228,37 @@ static void fetch_slab(const struct sense_s* d, long coil, complex float* into)
 	md_copy2(DIMS, kdims, kstrs, k, d->kern_strs,
 			d->kernels + slab_at(d->kern_slab_offset, coil), CFL_SIZE);
 
-	md_resize_center(DIMS, mdims, into, kdims, k, CFL_SIZE);
-	md_free(k);
+	/* A kernel is a few samples across, so most of what a transform of the
+	 * padded grid computes is transforms of zeros.  Taken an axis at a time,
+	 * each axis is padded only when it is transformed: along the first only
+	 * the lines through the kernel are transformed, along the second the
+	 * planes through it, and only the third is the whole grid.  A centred
+	 * unitary transform is one transform per axis whichever way it is taken,
+	 * so this is the same map. */
+	long sdims[DIMS];
+	md_copy_dims(DIMS, sdims, kdims);
 
-	ifftuc(DIMS, mdims, FFT_FLAGS, into, into);
+	complex float* cur = k;
+
+	for (int a = 0; a < 3; a++) {
+
+		long ndims[DIMS];
+		md_copy_dims(DIMS, ndims, sdims);
+		ndims[a] = mdims[a];
+
+		complex float* next = (2 == a) ? into : md_alloc_sameplace(DIMS, ndims, CFL_SIZE, into);
+
+		md_resize_center(DIMS, ndims, next, sdims, cur, CFL_SIZE);
+		md_free(cur);
+
+		if (MD_IS_SET(FFT_FLAGS, a) && (1 < ndims[a]))
+			ifftuc(DIMS, ndims, MD_BIT(a), next, next);
+
+		cur = next;
+		md_copy_dims(DIMS, sdims, ndims);
+	}
+
+	assert(md_check_equal_dims(DIMS, sdims, mdims, ~0UL));
 }
 
 /* Somewhere to put a slab, when one has to be put together. */
@@ -365,7 +392,7 @@ static complex float* onto_card(const long dims[DIMS], const complex float* ptr,
 
 		complex float* on = md_alloc_gpu(DIMS, dims, CFL_SIZE);
 
-		if (filled)
+		if (filled && (0 != bartorch_cuda_copy_pageable(on, ptr, md_calc_size(DIMS, dims) * (long)CFL_SIZE)))
 			md_copy(DIMS, dims, on, ptr, CFL_SIZE);
 
 		return on;
@@ -381,7 +408,7 @@ static void off_card(const long dims[DIMS], complex float* ptr, complex float* o
 	if (on == ptr)
 		return;
 
-	if (filled)
+	if (filled && (0 != bartorch_cuda_copy_pageable(ptr, on, md_calc_size(DIMS, dims) * (long)CFL_SIZE)))
 		md_copy(DIMS, dims, ptr, on, CFL_SIZE);
 
 	md_free(on);
@@ -446,13 +473,12 @@ static void normal_slab(const struct sense_s* d, long coil, const complex float*
 static void normal_slab_coset(const struct sense_s* d, long coil, const complex float* map,
 		const long* mstrs, void* _c)
 {
-	(void)coil;
 	struct slab_ctx* c = _c;
 
 	md_ztenmul2(DIMS, d->slab_dims, d->cim_strs, c->cim, d->img_strs, c->src, mstrs, map);
 
 	md_clear(DIMS, d->cim_dims, c->nrm, CFL_SIZE);
-	bartorch_nufft_coset_normal(d->slab, c->nrm, c->cim);
+	bartorch_nufft_coset_normal(d->slab, c->nrm, c->cim, coil + d->batch >= d->coils);
 
 	md_zfmacc2(DIMS, d->slab_dims, d->img_strs, c->dst, d->cim_strs, c->nrm, mstrs, map);
 }
@@ -467,10 +493,9 @@ static void normal_slab_coset(const struct sense_s* d, long coil, const complex 
 static void normal_slab_folded(const struct sense_s* d, long coil, const complex float* map,
 		const long* mstrs, void* _c)
 {
-	(void)coil;
 	struct slab_ctx* c = _c;
 
-	bartorch_nufft_coset_normal_sense(d->slab, c->dst, c->src, mstrs, map);
+	bartorch_nufft_coset_normal_sense(d->slab, c->dst, c->src, mstrs, map, coil + d->batch >= d->coils);
 }
 
 static void sense_forward(const linop_data_t* _d, complex float* dst, const complex float* src)

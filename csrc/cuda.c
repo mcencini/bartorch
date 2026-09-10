@@ -14,6 +14,7 @@
  */
 #include <stdbool.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "include/bartorch.h"
 
@@ -241,6 +242,137 @@ void bartorch_host_free(void* ptr)
 	xfree(ptr);
 }
 
+/* Copies between the card and pageable host memory, through two page-locked
+ * buffers of our own.
+ *
+ * A copy to or from pageable memory is staged by the driver anyway, and into a
+ * fresh destination it runs at the rate pages can be faulted in while the copy
+ * engine waits: 0.5 GB/s for a 512 MiB image here, against 6.9 GB/s into
+ * pages already touched and 10 GB/s into page-locked ones.  Through two
+ * buffers the card fills one while the host empties the other, and it is the
+ * host's copy that faults the pages -- on several threads at once. */
+enum { BOUNCE_BYTES = 32 << 20 };
+
+static void* bounce[2];
+static cudaEvent_t bounce_done[2];
+
+static bool bounce_open(void)
+{
+	if (NULL != bounce[1])
+		return true;
+
+	for (int i = 0; i < 2; i++) {
+
+		if (   (cudaSuccess != cudaHostAlloc(&bounce[i], BOUNCE_BYTES, cudaHostAllocDefault))
+		    || (cudaSuccess != cudaEventCreateWithFlags(&bounce_done[i], cudaEventDisableTiming))) {
+
+			cudaGetLastError();
+			return false;
+		}
+	}
+
+	return true;
+}
+
+static void host_copy(void* dst, const void* src, size_t n)
+{
+	long parts = (long)(n >> 22);
+
+	if (parts < 2) {
+
+		memcpy(dst, src, n);
+		return;
+	}
+
+#pragma omp parallel for
+	for (long p = 0; p < parts; p++) {
+
+		size_t a = n * (size_t)p / (size_t)parts;
+		size_t b = n * (size_t)(p + 1) / (size_t)parts;
+
+		memcpy((char*)dst + a, (const char*)src + a, b - a);
+	}
+}
+
+int bartorch_cuda_copy_pageable(void* dst, const void* src, long size)
+{
+	if ((-1 == current_device) || (0 >= size) || !bounce_open())
+		return -1;
+
+	bool to_host = !cuda_ondevice(dst);
+	cudaStream_t stream = cuda_get_stream();
+
+	for (int i = 0; i < 2; i++)
+		cudaEventSynchronize(bounce_done[i]);
+
+	long chunks = (size + BOUNCE_BYTES - 1) / BOUNCE_BYTES;
+
+	for (long k = 0; k <= chunks; k++) {
+
+		long off = k * (long)BOUNCE_BYTES;
+		long len = MIN((long)BOUNCE_BYTES, size - off);
+		int b = (int)(k & 1);
+
+		if (to_host) {
+
+			if (k < chunks) {
+
+				if (cudaSuccess != cudaMemcpyAsync(bounce[b], (const char*)src + off, (size_t)len,
+								cudaMemcpyDeviceToHost, stream))
+					return -1;
+
+				cudaEventRecord(bounce_done[b], stream);
+			}
+
+			if (0 < k) {
+
+				long poff = (k - 1) * (long)BOUNCE_BYTES;
+				long plen = MIN((long)BOUNCE_BYTES, size - poff);
+
+				cudaEventSynchronize(bounce_done[b ^ 1]);
+				host_copy((char*)dst + poff, bounce[b ^ 1], (size_t)plen);
+			}
+
+		} else if (k < chunks) {
+
+			cudaEventSynchronize(bounce_done[b]);
+			host_copy(bounce[b], (const char*)src + off, (size_t)len);
+
+			if (cudaSuccess != cudaMemcpyAsync((char*)dst + off, bounce[b], (size_t)len,
+							cudaMemcpyHostToDevice, stream))
+				return -1;
+
+			cudaEventRecord(bounce_done[b], stream);
+		}
+	}
+
+	return 0;
+}
+
+/* Page-lock host memory that already exists, so the copy engine reads it on
+ * its own and a copy out of it runs behind whatever the card is doing.  For
+ * gigabytes it is a fraction of a second here, where allocating as much
+ * page-locked takes seconds. */
+int bartorch_cuda_host_register(void* ptr, long size)
+{
+	if ((NULL == ptr) || (0 >= size) || (-1 == current_device))
+		return -1;
+
+	if (cudaSuccess != cudaHostRegister(ptr, (size_t)size, cudaHostRegisterDefault)) {
+
+		cudaGetLastError();
+		return -1;
+	}
+
+	return 0;
+}
+
+void bartorch_cuda_host_unregister(void* ptr)
+{
+	if ((NULL != ptr) && (cudaSuccess != cudaHostUnregister(ptr)))
+		cudaGetLastError();
+}
+
 /* A stream of its own for bringing the function over.
  *
  * BART takes its stream from the OpenMP thread it is on, so a copy issued
@@ -393,6 +525,9 @@ int bartorch_cuda_signal_stream(void* stream) { (void)stream; return -1; }
 void* bartorch_host_alloc(long size, int pinned) { (void)pinned; return (0 < size) ? xmalloc((size_t)size) : NULL; }
 void bartorch_host_free(void* ptr) { if (NULL != ptr) xfree(ptr); }
 int bartorch_cuda_stage_open(void** stage) { (void)stage; return -1; }
+int bartorch_cuda_copy_pageable(void* dst, const void* src, long size) { (void)dst; (void)src; (void)size; return -1; }
+int bartorch_cuda_host_register(void* ptr, long size) { (void)ptr; (void)size; return -1; }
+void bartorch_cuda_host_unregister(void* ptr) { (void)ptr; }
 void bartorch_cuda_stage_close(void* stage) { (void)stage; }
 int bartorch_cuda_stage_copy(void* stage, int slot, void* dst, const void* src, long size)
 { (void)stage; (void)slot; (void)dst; (void)src; (void)size; return -1; }

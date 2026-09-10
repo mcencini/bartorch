@@ -482,24 +482,46 @@ class LinearOperator:
 
     # --- application ----------------------------------------------------
 
-    def _apply(self, fn, x: torch.Tensor, ishape: Shape, oshape: Shape) -> torch.Tensor:
+    def _apply(
+        self, fn, x: torch.Tensor, ishape: Shape, oshape: Shape, out: torch.Tensor | None = None
+    ) -> torch.Tensor:
         x = _as_operand(x, ishape, "input")
-        y = torch.empty(oshape, dtype=torch.complex64, device=x.device)
+        if out is None:
+            y = torch.empty(oshape, dtype=torch.complex64, device=x.device)
+        else:
+            if (
+                tuple(out.shape) != tuple(oshape)
+                or out.dtype != torch.complex64
+                or out.device != x.device
+                or not out.is_contiguous()
+            ):
+                raise ValueError(
+                    f"out must be a contiguous complex64 tensor of shape {tuple(oshape)} on {x.device}"
+                )
+            y = out
         with _lock, _on_device(self.device or x.device):
             if fn(self._h.ptr, y.data_ptr(), x.data_ptr()) != 0:
                 raise BartError("operator application failed; see the log for BART's message")
         return y
 
-    def __call__(self, x: torch.Tensor) -> torch.Tensor:
-        return self._apply(library().bartorch_linop_forward, x, self.ishape, self.oshape)
+    def __call__(self, x: torch.Tensor, out: torch.Tensor | None = None) -> torch.Tensor:
+        """The operator applied to ``x``, written into ``out`` when one is given.
+
+        A solver that applies the operator every iteration and passes the same
+        ``out`` each time reuses one array rather than asking for a fresh one,
+        and a fresh host array costs its pages being faulted in as it is
+        written -- which for an image crossing from a card is most of the
+        crossing.
+        """
+        return self._apply(library().bartorch_linop_forward, x, self.ishape, self.oshape, out)
 
     forward = __call__
 
-    def adjoint(self, y: torch.Tensor) -> torch.Tensor:
-        return self._apply(library().bartorch_linop_adjoint, y, self.oshape, self.ishape)
+    def adjoint(self, y: torch.Tensor, out: torch.Tensor | None = None) -> torch.Tensor:
+        return self._apply(library().bartorch_linop_adjoint, y, self.oshape, self.ishape, out)
 
-    def normal(self, x: torch.Tensor) -> torch.Tensor:
-        return self._apply(library().bartorch_linop_normal, x, self.ishape, self.ishape)
+    def normal(self, x: torch.Tensor, out: torch.Tensor | None = None) -> torch.Tensor:
+        return self._apply(library().bartorch_linop_normal, x, self.ishape, self.ishape, out)
 
     # --- solving --------------------------------------------------------
 

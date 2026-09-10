@@ -204,3 +204,57 @@ extern "C" void bartorch_cuda_scatter(long V, long L, const int* kept, _Complex 
 
 	CUDA_KERNEL_ERROR;
 }
+
+/* A coil's gathered coefficients contracted, in place, against a real
+ * function kept as the upper triangle of a symmetric matrix.
+ *
+ * At a kept location the coefficients meet only each other: they are read,
+ * multiplied by the matrix, and written back over themselves, so there is no
+ * second bank and nothing to clear or copy back.  Entry (i, j), i <= j, of the
+ * matrix at location l is `mat[(i + j (j + 1) / 2) L + l]`, the order
+ * `hermite_to_uppertriag` lays the function's entries out in. */
+enum { CONTRACT_MAX = 16 };
+
+__global__ static void kern_contract_upper_real(long L, int R, cuFloatComplex* bank, const float* mat)
+{
+	long start = threadIdx.x + (long)blockDim.x * blockIdx.x;
+	long stride = (long)blockDim.x * gridDim.x;
+
+	for (long l = start; l < L; l += stride) {
+
+		cuFloatComplex in[CONTRACT_MAX];
+
+		for (int c = 0; c < R; c++)
+			in[c] = bank[c * L + l];
+
+		for (int r = 0; r < R; r++) {
+
+			float re = 0.f;
+			float im = 0.f;
+
+			for (int c = 0; c < R; c++) {
+
+				int lo = (r < c) ? r : c;
+				int hi = (r < c) ? c : r;
+				float m = mat[(long)(lo + hi * (hi + 1) / 2) * L + l];
+
+				re += m * in[c].x;
+				im += m * in[c].y;
+			}
+
+			bank[r * L + l] = make_cuFloatComplex(re, im);
+		}
+	}
+}
+
+extern "C" int bartorch_cuda_contract_upper_real(long L, int R, _Complex float* bank, const float* mat)
+{
+	if ((R < 1) || (R > CONTRACT_MAX))
+		return -1;
+
+	kern_contract_upper_real<<<grid_for(L), 256, 0, cuda_get_stream()>>>(L, R, (cuFloatComplex*)bank, mat);
+
+	CUDA_KERNEL_ERROR;
+
+	return 0;
+}

@@ -1613,3 +1613,40 @@ def test_a_transform_asked_for_after_the_normal_plans_again(in_tools):
     after = A(x)
 
     torch.testing.assert_close(after, before, rtol=1e-5, atol=1e-6)
+
+
+@requires_finufft
+@requires_cuda
+def test_the_contraction_kernel_is_barts_contraction(in_tools):
+    """The in-place contraction computes what BART's upper-triangular one does.
+
+    At a kept location a coil's coefficients are multiplied by the function's
+    matrix there, stored as its upper triangle.  bartorch does that in place,
+    in one pass; BART through a buffer it clears and copies back.  Held
+    against each other on a subspace function that is compressed, the normals
+    agree to rounding.
+    """
+    from bartorch.ops import LinearOperator
+
+    n, read, spokes, frames, coeffs, coils = 32, 16, 24, 4, 3, 2
+    traj, basis = _subspace(n, spokes, frames, coeffs, read=read)
+
+    torch.manual_seed(0)
+    maps = torch.randn(coils, n, n, dtype=torch.complex64)
+    maps = maps / maps.abs().pow(2).sum(0, keepdim=True).sqrt()
+
+    before = _finufft.functions_compressed()
+    A = LinearOperator.sense(maps.cuda(), (coils, n, n), traj=traj.cuda(), basis=basis.cuda())
+    assert _finufft.functions_compressed() > before, "the function was compressed"
+
+    x = torch.randn(A.ishape, dtype=torch.complex64, device="cuda")
+
+    try:
+        _finufft._contraction_kernel(False)
+        barts = A.normal(x)
+        _finufft._contraction_kernel(True)
+        ours = A.normal(x)
+    finally:
+        _finufft._contraction_kernel(True)
+
+    assert float((ours - barts).abs().max() / barts.abs().max()) < 1e-5

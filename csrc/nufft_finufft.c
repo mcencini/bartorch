@@ -55,6 +55,7 @@ extern void bartorch_cuda_phase_map_in(int N, const long dims[], const float shi
 extern void bartorch_cuda_phase_map_out(int N, const long dims[], const float shift[3], float scale,
 		complex float* dst, const complex float* src, const complex float* map);
 extern void bartorch_cuda_gather(long L, const int* kept, complex float* dst, const complex float* src);
+extern int bartorch_cuda_contract_upper_real(long L, int R, complex float* bank, const float* mat);
 extern void bartorch_cuda_scatter(long V, long L, const int* kept, complex float* dst, const complex float* src);
 #endif
 
@@ -222,7 +223,9 @@ struct nufft_fi_s {
 	void* psf_slot[2];		/* where a set lands */
 	void* stage;			/* the stream a set crosses on */
 	int slot;			/* the one BART is pointed at */
+	int slot_set[2];		/* the set each slot holds or is receiving */
 	int coset;			/* the set in it */
+	bool psf_registered;		/* the host copy is page-locked */
 	long psf_coset;			/* elements in one set of the function */
 	size_t psf_size;		/* a real function is stored as floats */
 	int cosets;
@@ -579,6 +582,15 @@ int bartorch_nufft_overlap_psf(void)
 	return overlap_psf_enabled;
 }
 
+/* Whether a real, upper-triangular contraction runs in the kernel of our own
+ * or in BART's -- the second is there to be held against. */
+static int contraction_kernel = 1;
+
+void bartorch_nufft_set_contraction_kernel(int enable)
+{
+	contraction_kernel = (0 != enable);
+}
+
 /* Whether the device's transform pair is let go at the first normal. */
 static int release_transforms_enabled = 1;
 
@@ -600,6 +612,27 @@ int bartorch_nufft_release_transforms(void)
  * resident for every iteration with nothing reading it.  The host keeps the
  * trajectory the pair was built from, so a transform asked for afterwards
  * plans again.  Called with the lock held. */
+/* Let the host copy of the function go.  A crossing may still be reading it --
+ * the next application's first set is started as the last one ends -- so the
+ * stream it crosses on is closed, which waits for it, before anything is
+ * freed. */
+static void psf_host_free(struct nufft_fi_s* d)
+{
+	if (NULL == d->psf_host)
+		return;
+
+	bartorch_cuda_stage_close(d->stage);
+	d->stage = NULL;
+
+	if (d->psf_registered)
+		bartorch_cuda_host_unregister(d->psf_host);
+
+	d->psf_registered = false;
+
+	bartorch_host_free(d->psf_host);
+	d->psf_host = NULL;
+}
+
 static void release_device_side(struct nufft_fi_s* d)
 {
 	if (!release_transforms_enabled || (NULL == d->toeplitz) || (NULL == d->side[1].forward_plan))
@@ -650,18 +683,22 @@ static void open_slots(struct nufft_fi_s* d, const void* ref)
 	md_copy_dims(ND, psf_dims, t->psf_dims);
 	psf_dims[t->N] = 1;
 
-	/* Two slots, so the set that will be wanted next crosses while the card
-	 * convolves the one it has.  The crossing goes on a stream of its own,
-	 * ordered against BART's by events; where there is no such stream to be
-	 * had it is an ordinary copy into the slot, and the second slot simply
-	 * goes unused ahead of time. */
-	if (!overlap_psf_enabled || (0 != bartorch_cuda_stage_open(&d->stage)))
+	/* A set crosses on a stream of its own, ordered against BART's by
+	 * events, so it can run behind the convolution: into the one slot as
+	 * soon as the set before it has been read for the last time, or -- with
+	 * the overlap -- into a second slot while the set before it is
+	 * convolved.  Where there is no such stream it is an ordinary copy. */
+	if (0 != bartorch_cuda_stage_open(&d->stage))
 		d->stage = NULL;
 
-	for (int i = 0; i < ((NULL != d->stage) ? 2 : 1); i++)
+	int slots = ((NULL != d->stage) && overlap_psf_enabled) ? 2 : 1;
+
+	for (int i = 0; i < slots; i++)
 		d->psf_slot[i] = md_alloc_sameplace(ND, psf_dims, d->psf_size, ref);
 
 	d->slot = 0;
+	d->slot_set[0] = -1;
+	d->slot_set[1] = -1;
 }
 
 static void use_coset(struct nufft_fi_s* d);
@@ -702,17 +739,25 @@ static void fetch_coset(struct nufft_fi_s* d, int i)
 		return;
 	}
 
-	int cur = i & 1;
+	int slots = (NULL != d->psf_slot[1]) ? 2 : 1;
+	int cur = i % slots;
 
-	/* The first set has nobody ahead of it to have started it. */
-	if (0 == i)
-		issue_coset(d, 0, cur);
+	/* A set nobody has started is started now. */
+	if (d->slot_set[cur] != i) {
 
-	/* Started now, so that it crosses while this one is convolved.  A slot
-	 * is only overwritten once the card has said it is done reading it,
-	 * which is what the release at the end of a convolution says. */
-	if (i + 1 < d->cosets)
+		issue_coset(d, i, cur);
+		d->slot_set[cur] = i;
+	}
+
+	/* With two slots the next set starts as this one does, into the slot
+	 * the set before this one released.  With one it starts once this
+	 * one's function has been read for the last time: `slot_read`.  A slot
+	 * is only overwritten once the card has said it is done with it. */
+	if ((2 == slots) && (i + 1 < d->cosets)) {
+
 		issue_coset(d, i + 1, cur ^ 1);
+		d->slot_set[cur ^ 1] = i + 1;
+	}
 
 	bartorch_cuda_stage_wait(d->stage, cur);
 
@@ -809,6 +854,21 @@ static void contract_bank(struct nufft_data* t, const void* psf,
 		const long bank_dims[], const long ciT_dims[], complex float* bank)
 {
 	int N = t->N;
+
+#ifdef USE_CUDA
+	/* In place and in one pass, where the function is real and kept as its
+	 * upper triangle: what follows is the general contraction, over a chunk
+	 * buffer that has to be cleared and copied back. */
+	if (contraction_kernel && t->conf.real && t->conf.upper_triag && cuda_ondevice(bank)) {
+
+		long L = bank_dims[0];
+		int R = (int)(md_calc_size(N, bank_dims) / L);
+
+		if ((md_calc_size(N, ciT_dims) == md_calc_size(N, bank_dims))
+		    && (0 == bartorch_cuda_contract_upper_real(L, R, bank, psf)))
+			return;
+	}
+#endif
 
 	long locations = bank_dims[0];
 	long chunk = MIN(locations, (long)CONTRACT_CHUNK);
@@ -942,6 +1002,25 @@ static complex float* multiply_transfer(struct nufft_data* t, const void* psf,
 	return out;
 }
 
+/* The set's function has been read for the last time.
+ *
+ * With one slot this is when the next set can start to cross: the card still
+ * has this coil's scatter, inverse transforms and accumulation ahead of it,
+ * none of which reads the function, and the crossing runs behind them.  After
+ * the last set the first is started again, for the next application. */
+static void slot_read(struct nufft_fi_s* d, bool last)
+{
+	if (!last || (NULL == d->stage) || (NULL != d->psf_slot[1]))
+		return;
+
+	bartorch_cuda_stage_release(d->stage, 0);
+
+	int next = (d->coset + 1) % d->cosets;
+
+	issue_coset(d, next, 0);
+	d->slot_set[0] = next;
+}
+
 /* Down to the places the samples reach, and back up with zeros elsewhere. */
 static void gather(const struct nufft_fi_s* d, complex float* dst, const complex float* src)
 {
@@ -975,7 +1054,7 @@ static void scatter(const struct nufft_fi_s* d, long grid, complex float* dst, c
  * function contracts them, so a coil's are gathered before any is multiplied.
  */
 static void packed_coset(struct nufft_fi_s* d, complex float* dst, const complex float* src,
-		const void* psf, const long map_strs[], const complex float* map)
+		const void* psf, const long map_strs[], const complex float* map, bool last)
 {
 	struct nufft_data* t = d->toeplitz_data;
 	int N = t->N;
@@ -1043,6 +1122,8 @@ static void packed_coset(struct nufft_fi_s* d, complex float* dst, const complex
 		else
 			contract_bank(t, psf, bank_dims, ciT_bank_dims, bank);
 
+		slot_read(d, last && (c == coils - 1));
+
 		for (long r = 0; r < out_coeffs; r++) {
 
 			scatter(d, grid, volume, bank + r * locations);
@@ -1068,7 +1149,7 @@ static void packed_coset(struct nufft_fi_s* d, complex float* dst, const complex
  * triangle -- and the arrangements it does not cover go back to BART's own.
  */
 static bool fused_coset(struct nufft_fi_s* d, complex float* dst, const complex float* src,
-		const long map_strs[], const complex float* map)
+		const long map_strs[], const complex float* map, bool last)
 {
 	struct nufft_data* t = d->toeplitz_data;
 
@@ -1079,7 +1160,7 @@ static bool fused_coset(struct nufft_fi_s* d, complex float* dst, const complex 
 
 	if (NULL != d->kept) {
 
-		packed_coset(d, dst, src, psf, map_strs, map);
+		packed_coset(d, dst, src, psf, map_strs, map, last);
 		return true;
 	}
 
@@ -1098,6 +1179,8 @@ static bool fused_coset(struct nufft_fi_s* d, complex float* dst, const complex 
 	linop_forward(t->cfft_op, t->N, t->cim_dims, grid, t->N, t->cim_dims, grid);
 
 	grid = multiply_transfer(t, psf, t->cim_dims, t->ciT_dims, grid);
+
+	slot_read(d, last);
 
 	linop_adjoint(t->cfft_op, t->N, t->cim_dims, grid, t->N, t->cim_dims, grid);
 
@@ -1144,9 +1227,9 @@ static void coset_begin(struct nufft_fi_s* d, const void* ref)
 
 /* The set that is loaded, convolved with `src` and added to `dst`. */
 static void coset_normal(struct nufft_fi_s* d, complex float* dst, const complex float* src,
-		const long map_strs[], const complex float* map)
+		const long map_strs[], const complex float* map, bool last)
 {
-	if (!fused_coset(d, dst, src, map_strs, map))
+	if (!fused_coset(d, dst, src, map_strs, map, last))
 		error("bartorch: a streamed set with no function in its slot\n");
 
 	if (NULL != d->stage)
@@ -1163,9 +1246,9 @@ void bartorch_nufft_coset_use(const struct linop_s* op, int i)
 	fetch_coset(CAST_DOWN(nufft_fi_s, linop_get_data(op)), i);
 }
 
-void bartorch_nufft_coset_normal(const struct linop_s* op, complex float* dst, const complex float* src)
+void bartorch_nufft_coset_normal(const struct linop_s* op, complex float* dst, const complex float* src, int last)
 {
-	coset_normal(CAST_DOWN(nufft_fi_s, linop_get_data(op)), dst, src, NULL, NULL);
+	coset_normal(CAST_DOWN(nufft_fi_s, linop_get_data(op)), dst, src, NULL, NULL, (0 != last));
 }
 
 /* Whether a set can be convolved with the sensitivity folded in.
@@ -1192,9 +1275,9 @@ int bartorch_nufft_coset_folds(const struct linop_s* op)
  * each of those is half a gigabyte.  Folded in here neither is made. */
 void bartorch_nufft_coset_normal_sense(const struct linop_s* op,
 		complex float* dst, const complex float* src,
-		const long map_strs[], const complex float* map)
+		const long map_strs[], const complex float* map, int last)
 {
-	coset_normal(CAST_DOWN(nufft_fi_s, linop_get_data(op)), dst, src, map_strs, map);
+	coset_normal(CAST_DOWN(nufft_fi_s, linop_get_data(op)), dst, src, map_strs, map, (0 != last));
 }
 
 void bartorch_nufft_coset_end(const struct linop_s* op)
@@ -1219,11 +1302,8 @@ static void nufft_fi_normal(const linop_data_t* _d, complex float* dst, const co
 		return;
 	}
 
-	/* Nobody put the sets outside, so they are walked here.  The fetch is
-	 * not put on a stream of its own: what would be overlapped is BART's
-	 * own arithmetic, which threads, and a region of two makes that
-	 * threading nested -- measured at 96^3 with eight coils, 6.48 s against
-	 * 2.75 s to save 8 MB of 210. */
+	/* Nobody put the sets outside, so they are walked here, each read by a
+	 * single convolution. */
 	struct nufft_data* t = d->toeplitz_data;
 
 	coset_begin(d, dst);
@@ -1233,7 +1313,7 @@ static void nufft_fi_normal(const linop_data_t* _d, complex float* dst, const co
 	for (int i = 0; i < d->cosets; i++) {
 
 		fetch_coset(d, i);
-		coset_normal(d, dst, src, NULL, NULL);
+		coset_normal(d, dst, src, NULL, NULL, true);
 	}
 
 	pthread_mutex_unlock(&d->lock);
@@ -1254,7 +1334,7 @@ static void nufft_fi_del(const linop_data_t* _d)
 
 	md_free(d->host_weights);
 	md_free(d->host_basis);
-	bartorch_host_free(d->psf_host);
+	psf_host_free(d);
 
 	bartorch_cuda_stage_close(d->stage);
 
@@ -1956,7 +2036,7 @@ static void stream_psf(struct nufft_fi_s* d)
 
 	if ((cosets < 2) || (t->psf_dims[t->N] != cosets)) {
 
-		bartorch_host_free(d->psf_host);
+		psf_host_free(d);
 		d->psf_host = NULL;
 		return;
 	}
@@ -1965,6 +2045,11 @@ static void stream_psf(struct nufft_fi_s* d)
 	d->psf_size = t->conf.real ? FL_SIZE : CFL_SIZE;
 	d->cosets = cosets;
 	d->toeplitz_data = t;
+
+	/* Page-locked, so a set's crossing runs behind the convolution rather
+	 * than holding up the host that issued it. */
+	d->psf_registered = (0 == bartorch_cuda_host_register(d->psf_host,
+				(long)cosets * d->psf_coset * (long)d->psf_size));
 
 	/* A compressed function is gathered against through a list of the
 	 * places the samples reach, made once from the map they were found
@@ -2304,7 +2389,10 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 
 	d->stage = NULL;
 	d->slot = 0;
+	d->slot_set[0] = -1;
+	d->slot_set[1] = -1;
 	d->coset = 0;
+	d->psf_registered = false;
 	d->kept = NULL;
 	d->kept_n = 0;
 
@@ -2580,7 +2668,7 @@ void nufft_update_traj(const struct linop_s* nufft, int N, const long trj_dims[N
 		if (NULL != d->toeplitz)
 			linop_free(d->toeplitz);
 
-		bartorch_host_free(d->psf_host);
+		psf_host_free(d);
 		d->psf_host = NULL;
 
 		bartorch_cuda_stage_close(d->stage);

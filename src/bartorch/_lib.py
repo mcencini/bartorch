@@ -250,6 +250,8 @@ def _bind(lib: ctypes.CDLL) -> ctypes.CDLL:
     lib.bartorch_nufft_set_overlap_psf.argtypes = [c.c_int]
     lib.bartorch_nufft_overlap_psf.restype = c.c_int
     lib.bartorch_nufft_overlap_psf.argtypes = []
+    lib.bartorch_nufft_set_contraction_kernel.restype = None
+    lib.bartorch_nufft_set_contraction_kernel.argtypes = [c.c_int]
     lib.bartorch_nufft_set_release_transforms.restype = None
     lib.bartorch_nufft_set_release_transforms.argtypes = [c.c_int]
     lib.bartorch_nufft_release_transforms.restype = c.c_int
