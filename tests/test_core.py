@@ -209,9 +209,9 @@ def test_a_failed_assertion_inside_bart_reaches_the_caller():
     path, where the error catcher turns it into a return code.
     """
     import bartorch.tools as bt
-    from bartorch.ops import LinearOperator
+    from bartorch import linop
 
     n = 16
     traj = bt.traj(x=n, y=8, r=True)
     with pytest.raises(bartorch.BartError):
-        LinearOperator.nufft(traj, (8, 1, n, n), toeplitz=False)
+        linop.NUFFT(traj, (8, 1, n, n), toeplitz=False)

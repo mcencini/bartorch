@@ -23,8 +23,9 @@ C library with a small C ABI; Python reaches it through ctypes.
 | `csrc/finufft.c`, `nufft_finufft.c` | FINUFFT's and cuFINUFFT's entry points, and BART's NUFFT operator built out of a pair of their plans. |
 | `csrc/compat/` | The `cblas.h`, `lapacke.h` and `fftw3.h` BART includes. |
 | `third_party/` | pocketfft and BlocksRuntime, vendored with their licenses. |
-| `src/bartorch/` | The package: `_lib.py` (ctypes), `_backend.py` (which library serves BLAS and LAPACK), `_buffer.py` (a tensor over one of BART's buffers, host or device), `core/graph.py` (tools on tensors), `ops.py` (operators), `finufft.py` (the substitution), `tools/` (one function per BART command). |
+| `src/bartorch/` | The package: `_abi.py` (the ctypes signatures, generated from the header), `_lib.py` (finding and loading the library), `_marshal.py` (what an ABI argument looks like), `_backend.py` (which library serves BLAS and LAPACK), `_buffer.py` (a tensor over one of BART's buffers, host or device), `core/graph.py` (tools on tensors), `_operator.py` (what every operator shares), `linop/` and `nlop/` (a class per operator), `interop/` (handing them to other libraries), `finufft.py` (the substitution), `tools/` (one function per BART command), `ops.py` (a deprecation shim). |
 | `build_tools/gen_tools.py` | Generates `tools/_generated.py` from the BART sources. |
+| `build_tools/gen_abi.py` | Generates `_abi.py` from `csrc/include/bartorch.h`. |
 | `attic/prototype/` | An earlier pybind11 extension, kept for reference and not built. |
 
 ## Design rules
@@ -534,6 +535,47 @@ glibc's `assert` calls `abort()` and a wrong shape takes the interpreter down.
 nor the libraries, and the symbol is hidden so it binds inside this library
 alone.
 
+## The operator layer
+
+`LinearOperator` is an interface, not a namespace: two shapes, a forward, an
+adjoint, a normal. Everything written against an operator -- a solver, a torch
+model, `deepinv` -- is written against that, and an operator of one's own is a
+subclass with two methods, which then chains with BART's own and is solved by
+BART's own.
+
+`BartLinearOperator` is one that a BART handle stands behind, and every
+concrete operator is one: `FFT`, `Diagonal`, `Sampling`, `MultiplySum`,
+`NUFFT`, `Sense`, `Callback`. Each says only which of BART's constructors
+makes it, in `_create`; the lock BART is called under, the device it is built
+on, the handle's lifetime and the tensors the handle holds by pointer and must
+outlive are all in `_operator.py`. A new operator is the call and nothing
+around it.
+
+Composition builds BART's composite rather than a Python chain, so a chain of
+five applies as one call and a solver iterating on it never returns to Python.
+An operator written in Python joins the same way -- `as_bart()` wraps it as a
+pair of callbacks -- which is what lets BART's conjugate gradients drive it.
+
+`.H` is the exception that proves the rule: BART has no adjoint-of-an-operator
+constructor, so `Adjoint` is the operator read the other way round rather than
+a second handle, and applying it costs what `adjoint` costs. Only composing it
+needs a handle, and only then is one made.
+
+**A backward pass is the adjoint, not the transpose.** Torch stores conjugate
+Wirtinger gradients: what it wants back for `y = A x` is `A^H g`. The near
+miss is silent and a real-valued test would never see it, so
+`tests/test_linop.py` compares against torch's own gradient for a
+multiplication torch can do, and asserts that the transpose would have
+disagreed.
+
+**`deepinv` is an adapter, not a base class.** An operator carries `A`,
+`A_adjoint` and `A_dagger` under `deepinv`'s names, and `to_deepinv()` returns
+a real `LinearPhysics` built the first time it is asked for. Inheriting
+instead would put that import in the path of every operator and tie releases
+here to releases there. The wrapper's own work is `deepinv`'s batch axis,
+which a BART operator does not have, and `A_dagger` as BART's conjugate
+gradients.
+
 ## Commands
 
 ```sh
@@ -543,8 +585,27 @@ pip install -e .                    # the same through scikit-build-core
 pip install -e . --config-settings=cmake.define.BARTORCH_CUDA=ON   # with device code
 python scripts/check_device.py      # everything a card can answer that a host cannot
 python build_tools/gen_tools.py     # after a submodule bump
+python build_tools/gen_abi.py       # after changing the C header
 ruff format src tests build_tools && ruff check src tests build_tools
 ```
+
+Three things a fresh checkout needs before that first line works, each of
+which fails with a message that does not say which:
+
+* **A compiler that puts BART's nested functions on the heap.** GCC 14 or
+  newer, for `-ftrampoline-impl=heap`, or clang -- `cmake -DCMAKE_C_COMPILER=clang
+  -DCMAKE_CXX_COMPILER=clang++`. CMake says so and stops; GCC 13 is not enough.
+* **OpenMP for whichever of those it is.** `libomp-dev` beside clang. Without
+  it the build still works and the overlapped walks in `csrc/sense.c` run in
+  sequence.
+* **FINUFFT.** `pip install finufft`. Without it seventeen tests fail rather
+  than skip, because nothing reaches BART's own gridder without having been
+  sent there and the substitution declining is an error, not a fallback.
+
+With those, and `pip install torch numpy scipy pytest`, the suite is green
+apart from the CUDA tests, which skip without a card. `pip install mkl
+deepinv` covers the rest: the FFT tests that assert MKL planned, and the
+``LinearPhysics`` adapter.
 
 ## Tests
 

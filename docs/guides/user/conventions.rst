@@ -45,10 +45,10 @@ because BART commands can mutate them. Keep that default while learning;
 ``LinearOperator`` supports forward application, ``adjoint``, ``normal``,
 composition with ``@``, addition, and a conjugate-gradient ``lstsq`` solver.
 ``P @ F @ S`` applies sensitivity multiplication, Fourier encoding, and sampling
-in that order. ``NonlinearOperator.from_torch`` provides derivatives of a
+in that order. ``nlop.FromTorch`` provides derivatives of a
 PyTorch signal model to BART's Gauss-Newton solver.
 
-``LinearOperator.fft`` is centered and unitary by default. The FFT tool is
+``linop.FFT`` is centered and unitary by default. The FFT tool is
 unnormalized unless ``unitary=True`` is passed. State centering and normalization
 when comparing reconstructions; see the FFT tool reference for its options.
 

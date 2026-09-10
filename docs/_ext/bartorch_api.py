@@ -104,7 +104,7 @@ def render(node, name, module, path, app):
     if kind == "class":
         methods = {n.name: n for n in node.body if isinstance(n, ast.FunctionDef)}
         for child in node.body:
-            # LinearOperator.forward is an alias for __call__.
+            # LinearOperator.forward is the un-recorded __call__.
             if isinstance(child, ast.Assign) and isinstance(child.value, ast.Name):
                 for target in child.targets:
                     if isinstance(target, ast.Name) and child.value.id in methods:
@@ -141,7 +141,8 @@ def generate(app):
     out = Path(app.srcdir) / "api" / "generated"
     modules = {
         "package": ("bartorch", "Package and diagnostics"),
-        "operators": ("bartorch.ops", "Operators and solvers"),
+        "linops": ("bartorch.linop", "Linear operators and solvers"),
+        "nlops": ("bartorch.nlop", "Nonlinear operators and solvers"),
         "cuda": ("bartorch.cuda", "CUDA controls"),
         "finufft": ("bartorch.finufft", "NUFFT backend controls"),
         "cfl": ("bartorch.utils.cfl", "CFL file interoperability"),

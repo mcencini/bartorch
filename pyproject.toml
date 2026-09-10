@@ -41,9 +41,14 @@ finufft = ["finufft>=2.2"]
 # int64 in `cufinufftf_setpts` and defaults filled from the options struct
 # alone.  That is the API from 2.3 on.
 cufinufft = ["cufinufft>=2.3"]
+# deepinv is an adapter, not a base class: LinearOperator.to_deepinv() hands an
+# operator over as a LinearPhysics, and nothing in the package imports deepinv
+# until it is called.
+deepinv = ["deepinv>=0.2"]
 dev = [
     "pytest>=7",
     "ruff",
+    "deepinv>=0.2",
 ]
 docs = [
     "sphinx>=7.0",

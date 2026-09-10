@@ -10,7 +10,7 @@ import torch
 
 import bartorch
 import bartorch.tools as bt
-from bartorch.ops import LinearOperator
+from bartorch import linop
 
 requires_cuda = pytest.mark.skipif(
     not bartorch.cuda.available(), reason="no CUDA device, or the library was built without CUDA"
@@ -69,7 +69,7 @@ def test_a_tool_gives_the_same_answer_on_the_device_as_on_the_host():
 def test_an_operator_applies_on_the_device():
     n = 32
     x = torch.randn(1, n, n, dtype=torch.complex64, device="cuda")
-    F = LinearOperator.fft((1, n, n), axes=(-1, -2))
+    F = linop.FFT((1, n, n), axes=(-1, -2))
     y = F(x)
     assert y.device.type == "cuda"
     torch.testing.assert_close(y.cpu(), F(x.cpu()), rtol=1e-4, atol=1e-4)

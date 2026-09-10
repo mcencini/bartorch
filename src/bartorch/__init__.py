@@ -14,20 +14,20 @@ from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError, version
 
-from bartorch import cuda, finufft
+from bartorch import cuda, finufft, interop, linop, nlop
 from bartorch.core.graph import (
     BartError,
     coil_batch,
-    fold_maps,
     dispatch,
+    fold_maps,
     get_debug_level,
     kernels_to_maps,
     maps_to_kernels,
     run_command,
     set_coil_batch,
-    set_fold_maps,
     set_copy_inputs,
     set_debug_level,
+    set_fold_maps,
     set_num_threads,
 )
 
@@ -64,6 +64,9 @@ __all__ = [
     "BartError",
     "cuda",
     "finufft",
+    "interop",
+    "linop",
+    "nlop",
     "__version__",
     "backend_sources",
     "bart_version",

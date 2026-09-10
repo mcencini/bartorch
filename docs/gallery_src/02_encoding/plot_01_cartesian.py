@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 import torch
 
 import bartorch
-from bartorch.ops import LinearOperator
+from bartorch import linop
 
 bartorch.set_num_threads(1)
 torch.manual_seed(0)
@@ -21,11 +21,11 @@ y, x = torch.meshgrid(grid, grid, indexing="ij")
 maps = torch.stack([torch.exp(1j * (j * x + (3 - j) * y)) for j in range(ncoils)])
 maps = maps / ncoils**0.5
 image_shape, coil_shape = (1, n, n), (ncoils, n, n)
-S = LinearOperator.multiply_sum(maps, image_shape, coil_shape)
-F = LinearOperator.fft(coil_shape, axes=(-2, -1))
+S = linop.MultiplySum(maps, image_shape, coil_shape)
+F = linop.FFT(coil_shape, axes=(-2, -1))
 mask = torch.zeros(1, n, n, dtype=torch.complex64)
 mask[:, ::2, :] = 1
-P = LinearOperator.sampling(mask, coil_shape)
+P = linop.Sampling(mask, coil_shape)
 A = P @ F @ S
 image = torch.exp(-5 * (x.square() + y.square())).to(torch.complex64)[None]
 measurements = A(image)

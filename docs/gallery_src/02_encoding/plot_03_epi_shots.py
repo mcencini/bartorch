@@ -14,7 +14,7 @@ import torch
 
 import bartorch
 import bartorch.tools as bt
-from bartorch.ops import LinearOperator
+from bartorch import linop
 
 bartorch.set_num_threads(1)
 torch.manual_seed(3)
@@ -25,12 +25,12 @@ maps = torch.stack([torch.exp(1j * j * yy) for j in range(ncoils)])[None] / ncoi
 phases = torch.stack([torch.ones_like(xx), torch.exp(1j * (1.2 * xx + yy))])[:, None]
 shape = (1, 1, n, n)
 data_shape = (nshots, ncoils, n, n)
-SD = LinearOperator.multiply_sum(maps * phases, shape, data_shape)
-F = LinearOperator.fft(data_shape, axes=(-2, -1))
+SD = linop.MultiplySum(maps * phases, shape, data_shape)
+F = linop.FFT(data_shape, axes=(-2, -1))
 mask = torch.zeros(nshots, 1, n, n, dtype=torch.complex64)
 for shot in range(nshots):
     mask[shot, :, shot::nshots, :] = 1
-A = LinearOperator.sampling(mask, data_shape) @ F @ SD
+A = linop.Sampling(mask, data_shape) @ F @ SD
 truth = bt.phantom([n, n]).reshape(shape)
 data = (
     torch.fft.fftshift(

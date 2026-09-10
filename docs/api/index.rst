@@ -27,8 +27,10 @@ Useful starting points
 * Reconstruction: :func:`bartorch.tools.pics`, :func:`bartorch.tools.nlinv`,
   :func:`bartorch.tools.moba`, :func:`bartorch.tools.wave`,
   :func:`bartorch.tools.wshfl`.
-* Native apps: :class:`bartorch.ops.LinearOperator` and
-  :class:`bartorch.ops.NonlinearOperator`.
+* Native apps: the operators in :mod:`bartorch.linop` and
+  :mod:`bartorch.nlop`, each a class of its own over
+  :class:`bartorch.linop.LinearOperator` and
+  :class:`bartorch.nlop.NonlinearOperator`.
 
 Read :doc:`../guides/user/conventions` before translating CLI arguments.
 Some raw option strings retain BART's bitmasks even though axis-oriented wrappers

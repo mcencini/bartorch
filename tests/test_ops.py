@@ -7,7 +7,7 @@ import pytest
 import torch
 
 import bartorch.tools as bt
-from bartorch.ops import LinearOperator, NonlinearOperator
+from bartorch import linop, nlop
 
 
 def _rand(*shape):
@@ -20,14 +20,14 @@ def _inner(a, b):
 
 def test_bart_fft_operator_matches_numpy():
     x = _rand(8, 16)
-    F = LinearOperator.fft((8, 16), axes=-1)
+    F = linop.FFT((8, 16), axes=-1)
     y = F(x)
     ref = np.fft.fftshift(np.fft.fft(np.fft.ifftshift(x.numpy(), axes=-1), axis=-1), axes=-1)
     np.testing.assert_allclose(y.numpy(), ref / np.sqrt(16), rtol=1e-4, atol=1e-4)
 
 
 def test_adjoint_identity_holds_for_the_fft_operator():
-    F = LinearOperator.fft((8, 16), axes=(-1, -2))
+    F = linop.FFT((8, 16), axes=(-1, -2))
     x, y = _rand(8, 16), _rand(8, 16)
     assert _inner(F(x), y) == pytest.approx(_inner(x, F.adjoint(y)), rel=1e-4)
 
@@ -35,8 +35,8 @@ def test_adjoint_identity_holds_for_the_fft_operator():
 def test_python_operator_runs_inside_bart_and_chains_with_a_bart_operator():
     shape = (8, 16)
     w = _rand(*shape)
-    W = LinearOperator.from_callbacks(shape, shape, lambda x: w * x, lambda y: w.conj() * y)
-    F = LinearOperator.fft(shape, axes=-1)
+    W = linop.Callback(shape, shape, lambda x: w * x, lambda y: w.conj() * y)
+    F = linop.FFT(shape, axes=-1)
     A = F @ W
     x = _rand(*shape)
     torch.testing.assert_close(A(x), F(w * x), rtol=1e-4, atol=1e-4)
@@ -52,7 +52,7 @@ def test_bart_uses_the_normal_callback_when_given_one():
         calls.append(1)
         return 2 * x
 
-    Op = LinearOperator.from_callbacks(shape, shape, lambda x: x, lambda y: y, normal=normal)
+    Op = linop.Callback(shape, shape, lambda x: x, lambda y: y, normal=normal)
     x = _rand(*shape)
     torch.testing.assert_close(Op.normal(x), 2 * x)
     assert calls
@@ -63,8 +63,8 @@ def test_least_squares_recovers_the_image_from_coil_data():
     ksp = bt.phantom([n, n], kspace=True, ncoils=ncoils)
     maps = bt.ecalib(ksp, calib_size=12, maps=1).reshape(ncoils, n, n)
     img = bt.phantom([n, n]).reshape(1, n, n)
-    S = LinearOperator.multiply_sum(maps, (1, n, n), (ncoils, n, n))
-    F = LinearOperator.fft((ncoils, n, n), axes=(-1, -2))
+    S = linop.MultiplySum(maps, (1, n, n), (ncoils, n, n))
+    F = linop.FFT((ncoils, n, n), axes=(-1, -2))
     A = F @ S
     y = A(img)
     x = A.lstsq(y, maxiter=50, tol=1e-8)
@@ -75,7 +75,7 @@ def test_sampling_operator_zeroes_unsampled_lines():
     shape = (4, 8, 8)
     pattern = torch.zeros(1, 8, 8, dtype=torch.complex64)
     pattern[..., ::2, :] = 1
-    P = LinearOperator.sampling(pattern, shape)
+    P = linop.Sampling(pattern, shape)
     x = _rand(*shape)
     torch.testing.assert_close(P(x), x * pattern)
 
@@ -84,7 +84,7 @@ def test_nufft_operator_agrees_with_the_nufft_tool():
     n = 32
     traj = bt.traj(x=n, y=16, r=True)
     img = bt.phantom([n, n]).reshape(1, n, n)
-    A = LinearOperator.nufft(traj, (1, n, n))
+    A = linop.NUFFT(traj, (1, n, n))
     y = A(img)
     ref = bt.nufft(traj, img)
     torch.testing.assert_close(y.reshape(ref.shape), ref, rtol=1e-3, atol=1e-3)
@@ -96,7 +96,7 @@ def test_toeplitz_normal_operator_matches_adjoint_after_forward():
     n = 32
     traj = bt.traj(x=n, y=16, r=True)
     img = bt.phantom([n, n]).reshape(1, n, n)
-    A = LinearOperator.nufft(traj, (1, n, n), toeplitz=True)
+    A = linop.NUFFT(traj, (1, n, n), toeplitz=True)
     torch.testing.assert_close(A.normal(img), A.adjoint(A(img)), rtol=2e-2, atol=2e-2)
 
 
@@ -106,7 +106,7 @@ def test_torch_function_becomes_a_bart_nonlinear_operator_with_a_correct_adjoint
     def fn(x):
         return x * x.abs() + x.conj() * 0.5
 
-    F = NonlinearOperator.from_torch(fn, shape, shape)
+    F = nlop.FromTorch(fn, shape, shape)
     x = _rand(*shape)
     torch.testing.assert_close(F(x), fn(x))
     dx, dy = _rand(*shape), _rand(*shape)
@@ -129,7 +129,7 @@ def test_gauss_newton_fits_a_mono_exponential_decay():
     def model(p):
         return p[0][:, None] * torch.exp(-p[1][:, None] * t[None, :])
 
-    F = NonlinearOperator.from_torch(model, (2, nvox), (nvox, nechoes))
+    F = nlop.FromTorch(model, (2, nvox), (nvox, nechoes))
     y = model(truth)
     x0 = torch.ones(2, nvox, dtype=torch.complex64)
     x = F.irgnm(y, x0, iterations=10, alpha=1.0, alpha_min=1e-6, redu=3.0, cgiter=50)
@@ -147,8 +147,8 @@ def test_model_based_reconstruction_chains_a_torch_model_with_a_bart_encoding():
     def model(p):
         return p[0][None] * torch.exp(-p[1][None] * t[:, None, None])
 
-    F = LinearOperator.fft((nechoes, n, n), axes=(-1, -2))
-    M = NonlinearOperator.from_torch(model, (2, n, n), (nechoes, n, n))
+    F = linop.FFT((nechoes, n, n), axes=(-1, -2))
+    M = nlop.FromTorch(model, (2, n, n), (nechoes, n, n))
     A = F @ M
     assert A.ishape == (2, n, n) and A.oshape == (nechoes, n, n)
     y = A(truth)
@@ -173,10 +173,10 @@ def test_a_three_dimensional_nufft_takes_three_spatial_axes_from_the_trajectory(
     planar[..., 2] = 0
 
     # A volume: the last three axes are spatial and the coils sit in front.
-    A = LinearOperator.nufft(volumetric, (coils, n, n, n), toeplitz=False)
+    A = linop.NUFFT(volumetric, (coils, n, n, n), toeplitz=False)
     assert A.oshape == (coils, spokes, n, 1)
 
     # The same shape read two-dimensionally would have made the coils a third
     # spatial axis, so kz staying at zero is what has to say otherwise.
-    B = LinearOperator.nufft(planar, (1, n, n), toeplitz=False)
+    B = linop.NUFFT(planar, (1, n, n), toeplitz=False)
     assert B.oshape == (1, spokes, n, 1)
