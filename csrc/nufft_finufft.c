@@ -239,6 +239,7 @@ struct nufft_fi_s {
 	void* stage;			/* the stream a set crosses on */
 	int slot;			/* the one BART is pointed at */
 	int slot_set[2];		/* the set each slot holds or is receiving */
+	int slot_pending;		/* a slot the card has not yet been held for, or -1 */
 	int coset;			/* the set in it */
 	bool psf_registered;		/* the host copy is page-locked */
 	long psf_coset;			/* elements in one set of the function */
@@ -780,7 +781,8 @@ static void fetch_coset(struct nufft_fi_s* d, int i)
 		d->slot_set[cur ^ 1] = i + 1;
 	}
 
-	bartorch_cuda_stage_wait(d->stage, cur);
+	/* The card is held for it where it is first read (`slot_ready`). */
+	d->slot_pending = cur;
 
 	d->slot = cur;
 
@@ -1085,6 +1087,24 @@ static struct bartorch_cb_fft* callbacks_for(struct nufft_fi_s* d)
 	return d->cb_fft;
 }
 
+/* Hold the card until the set in the slot has arrived.
+ *
+ * As late as it can be: a set's first transforms do not read the function,
+ * so they run while its last part is still crossing, and only the first
+ * multiplication by it waits.  At 256^3 a set takes 30 ms to cross and the
+ * work that can hide it after the last read of the set before is 22 ms of
+ * inverse transforms; the forward transforms of the next set's first coil
+ * are what cover the rest.  The wait goes on the stream of whoever
+ * multiplies. */
+static void slot_ready(struct nufft_fi_s* d)
+{
+	if ((NULL == d->stage) || (-1 == d->slot_pending))
+		return;
+
+	bartorch_cuda_stage_wait(d->stage, d->slot_pending);
+	d->slot_pending = -1;
+}
+
 /* Down to the places the samples reach, and back up with zeros elsewhere. */
 static void gather(const struct nufft_fi_s* d, long grid, complex float* dst, const complex float* src)
 {
@@ -1233,6 +1253,8 @@ static void packed_coset(struct nufft_fi_s* d, complex float* dst, const complex
 		for (long r = 0; r < coeffs; r++)
 			coefficient_in(d, cb, shift, bank + r * locations, volume, src + c * coil_step + r * rest_step, m);
 
+		slot_ready(d);
+
 		if (md_check_equal_dims(N, bank_dims, ciT_bank_dims, ~0UL))
 			bank = multiply_transfer(t, psf, bank_dims, ciT_bank_dims, bank);
 		else
@@ -1290,6 +1312,8 @@ static bool fused_coset(struct nufft_fi_s* d, complex float* dst, const complex 
 	apply_phase(t, t->cim_dims, shift, grid, src, false);
 
 	linop_forward(t->cfft_op, t->N, t->cim_dims, grid, t->N, t->cim_dims, grid);
+
+	slot_ready(d);
 
 	grid = multiply_transfer(t, psf, t->cim_dims, t->ciT_dims, grid);
 
@@ -2517,6 +2541,7 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 	d->slot = 0;
 	d->slot_set[0] = -1;
 	d->slot_set[1] = -1;
+	d->slot_pending = -1;
 	d->coset = 0;
 	d->psf_registered = false;
 	d->kept_mask = NULL;
@@ -2802,6 +2827,7 @@ void nufft_update_traj(const struct linop_s* nufft, int N, const long trj_dims[N
 		bartorch_cuda_stage_close(d->stage);
 		d->stage = NULL;
 		d->slot = 0;
+		d->slot_pending = -1;
 
 		md_free(d->kept_mask);
 		md_free(d->kept_prefix);
