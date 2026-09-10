@@ -1388,6 +1388,38 @@ def test_a_basis_that_is_really_complex_keeps_the_function_complex(in_tools):
 
 
 @requires_finufft
+def test_a_basis_real_to_single_precision_keeps_the_function_real(in_tools):
+    """A basis computed in floats is real only to single precision.
+
+    An SVD of a dictionary done in floats leaves imaginary parts of a few
+    parts in a million on vectors that are real, and the function built from
+    such a basis is real to the same precision, so it is stored as floats.  A
+    basis with an imaginary part of its own is not.
+    """
+    from bartorch.tools import _generated as g
+
+    n, coils, frames, coeffs, spokes = 32, 4, 6, 3, 8
+    traj, _ = _subspace(n, spokes, frames, coeffs)
+    torch.manual_seed(0)
+    values = torch.linalg.qr(torch.randn(frames, coeffs))[0].T.contiguous()
+    k = torch.randn(frames, 1, coils, spokes, n, 1, dtype=torch.complex64)
+    maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
+
+    def stored_real(fraction):
+        """Whether a basis whose imaginary part holds `fraction` of its energy is stored real."""
+        imaginary = torch.randn(coeffs, frames)
+        imaginary *= (fraction * values.pow(2).sum() / imaginary.pow(2).sum()).sqrt()
+        basis = torch.zeros(coeffs, frames, 1, 1, 1, 1, 1, dtype=torch.complex64)
+        basis[..., 0, 0, 0, 0, 0] = values + 1j * imaginary
+        before = _finufft.functions_real()
+        g.pics(k, maps, t=traj, B=basis, i=1)
+        return _finufft.functions_real() > before
+
+    assert stored_real(1e-11), "an imaginary part at single precision leaves the function real"
+    assert not stored_real(1e-6), "an imaginary part of its own keeps the function complex"
+
+
+@requires_finufft
 def test_a_subspace_function_is_stored_as_its_upper_triangle(in_tools):
     """A Gram matrix is Hermitian, so its upper triangle is the whole of it.
 

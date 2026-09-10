@@ -107,9 +107,9 @@ extern double bartorch_finufft_upsampling(void);
 
 /* Normal operators built since the last reset, so a test can say that a
  * solve ran on a point spread function rather than on the transform pair;
- * the functions among them that were compressed; and the sets convolved
- * with the passes run inside cuFFT's transforms. */
-enum { TP_PSF, TP_PAIR, TP_COMPRESSED, TP_CALLBACKS, TP_COUNTERS };
+ * the functions among them that were compressed; the sets convolved with
+ * the passes run inside cuFFT's transforms; and the functions stored real. */
+enum { TP_PSF, TP_PAIR, TP_COMPRESSED, TP_CALLBACKS, TP_REAL, TP_COUNTERS };
 static long toeplitz_counters[TP_COUNTERS];
 
 /* Building a point spread function needs a transform of its own, and that
@@ -1981,7 +1981,13 @@ static bool basis_is_real(int N, const long bas_dims[N], const complex float* ba
 
 	md_free(host);
 
-	bool real = (0. == energy) || (left <= 1.e-12 * energy);
+	/* What the turn leaves is held against single precision: a basis computed
+	 * in floats -- an SVD of a dictionary, say -- keeps imaginary parts at that
+	 * level when it is real, and dropping them changes the function by about
+	 * as little. */
+	const double noise = 100. * FLT_EPSILON;
+
+	bool real = (0. == energy) || (left <= noise * noise * energy);
 
 	debug_printf(DP_DEBUG1, "Basis is %sreal, %g of it left after one turn\n",
 			real ? "" : "not ", (0. == energy) ? 0. : sqrt(left / energy));
@@ -2002,6 +2008,9 @@ static void install_psf(struct nufft_data* data, const complex float* traj, comp
 	 * there.  It is asked before the function is built, because whether it
 	 * comes out real decides where it is built. */
 	bool store_real = data->conf.real || basis_is_real(ND, data->bas_dims, basis);
+
+	if (store_real)
+		toeplitz_counters[TP_REAL]++;
 
 	/* Streamed, the function is made an entry at a time and kept on the
 	 * host: neither it nor any entry but the one being made is ever

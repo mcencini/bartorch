@@ -410,6 +410,18 @@ def functions_compressed() -> int:
     return int(library().bartorch_toeplitz_counter(2))
 
 
+def functions_real() -> int:
+    """Toeplitz functions stored as floats since the counters were reset.
+
+    Whether a function is stored real is decided from the basis when it is
+    built, so the arguments alone do not say -- this is how a caller or a test
+    finds out.
+    """
+    from bartorch._lib import library
+
+    return int(library().bartorch_toeplitz_counter(4))
+
+
 def sets_through_callbacks() -> int:
     """Sets convolved with the passes inside cuFFT's transforms since the counters were reset."""
     from bartorch._lib import library
