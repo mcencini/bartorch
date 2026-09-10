@@ -46,6 +46,9 @@
 #include "num/multiplace.h"
 #include "num/triagmat.h"
 #include "num/gpuops.h"
+#ifdef USE_CUDA
+#include "noncart/gpu_grid.h"
+#endif
 
 #include "include/bartorch.h"
 
@@ -208,13 +211,11 @@ struct nufft_fi_s {
 	 */
 	struct nufft_data* toeplitz_data;
 	complex float* psf_host;
-	complex float* linphase_host;
 	void* psf_slot[2];		/* where a set lands */
-	complex float* linphase_slot[2];
 	void* stage;			/* the stream a set crosses on */
 	int slot;			/* the one BART is pointed at */
+	int coset;			/* the set in it */
 	long psf_coset;			/* elements in one set of the function */
-	long linphase_coset;
 	size_t psf_size;		/* a real function is stored as floats */
 	int cosets;
 
@@ -636,10 +637,6 @@ static void open_slots(struct nufft_fi_s* d, const void* ref)
 	md_copy_dims(ND, psf_dims, t->psf_dims);
 	psf_dims[t->N] = 1;
 
-	long lph_dims[ND];
-	md_copy_dims(ND, lph_dims, t->lph_dims);
-	lph_dims[t->N] = 1;
-
 	/* Two slots, so the set that will be wanted next crosses while the card
 	 * convolves the one it has.  The crossing goes on a stream of its own,
 	 * ordered against BART's by events; where there is no such stream to be
@@ -648,11 +645,8 @@ static void open_slots(struct nufft_fi_s* d, const void* ref)
 	if (!overlap_psf_enabled || (0 != bartorch_cuda_stage_open(&d->stage)))
 		d->stage = NULL;
 
-	for (int i = 0; i < ((NULL != d->stage) ? 2 : 1); i++) {
-
+	for (int i = 0; i < ((NULL != d->stage) ? 2 : 1); i++)
 		d->psf_slot[i] = md_alloc_sameplace(ND, psf_dims, d->psf_size, ref);
-		d->linphase_slot[i] = md_alloc_sameplace(ND, lph_dims, CFL_SIZE, ref);
-	}
 
 	d->slot = 0;
 }
@@ -666,15 +660,12 @@ static void issue_coset(struct nufft_fi_s* d, int i, int slot)
 	int ND = t->N + 1;
 
 	long psf_bytes = d->psf_coset * (long)d->psf_size;
-	long lph_bytes = d->linphase_coset * (long)CFL_SIZE;
 
 	const char* psf_src = (const char*)d->psf_host + (size_t)i * (size_t)psf_bytes;
-	const complex float* lph_src = d->linphase_host + (long)i * d->linphase_coset;
 
 	if (NULL != d->stage) {
 
 		bartorch_cuda_stage_copy(d->stage, slot, d->psf_slot[slot], psf_src, psf_bytes);
-		bartorch_cuda_stage_copy(d->stage, slot, d->linphase_slot[slot], lph_src, lph_bytes);
 		return;
 	}
 
@@ -682,17 +673,14 @@ static void issue_coset(struct nufft_fi_s* d, int i, int slot)
 	md_copy_dims(ND, psf_dims, t->psf_dims);
 	psf_dims[t->N] = 1;
 
-	long lph_dims[ND];
-	md_copy_dims(ND, lph_dims, t->lph_dims);
-	lph_dims[t->N] = 1;
-
 	md_copy(ND, psf_dims, d->psf_slot[slot], psf_src, d->psf_size);
-	md_copy(ND, lph_dims, d->linphase_slot[slot], lph_src, CFL_SIZE);
 }
 
 /* Bring one set of frequencies over, into the slot given. */
 static void fetch_coset(struct nufft_fi_s* d, int i)
 {
+	d->coset = i;
+
 	if (NULL == d->stage) {
 
 		issue_coset(d, i, 0);
@@ -730,19 +718,42 @@ static void use_coset(struct nufft_fi_s* d)
 	md_copy_dims(ND, psf_dims, t->psf_dims);
 	psf_dims[t->N] = 1;
 
-	long lph_dims[ND];
-	md_copy_dims(ND, lph_dims, t->lph_dims);
-	lph_dims[t->N] = 1;
-
 	if (NULL != t->psf)
 		multiplace_free(t->psf);
 
 	t->psf = multiplace_move_wrapper(ND, psf_dims, d->psf_size, d->psf_slot[d->slot]);
+}
 
-	if (NULL != t->linphase)
-		multiplace_free(t->linphase);
+/* The shift of the set in the slot: half a cell back along each axis the
+ * set's index has a bit for, which is how the function's sets were made. */
+static void coset_shift(const struct nufft_fi_s* d, float shift[3])
+{
+	const struct nufft_data* t = d->toeplitz_data;
 
-	t->linphase = multiplace_move_wrapper(ND, lph_dims, CFL_SIZE, d->linphase_slot[d->slot]);
+	long factors[3];
+
+	for (int i = 0; i < 3; i++)
+		factors[i] = ((t->img_dims[i] > 1) && MD_IS_SET(t->flags, i)) ? 2 : 1;
+
+	bartorch_psf_shift(3, shift, 3, factors, d->coset);
+}
+
+/* The set's linear phase, put on as the image is read and, conjugated and
+ * accumulated, taken off as it is written -- computed where it is applied
+ * rather than read from a volume of it.  It is BART's own kernel, over the
+ * shift, centring and scale its precomputed phases carry, so what it applies
+ * is what they would have. */
+static void apply_phase(const struct nufft_data* t, const long dims[], const float shift[3],
+		complex float* dst, const complex float* src, bool out)
+{
+	float scale = 1.f / sqrtf((float)md_calc_size(3, t->img_dims));
+
+#ifdef USE_CUDA
+	cuda_apply_linphases_3D(t->N, dims, shift, dst, src, out, out, true, scale);
+#else
+	(void)dims; (void)dst; (void)src; (void)out; (void)scale;
+	error("bartorch: a streamed set is convolved on a card\n");
+#endif
 }
 
 /* How many gathered locations are contracted at once.
@@ -905,11 +916,13 @@ static complex float* multiply_transfer(struct nufft_data* t, const void* psf,
  * function contracts them, so a coil's are gathered before any is multiplied.
  */
 static void packed_coset(struct nufft_fi_s* d, complex float* dst, const complex float* src,
-		const complex float* linphase, const void* psf,
-		const long map_strs[], const complex float* map)
+		const void* psf, const long map_strs[], const complex float* map)
 {
 	struct nufft_data* t = d->toeplitz_data;
 	int N = t->N;
+
+	float shift[3];
+	coset_shift(d, shift);
 
 	if (NULL == d->vol_fft)
 		d->vol_fft = linop_fft_create(N, t->img_dims, t->flags | t->conf.cfft);
@@ -959,9 +972,7 @@ static void packed_coset(struct nufft_fi_s* d, complex float* dst, const complex
 
 		for (long r = 0; r < coeffs; r++) {
 
-			md_zmul2(N, t->img_dims, t->img_strs, volume,
-					t->img_strs, src + c * coil_step + r * rest_step,
-					t->img_strs, linphase);
+			apply_phase(t, t->img_dims, shift, volume, src + c * coil_step + r * rest_step, false);
 
 			if (NULL != m)
 				md_zmul2(N, t->img_dims, t->img_strs, volume,
@@ -990,8 +1001,7 @@ static void packed_coset(struct nufft_fi_s* d, complex float* dst, const complex
 				md_zmulc2(N, t->img_dims, t->img_strs, volume,
 						t->img_strs, volume, map_strs, m);
 
-			md_zfmacc2(N, t->img_dims, t->img_strs, dst + c * coil_step + r * rest_step,
-					t->img_strs, volume, t->img_strs, linphase);
+			apply_phase(t, t->img_dims, shift, dst + c * coil_step + r * rest_step, volume, true);
 		}
 
 		md_free(bank);
@@ -1014,15 +1024,14 @@ static bool fused_coset(struct nufft_fi_s* d, complex float* dst, const complex 
 {
 	struct nufft_data* t = d->toeplitz_data;
 
-	const complex float* linphase = multiplace_read(t->linphase, src);
 	const void* psf = multiplace_read(t->psf, src);
 
-	if ((NULL == linphase) || (NULL == psf))
+	if (NULL == psf)
 		return false;
 
 	if (NULL != t->compress) {
 
-		packed_coset(d, dst, src, linphase, psf, map_strs, map);
+		packed_coset(d, dst, src, psf, map_strs, map);
 		return true;
 	}
 
@@ -1031,9 +1040,12 @@ static bool fused_coset(struct nufft_fi_s* d, complex float* dst, const complex 
 	if (NULL != map)
 		return false;
 
+	float shift[3];
+	coset_shift(d, shift);
+
 	complex float* grid = md_alloc_sameplace(t->N, t->cim_dims, CFL_SIZE, dst);
 
-	md_zmul2(t->N, t->cim_dims, t->cim_strs, grid, t->cim_strs, src, t->img_strs, linphase);
+	apply_phase(t, t->cim_dims, shift, grid, src, false);
 
 	linop_forward(t->cfft_op, t->N, t->cim_dims, grid, t->N, t->cim_dims, grid);
 
@@ -1042,7 +1054,7 @@ static bool fused_coset(struct nufft_fi_s* d, complex float* dst, const complex 
 	linop_adjoint(t->cfft_op, t->N, t->cim_dims, grid, t->N, t->cim_dims, grid);
 
 	/* Into the answer, not over it: this is what the second image was for. */
-	md_zfmacc2(t->N, t->cim_dims, t->cim_strs, dst, t->cim_strs, grid, t->img_strs, linphase);
+	apply_phase(t, t->cim_dims, shift, dst, grid, true);
 
 	md_free(grid);
 
@@ -1086,24 +1098,8 @@ static void coset_begin(struct nufft_fi_s* d, const void* ref)
 static void coset_normal(struct nufft_fi_s* d, complex float* dst, const complex float* src,
 		const long map_strs[], const complex float* map)
 {
-	if (fused_coset(d, dst, src, map_strs, map)) {
-
-		if (NULL != d->stage)
-			bartorch_cuda_stage_release(d->stage, d->slot);
-
-		return;
-	}
-
-	assert(NULL == map);
-
-	struct nufft_data* t = d->toeplitz_data;
-
-	complex float* part = md_alloc_sameplace(t->N, t->cim_dims, CFL_SIZE, dst);
-
-	linop_normal_unchecked(d->toeplitz, part, src);
-	md_zadd(t->N, t->cim_dims, dst, dst, part);
-
-	md_free(part);
+	if (!fused_coset(d, dst, src, map_strs, map))
+		error("bartorch: a streamed set with no function in its slot\n");
 
 	if (NULL != d->stage)
 		bartorch_cuda_stage_release(d->stage, d->slot);
@@ -1211,15 +1207,11 @@ static void nufft_fi_del(const linop_data_t* _d)
 	md_free(d->host_weights);
 	md_free(d->host_basis);
 	bartorch_host_free(d->psf_host);
-	bartorch_host_free(d->linphase_host);
 
 	bartorch_cuda_stage_close(d->stage);
 
-	for (int i = 0; i < 2; i++) {
-
+	for (int i = 0; i < 2; i++)
 		md_free(d->psf_slot[i]);
-		md_free(d->linphase_slot[i]);
-	}
 
 	if (NULL != d->vol_fft)
 		linop_free(d->vol_fft);
@@ -1909,14 +1901,6 @@ static void stream_psf(struct nufft_fi_s* d)
 
 	struct nufft_data* t = CAST_DOWN(nufft_data, linop_get_data_nested(d->toeplitz));
 
-	if (NULL == t->linphase) {
-
-		bartorch_host_free(d->psf_host);
-		d->psf_host = NULL;
-		return;
-	}
-
-	int ND = t->N + 1;
 	int cosets = (int)t->lph_dims[t->N];
 
 	if ((cosets < 2) || (t->psf_dims[t->N] != cosets)) {
@@ -1926,13 +1910,7 @@ static void stream_psf(struct nufft_fi_s* d)
 		return;
 	}
 
-	const complex float* lph = multiplace_read(t->linphase, d->radians[0]);
-
-	d->linphase_host = bartorch_host_alloc(md_calc_size(ND, t->lph_dims) * (long)CFL_SIZE, overlap_psf_enabled);
-	md_copy(ND, t->lph_dims, d->linphase_host, lph, CFL_SIZE);
-
 	d->psf_coset = md_calc_size(t->N, t->psf_dims);
-	d->linphase_coset = md_calc_size(t->N, t->lph_dims);
 	d->psf_size = t->conf.real ? FL_SIZE : CFL_SIZE;
 	d->cosets = cosets;
 	d->toeplitz_data = t;
@@ -1995,13 +1973,11 @@ static const struct linop_s* toeplitz_for(int N, const long ksp_dims[N], const l
 		barts.compress_psf = true;
 
 	/* Streaming needs the normal that walks the sets rather than the one
-	 * that convolves them at once, and a linear phase it can be handed one
-	 * of: without a precomputed phase the shift is worked out from the set
-	 * BART thinks it is on, which is always the first once it is told it
-	 * has one. */
-	/* Only where the function will actually be streamed: asking for the
-	 * low-memory normal where it buys nothing would walk the sets for no
-	 * reason. */
+	 * that convolves them at once, and only where the function will
+	 * actually be streamed: asking for it where it buys nothing would walk
+	 * the sets for no reason.  The sets' phases are not precomputed --
+	 * that is a volume of phase per set, made on the host -- because the
+	 * streamed convolution computes each where it applies it. */
 	/* Whether a card is in use is not where the trajectory lies: an
 	 * operator built for a card from inputs on the host streams just the
 	 * same, from a copy of the trajectory made there for the build. */
@@ -2010,7 +1986,7 @@ static const struct linop_s* toeplitz_for(int N, const long ksp_dims[N], const l
 	if (stream_psf_enabled && on_card) {
 
 		barts.lowmem = true;
-		barts.precomp_linphase = true;
+		barts.precomp_linphase = false;
 	}
 
 	const struct linop_s* op = bart_nufft_create2(N, ksp_dims, cim_dims, traj_dims, traj,
@@ -2234,18 +2210,15 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 	d->toeplitz = NULL;
 	d->toeplitz_data = NULL;
 	d->psf_host = NULL;
-	d->linphase_host = NULL;
 	d->cosets = 0;
 	d->vol_fft = NULL;
 
 	d->stage = NULL;
 	d->slot = 0;
+	d->coset = 0;
 
-	for (int i = 0; i < 2; i++) {
-
+	for (int i = 0; i < 2; i++)
 		d->psf_slot[i] = NULL;
-		d->linphase_slot[i] = NULL;
-	}
 
 	for (int i = 0; i < 3; i++)
 		d->radians[i] = NULL;
@@ -2517,9 +2490,7 @@ void nufft_update_traj(const struct linop_s* nufft, int N, const long trj_dims[N
 			linop_free(d->toeplitz);
 
 		bartorch_host_free(d->psf_host);
-		bartorch_host_free(d->linphase_host);
 		d->psf_host = NULL;
-		d->linphase_host = NULL;
 
 		bartorch_cuda_stage_close(d->stage);
 		d->stage = NULL;
@@ -2528,9 +2499,7 @@ void nufft_update_traj(const struct linop_s* nufft, int N, const long trj_dims[N
 		for (int i = 0; i < 2; i++) {
 
 			md_free(d->psf_slot[i]);
-			md_free(d->linphase_slot[i]);
 			d->psf_slot[i] = NULL;
-			d->linphase_slot[i] = NULL;
 		}
 
 		d->toeplitz = toeplitz_for(N, d->ksp_dims, d->cim_dims, trj_dims, traj,
