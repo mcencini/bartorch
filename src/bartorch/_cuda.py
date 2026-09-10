@@ -80,8 +80,13 @@ def use_memcache(enable: bool) -> None:
     """Whether BART keeps freed device blocks for reuse.
 
     Off, BART returns memory to the driver as soon as it is done with it, so
-    torch's caching allocator can take it back.  That is the setting to want
-    on a card whose memory is tight, and it costs allocation latency.
+    torch's caching allocator can take it back, and what the driver reports is
+    what is in use.  It costs allocation latency: a normal at 256^3 over four
+    coefficients asks for hundreds of transform workspaces, and takes 8.4 s
+    with the cache off against 6.6 s with it on.  A SENSE operator whose
+    caller keeps its arrays on the host hands the cache back after each
+    application either way, so the card holds the operator alone between
+    two of them.
     """
     library().bartorch_cuda_use_memcache(int(bool(enable)))
 

@@ -281,16 +281,10 @@ def overlap_psf(enable: bool = True) -> None:
     nested.  The function is page-locked on the host, because an asynchronous
     copy out of pageable memory is not one.
 
-    It costs a second slot on the card, and a slot is one set of frequencies:
-    62 MB of a 128^3 problem over four coefficients, against 1026 MB for the
-    problem, and it grows with the set as everything else does.  What it buys
-    is the crossing, which is most of what is left in a normal once the
-    function is compressed: 25.6 s against 27.2 s over forty-five iterations
-    of that problem, and nothing either way over five.
-
-    Off unless asked for.  Six per cent of the card for six per cent of the
-    time is a trade whose sides are the same size, and the card is the one
-    that ends a reconstruction when it runs out.
+    It costs a second slot on the card, and a slot is one set of the function:
+    at 256^3 over four coefficients, 354 MiB on a normal that otherwise peaks
+    at 2.4 GiB.  What it buys is the crossing, which is a twentieth of a
+    normal there: 6.3 s against 6.6 s.  Off unless asked for.
     """
     from bartorch._lib import library
 
