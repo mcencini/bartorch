@@ -18,11 +18,11 @@
 
 #include "include/bartorch.h"
 
+#include "misc/misc.h"
+
 #ifdef USE_CUDA
 
 #include <cuda_runtime_api.h>
-
-#include "misc/misc.h"
 
 #include "num/gpuops.h"
 #include "num/mem.h"
@@ -503,19 +503,6 @@ int bartorch_cuda_built(void) { return 0; }
 int bartorch_cuda_device_count(void) { return 0; }
 int bartorch_cuda_enable(int device) { return (device < 0) ? 0 : -1; }
 int bartorch_cuda_device(void) { return -1; }
-/* Two streams rather than BART's one.
- *
- * An operator that has to bring a slab of sensitivities across fetches the
- * next while the card works on this one, and that needs a stream to fetch on;
- * with one stream the loop waits for each crossing.  Nothing else in BART
- * changes: a stream count above one only lets its own parallel loops fan out,
- * which is what the count is for. */
-__attribute__((constructor))
-static void bartorch_streams_default(void)
-{
-	cuda_num_streams = 2;
-}
-
 int bartorch_cuda_set_streams(int n) { (void)n; return -1; }
 int bartorch_cuda_get_streams(void) { return 0; }
 int bartorch_cuda_use_memcache(int enable) { (void)enable; return -1; }
