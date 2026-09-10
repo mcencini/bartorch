@@ -2109,7 +2109,7 @@ static const struct linop_s* toeplitz_for(int N, const long ksp_dims[N], const l
 	 * cache keeps every block of it once it is freed.  Handed back here,
 	 * what a solve holds is what it uses. */
 #ifdef USE_CUDA
-	if (0 != bartorch_on_device(traj))
+	if (on_card)
 		bartorch_cuda_memcache_clear_all();
 #endif
 

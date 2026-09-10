@@ -492,6 +492,11 @@ static void sense_forward(const linop_data_t* _d, complex float* dst, const comp
 	md_free(c.cim);
 
 	off_card(d->img_dims, (complex float*)src, src_on, false);
+
+#ifdef USE_CUDA
+	if (crosses(src))
+		bartorch_cuda_memcache_clear_all();
+#endif
 }
 
 static void sense_adjoint(const linop_data_t* _d, complex float* dst, const complex float* src)
@@ -515,6 +520,11 @@ static void sense_adjoint(const linop_data_t* _d, complex float* dst, const comp
 	md_free(c.cim);
 
 	off_card(d->img_dims, dst, dst_on, true);
+
+#ifdef USE_CUDA
+	if (crosses(dst))
+		bartorch_cuda_memcache_clear_all();
+#endif
 }
 
 /* A^H A, which is where the memory goes: a non-Cartesian transform answers
@@ -582,7 +592,8 @@ static void sense_normal(const linop_data_t* _d, complex float* dst, const compl
 	 * serves the hundreds of transform workspaces an application asks for
 	 * -- and leaves the card holding, between applications, whatever the
 	 * last one freed.  For a caller whose arrays are on the host the card
-	 * holds the operator and nothing else, so the cache is handed back. */
+	 * holds the operator and nothing else, so the cache is handed back;
+	 * the forward and the adjoint do the same. */
 #ifdef USE_CUDA
 	if (crosses(src))
 		bartorch_cuda_memcache_clear_all();
