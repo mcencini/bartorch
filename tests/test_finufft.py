@@ -1697,6 +1697,49 @@ def test_the_passes_inside_the_transforms_answer_as_the_passes_on_their_own(in_t
 
 @requires_finufft
 @requires_cuda
+@pytest.mark.skipif(not _finufft.paired_built(), reason="built without the pair kernels (BARTORCH_MATHDX_DIR)")
+def test_sets_convolved_in_pairs_answer_as_sets_one_at_a_time(in_tools):
+    """Two sets that differ only along x share their passes along z and y.
+
+    The pair kernels convolve a coil against both sets at once; built without
+    pairing, the same operator convolves them a set at a time.  The normals
+    agree to rounding, and the image the normal is applied to is left alone.
+    """
+    from bartorch.ops import LinearOperator
+
+    n, read, spokes, frames, coeffs, coils = 32, 16, 48, 4, 4, 2
+    traj = bt.traj(x=read, y=spokes * frames, r=True, flag_3=True).reshape(frames, spokes, read, 3)[:, None, None]
+    basis = torch.zeros(coeffs, frames, 1, 1, 1, 1, 1, dtype=torch.complex64)
+    for c in range(coeffs):
+        basis[c, :, 0, 0, 0, 0, 0] = torch.cos(torch.pi * c * (torch.arange(frames) + 0.5) / frames)
+
+    torch.manual_seed(0)
+    maps = torch.randn(coils, n, n, n, dtype=torch.complex64)
+    maps = maps / maps.abs().pow(2).sum(0, keepdim=True).sqrt()
+    x = torch.randn(coeffs, 1, 1, 1, n, n, n, dtype=torch.complex64, device="cuda")
+    kept = x.clone()
+
+    def normal(pair):
+        _finufft.pair_sets(pair)
+        try:
+            A = LinearOperator.sense(maps.cuda(), (coils, n, n, n), traj=traj.cuda(), basis=basis.cuda())
+            before = _finufft.pairs_convolved()
+            out = A.normal(x)
+            return out, _finufft.pairs_convolved() - before
+        finally:
+            _finufft.pair_sets(True)
+
+    one_at_a_time, none = normal(False)
+    in_pairs, pairs = normal(True)
+
+    assert none == 0, "without pairing no pair is convolved together"
+    assert pairs > 0, "the sets were convolved in pairs"
+    assert torch.equal(x, kept), "the image was left as it was"
+    assert float((in_pairs - one_at_a_time).abs().max() / one_at_a_time.abs().max()) < 1e-5
+
+
+@requires_finufft
+@requires_cuda
 def test_the_contraction_kernel_is_barts_contraction(in_tools):
     """The in-place contraction computes what BART's upper-triangular one does.
 

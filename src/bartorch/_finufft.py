@@ -349,6 +349,38 @@ def fft_callbacks(enable: bool = True) -> None:
     library().bartorch_nufft_set_fft_callbacks(int(bool(enable)))
 
 
+def pair_sets(enable: bool = True) -> None:
+    """Convolve the sets of a Toeplitz function in pairs, where the pair kernels allow it.
+
+    The eight sets of a decomposed function differ by half a cell along each
+    axis, and the phase along one axis passes through the transforms along the
+    other two, so the two sets that differ only along x share their transforms
+    along z and y, forward and back.  The pair kernels (cuFFTDx, compiled for
+    the grid sizes the library was built with) convolve a coil against both
+    at once.  They take a compressed real function kept as its upper triangle,
+    four coefficients and a cubic grid of a compiled size; anything else is
+    convolved a set at a time.  Read when a function is streamed, so it applies
+    to operators built afterwards.  On unless turned off.
+    """
+    from bartorch._lib import library
+
+    library().bartorch_nufft_set_paired(int(bool(enable)))
+
+
+def pairing_sets() -> bool:
+    """Whether the sets of a Toeplitz function are convolved in pairs where they can be."""
+    from bartorch._lib import library
+
+    return bool(library().bartorch_nufft_paired())
+
+
+def paired_built() -> bool:
+    """Whether the library was built with the pair kernels (``BARTORCH_MATHDX_DIR``)."""
+    from bartorch._lib import library
+
+    return bool(library().bartorch_nufft_paired_built())
+
+
 def using_fft_callbacks() -> bool:
     """Whether the passes around a volume's transform run inside it where they can."""
     from bartorch._lib import library
@@ -420,6 +452,13 @@ def functions_real() -> int:
     from bartorch._lib import library
 
     return int(library().bartorch_toeplitz_counter(4))
+
+
+def pairs_convolved() -> int:
+    """Pairs of sets convolved together by the pair kernels since the counters were reset."""
+    from bartorch._lib import library
+
+    return int(library().bartorch_toeplitz_counter(5))
 
 
 def sets_through_callbacks() -> int:

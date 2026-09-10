@@ -51,6 +51,9 @@
  * run inside it. */
 struct bartorch_cb_fft;
 
+/* csrc/paired.cu: a coil against a pair of sets, in cuFFTDx kernels. */
+struct bartorch_paired;
+
 #ifdef USE_CUDA
 #include "noncart/gpu_grid.h"
 
@@ -71,6 +74,16 @@ extern void bartorch_cb_fft_forward(struct bartorch_cb_fft* p, int N, const long
 extern void bartorch_cb_fft_inverse(struct bartorch_cb_fft* p, int N, const long dims[],
 		const float shift[3], float scale, const unsigned int* mask, const int* prefix,
 		complex float* dst, complex float* volume, const complex float* bank, const complex float* map);
+#endif
+
+#ifdef BARTORCH_PAIRED
+extern struct bartorch_paired* bartorch_paired_create(const long dims[3], int coeffs, int sets, const float (*shifts)[3]);
+extern void bartorch_paired_free(struct bartorch_paired* p);
+extern void bartorch_paired_in(const struct bartorch_paired* p, int k,
+		const complex float* src, const complex float* map, complex float* scratch);
+extern void bartorch_paired_out(const struct bartorch_paired* p, int k,
+		complex float* dst, const complex float* map, complex float* scratch,
+		const float* psf0, const float* psf1, const unsigned int* mask, const int* prefix, long L);
 #endif
 
 #include "include/bartorch.h"
@@ -108,8 +121,9 @@ extern double bartorch_finufft_upsampling(void);
 /* Normal operators built since the last reset, so a test can say that a
  * solve ran on a point spread function rather than on the transform pair;
  * the functions among them that were compressed; the sets convolved with
- * the passes run inside cuFFT's transforms; and the functions stored real. */
-enum { TP_PSF, TP_PAIR, TP_COMPRESSED, TP_CALLBACKS, TP_REAL, TP_COUNTERS };
+ * the passes run inside cuFFT's transforms; the functions stored real; and
+ * the pairs of sets convolved together by the pair kernels. */
+enum { TP_PSF, TP_PAIR, TP_COMPRESSED, TP_CALLBACKS, TP_REAL, TP_PAIRED, TP_COUNTERS };
 static long toeplitz_counters[TP_COUNTERS];
 
 /* Building a point spread function needs a transform of its own, and that
@@ -245,6 +259,9 @@ struct nufft_fi_s {
 	long psf_coset;			/* elements in one set of the function */
 	size_t psf_size;		/* a real function is stored as floats */
 	int cosets;
+	int unit;			/* sets in a slot: one, or the two of a pair */
+	int units;			/* units in the function */
+	int set;			/* the set the per-set convolution is at */
 
 	/* The places the samples reach, on the card, as coset.cuh reads them:
 	 * a bit per grid point and a count per word of bits. */
@@ -261,6 +278,11 @@ struct nufft_fi_s {
 	 * and then `vol_fft` and the passes serve. */
 	struct bartorch_cb_fft* cb_fft;
 	bool cb_tried;
+
+	/* The pair kernels, where the grid, the rank and the function allow them:
+	 * then a slot holds the two sets that differ only along x, and a coil is
+	 * convolved against both at once. */
+	struct bartorch_paired* paired;
 };
 
 static DEF_TYPEID(nufft_fi_s);
@@ -703,7 +725,7 @@ static void open_slots(struct nufft_fi_s* d, const void* ref)
 
 	long psf_dims[ND];
 	md_copy_dims(ND, psf_dims, t->psf_dims);
-	psf_dims[t->N] = 1;
+	psf_dims[t->N] = d->unit;
 
 	/* A set crosses on a stream of its own, ordered against BART's by
 	 * events, so it can run behind the convolution: into the one slot as
@@ -723,15 +745,15 @@ static void open_slots(struct nufft_fi_s* d, const void* ref)
 	d->slot_set[1] = -1;
 }
 
-static void use_coset(struct nufft_fi_s* d);
+static void use_coset(struct nufft_fi_s* d, int s);
 
-/* Start a set's crossing into a slot. */
+/* Start a unit's crossing into a slot: its sets lie side by side. */
 static void issue_coset(struct nufft_fi_s* d, int i, int slot)
 {
 	struct nufft_data* t = d->toeplitz_data;
 	int ND = t->N + 1;
 
-	long psf_bytes = d->psf_coset * (long)d->psf_size;
+	long psf_bytes = d->psf_coset * (long)d->psf_size * d->unit;
 
 	const char* psf_src = (const char*)d->psf_host + (size_t)i * (size_t)psf_bytes;
 
@@ -743,7 +765,7 @@ static void issue_coset(struct nufft_fi_s* d, int i, int slot)
 
 	long psf_dims[ND];
 	md_copy_dims(ND, psf_dims, t->psf_dims);
-	psf_dims[t->N] = 1;
+	psf_dims[t->N] = d->unit;
 
 	md_copy(ND, psf_dims, d->psf_slot[slot], psf_src, d->psf_size);
 }
@@ -752,12 +774,13 @@ static void issue_coset(struct nufft_fi_s* d, int i, int slot)
 static void fetch_coset(struct nufft_fi_s* d, int i)
 {
 	d->coset = i;
+	d->set = i * d->unit;
 
 	if (NULL == d->stage) {
 
 		issue_coset(d, i, 0);
 		d->slot = 0;
-		use_coset(d);
+		use_coset(d, 0);
 		return;
 	}
 
@@ -775,7 +798,7 @@ static void fetch_coset(struct nufft_fi_s* d, int i)
 	 * the set before this one released.  With one it starts once this
 	 * one's function has been read for the last time: `slot_read`.  A slot
 	 * is only overwritten once the card has said it is done with it. */
-	if ((2 == slots) && (i + 1 < d->cosets)) {
+	if ((2 == slots) && (i + 1 < d->units)) {
 
 		issue_coset(d, i + 1, cur ^ 1);
 		d->slot_set[cur ^ 1] = i + 1;
@@ -786,11 +809,11 @@ static void fetch_coset(struct nufft_fi_s* d, int i)
 
 	d->slot = cur;
 
-	use_coset(d);
+	use_coset(d, 0);
 }
 
-/* Point BART at the slot a set has landed in. */
-static void use_coset(struct nufft_fi_s* d)
+/* Point BART at set `s` of the unit in the slot. */
+static void use_coset(struct nufft_fi_s* d, int s)
 {
 	struct nufft_data* t = d->toeplitz_data;
 	int ND = t->N + 1;
@@ -802,12 +825,14 @@ static void use_coset(struct nufft_fi_s* d)
 	if (NULL != t->psf)
 		multiplace_free(t->psf);
 
-	t->psf = multiplace_move_wrapper(ND, psf_dims, d->psf_size, d->psf_slot[d->slot]);
+	char* slot = (char*)d->psf_slot[d->slot] + (size_t)s * (size_t)d->psf_coset * d->psf_size;
+
+	t->psf = multiplace_move_wrapper(ND, psf_dims, d->psf_size, slot);
 }
 
 /* The shift of the set in the slot: half a cell back along each axis the
  * set's index has a bit for, which is how the function's sets were made. */
-static void coset_shift(const struct nufft_fi_s* d, float shift[3])
+static void coset_shift(const struct nufft_fi_s* d, int set, float shift[3])
 {
 	const struct nufft_data* t = d->toeplitz_data;
 
@@ -816,7 +841,7 @@ static void coset_shift(const struct nufft_fi_s* d, float shift[3])
 	for (int i = 0; i < 3; i++)
 		factors[i] = ((t->img_dims[i] > 1) && MD_IS_SET(t->flags, i)) ? 2 : 1;
 
-	bartorch_psf_shift(3, shift, 3, factors, d->coset);
+	bartorch_psf_shift(3, shift, 3, factors, set);
 }
 
 /* The set's linear phase, put on as the image is read and, conjugated and
@@ -1038,10 +1063,34 @@ static void slot_read(struct nufft_fi_s* d, bool last)
 
 	bartorch_cuda_stage_release(d->stage, 0);
 
-	int next = (d->coset + 1) % d->cosets;
+	int next = (d->coset + 1) % d->units;
 
 	issue_coset(d, next, 0);
 	d->slot_set[0] = next;
+}
+
+/* Whether sets are convolved in pairs where the pair kernels allow it.  Read
+ * when a function is streamed, so it applies to operators built afterwards. */
+static int paired_enabled = 1;
+
+void bartorch_nufft_set_paired(int enable)
+{
+	paired_enabled = (0 != enable);
+}
+
+int bartorch_nufft_paired(void)
+{
+	return paired_enabled;
+}
+
+/* Whether this library has pair kernels at all. */
+int bartorch_nufft_paired_built(void)
+{
+#ifdef BARTORCH_PAIRED
+	return 1;
+#else
+	return 0;
+#endif
 }
 
 /* Whether the passes around a volume's transform run inside it, as cuFFT
@@ -1202,7 +1251,7 @@ static void packed_coset(struct nufft_fi_s* d, complex float* dst, const complex
 	int N = t->N;
 
 	float shift[3];
-	coset_shift(d, shift);
+	coset_shift(d, d->set, shift);
 
 	struct bartorch_cb_fft* cb = callbacks_for(d);
 
@@ -1274,6 +1323,68 @@ static void packed_coset(struct nufft_fi_s* d, complex float* dst, const complex
 		toeplitz_counters[TP_CALLBACKS]++;
 }
 
+/* The two sets in the slot, convolved with `src` and added to `dst`.
+ *
+ * With the kernels a coil goes against both sets at once: its passes along z
+ * and y serve both, and the pass along x multiplies by each set's function in
+ * turn.  The kernels read a coil's coefficients a volume apart, which a folded
+ * sensitivity or a single coil gives; anything else goes a set at a time. */
+static void paired_unit(struct nufft_fi_s* d, complex float* dst, const complex float* src,
+		const long map_strs[], const complex float* map, bool last)
+{
+	struct nufft_data* t = d->toeplitz_data;
+
+	long coils = t->cim_dims[3];
+
+	if ((NULL == map) && (1 != coils)) {
+
+		for (int s = 0; s < 2; s++) {
+
+			d->set = 2 * d->coset + s;
+			use_coset(d, s);
+
+			const void* psf = multiplace_read(t->psf, src);
+
+			packed_coset(d, dst, src, psf, map_strs, map, last && (1 == s));
+		}
+
+		return;
+	}
+
+#ifdef BARTORCH_PAIRED
+	long vol = md_calc_size(3, t->cim_dims);
+	long coeffs = md_calc_size(t->N, t->cim_dims) / md_calc_size(4, t->cim_dims);
+	long map_coil_step = (NULL == map) ? 0 : map_strs[3] / (long)CFL_SIZE;
+
+	long sdims[1] = { coeffs * vol };
+	complex float* scratch = md_alloc_sameplace(1, sdims, CFL_SIZE, dst);
+
+	const float* psf0 = d->psf_slot[d->slot];
+	const float* psf1 = psf0 + d->psf_coset;
+
+	for (long c = 0; c < coils; c++) {
+
+		const complex float* m = (NULL == map) ? NULL : map + c * map_coil_step;
+
+		bartorch_paired_in(d->paired, d->coset, src, m, scratch);
+
+		slot_ready(d);
+
+		bartorch_paired_out(d->paired, d->coset, dst, m, scratch, psf0, psf1,
+				d->kept_mask, d->kept_prefix, t->psf_dims[0]);
+
+		slot_read(d, last && (c == coils - 1));
+	}
+
+	md_free(scratch);
+
+	toeplitz_counters[TP_PAIRED]++;
+#else
+	(void)dst; (void)src; (void)map_strs; (void)map; (void)last;
+	error("bartorch: sets in pairs without the pair kernels\n");
+#endif
+}
+
 /* One set of frequencies, convolved and added to what is there.
  *
  * This is `toeplitz_mult_lowmem` without the two things that cost a pass over
@@ -1286,6 +1397,12 @@ static void packed_coset(struct nufft_fi_s* d, complex float* dst, const complex
 static bool fused_coset(struct nufft_fi_s* d, complex float* dst, const complex float* src,
 		const long map_strs[], const complex float* map, bool last)
 {
+	if (2 == d->unit) {
+
+		paired_unit(d, dst, src, map_strs, map, last);
+		return true;
+	}
+
 	struct nufft_data* t = d->toeplitz_data;
 
 	const void* psf = multiplace_read(t->psf, src);
@@ -1305,7 +1422,7 @@ static bool fused_coset(struct nufft_fi_s* d, complex float* dst, const complex 
 		return false;
 
 	float shift[3];
-	coset_shift(d, shift);
+	coset_shift(d, d->set, shift);
 
 	complex float* grid = md_alloc_sameplace(t->N, t->cim_dims, CFL_SIZE, dst);
 
@@ -1349,7 +1466,7 @@ int bartorch_nufft_cosets(const struct linop_s* op)
 
 	struct nufft_fi_s* d = CAST_DOWN(nufft_fi_s, linop_get_data(op));
 
-	return (NULL == d->psf_host) ? 0 : d->cosets;
+	return (NULL == d->psf_host) ? 0 : d->units;
 }
 
 static void coset_begin(struct nufft_fi_s* d, const void* ref)
@@ -1447,7 +1564,7 @@ static void nufft_fi_normal(const linop_data_t* _d, complex float* dst, const co
 
 	md_clear(t->N, t->cim_dims, dst, CFL_SIZE);
 
-	for (int i = 0; i < d->cosets; i++) {
+	for (int i = 0; i < d->units; i++) {
 
 		fetch_coset(d, i);
 		coset_normal(d, dst, src, NULL, NULL, true);
@@ -1486,6 +1603,9 @@ static void nufft_fi_del(const linop_data_t* _d)
 
 #ifdef USE_CUDA
 	bartorch_cb_fft_free(d->cb_fft);
+#endif
+#ifdef BARTORCH_PAIRED
+	bartorch_paired_free(d->paired);
 #endif
 
 	xfree(d->cim_dims);
@@ -2248,10 +2368,37 @@ static void stream_psf(struct nufft_fi_s* d)
 		t->compress = NULL;
 	}
 
+	/* In pairs, where the kernels allow it: a compressed, real function kept
+	 * as its upper triangle, over eight sets.  The kernels decide the rest --
+	 * the grid and the number of coefficients. */
+	d->unit = 1;
+
+#ifdef BARTORCH_PAIRED
+	if (paired_enabled && (NULL != d->kept_mask) && t->conf.real && t->conf.upper_triag && (8 == cosets)) {
+
+		if (NULL == d->paired) {
+
+			float shifts[8][3];
+
+			for (int i = 0; i < 8; i++)
+				coset_shift(d, i, shifts[i]);
+
+			long coeffs = md_calc_size(t->N, t->cim_dims) / md_calc_size(4, t->cim_dims);
+
+			d->paired = bartorch_paired_create(t->img_dims, (int)coeffs, 8, (const float (*)[3])shifts);
+		}
+
+		if (NULL != d->paired)
+			d->unit = 2;
+	}
+#endif
+
+	d->units = cosets / d->unit;
+
 	/* One set is all BART is told it has, so its own loop runs once. */
 	t->lph_dims[t->N] = 1;
 
-	debug_printf(DP_DEBUG1, "Streaming the function: %d sets of %ld\n", cosets, d->psf_coset);
+	debug_printf(DP_DEBUG1, "Streaming the function: %d sets of %ld, %d to a slot\n", cosets, d->psf_coset, d->unit);
 }
 
 static const struct linop_s* toeplitz_for(int N, const long ksp_dims[N], const long cim_dims[N],
@@ -2557,6 +2704,10 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 	d->kept_prefix = NULL;
 	d->cb_fft = NULL;
 	d->cb_tried = false;
+	d->paired = NULL;
+	d->unit = 1;
+	d->units = 0;
+	d->set = 0;
 
 	for (int i = 0; i < 2; i++)
 		d->psf_slot[i] = NULL;

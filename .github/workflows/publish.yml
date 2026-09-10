@@ -144,6 +144,14 @@ jobs:
       # BART needs GCC 14 for -ftrampoline-impl=heap, or clang 16+ for Blocks;
       # the manylinux image's default toolchain is checked at configure time
       # and the build fails loudly if it is older.
+      # The pair kernels are cuFFTDx, whose headers come with MathDx: only the
+      # build reads them, and the wheel carries what they compile to, so a
+      # machine running it needs the driver and nothing else.  The sizes they
+      # are compiled for are BARTORCH_PAIRED_SIZES's default (CMakeLists.txt).
+      - name: Fetch MathDx
+        run: |
+          python -m pip install nvidia-mathdx==25.6.0
+          echo "MATHDX_DIR=$(python -c 'import os, sysconfig; print(os.path.join(sysconfig.get_paths()["purelib"], "nvidia", "mathdx"))')" >> $GITHUB_ENV
       - name: Build the wheel
         env:
           CUDACXX: /usr/local/cuda-12.8/bin/nvcc
@@ -151,7 +159,8 @@ jobs:
           cc --version
           python -m pip install build
           python -m build --wheel --outdir dist/ \
-            -C cmake.define.BARTORCH_CUDA=ON
+            -C cmake.define.BARTORCH_CUDA=ON \
+            -C "cmake.define.BARTORCH_MATHDX_DIR=$MATHDX_DIR"
       # The CUDA runtimes are excluded rather than vendored: torch already
       # brings them, and bundling them would add hundreds of megabytes.
       - name: Repair to a manylinux tag

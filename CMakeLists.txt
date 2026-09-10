@@ -252,7 +252,60 @@ if(BARTORCH_CUDA)
     list(APPEND BARTORCH_SOURCES "${_lto_hdr}")
 endif()
 
+# The paired Toeplitz kernels (csrc/paired.cu) are cuFFTDx, which is headers
+# only and comes with MathDx: BARTORCH_MATHDX_DIR names its nvidia/mathdx
+# directory -- `pip install nvidia-mathdx` puts one in site-packages -- and
+# the kernels are compiled for the cubic grid sizes in BARTORCH_PAIRED_SIZES,
+# tuned for the newest architecture listed.  The default is every size from
+# 192 to 512 that cuFFTDx transforms at cuFFT's speed or near it, plus 32 for
+# the tests; 340, whose factor 17 cuFFTDx takes through Bluestein's algorithm
+# at 2.6 times cuFFT's time, is left to cuFFT.  Without it the library has no
+# paired kernels and every size is served by the transforms it has otherwise.
+set(BARTORCH_MATHDX_DIR "" CACHE PATH "MathDx's nvidia/mathdx directory, for the paired Toeplitz kernels")
+set(BARTORCH_PAIRED_SIZES "32;192;200;224;240;256;288;300;320;360;384;400;448;480;512" CACHE STRING "Cubic grid sizes the paired Toeplitz kernels are compiled for")
+if(BARTORCH_CUDA AND BARTORCH_MATHDX_DIR)
+    if(NOT EXISTS "${BARTORCH_MATHDX_DIR}/include/cufftdx.hpp")
+        message(FATAL_ERROR "BARTORCH_MATHDX_DIR=${BARTORCH_MATHDX_DIR} has no include/cufftdx.hpp")
+    endif()
+    set(_sizes "")
+    foreach(_n ${BARTORCH_PAIRED_SIZES})
+        string(APPEND _sizes " X(${_n})")
+    endforeach()
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/paired_sizes.h.in"
+        "/* Generated from BARTORCH_PAIRED_SIZES; see CMakeLists.txt. */\n#define BARTORCH_PAIRED_SIZES(X)${_sizes}\n")
+    configure_file("${CMAKE_CURRENT_BINARY_DIR}/paired_sizes.h.in" "${CMAKE_CURRENT_BINARY_DIR}/paired_sizes.h" COPYONLY)
+    list(GET BARTORCH_CUDA_ARCHITECTURES -1 _paired_arch)
+    set(_paired_archs "")
+    foreach(_a ${BARTORCH_CUDA_ARCHITECTURES})
+        list(APPEND _paired_archs "${_a}-real")
+    endforeach()
+    # Compiled on their own and for the listed architectures only: PTX of a
+    # template instantiated once per grid size is megabytes, and a card newer
+    # than the list is served by the transforms the library has otherwise.
+    add_library(bartorch_paired OBJECT csrc/paired.cu)
+    set_target_properties(bartorch_paired PROPERTIES
+        CUDA_ARCHITECTURES "${_paired_archs}"
+        POSITION_INDEPENDENT_CODE ON)
+    target_include_directories(bartorch_paired PRIVATE
+        "${BARTORCH_MATHDX_DIR}/include"
+        "${BARTORCH_MATHDX_DIR}/external/cutlass/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/csrc"
+        "${BART_SRC}"
+        "${BART_GEN}"
+        "${BART_GEN}/misc"
+        "${CMAKE_CURRENT_BINARY_DIR}")
+    target_compile_definitions(bartorch_paired PRIVATE ${BART_C_DEFS} _GNU_SOURCE
+        BARTORCH_PAIRED_SM=${_paired_arch}0)
+    target_compile_options(bartorch_paired PRIVATE -Xcompiler=-fPIC -Xfatbin=-compress-all)
+    list(APPEND BART_C_DEFS BARTORCH_PAIRED)
+    message(STATUS "Paired Toeplitz kernels: cuFFTDx from ${BARTORCH_MATHDX_DIR}, sizes ${BARTORCH_PAIRED_SIZES}")
+endif()
+
 add_library(bartorch SHARED ${BART_SOURCES} ${BARTORCH_SOURCES})
+
+if(TARGET bartorch_paired)
+    target_sources(bartorch PRIVATE $<TARGET_OBJECTS:bartorch_paired>)
+endif()
 
 # BART's NUFFT operator keeps its implementation under another name, so
 # csrc/nufft_finufft.c can answer with FINUFFT's transform and still hand back
