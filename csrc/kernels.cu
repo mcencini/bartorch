@@ -160,6 +160,11 @@ __device__ static inline cuFloatComplex ifftmod_at(int n, int j)
 	if (n <= 1)
 		return make_cuFloatComplex(1.f, 0.f);
 
+	/* On an axis a multiple of four long every factor is a sign: (-1)^j,
+	 * negated once more where the axis is not a multiple of eight. */
+	if (0 == n % 4)
+		return make_cuFloatComplex((((j & 1) ? -1.f : 1.f) * ((0 == n % 8) ? 1.f : -1.f)), 0.f);
+
 	int c = n / 2;
 	int num = ((2 * j - c) * c) % (2 * n);
 
