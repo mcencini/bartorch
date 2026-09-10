@@ -344,6 +344,49 @@ static void drive_slabs(const struct sense_s* d, const void* ref, slab_fn fn, vo
 	md_free(slab[0]);
 }
 
+/* An operand where the arithmetic is.
+ *
+ * The arithmetic is on the card whenever one is in use, whatever the caller
+ * hands over: a solver that keeps its vectors on the host sees an operator
+ * that takes and returns host arrays, and between two applications the card
+ * holds the operator and nothing of the solver's.  An image crosses whole,
+ * once each way; the samples cross a slab at a time, which the loop does
+ * already.  Where there is no card, or the operand is on it, it is used
+ * where it lies. */
+static bool crosses(const void* ptr)
+{
+	return !bartorch_on_device(ptr) && (0 <= bartorch_cuda_device());
+}
+
+static complex float* onto_card(const long dims[DIMS], const complex float* ptr, bool filled)
+{
+#ifdef USE_CUDA
+	if (crosses(ptr)) {
+
+		complex float* on = md_alloc_gpu(DIMS, dims, CFL_SIZE);
+
+		if (filled)
+			md_copy(DIMS, dims, on, ptr, CFL_SIZE);
+
+		return on;
+	}
+#else
+	(void)dims; (void)filled;
+#endif
+	return (complex float*)ptr;
+}
+
+static void off_card(const long dims[DIMS], complex float* ptr, complex float* on, bool filled)
+{
+	if (on == ptr)
+		return;
+
+	if (filled)
+		md_copy(DIMS, dims, ptr, on, CFL_SIZE);
+
+	md_free(on);
+}
+
 /* Each way of applying the operator, as what it does to one slab. */
 struct slab_ctx {
 
@@ -434,36 +477,44 @@ static void sense_forward(const linop_data_t* _d, complex float* dst, const comp
 {
 	const auto d = CAST_DOWN(sense_s, _d);
 
+	complex float* src_on = onto_card(d->img_dims, src, true);
+
 	struct slab_ctx c = {
 
-		.dst = dst, .src = src,
-		.cim = md_alloc_sameplace(DIMS, d->cim_dims, CFL_SIZE, dst),
-		.out = md_alloc_sameplace(DIMS, d->out_dims, CFL_SIZE, dst),
+		.dst = dst, .src = src_on,
+		.cim = md_alloc_sameplace(DIMS, d->cim_dims, CFL_SIZE, src_on),
+		.out = md_alloc_sameplace(DIMS, d->out_dims, CFL_SIZE, src_on),
 	};
 
-	drive_slabs(d, dst, forward_slab, &c);
+	drive_slabs(d, src_on, forward_slab, &c);
 
 	md_free(c.out);
 	md_free(c.cim);
+
+	off_card(d->img_dims, (complex float*)src, src_on, false);
 }
 
 static void sense_adjoint(const linop_data_t* _d, complex float* dst, const complex float* src)
 {
 	const auto d = CAST_DOWN(sense_s, _d);
 
+	complex float* dst_on = onto_card(d->img_dims, dst, false);
+
 	struct slab_ctx c = {
 
-		.dst = dst, .src = src,
-		.cim = md_alloc_sameplace(DIMS, d->cim_dims, CFL_SIZE, dst),
-		.out = md_alloc_sameplace(DIMS, d->out_dims, CFL_SIZE, dst),
+		.dst = dst_on, .src = src,
+		.cim = md_alloc_sameplace(DIMS, d->cim_dims, CFL_SIZE, dst_on),
+		.out = md_alloc_sameplace(DIMS, d->out_dims, CFL_SIZE, dst_on),
 	};
 
-	md_clear(DIMS, d->img_dims, dst, CFL_SIZE);
+	md_clear(DIMS, d->img_dims, dst_on, CFL_SIZE);
 
-	drive_slabs(d, dst, adjoint_slab, &c);
+	drive_slabs(d, dst_on, adjoint_slab, &c);
 
 	md_free(c.out);
 	md_free(c.cim);
+
+	off_card(d->img_dims, dst, dst_on, true);
 }
 
 /* A^H A, which is where the memory goes: a non-Cartesian transform answers
@@ -489,27 +540,30 @@ static void sense_normal(const linop_data_t* _d, complex float* dst, const compl
 #pragma omp atomic
 		sense_counters[SN_FOLDED]++;
 
+	complex float* src_on = onto_card(d->img_dims, src, true);
+	complex float* dst_on = onto_card(d->img_dims, dst, false);
+
 	struct slab_ctx c = {
 
-		.dst = dst, .src = src,
-		.cim = folds ? NULL : md_alloc_sameplace(DIMS, d->cim_dims, CFL_SIZE, dst),
-		.nrm = folds ? NULL : md_alloc_sameplace(DIMS, d->cim_dims, CFL_SIZE, dst),
+		.dst = dst_on, .src = src_on,
+		.cim = folds ? NULL : md_alloc_sameplace(DIMS, d->cim_dims, CFL_SIZE, dst_on),
+		.nrm = folds ? NULL : md_alloc_sameplace(DIMS, d->cim_dims, CFL_SIZE, dst_on),
 	};
 
-	md_clear(DIMS, d->img_dims, dst, CFL_SIZE);
+	md_clear(DIMS, d->img_dims, dst_on, CFL_SIZE);
 
 	if (0 == cosets) {
 
-		drive_slabs(d, dst, normal_slab, &c);
+		drive_slabs(d, dst_on, normal_slab, &c);
 
 	} else {
 
-		bartorch_nufft_coset_begin(d->slab, dst);
+		bartorch_nufft_coset_begin(d->slab, dst_on);
 
 		for (int i = 0; i < cosets; i++) {
 
 			bartorch_nufft_coset_use(d->slab, i);
-			drive_slabs(d, dst, folds ? normal_slab_folded : normal_slab_coset, &c);
+			drive_slabs(d, dst_on, folds ? normal_slab_folded : normal_slab_coset, &c);
 		}
 
 		bartorch_nufft_coset_end(d->slab);
@@ -520,6 +574,9 @@ static void sense_normal(const linop_data_t* _d, complex float* dst, const compl
 
 	if (NULL != c.cim)
 		md_free(c.cim);
+
+	off_card(d->img_dims, (complex float*)src, src_on, false);
+	off_card(d->img_dims, dst, dst_on, true);
 }
 
 static void sense_del(const linop_data_t* _d)

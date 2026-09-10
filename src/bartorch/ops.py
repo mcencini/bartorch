@@ -143,14 +143,21 @@ class LinearOperator:
         self._h = handle
         self.ishape: Shape = tuple(ishape)
         self.oshape: Shape = tuple(oshape)
+        #: Where the operator does its arithmetic, when that is not simply
+        #: where its operands are.
+        self.device: torch.device | None = None
         _check_dims(library().bartorch_linop_domain, handle.ptr, self.ishape, "domain")
         _check_dims(library().bartorch_linop_codomain, handle.ptr, self.oshape, "codomain")
 
     # --- construction ---------------------------------------------------
 
     @classmethod
-    def _create(cls, ptr: int, ishape: Shape, oshape: Shape, keep: tuple = ()) -> LinearOperator:
-        return cls(_Handle(ptr, library().bartorch_linop_free, keep), ishape, oshape)
+    def _create(
+        cls, ptr: int, ishape: Shape, oshape: Shape, keep: tuple = (), device=None
+    ) -> LinearOperator:
+        op = cls(_Handle(ptr, library().bartorch_linop_free, keep), ishape, oshape)
+        op.device = device
+        return op
 
     @classmethod
     def from_callbacks(
@@ -325,6 +332,7 @@ class LinearOperator:
         toeplitz: bool = True,
         weights: torch.Tensor | None = None,
         basis: torch.Tensor | None = None,
+        device: torch.device | str | None = None,
     ) -> LinearOperator:
         """Sensitivities and a transform, over one slab of coils at a time.
 
@@ -367,6 +375,14 @@ class LinearOperator:
             takes it: ``(coeffs, frames, 1, 1, 1, 1, 1)``.  The image then
             carries one volume per coefficient, ``(coeffs, 1, 1, 1, *spatial)``,
             and the samples one set per frame.
+        device : device, optional
+            Where the operator is built and does its arithmetic.  Without
+            one, that is where the trajectory is, or the sensitivities on a
+            grid.  Given a card, every operand may be on the host: an image
+            crosses whole, once each way, the samples cross a slab at a time,
+            and between two applications the card holds the operator and
+            nothing of the caller's -- so a solver that keeps its vectors on
+            the host uses the card for the operator alone.
         """
         _ensure_ready()
         image_shape = tuple(image_shape)
@@ -420,8 +436,14 @@ class LinearOperator:
         kspace_shape = tuple(kspace_shape)
 
         # Where the operator is built follows the transform's own data, not
-        # the sensitivities: a bank left on the host is the point.
-        built_on = s.device if t is None else t.device
+        # the sensitivities: a bank left on the host is the point.  Named,
+        # it may be a card none of the inputs are on.
+        if device is not None:
+            built_on = torch.device(device)
+            if built_on.type == "cuda" and built_on.index is None:
+                built_on = torch.device("cuda", torch.cuda.current_device())
+        else:
+            built_on = s.device if t is None else t.device
 
         with _lock, _on_device(built_on):
             ptr = library().bartorch_linop_sense(
@@ -439,7 +461,7 @@ class LinearOperator:
                 int(toeplitz),
             )
         keep = tuple(x for x in (s, t, w, b) if x is not None)
-        return cls._create(ptr, ishape, kspace_shape, keep)
+        return cls._create(ptr, ishape, kspace_shape, keep, device=built_on)
 
     # --- algebra --------------------------------------------------------
 
@@ -463,7 +485,7 @@ class LinearOperator:
     def _apply(self, fn, x: torch.Tensor, ishape: Shape, oshape: Shape) -> torch.Tensor:
         x = _as_operand(x, ishape, "input")
         y = torch.empty(oshape, dtype=torch.complex64, device=x.device)
-        with _lock, _on_device(x.device):
+        with _lock, _on_device(self.device or x.device):
             if fn(self._h.ptr, y.data_ptr(), x.data_ptr()) != 0:
                 raise BartError("operator application failed; see the log for BART's message")
         return y
@@ -495,7 +517,7 @@ class LinearOperator:
             x = torch.zeros(self.ishape, dtype=torch.complex64, device=y.device)
         else:
             x = _as_operand(x0, self.ishape, "x0").clone()
-        with _lock, _on_device(y.device):
+        with _lock, _on_device(self.device or y.device):
             code = library().bartorch_lsqr(
                 self._h.ptr,
                 int(maxiter),

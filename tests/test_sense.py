@@ -287,3 +287,58 @@ def test_a_kernel_bank_serves_a_subspace_operator_as_the_maps_it_stands_for():
     lhs = torch.vdot(dense(x).flatten(), y.flatten())
     rhs = torch.vdot(x.flatten(), dense.adjoint(y).flatten())
     assert abs(lhs - rhs) / abs(lhs) < 1e-4
+
+
+@pytest.mark.skipif(
+    not bartorch.cuda.available(), reason="no CUDA device, or the library was built without CUDA"
+)
+def test_an_operator_on_a_card_takes_and_returns_host_arrays():
+    """The card holds the operator; the caller's arrays stay where they are.
+
+    Built for a card from inputs on the host, the operator brings an image
+    over whole once each way and the samples a slab at a time, and answers
+    what it answers with everything on the card.  A solver that keeps its
+    vectors on the host then uses the card for the operator alone -- and
+    between two applications the card holds nothing of the solver's.
+    """
+    n, spokes, frames, coeffs, coils = 16, 8, 4, 2, 4
+    traj = bt.traj(x=n, y=spokes * frames, r=True).reshape(frames, spokes, n, 3)[:, None, None]
+    basis = torch.zeros(coeffs, frames, 1, 1, 1, 1, 1, dtype=torch.complex64)
+    basis[0, :, 0, 0, 0, 0, 0] = 1.0
+    basis[1, :, 0, 0, 0, 0, 0] = torch.linspace(-1, 1, frames)
+    kernels, _ = _smooth_bank(n=n, coils=coils)
+
+    on_card = LinearOperator.sense(
+        kernels.cuda(), (coils, n, n), traj=traj.cuda(), basis=basis.cuda(), kernels=True
+    )
+    from_host = LinearOperator.sense(
+        kernels, (coils, n, n), traj=traj, basis=basis, kernels=True, device="cuda"
+    )
+    assert from_host.device.type == "cuda"
+
+    torch.manual_seed(0)
+    x = torch.randn(on_card.ishape, dtype=torch.complex64)
+    y = torch.randn(on_card.oshape, dtype=torch.complex64)
+
+    for name, got, want in (
+        ("forward", from_host(x), on_card(x.cuda())),
+        ("adjoint", from_host.adjoint(y), on_card.adjoint(y.cuda())),
+        ("normal", from_host.normal(x), on_card.normal(x.cuda())),
+    ):
+        assert got.device.type == "cpu", name
+        torch.testing.assert_close(got, want.cpu(), rtol=1e-5, atol=1e-6, msg=name)
+
+    solved = from_host.lstsq(y, maxiter=5)
+    assert solved.device.type == "cpu"
+    torch.testing.assert_close(
+        solved, on_card.lstsq(y.cuda(), maxiter=5).cpu(), rtol=1e-4, atol=1e-5
+    )
+
+    bartorch.cuda.use_memcache(False)
+    torch.cuda.synchronize()
+    before, _ = torch.cuda.mem_get_info()
+    from_host.normal(x)
+    torch.cuda.synchronize()
+    after, _ = torch.cuda.mem_get_info()
+    bartorch.cuda.use_memcache(True)
+    assert after >= before - (16 << 20), "a normal left nothing of the caller's on the card"

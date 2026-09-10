@@ -2002,7 +2002,12 @@ static const struct linop_s* toeplitz_for(int N, const long ksp_dims[N], const l
 	/* Only where the function will actually be streamed: asking for the
 	 * low-memory normal where it buys nothing would walk the sets for no
 	 * reason. */
-	if (stream_psf_enabled && (0 != bartorch_on_device(traj))) {
+	/* Whether a card is in use is not where the trajectory lies: an
+	 * operator built for a card from inputs on the host streams just the
+	 * same, from a copy of the trajectory made there for the build. */
+	bool on_card = (0 != bartorch_on_device(traj)) || (0 <= bartorch_cuda_device());
+
+	if (stream_psf_enabled && on_card) {
 
 		barts.lowmem = true;
 		barts.precomp_linphase = true;
@@ -2014,7 +2019,25 @@ static const struct linop_s* toeplitz_for(int N, const long ksp_dims[N], const l
 	struct nufft_data* data = CAST_DOWN(nufft_data, linop_get_data_nested(op));
 
 	making_psf++;
-	install_psf(data, traj, to_host);
+	/* The function is built where the arithmetic will be.  BART's own
+	 * operator keeps its copy of the trajectory where the caller's is,
+	 * which for a caller on the host means the card never holds it. */
+	const complex float* traj_on = traj;
+	complex float* traj_copy = NULL;
+
+#ifdef USE_CUDA
+	if (on_card && (0 == bartorch_on_device(traj))) {
+
+		traj_copy = md_alloc_gpu(N, traj_dims, CFL_SIZE);
+		md_copy(N, traj_dims, traj_copy, traj, CFL_SIZE);
+		traj_on = traj_copy;
+	}
+#endif
+
+	install_psf(data, traj_on, to_host);
+
+	if (NULL != traj_copy)
+		md_free(traj_copy);
 
 	/* Building the function allocates a transform of its own, the pattern
 	 * spread for the mask and the trajectory shifted for a set, and BART's
