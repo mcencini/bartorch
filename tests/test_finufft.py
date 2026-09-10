@@ -1721,6 +1721,7 @@ def test_sets_convolved_in_pairs_answer_as_sets_one_at_a_time(in_tools):
 
     def normal(pair):
         _finufft.pair_sets(pair)
+        _finufft.bfloat16_function(False)
         try:
             A = LinearOperator.sense(maps.cuda(), (coils, n, n, n), traj=traj.cuda(), basis=basis.cuda())
             before = _finufft.pairs_convolved()
@@ -1728,6 +1729,7 @@ def test_sets_convolved_in_pairs_answer_as_sets_one_at_a_time(in_tools):
             return out, _finufft.pairs_convolved() - before
         finally:
             _finufft.pair_sets(True)
+            _finufft.bfloat16_function(True)
 
     one_at_a_time, none = normal(False)
     in_pairs, pairs = normal(True)
@@ -1736,6 +1738,47 @@ def test_sets_convolved_in_pairs_answer_as_sets_one_at_a_time(in_tools):
     assert pairs > 0, "the sets were convolved in pairs"
     assert torch.equal(x, kept), "the image was left as it was"
     assert float((in_pairs - one_at_a_time).abs().max() / one_at_a_time.abs().max()) < 1e-5
+
+
+@requires_finufft
+@requires_cuda
+@pytest.mark.skipif(not _finufft.paired_built(), reason="built without the pair kernels (BARTORCH_MATHDX_DIR)")
+def test_a_function_kept_in_bfloat16_answers_as_one_kept_in_floats(in_tools):
+    """bfloat16 keeps a float's range and rounds each value to 2^-9 of itself.
+
+    The paired normal with its function in bfloat16 is held against the same
+    normal with it in floats, and against the one-set-at-a-time path a single
+    coil without a map takes inside a pair.  They differ by the rounding and by
+    no more.
+    """
+    from bartorch.ops import LinearOperator
+
+    n, read, spokes, frames, coeffs, coils = 32, 16, 48, 4, 4, 2
+    traj = bt.traj(x=read, y=spokes * frames, r=True, flag_3=True).reshape(frames, spokes, read, 3)[:, None, None]
+    basis = torch.zeros(coeffs, frames, 1, 1, 1, 1, 1, dtype=torch.complex64)
+    for c in range(coeffs):
+        basis[c, :, 0, 0, 0, 0, 0] = torch.cos(torch.pi * c * (torch.arange(frames) + 0.5) / frames)
+
+    torch.manual_seed(0)
+    maps = torch.randn(coils, n, n, n, dtype=torch.complex64)
+    maps = maps / maps.abs().pow(2).sum(0, keepdim=True).sqrt()
+    x = torch.randn(coeffs, 1, 1, 1, n, n, n, dtype=torch.complex64, device="cuda")
+
+    def normal(bf16):
+        _finufft.bfloat16_function(bf16)
+        try:
+            before = _finufft.functions_bfloat16()
+            A = LinearOperator.sense(maps.cuda(), (coils, n, n, n), traj=traj.cuda(), basis=basis.cuda())
+            return A.normal(x), _finufft.functions_bfloat16() - before
+        finally:
+            _finufft.bfloat16_function(True)
+
+    floats, none = normal(False)
+    halves, kept = normal(True)
+
+    assert none == 0 and kept > 0, "the function was kept in bfloat16 only when asked"
+    difference = float((halves - floats).norm() / floats.norm())
+    assert 0 < difference < 2.0**-8, difference
 
 
 @requires_finufft

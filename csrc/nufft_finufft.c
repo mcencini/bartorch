@@ -64,6 +64,7 @@ extern void bartorch_cuda_phase_map_out(int N, const long dims[], const float sh
 		complex float* dst, const complex float* src, const complex float* map);
 extern void bartorch_cuda_gather(long V, const unsigned int* mask, const int* prefix, complex float* dst, const complex float* src);
 extern int bartorch_cuda_contract_upper_real(long L, int R, complex float* bank, const float* mat);
+extern int bartorch_cuda_contract_upper_real_bf16(long L, int R, complex float* bank, const void* mat);
 extern void bartorch_cuda_scatter(long V, const unsigned int* mask, const int* prefix, complex float* dst, const complex float* src);
 
 extern struct bartorch_cb_fft* bartorch_cb_fft_create(const long dims[3]);
@@ -82,7 +83,7 @@ extern void bartorch_paired_free(struct bartorch_paired* p);
 extern void bartorch_paired_in(const struct bartorch_paired* p, int k,
 		const complex float* src, const complex float* map, complex float* scratch);
 extern void bartorch_paired_fused(const struct bartorch_paired* p, int k, complex float* scratch,
-		const float* psf0, const float* psf1, const unsigned int* mask, const int* prefix, long L);
+		const void* psf0, const void* psf1, int bf16, const unsigned int* mask, const int* prefix, long L);
 extern void bartorch_paired_back(const struct bartorch_paired* p, int k,
 		complex float* dst, const complex float* map, complex float* scratch);
 #endif
@@ -122,9 +123,10 @@ extern double bartorch_finufft_upsampling(void);
 /* Normal operators built since the last reset, so a test can say that a
  * solve ran on a point spread function rather than on the transform pair;
  * the functions among them that were compressed; the sets convolved with
- * the passes run inside cuFFT's transforms; the functions stored real; and
- * the pairs of sets convolved together by the pair kernels. */
-enum { TP_PSF, TP_PAIR, TP_COMPRESSED, TP_CALLBACKS, TP_REAL, TP_PAIRED, TP_COUNTERS };
+ * the passes run inside cuFFT's transforms; the functions stored real; the
+ * pairs of sets convolved together by the pair kernels; and the functions
+ * kept in bfloat16. */
+enum { TP_PSF, TP_PAIR, TP_COMPRESSED, TP_CALLBACKS, TP_REAL, TP_PAIRED, TP_BF16, TP_COUNTERS };
 static long toeplitz_counters[TP_COUNTERS];
 
 /* Building a point spread function needs a transform of its own, and that
@@ -1084,6 +1086,36 @@ int bartorch_nufft_paired(void)
 	return paired_enabled;
 }
 
+/* Whether a function whose sets are paired is kept in bfloat16: half the host
+ * copy, half of what crosses and of the slot it lands in, at a rounding of
+ * 2^-9 of each value where floats keep 2^-24.  bfloat16 keeps the exponent
+ * of a float, so no value is clipped.  Read when a function is streamed. */
+static int bf16_enabled = 1;
+
+void bartorch_nufft_set_bf16(int enable)
+{
+	bf16_enabled = (0 != enable);
+}
+
+int bartorch_nufft_bf16(void)
+{
+	return bf16_enabled;
+}
+
+/* A float as bfloat16, rounded to nearest even. */
+static uint16_t to_bf16(float f)
+{
+	uint32_t u;
+	memcpy(&u, &f, sizeof u);
+
+	if ((u & 0x7fffffffu) > 0x7f800000u)
+		return (uint16_t)((u >> 16) | 0x40u);
+
+	u += 0x7fffu + ((u >> 16) & 1u);
+
+	return (uint16_t)(u >> 16);
+}
+
 /* Whether this library has pair kernels at all. */
 int bartorch_nufft_paired_built(void)
 {
@@ -1305,6 +1337,11 @@ static void packed_coset(struct nufft_fi_s* d, complex float* dst, const complex
 
 		slot_ready(d);
 
+#ifdef USE_CUDA
+		if (2 == d->psf_size)
+			bartorch_cuda_contract_upper_real_bf16(locations, (int)coeffs, bank, psf);
+		else
+#endif
 		if (md_check_equal_dims(N, bank_dims, ciT_bank_dims, ~0UL))
 			bank = multiply_transfer(t, psf, bank_dims, ciT_bank_dims, bank);
 		else
@@ -1360,8 +1397,8 @@ static void paired_unit(struct nufft_fi_s* d, complex float* dst, const complex 
 	long sdims[1] = { coeffs * vol };
 	complex float* scratch = md_alloc_sameplace(1, sdims, CFL_SIZE, dst);
 
-	const float* psf0 = d->psf_slot[d->slot];
-	const float* psf1 = psf0 + d->psf_coset;
+	const char* psf0 = d->psf_slot[d->slot];
+	const char* psf1 = psf0 + (size_t)d->psf_coset * d->psf_size;
 
 	for (long c = 0; c < coils; c++) {
 
@@ -1371,7 +1408,7 @@ static void paired_unit(struct nufft_fi_s* d, complex float* dst, const complex 
 
 		slot_ready(d);
 
-		bartorch_paired_fused(d->paired, d->coset, scratch, psf0, psf1,
+		bartorch_paired_fused(d->paired, d->coset, scratch, psf0, psf1, 2 == d->psf_size,
 				d->kept_mask, d->kept_prefix, t->psf_dims[0]);
 
 		/* The pair has been read for the last time once the last coil is past
@@ -2322,11 +2359,6 @@ static void stream_psf(struct nufft_fi_s* d)
 	d->cosets = cosets;
 	d->toeplitz_data = t;
 
-	/* Page-locked, so a set's crossing runs behind the convolution rather
-	 * than holding up the host that issued it. */
-	d->psf_registered = (0 == bartorch_cuda_host_register(d->psf_host,
-				(long)cosets * d->psf_coset * (long)d->psf_size));
-
 	/* A compressed function is gathered against through a mask of the
 	 * places the samples reach, made once from the map they were found
 	 * with; the map, one long per grid point, is let go. */
@@ -2400,6 +2432,34 @@ static void stream_psf(struct nufft_fi_s* d)
 #endif
 
 	d->units = cosets / d->unit;
+
+	/* Paired, the function is kept in bfloat16, converted in place and the
+	 * copy shrunk to what it holds: each value lands on the first half of
+	 * where it was read, and the values still to be read lie beyond it.  A
+	 * set convolved on its own inside a pair reads it through the
+	 * contraction kernel, so that kernel is a condition. */
+	if ((2 == d->unit) && bf16_enabled && contraction_kernel) {
+
+		long n = (long)cosets * d->psf_coset;
+		const float* in = (const float*)d->psf_host;
+		uint16_t* out = (uint16_t*)d->psf_host;
+
+		for (long i = 0; i < n; i++)
+			out[i] = to_bf16(in[i]);
+
+		void* shrunk = realloc(d->psf_host, (size_t)n * sizeof(uint16_t));
+
+		if (NULL != shrunk)
+			d->psf_host = shrunk;
+
+		d->psf_size = sizeof(uint16_t);
+		toeplitz_counters[TP_BF16]++;
+	}
+
+	/* Page-locked, so a set's crossing runs behind the convolution rather
+	 * than holding up the host that issued it. */
+	d->psf_registered = (0 == bartorch_cuda_host_register(d->psf_host,
+				(long)cosets * d->psf_coset * (long)d->psf_size));
 
 	/* One set is all BART is told it has, so its own loop runs once. */
 	t->lph_dims[t->N] = 1;

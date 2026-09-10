@@ -23,6 +23,8 @@
 
 #include <cuda_runtime_api.h>
 
+#include <cuda_bf16.h>
+
 #include <cufftdx.hpp>
 
 #include "misc/debug.h"
@@ -52,6 +54,9 @@ __device__ inline cplx cmul(cplx a, cplx b) { cplx c; c.x = a.x * b.x - a.y * b.
 __device__ inline cplx cmulc(cplx a, cplx b) { cplx c; c.x = a.x * b.x + a.y * b.y; c.y = a.y * b.x - a.x * b.y; return c; }	/* a conj(b) */
 
 constexpr size_t cmax(size_t a, size_t b) { return (a > b) ? a : b; }
+
+__device__ inline float widen(float v) { return v; }
+__device__ inline float widen(__nv_bfloat16 v) { return __bfloat162float(v); }
 
 template <unsigned N>
 struct Shape {
@@ -187,7 +192,7 @@ struct ZOut {
 struct XArgs {
 
 	cplx* B[R];
-	const float* psf[2];
+	const void* psf[2];		/* floats or bfloat16, as the instantiation says */
 	const unsigned* mask;
 	const int* prefix;
 	const cplx* tx;			/* 2 x N: each set's phase along x */
@@ -198,7 +203,7 @@ struct XArgs {
  * each set's phase, the transform, the multiplication by the set's function at
  * the places the samples reach, the transform back, the conjugate phase, and
  * the sum of the two. */
-template <unsigned N>
+template <unsigned N, typename P>
 __global__ void __launch_bounds__(Shape<N>::XF::max_threads_per_block) fused(XArgs a)
 {
 	using XF = typename Shape<N>::XF;
@@ -311,7 +316,7 @@ __global__ void __launch_bounds__(Shape<N>::XF::max_threads_per_block) fused(XAr
 
 						const unsigned lo = (r < c) ? r : c;
 						const unsigned hi = (r < c) ? c : r;
-						const float m = a.psf[sx][(long)(lo + hi * (hi + 1) / 2) * a.L + j];
+						const float m = widen(static_cast<const P*>(a.psf[sx])[(long)(lo + hi * (hi + 1) / 2) * a.L + j]);
 
 						o[r].x += m * v[c].x;
 						o[r].y += m * v[c].y;
@@ -368,7 +373,8 @@ struct Call {
 	const cplx* src;
 	const cplx* map;
 	cplx* B;
-	const float* psf[2];
+	const void* psf[2];
+	int bf16;
 	const unsigned* mask;
 	const int* prefix;
 	long L;
@@ -399,7 +405,8 @@ int prepare(void)
 	    || (cudaSuccess != cudaFuncSetAttribute(strided<N, typename S::SF, Plain>, cudaFuncAttributeMaxDynamicSharedMemorySize, s))
 	    || (cudaSuccess != cudaFuncSetAttribute(strided<N, typename S::SI, Plain>, cudaFuncAttributeMaxDynamicSharedMemorySize, s))
 	    || (cudaSuccess != cudaFuncSetAttribute(strided<N, typename S::SI, ZOut>, cudaFuncAttributeMaxDynamicSharedMemorySize, s))
-	    || (cudaSuccess != cudaFuncSetAttribute(fused<N>, cudaFuncAttributeMaxDynamicSharedMemorySize, x))) {
+	    || (cudaSuccess != cudaFuncSetAttribute(fused<N, float>, cudaFuncAttributeMaxDynamicSharedMemorySize, x))
+	    || (cudaSuccess != cudaFuncSetAttribute(fused<N, __nv_bfloat16>, cudaFuncAttributeMaxDynamicSharedMemorySize, x))) {
 
 		cudaGetLastError();
 		return -1;
@@ -448,7 +455,10 @@ void run_fused(const Call* c, cudaStream_t stream)
 	a.tx = c->tab;
 	a.L = c->L;
 
-	fused<N><<<(unsigned)((size_t)N * N), S::XF::block_dim, S::smem_x, stream>>>(a);
+	if (c->bf16)
+		fused<N, __nv_bfloat16><<<(unsigned)((size_t)N * N), S::XF::block_dim, S::smem_x, stream>>>(a);
+	else
+		fused<N, float><<<(unsigned)((size_t)N * N), S::XF::block_dim, S::smem_x, stream>>>(a);
 }
 
 /* The passes along y and z back out, into the answer. */
@@ -591,8 +601,9 @@ extern "C" void bartorch_paired_free(struct bartorch_paired* p)
  * coefficients `src` -- times the sensitivity `map`, or NULL -- through the
  * passes along z and y into `scratch`.  `fused` takes them through the pass
  * along x against the two sets' functions `psf0`, `psf1` (the upper triangle,
- * compressed to the places `mask` and `prefix` keep, `L` of them).  `back`
- * takes them through the passes along y and z out, adding to `dst`.  Only
+ * compressed to the places `mask` and `prefix` keep, `L` of them; floats, or
+ * bfloat16 where `bf16`).  `back` takes them through the passes along y and z
+ * out, adding to `dst`.  Only
  * `fused` reads the functions, so the card is held for them just before it,
  * and they are free for the next pair just after. */
 extern "C" void bartorch_paired_in(const struct bartorch_paired* p, int k,
@@ -612,7 +623,7 @@ extern "C" void bartorch_paired_in(const struct bartorch_paired* p, int k,
 }
 
 extern "C" void bartorch_paired_fused(const struct bartorch_paired* p, int k, _Complex float* scratch,
-		const float* psf0, const float* psf1, const unsigned int* mask, const int* prefix, long L)
+		const void* psf0, const void* psf1, int bf16, const unsigned int* mask, const int* prefix, long L)
 {
 	Call c;
 
@@ -620,6 +631,7 @@ extern "C" void bartorch_paired_fused(const struct bartorch_paired* p, int k, _C
 	c.B = (cplx*)scratch;
 	c.psf[0] = psf0;
 	c.psf[1] = psf1;
+	c.bf16 = bf16;
 	c.mask = mask;
 	c.prefix = prefix;
 	c.L = L;

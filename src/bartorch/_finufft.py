@@ -374,11 +374,39 @@ def pairing_sets() -> bool:
     return bool(library().bartorch_nufft_paired())
 
 
+def bfloat16_function(enable: bool = True) -> None:
+    """Keep a Toeplitz function whose sets are paired in bfloat16.
+
+    Half the host copy, half of what crosses to the card and of the slot it
+    lands in, and half of what the pass along x reads, at a rounding of 2^-9 of
+    each value where float32 keeps 2^-24.  bfloat16 keeps float32's exponent,
+    so no value is clipped.  Read when a function is streamed, so it applies to
+    operators built afterwards.  On unless turned off.
+    """
+    from bartorch._lib import library
+
+    library().bartorch_nufft_set_bf16(int(bool(enable)))
+
+
+def storing_bfloat16() -> bool:
+    """Whether a Toeplitz function whose sets are paired is kept in bfloat16."""
+    from bartorch._lib import library
+
+    return bool(library().bartorch_nufft_bf16())
+
+
 def paired_built() -> bool:
     """Whether the library was built with the pair kernels (``BARTORCH_MATHDX_DIR``)."""
     from bartorch._lib import library
 
     return bool(library().bartorch_nufft_paired_built())
+
+
+def functions_bfloat16() -> int:
+    """Toeplitz functions kept in bfloat16 since the counters were reset."""
+    from bartorch._lib import library
+
+    return int(library().bartorch_toeplitz_counter(6))
 
 
 def using_fft_callbacks() -> bool:

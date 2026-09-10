@@ -266,6 +266,10 @@ def _bind(lib: ctypes.CDLL) -> ctypes.CDLL:
     lib.bartorch_nufft_paired.argtypes = []
     lib.bartorch_nufft_paired_built.restype = c.c_int
     lib.bartorch_nufft_paired_built.argtypes = []
+    lib.bartorch_nufft_set_bf16.restype = None
+    lib.bartorch_nufft_set_bf16.argtypes = [c.c_int]
+    lib.bartorch_nufft_bf16.restype = c.c_int
+    lib.bartorch_nufft_bf16.argtypes = []
     lib.bartorch_sense_set_coil_batch.restype = None
     lib.bartorch_sense_set_coil_batch.argtypes = [c.c_int]
     lib.bartorch_sense_set_fold_maps.restype = None

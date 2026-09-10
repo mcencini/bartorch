@@ -22,6 +22,11 @@
 
 #include "coset.cuh"
 
+#include <cuda_bf16.h>
+
+__device__ static inline float widen(float v) { return v; }
+__device__ static inline float widen(__nv_bfloat16 v) { return __bfloat162float(v); }
+
 /* dst = src * map * phase */
 __global__ static void kern_phase_map_in(struct phase_conf c, cuFloatComplex* dst,
 		const cuFloatComplex* src, const cuFloatComplex* map)
@@ -226,7 +231,8 @@ extern "C" void bartorch_cuda_modulate(const long dims[3], long rest, const long
  * `hermite_to_uppertriag` lays the function's entries out in. */
 enum { CONTRACT_MAX = 16 };
 
-__global__ static void kern_contract_upper_real(long L, int R, cuFloatComplex* bank, const float* mat)
+template <typename P>
+__global__ static void kern_contract_upper_real(long L, int R, cuFloatComplex* bank, const P* mat)
 {
 	long start = threadIdx.x + (long)blockDim.x * blockIdx.x;
 	long stride = (long)blockDim.x * gridDim.x;
@@ -247,7 +253,7 @@ __global__ static void kern_contract_upper_real(long L, int R, cuFloatComplex* b
 
 				int lo = (r < c) ? r : c;
 				int hi = (r < c) ? c : r;
-				float m = mat[(long)(lo + hi * (hi + 1) / 2) * L + l];
+				float m = widen(mat[(long)(lo + hi * (hi + 1) / 2) * L + l]);
 
 				re += m * in[c].x;
 				im += m * in[c].y;
@@ -263,7 +269,20 @@ extern "C" int bartorch_cuda_contract_upper_real(long L, int R, _Complex float* 
 	if ((R < 1) || (R > CONTRACT_MAX))
 		return -1;
 
-	kern_contract_upper_real<<<grid_for(L), 256, 0, cuda_get_stream()>>>(L, R, (cuFloatComplex*)bank, mat);
+	kern_contract_upper_real<float><<<grid_for(L), 256, 0, cuda_get_stream()>>>(L, R, (cuFloatComplex*)bank, mat);
+
+	CUDA_KERNEL_ERROR;
+
+	return 0;
+}
+
+/* The same, against a function kept in bfloat16. */
+extern "C" int bartorch_cuda_contract_upper_real_bf16(long L, int R, _Complex float* bank, const void* mat)
+{
+	if ((R < 1) || (R > CONTRACT_MAX))
+		return -1;
+
+	kern_contract_upper_real<__nv_bfloat16><<<grid_for(L), 256, 0, cuda_get_stream()>>>(L, R, (cuFloatComplex*)bank, (const __nv_bfloat16*)mat);
 
 	CUDA_KERNEL_ERROR;
 
