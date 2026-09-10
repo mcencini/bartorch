@@ -428,17 +428,13 @@ void run_in(const Call* c, cudaStream_t stream)
 				Plain{ c->B + r * V });
 }
 
-/* The pass along x of both sets, and the passes along y and z back out into
- * the answer. */
+/* The pass along x of both sets: the only one that reads their functions. */
 template <unsigned N>
-void run_out(const Call* c, cudaStream_t stream)
+void run_fused(const Call* c, cudaStream_t stream)
 {
 	using S = Shape<N>;
 
 	const size_t V = (size_t)N * N * N;
-	const dim3 grid(N / S::tile, N);
-	const cplx* ty = c->tab + 2 * N;
-	const cplx* tz = c->tab + 3 * N;
 
 	XArgs a;
 
@@ -453,6 +449,18 @@ void run_out(const Call* c, cudaStream_t stream)
 	a.L = c->L;
 
 	fused<N><<<(unsigned)((size_t)N * N), S::XF::block_dim, S::smem_x, stream>>>(a);
+}
+
+/* The passes along y and z back out, into the answer. */
+template <unsigned N>
+void run_back(const Call* c, cudaStream_t stream)
+{
+	using S = Shape<N>;
+
+	const size_t V = (size_t)N * N * N;
+	const dim3 grid(N / S::tile, N);
+	const cplx* ty = c->tab + 2 * N;
+	const cplx* tz = c->tab + 3 * N;
 
 	for (unsigned r = 0; r < R; r++)
 		strided<N, typename S::SI, Plain><<<grid, S::SI::block_dim, S::smem_s, stream>>>((size_t)N, (size_t)N * N,
@@ -468,10 +476,11 @@ struct Entry {
 	unsigned n;
 	int (*prepare)(void);
 	void (*run_in)(const Call*, cudaStream_t);
-	void (*run_out)(const Call*, cudaStream_t);
+	void (*run_fused)(const Call*, cudaStream_t);
+	void (*run_back)(const Call*, cudaStream_t);
 };
 
-#define BARTORCH_PAIRED_ENTRY(n) { n, prepare<n>, run_in<n>, run_out<n> },
+#define BARTORCH_PAIRED_ENTRY(n) { n, prepare<n>, run_in<n>, run_fused<n>, run_back<n> },
 
 const Entry table[] = { BARTORCH_PAIRED_SIZES(BARTORCH_PAIRED_ENTRY) };
 
@@ -578,13 +587,14 @@ extern "C" void bartorch_paired_free(struct bartorch_paired* p)
 	xfree(p);
 }
 
-/* One coil against pair `k`, in two halves: `in` takes the coil's four
+/* One coil against pair `k`, in three steps.  `in` takes the coil's four
  * coefficients `src` -- times the sensitivity `map`, or NULL -- through the
- * passes along z and y into `scratch`; `out` takes them through the pass
+ * passes along z and y into `scratch`.  `fused` takes them through the pass
  * along x against the two sets' functions `psf0`, `psf1` (the upper triangle,
- * compressed to the places `mask` and `prefix` keep, `L` of them) and back out,
- * adding to `dst`.  Only `out` reads the functions, so the card needs to be
- * held for them only between the two. */
+ * compressed to the places `mask` and `prefix` keep, `L` of them).  `back`
+ * takes them through the passes along y and z out, adding to `dst`.  Only
+ * `fused` reads the functions, so the card is held for them just before it,
+ * and they are free for the next pair just after. */
 extern "C" void bartorch_paired_in(const struct bartorch_paired* p, int k,
 		const _Complex float* src, const _Complex float* map, _Complex float* scratch)
 {
@@ -601,15 +611,12 @@ extern "C" void bartorch_paired_in(const struct bartorch_paired* p, int k,
 	CUDA_KERNEL_ERROR;
 }
 
-extern "C" void bartorch_paired_out(const struct bartorch_paired* p, int k,
-		_Complex float* dst, const _Complex float* map, _Complex float* scratch,
+extern "C" void bartorch_paired_fused(const struct bartorch_paired* p, int k, _Complex float* scratch,
 		const float* psf0, const float* psf1, const unsigned int* mask, const int* prefix, long L)
 {
 	Call c;
 
 	memset(&c, 0, sizeof c);
-	c.dst = (cplx*)dst;
-	c.map = (const cplx*)map;
 	c.B = (cplx*)scratch;
 	c.psf[0] = psf0;
 	c.psf[1] = psf1;
@@ -617,9 +624,25 @@ extern "C" void bartorch_paired_out(const struct bartorch_paired* p, int k,
 	c.prefix = prefix;
 	c.L = L;
 	c.tab = p->tables + 4 * p->entry->n * k;
+
+	p->entry->run_fused(&c, cuda_get_stream());
+
+	CUDA_KERNEL_ERROR;
+}
+
+extern "C" void bartorch_paired_back(const struct bartorch_paired* p, int k,
+		_Complex float* dst, const _Complex float* map, _Complex float* scratch)
+{
+	Call c;
+
+	memset(&c, 0, sizeof c);
+	c.dst = (cplx*)dst;
+	c.map = (const cplx*)map;
+	c.B = (cplx*)scratch;
+	c.tab = p->tables + 4 * p->entry->n * k;
 	c.scale = p->scale;
 
-	p->entry->run_out(&c, cuda_get_stream());
+	p->entry->run_back(&c, cuda_get_stream());
 
 	CUDA_KERNEL_ERROR;
 }

@@ -81,9 +81,10 @@ extern struct bartorch_paired* bartorch_paired_create(const long dims[3], int co
 extern void bartorch_paired_free(struct bartorch_paired* p);
 extern void bartorch_paired_in(const struct bartorch_paired* p, int k,
 		const complex float* src, const complex float* map, complex float* scratch);
-extern void bartorch_paired_out(const struct bartorch_paired* p, int k,
-		complex float* dst, const complex float* map, complex float* scratch,
+extern void bartorch_paired_fused(const struct bartorch_paired* p, int k, complex float* scratch,
 		const float* psf0, const float* psf1, const unsigned int* mask, const int* prefix, long L);
+extern void bartorch_paired_back(const struct bartorch_paired* p, int k,
+		complex float* dst, const complex float* map, complex float* scratch);
 #endif
 
 #include "include/bartorch.h"
@@ -1370,10 +1371,15 @@ static void paired_unit(struct nufft_fi_s* d, complex float* dst, const complex 
 
 		slot_ready(d);
 
-		bartorch_paired_out(d->paired, d->coset, dst, m, scratch, psf0, psf1,
+		bartorch_paired_fused(d->paired, d->coset, scratch, psf0, psf1,
 				d->kept_mask, d->kept_prefix, t->psf_dims[0]);
 
+		/* The pair has been read for the last time once the last coil is past
+		 * its pass along x: the next pair can cross while this one's passes
+		 * back run. */
 		slot_read(d, last && (c == coils - 1));
+
+		bartorch_paired_back(d->paired, d->coset, dst, m, scratch);
 	}
 
 	md_free(scratch);
