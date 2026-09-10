@@ -255,3 +255,35 @@ def test_fetching_a_slab_alongside_the_arithmetic_changes_nothing():
 
     torch.testing.assert_close(one, reference, rtol=1e-4, atol=1e-5)
     torch.testing.assert_close(two, one, rtol=1e-4, atol=1e-5)
+
+
+def test_a_kernel_bank_serves_a_subspace_operator_as_the_maps_it_stands_for():
+    """Kernels and a basis compose.
+
+    A subspace operator carries one volume per coefficient and contracts them
+    into frames on the samples' side.  The sensitivities are the same for every
+    coefficient, so a bank held as kernels has to apply there as the maps it
+    stands for -- and the forward and adjoint have to be each other's adjoint,
+    which is what says the coefficients and frames land on the right axes.
+    """
+    n, spokes, frames, coeffs, coils = 16, 8, 4, 2, 4
+    traj = bt.traj(x=n, y=spokes * frames, r=True).reshape(frames, spokes, n, 3)[:, None, None]
+    basis = torch.zeros(coeffs, frames, 1, 1, 1, 1, 1, dtype=torch.complex64)
+    basis[0, :, 0, 0, 0, 0, 0] = 1.0
+    basis[1, :, 0, 0, 0, 0, 0] = torch.linspace(-1, 1, frames)
+    kernels, maps = _smooth_bank(n=n, coils=coils)
+
+    dense = LinearOperator.sense(maps, (coils, n, n), traj=traj, basis=basis)
+    compact = LinearOperator.sense(kernels, (coils, n, n), traj=traj, basis=basis, kernels=True)
+    assert dense.ishape == (coeffs, 1, 1, 1, 1, n, n)
+
+    torch.manual_seed(0)
+    x = torch.randn(dense.ishape, dtype=torch.complex64)
+    y = torch.randn(dense.oshape, dtype=torch.complex64)
+
+    torch.testing.assert_close(compact(x), dense(x), rtol=1e-4, atol=1e-5)
+    torch.testing.assert_close(compact.normal(x), dense.normal(x), rtol=1e-4, atol=1e-5)
+
+    lhs = torch.vdot(dense(x).flatten(), y.flatten())
+    rhs = torch.vdot(x.flatten(), dense.adjoint(y).flatten())
+    assert abs(lhs - rhs) / abs(lhs) < 1e-4

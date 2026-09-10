@@ -421,14 +421,16 @@ def test_more_frames_than_a_batch_of_one_thousand_are_still_finuffts(in_tools):
     _within_tolerance(got, ref)
 
 
-def _subspace(n, spokes, frames, coeffs):
+def _subspace(n, spokes, frames, coeffs, read=None):
     """A trajectory that varies across frames, and a basis over them.
 
     BART puts frames on TE and coefficients on COEFF, so in C order the
     trajectory is ``(frames, 1, 1, spokes, readout, 3)`` and the basis
-    ``(coeffs, frames, 1, 1, 1, 1, 1)``.
+    ``(coeffs, frames, 1, 1, 1, 1, 1)``.  The readout reaches the edge of an
+    ``n`` grid unless ``read`` says how many samples it has.
     """
-    traj = bt.traj(x=n, y=spokes * frames, r=True).reshape(frames, spokes, n, 3)[:, None, None]
+    read = n if read is None else read
+    traj = bt.traj(x=read, y=spokes * frames, r=True).reshape(frames, spokes, read, 3)[:, None, None]
     basis = torch.zeros(coeffs, frames, 1, 1, 1, 1, 1, dtype=torch.complex64)
     basis[0, :, 0, 0, 0, 0, 0] = 1.0
     basis[1, :, 0, 0, 0, 0, 0] = torch.linspace(-1, 1, frames)
@@ -1456,40 +1458,51 @@ def test_the_function_can_be_kept_off_the_card_and_brought_over_in_sets(in_tools
 
 @requires_finufft
 @requires_cuda
-def test_a_compressed_subspace_function_is_gathered_a_coefficient_at_a_time(in_tools):
-    """Gathering the spectrum is what makes a compressed function worth having.
+def test_compressing_a_radial_function_costs_less_than_the_embedding_itself(in_tools):
+    """A compressed function drops what the samples never reached.
 
-    A compressed function has values only where the samples reach, so the
-    spectrum that multiplies it is gathered down to those places.  One volume
-    is transformed and gathered at a time, so a coil's coefficients are
-    resident only in their gathered form, which is what makes the compressed
-    function cost less than the whole one rather than more.  What it computes
-    is the whole function's normal, less whatever the samples never reached.
+    The function is not zero where the samples do not reach, only small, and
+    compression cuts what is there, so what it costs depends on how much of the
+    grid goes unreached.  A three-dimensional radial readout that reaches the
+    edge leaves the corners of the cube, and there the cut adds a fraction to
+    the error the Toeplitz embedding already has -- one normal, held against
+    the pair of transforms it stands for.  No sampling pattern is given, so
+    every sample counts.
     """
-    from bartorch.tools import _generated as g
+    from bartorch.ops import LinearOperator
 
-    n, spokes, frames, coeffs, coils = 24, 96, 4, 3, 2
-    traj, basis = _subspace(n, spokes, frames, coeffs)
-    traj = traj.cuda()
+    n, spokes, frames, coeffs, coils = 64, 256, 8, 4, 4
+    traj = bt.traj(x=n, y=spokes * frames, r=True, flag_3=True)
+    traj = traj.reshape(frames, spokes, n, 3)[:, None, None].cuda()
+    basis = torch.zeros(coeffs, frames, 1, 1, 1, 1, 1, dtype=torch.complex64)
+    for c in range(coeffs):
+        basis[c, :, 0, 0, 0, 0, 0] = torch.cos(torch.pi * c * (torch.arange(frames) + 0.5) / frames)
     basis = basis.cuda()
 
     torch.manual_seed(0)
-    k = torch.randn(frames, 1, coils, spokes, n, 1, dtype=torch.complex64).cuda()
-    maps = (torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5).cuda()
+    maps = torch.randn(coils, n, n, n, dtype=torch.complex64)
+    maps = (maps / maps.abs().pow(2).sum(0, keepdim=True).sqrt()).cuda()
 
-    assert _finufft.compressing_psf(), "it is what happens unless it is turned off"
+    def build(compress, toeplitz):
+        _finufft.compress_psf(compress)
+        return LinearOperator.sense(maps, (coils, n, n, n), traj=traj, basis=basis, toeplitz=toeplitz)
 
     try:
-        _finufft.compress_psf(False)
-        whole = g.pics(k, maps, t=traj, B=basis, i=5)
-
-        _finufft.compress_psf(True)
-        gathered = g.pics(k, maps, t=traj, B=basis, i=5)
+        before = _finufft.functions_compressed()
+        compressed = build(True, True)
+        assert _finufft.functions_compressed() > before, "the function was compressed"
+        whole = build(False, True)
+        exact = build(False, False)
     finally:
         _finufft.compress_psf(True)
 
-    scale = float(whole.abs().max())
-    assert float((gathered - whole).abs().max()) / scale < 1e-3
+    x = torch.randn(compressed.ishape, dtype=torch.complex64, device="cuda")
+    reference = exact.normal(x)
+
+    def error(A):
+        return float((A.normal(x) - reference).norm() / reference.norm())
+
+    assert error(compressed) < 1.5 * error(whole)
 
 
 @requires_finufft
@@ -1536,24 +1549,25 @@ def test_a_sensitivity_folded_into_the_transform_answers_the_same(in_tools):
     Beside the transform it makes two of them for every slab: one to multiply
     the map into and one for the answer to land in.  A transform that reads and
     writes a coefficient at a time takes the map itself, on as a coefficient is
-    read and conjugated as it is written, and neither is made -- 1.13 GiB of a
-    224^3 problem over four coefficients.  What it must not change is the
-    answer, and it does not: the two differ by what the gridding's summation
+    read and conjugated as it is written, and neither is made.  What it must
+    not change is the answer: the two differ by what the gridding's summation
     order differs by.
 
-    The trajectory is sparse enough that the function is compressed, which is
-    the arrangement that reads a coefficient at a time and so the only one that
-    folds.
+    The readout covers half the grid's extent, so the function is compressed,
+    which is the arrangement that reads a coefficient at a time and so the
+    only one that folds.
     """
     from bartorch.tools import _generated as g
 
-    n, spokes, frames, coeffs, coils = 32, 24, 4, 3, 2
-    traj, basis = _subspace(n, spokes, frames, coeffs)
+    lib = library()
+
+    n, read, spokes, frames, coeffs, coils = 32, 16, 24, 4, 3, 2
+    traj, basis = _subspace(n, spokes, frames, coeffs, read=read)
     traj = traj.cuda()
     basis = basis.cuda()
 
     torch.manual_seed(0)
-    k = torch.randn(frames, 1, coils, spokes, n, 1, dtype=torch.complex64).cuda()
+    k = torch.randn(frames, 1, coils, spokes, read, 1, dtype=torch.complex64).cuda()
     maps = torch.randn(1, coils, 1, n, n, dtype=torch.complex64)
     maps = (maps / maps.abs().pow(2).sum(1, keepdim=True).sqrt()).cuda()
 
@@ -1561,12 +1575,41 @@ def test_a_sensitivity_folded_into_the_transform_answers_the_same(in_tools):
 
     try:
         bartorch.set_fold_maps(False)
+        before = lib.bartorch_sense_counter(2)
         beside = g.pics(k, maps, t=traj, B=basis, i=5)
+        assert lib.bartorch_sense_counter(2) == before
 
         bartorch.set_fold_maps(True)
         folded = g.pics(k, maps, t=traj, B=basis, i=5)
+        assert lib.bartorch_sense_counter(2) > before, "the normals were folded"
     finally:
         bartorch.set_fold_maps(True)
 
     scale = float(beside.abs().max())
     assert float((folded - beside).abs().max()) / scale < 1e-5
+
+
+@requires_finufft
+@requires_cuda
+def test_a_transform_asked_for_after_the_normal_plans_again(in_tools):
+    """The plans a normal lets go are made again for the transform that wants them.
+
+    With a Toeplitz function built, a normal reads neither the plans nor the
+    points they were set on, so the first normal lets the card's copy go.  A
+    forward applied afterwards has to plan again and answer as an operator
+    that never let them go.
+    """
+    from bartorch.ops import LinearOperator
+
+    assert _finufft.releasing_transforms(), "it is what happens unless it is turned off"
+
+    n = 24
+    traj = bt.traj(x=n, y=32, r=True).cuda()
+    A = LinearOperator.nufft(traj, (1, n, n), toeplitz=True)
+    x = bt.phantom([n, n]).reshape(1, n, n).to(torch.complex64).cuda()
+
+    before = A(x)
+    A.normal(x)
+    after = A(x)
+
+    torch.testing.assert_close(after, before, rtol=1e-5, atol=1e-6)

@@ -323,6 +323,8 @@ class LinearOperator:
         kspace_shape: Shape | None = None,
         kernels: bool = False,
         toeplitz: bool = True,
+        weights: torch.Tensor | None = None,
+        basis: torch.Tensor | None = None,
     ) -> LinearOperator:
         """Sensitivities and a transform, over one slab of coils at a time.
 
@@ -337,7 +339,9 @@ class LinearOperator:
         ----------
         sensitivities : tensor
             Coil sensitivities of shape ``(coils, *image_shape[1:])``, or the
-            k-space kernels they band-limit to when ``kernels`` is set.
+            k-space kernels they band-limit to when ``kernels`` is set.  A bank
+            left on the host while the transform is on a card is brought over
+            a slab at a time, so the bank itself never has to fit.
         image_shape : tuple of int
             Coil-image shape, C order, for instance ``(coils, y, x)``.
         traj : tensor, optional
@@ -348,14 +352,6 @@ class LinearOperator:
             Sample shape; by default the trajectory's, or the image's on a
             grid.
         kernels : bool
-            Sensitivities left on the host are brought over a slab at a time
-            when the operator is applied on a card, so the bank itself never
-            has to fit; what crosses is one slab.  Given a second stream --
-            ``bartorch.cuda.set_streams(2)``, one by default -- the slab after
-            next is fetched while this one is worked on, which hides the
-            crossing behind the arithmetic.
-
-        kernels : bool
             Read ``sensitivities`` as kernels: the centre of each map's
             spectrum, which is all a smooth map carries.  A slab is padded
             back on to the image grid and transformed when it is needed, so a
@@ -364,11 +360,20 @@ class LinearOperator:
             :func:`bartorch.maps_to_kernels` reports the error of.
         toeplitz : bool
             Apply the normal through the Toeplitz embedding.
+        weights : tensor, optional
+            A diagonal in k-space, as :meth:`nufft` takes it.
+        basis : tensor, optional
+            A subspace basis over frames and coefficients, as :meth:`nufft`
+            takes it: ``(coeffs, frames, 1, 1, 1, 1, 1)``.  The image then
+            carries one volume per coefficient, ``(coeffs, 1, 1, 1, *spatial)``,
+            and the samples one set per frame.
         """
         _ensure_ready()
         image_shape = tuple(image_shape)
         if len(image_shape) < 3:
             raise ValueError("image_shape is (coils, *spatial), for instance (coils, y, x)")
+        if traj is None and (weights is not None or basis is not None):
+            raise ValueError("weights and a basis belong to a non-Cartesian transform")
 
         # BART reads the coils off a dimension of their own, which sits after
         # the three spatial ones, so a two-dimensional problem carries the
@@ -385,18 +390,33 @@ class LinearOperator:
             sens_spatial = (1, *sens_spatial)
             s = s.reshape(coils, *sens_spatial)
         t = None if traj is None else _as_operand(traj, tuple(traj.shape), "traj")
+        w = None if weights is None else _as_operand(weights, tuple(weights.shape), "weights")
+        b = None if basis is None else _as_operand(basis, tuple(basis.shape), "basis")
 
-        max_shape = (coils, *spatial)
+        # A basis puts the coefficients on BART's COEFF axis, three past the
+        # coils, and the image carries that axis where the coils do not.
+        coeffs = 1 if b is None else int(b.shape[0])
+        if b is None:
+            max_shape = (coils, *spatial)
+            ishape = spatial
+        else:
+            max_shape = (coeffs, 1, 1, coils, *spatial)
+            ishape = (coeffs, 1, 1, 1, *spatial)
 
         if kspace_shape is None:
             if t is None:
                 kspace_shape = max_shape
             else:
-                # BART lays non-Cartesian samples out with the read axis a
-                # singleton and the coils where they always are, so the coil
-                # axis lines up with the sensitivities rather than landing on
-                # the one that carries sets of maps.
-                kspace_shape = (coils, *tuple(t.shape)[:-1], 1)
+                # BART lays non-Cartesian samples out as the trajectory is,
+                # with the coordinate axis a singleton and the coils on the
+                # axis after the spokes -- which is where the sensitivities
+                # have them, rather than the one that carries sets of maps.
+                bart = [1, *list(t.shape)[::-1][1:]]
+                bart += [1] * max(0, 4 - len(bart))
+                if bart[3] != 1:
+                    raise ValueError("the trajectory already has an axis where the coils go")
+                bart[3] = coils
+                kspace_shape = tuple(bart[::-1])
         kspace_shape = tuple(kspace_shape)
 
         # Where the operator is built follows the transform's own data, not
@@ -412,10 +432,14 @@ class LinearOperator:
                 int(kernels),
                 None if t is None else _dims(tuple(t.shape)),
                 None if t is None else t.data_ptr(),
+                None if w is None else _dims(tuple(w.shape)),
+                None if w is None else w.data_ptr(),
+                None if b is None else _dims(tuple(b.shape)),
+                None if b is None else b.data_ptr(),
                 int(toeplitz),
             )
-        keep = tuple(x for x in (s, t) if x is not None)
-        return cls._create(ptr, spatial, kspace_shape, keep)
+        keep = tuple(x for x in (s, t, w, b) if x is not None)
+        return cls._create(ptr, ishape, kspace_shape, keep)
 
     # --- algebra --------------------------------------------------------
 

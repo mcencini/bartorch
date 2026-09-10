@@ -96,8 +96,8 @@ int bartorch_sense_fold_maps(void)
 
 /* Operators built since the last reset: with the coil loop, and as BART's own
  * chain because this could not serve them. */
-enum { SN_FUSED, SN_CHAINED };
-static long sense_counters[2];
+enum { SN_FUSED, SN_CHAINED, SN_FOLDED };
+static long sense_counters[3];
 
 void bartorch_sense_set_coil_batch(int coils)
 {
@@ -111,13 +111,14 @@ int bartorch_sense_coil_batch(void)
 
 long bartorch_sense_counter(int which)
 {
-	return sense_counters[(SN_FUSED == which) ? SN_FUSED : SN_CHAINED];
+	return sense_counters[((SN_FUSED == which) || (SN_FOLDED == which)) ? which : SN_CHAINED];
 }
 
 void bartorch_sense_reset_counters(void)
 {
 	sense_counters[SN_FUSED] = 0;
 	sense_counters[SN_CHAINED] = 0;
+	sense_counters[SN_FOLDED] = 0;
 }
 
 struct sense_s {
@@ -484,6 +485,10 @@ static void sense_normal(const linop_data_t* _d, complex float* dst, const compl
 	bool folds = (0 != cosets) && (0 != bartorch_nufft_coset_folds(d->slab))
 			&& (1 == d->slab_dims[MAPS_DIM]) && fold_maps;
 
+	if (folds)
+#pragma omp atomic
+		sense_counters[SN_FOLDED]++;
+
 	struct slab_ctx c = {
 
 		.dst = dst, .src = src,
@@ -715,12 +720,25 @@ const struct linop_s* sense_nc_init(const long max_dims[DIMS], const long map_di
  */
 const struct linop_s* bartorch_sense_operator(const long max_dims[DIMS], const long sens_dims[DIMS],
 		const complex float* sens, int kernels, const long ksp_dims[DIMS],
-		const long traj_dims[DIMS], const complex float* traj, const struct nufft_conf_s* conf)
+		const long traj_dims[DIMS], const complex float* traj,
+		const long wgh_dims[DIMS], const complex float* weights,
+		const long bas_dims[DIMS], const complex float* basis,
+		const struct nufft_conf_s* conf)
 {
+	if ((NULL == traj) && ((NULL != weights) || (NULL != basis)))
+		error("bartorch: weights and a basis belong to a non-Cartesian transform\n");
+
 	long map_dims[DIMS];
 	md_select_dims(DIMS, FFT_FLAGS | COIL_FLAG | MAPS_FLAG, map_dims, max_dims);
 
-	struct sense_s* d = sense_slabs(max_dims, map_dims, ksp_dims, 0UL);
+	/* The transform takes the coefficients the image carries and a basis
+	 * contracts them into the frames the samples have, so what it is asked
+	 * for carries both -- as `sense_nc_init` asks for it. */
+	long ksp_dims2[DIMS];
+	md_copy_dims(DIMS, ksp_dims2, ksp_dims);
+	ksp_dims2[COEFF_DIM] = max_dims[COEFF_DIM];
+
+	struct sense_s* d = sense_slabs(max_dims, map_dims, ksp_dims2, 0UL);
 
 	if (0 != kernels) {
 
@@ -737,7 +755,7 @@ const struct linop_s* bartorch_sense_operator(const long max_dims[DIMS], const l
 	}
 
 	long slab_ksp_dims[DIMS];
-	md_copy_dims(DIMS, slab_ksp_dims, ksp_dims);
+	md_copy_dims(DIMS, slab_ksp_dims, ksp_dims2);
 	slab_ksp_dims[COIL_DIM] = d->batch;
 
 	/* Centred, which is what `bartorch.tools.fft` is and so what a caller
@@ -747,7 +765,8 @@ const struct linop_s* bartorch_sense_operator(const long max_dims[DIMS], const l
 		d->slab = linop_fftc_create(DIMS, slab_ksp_dims, FFT_FLAGS);
 	else
 		d->slab = nufft_create2(DIMS, slab_ksp_dims, d->cim_dims, traj_dims, traj,
-				NULL, NULL, NULL, NULL, *conf);
+				(weights ? wgh_dims : NULL), weights,
+				(basis ? bas_dims : NULL), basis, *conf);
 
 	sense_output_from(d);
 

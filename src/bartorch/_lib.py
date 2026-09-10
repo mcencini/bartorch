@@ -232,6 +232,10 @@ def _bind(lib: ctypes.CDLL) -> ctypes.CDLL:
         c.c_int,
         c.POINTER(c.c_long),
         c.c_void_p,
+        c.POINTER(c.c_long),
+        c.c_void_p,
+        c.POINTER(c.c_long),
+        c.c_void_p,
         c.c_int,
     ]
     lib.bartorch_nufft_set_stream_psf.restype = None
@@ -246,6 +250,10 @@ def _bind(lib: ctypes.CDLL) -> ctypes.CDLL:
     lib.bartorch_nufft_set_overlap_psf.argtypes = [c.c_int]
     lib.bartorch_nufft_overlap_psf.restype = c.c_int
     lib.bartorch_nufft_overlap_psf.argtypes = []
+    lib.bartorch_nufft_set_release_transforms.restype = None
+    lib.bartorch_nufft_set_release_transforms.argtypes = [c.c_int]
+    lib.bartorch_nufft_release_transforms.restype = c.c_int
+    lib.bartorch_nufft_release_transforms.argtypes = []
     lib.bartorch_sense_set_coil_batch.restype = None
     lib.bartorch_sense_set_coil_batch.argtypes = [c.c_int]
     lib.bartorch_sense_set_fold_maps.restype = None

@@ -81,8 +81,8 @@ extern double bartorch_finufft_upsampling(void);
 
 /* Normal operators built since the last reset, so a test can say that a
  * solve ran on a point spread function rather than on the transform pair. */
-enum { TP_PSF, TP_PAIR };
-static long toeplitz_counters[2];
+enum { TP_PSF, TP_PAIR, TP_COMPRESSED };
+static long toeplitz_counters[3];
 
 /* Building a point spread function needs a transform of its own, and that
  * transform is nobody's normal: it is asked for one adjoint and freed.  While
@@ -92,13 +92,14 @@ static _Thread_local int making_psf;
 
 long bartorch_toeplitz_counter(int which)
 {
-	return ((0 == which) || (1 == which)) ? toeplitz_counters[which] : -1;
+	return ((0 <= which) && (which <= TP_COMPRESSED)) ? toeplitz_counters[which] : -1;
 }
 
 void bartorch_toeplitz_reset_counters(void)
 {
 	toeplitz_counters[TP_PSF] = 0;
 	toeplitz_counters[TP_PAIR] = 0;
+	toeplitz_counters[TP_COMPRESSED] = 0;
 }
 
 /* One side of the bus: the pair of plans FINUFFT holds there, the coordinates
@@ -381,11 +382,11 @@ static int side_retarget(struct nufft_fi_s* d, int which)
 	return 0;
 }
 
-/* The side `ptr` is on, built if this is the first transform there.
+/* The side `ptr` is on, built if it has not been or has been let go.
  *
- * A side is built once and never rebuilt, so what this returns stays good
- * after the lock is dropped.  error() leaves by a longjmp, which is why it is
- * called with the lock released. */
+ * What this returns stays good after the lock is dropped unless a normal of
+ * the same operator runs meanwhile and lets it go.  error() leaves by a
+ * longjmp, which is why it is called with the lock released. */
 static const struct fi_side* side_for(struct nufft_fi_s* d, const void* ptr)
 {
 	int which = bartorch_on_device(ptr) ? 1 : 0;
@@ -562,6 +563,42 @@ void bartorch_nufft_set_overlap_psf(int enable)
 int bartorch_nufft_overlap_psf(void)
 {
 	return overlap_psf_enabled;
+}
+
+/* Whether the device's transform pair is let go at the first normal. */
+static int release_transforms_enabled = 1;
+
+void bartorch_nufft_set_release_transforms(int enable)
+{
+	release_transforms_enabled = (0 != enable);
+}
+
+int bartorch_nufft_release_transforms(void)
+{
+	return release_transforms_enabled;
+}
+
+/* Let the device's transform pair go.
+ *
+ * With a Toeplitz function built, a normal is a convolution: it reads neither
+ * the plans nor the points they were set on.  A solve applies the adjoint once
+ * to form its right-hand side and then only normals, so the pair would stay
+ * resident for every iteration with nothing reading it.  The host keeps the
+ * trajectory the pair was built from, so a transform asked for afterwards
+ * plans again.  Called with the lock held. */
+static void release_device_side(struct nufft_fi_s* d)
+{
+	if (!release_transforms_enabled || (NULL == d->toeplitz) || (NULL == d->side[1].forward_plan))
+		return;
+
+	side_free(d, &d->side[1]);
+
+	/* cuFINUFFT allocates from the stream-ordered pool, which keeps what is
+	 * freed until the device next synchronises: without this the plans are
+	 * gone and their memory is not, and the peak stays where it was. */
+#ifdef USE_CUDA
+	cuda_sync_device();
+#endif
 }
 
 void bartorch_nufft_set_compress_psf(int enable)
@@ -1039,6 +1076,8 @@ static void coset_begin(struct nufft_fi_s* d, const void* ref)
 {
 	pthread_mutex_lock(&d->lock);
 
+	release_device_side(d);
+
 	if (NULL == d->psf_slot[0])
 		open_slots(d, ref);
 }
@@ -1127,6 +1166,10 @@ static void nufft_fi_normal(const linop_data_t* _d, complex float* dst, const co
 		error("bartorch: the normal was asked for before the trajectory arrived\n");
 
 	if (NULL == d->psf_host) {
+
+		pthread_mutex_lock(&d->lock);
+		release_device_side(d);
+		pthread_mutex_unlock(&d->lock);
 
 		linop_normal_unchecked(d->toeplitz, dst, src);
 		return;
@@ -1446,8 +1489,6 @@ static int spread_mask(struct nufft_data* data, const complex float* traj, long*
 
 	const complex float* pattern = multiplace_read(data->weights, traj);
 
-	if (NULL == pattern)
-		error("bartorch: a compressed point spread function needs a pattern\n");
 
 	int device = bartorch_on_device(traj) ? 1 : 0;
 
@@ -1503,7 +1544,11 @@ static int spread_mask(struct nufft_data* data, const complex float* traj, long*
 	md_free(component);
 
 	complex float* samples_in = alloc_on(device, ND, one_dims, CFL_SIZE);
-	md_copy2(ND, one_dims, one_strs, samples_in, wgh_strs, pattern, CFL_SIZE);
+	/* Without a pattern every sample counts. */
+	if (NULL == pattern)
+		md_zfill(ND, one_dims, samples_in, 1.);
+	else
+		md_copy2(ND, one_dims, one_strs, samples_in, wgh_strs, pattern, CFL_SIZE);
 
 	complex float* reach = alloc_on(device, ND, data->com_dims, CFL_SIZE);
 	complex float* mask = alloc_on(device, ND, data->com_dims, CFL_SIZE);
@@ -1747,6 +1792,10 @@ static void install_psf(struct nufft_data* data, const complex float* traj, comp
 		}
 	}
 
+	if (NULL != data->compress)
+#pragma omp atomic
+		toeplitz_counters[TP_COMPRESSED]++;
+
 	long com_psf_dims[ND];
 	long com_psf_dims3[ND];
 	const long* idx = NULL;
@@ -1757,7 +1806,6 @@ static void install_psf(struct nufft_data* data, const complex float* traj, comp
 		md_select_dims(ND, ~MD_BIT(N), com_psf_dims3, com_psf_dims);
 		idx = multiplace_read(data->compress, traj);
 	}
-
 
 	complex float* psf = stream
 		? bartorch_psf_to_host(N, data->psf_dims, data->flags, data->trj_dims, traj,
@@ -1944,10 +1992,9 @@ static const struct linop_s* toeplitz_for(int N, const long ksp_dims[N], const l
 	barts.decomposed_psf = true;
 
 	/* Keeping only where the samples reach: the function loses the part
-	 * that lies outside the samples, and what crosses the bus for every set
-	 * loses it too.  It costs an index over the grid, which is why it needs
-	 * a pattern -- that is what says where the samples reached. */
-	if (compress_psf_enabled && (NULL != weights))
+	 * that lies outside them, and what crosses the bus for every set loses
+	 * it too.  Whether that pays is decided when the function is built. */
+	if (compress_psf_enabled)
 		barts.compress_psf = true;
 
 	/* Streaming needs the normal that walks the sets rather than the one
@@ -1964,7 +2011,6 @@ static const struct linop_s* toeplitz_for(int N, const long ksp_dims[N], const l
 		barts.precomp_linphase = true;
 	}
 
-
 	const struct linop_s* op = bart_nufft_create2(N, ksp_dims, cim_dims, traj_dims, traj,
 			wgh_dims, weights, (NULL != basis) ? bas_dims : NULL, basis, barts);
 
@@ -1972,6 +2018,16 @@ static const struct linop_s* toeplitz_for(int N, const long ksp_dims[N], const l
 
 	making_psf++;
 	install_psf(data, traj, to_host);
+
+	/* Building the function allocates a transform of its own, the pattern
+	 * spread for the mask and the trajectory shifted for a set, and BART's
+	 * cache keeps every block of it once it is freed.  Handed back here,
+	 * what a solve holds is what it uses. */
+#ifdef USE_CUDA
+	if (0 != bartorch_on_device(traj))
+		cuda_memcache_clear();
+#endif
+
 	making_psf--;
 
 #pragma omp atomic

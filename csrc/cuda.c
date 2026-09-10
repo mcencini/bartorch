@@ -24,6 +24,10 @@
 #include "misc/misc.h"
 
 #include "num/gpuops.h"
+#include "num/mem.h"
+
+/* mem.c's flag, which mem.h does not declare. */
+extern bool memcache;
 #include "num/init.h"
 
 static int current_device = -1;
@@ -99,12 +103,23 @@ int bartorch_cuda_get_streams(void)
 	return cuda_num_streams;
 }
 
+/* Off is both of BART's flags.  `cuda_memcache_off` sets the one in gpuops.c,
+ * but whether a freed block is kept is decided by the one in mem.c, which
+ * only `memcache_off` changes -- so the cache is emptied and then nothing more
+ * is put in it. */
 int bartorch_cuda_use_memcache(int enable)
 {
-	if (!enable)
+	cuda_memcache_clear();
+
+	if (!enable) {
+
 		cuda_memcache_off();
-	else
-		cuda_memcache_clear();
+		memcache_off();
+
+	} else {
+
+		memcache = true;
+	}
 
 	return 0;
 }

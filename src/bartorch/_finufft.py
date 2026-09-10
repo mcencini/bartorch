@@ -248,16 +248,18 @@ def compress_psf(enable: bool = True) -> None:
 
     A compressed function is the part of the function the samples reached,
     which is also all that crosses the bus for every set of frequencies it is
-    brought over in.  It costs an index over the grid -- one ``long`` a point,
-    whatever the function is -- so on a scalar function, which is one real
-    volume a set, the index costs more than the compression gives back; on a
-    subspace function, which is a triangle of volumes, it is paid for several
-    times over.
+    brought over in.  It costs an index over the grid -- one ``long`` a point
+    -- so it is kept only where it gives back more than that, which is decided
+    when the function is built: a subspace function, a triangle of volumes a
+    set, over a trajectory that leaves enough of the grid unreached.  A scalar
+    function never is.  :func:`functions_compressed` says when it happened.
 
-    It needs a pattern, which is what says where the samples reached, and
-    without one the function is kept whole.  Compression drops what the
-    samples never reached, so it is not exact: on a 24^3 subspace problem it
-    moves the reconstruction by 2e-04 of its largest value.
+    The function is not zero where the samples do not reach, only small, so
+    compression is not exact.  A three-dimensional radial readout that reaches
+    the edge leaves the corners of the cube, and there one normal at 64^3 over
+    four coefficients is 4.8e-03 from the pair of transforms it stands for,
+    against 4.3e-03 for the whole function.  A readout covering half of a
+    two-dimensional grid leaves most of it: 1.9e-02 against 3.5e-03.
     """
     from bartorch._lib import library
 
@@ -302,6 +304,30 @@ def overlapping_psf() -> bool:
     return bool(library().bartorch_nufft_overlap_psf())
 
 
+def release_transforms(enable: bool = True) -> None:
+    """Let the device's transform pair go at the first normal.
+
+    With a Toeplitz function built, a normal is a convolution and reads neither
+    the FINUFFT plans nor the sample positions they were set on.  A solve forms
+    its right-hand side with one adjoint and then applies only normals, so the
+    plans would otherwise stay on the card for every iteration with nothing
+    reading them -- and a plan grows with the number of samples, which is what
+    a many-frame acquisition has most of.  The first normal lets them go; a
+    transform asked for afterwards plans again from the trajectory the host
+    keeps.  On unless turned off.
+    """
+    from bartorch._lib import library
+
+    library().bartorch_nufft_set_release_transforms(int(bool(enable)))
+
+
+def releasing_transforms() -> bool:
+    """Whether the device's transform pair is let go at the first normal."""
+    from bartorch._lib import library
+
+    return bool(library().bartorch_nufft_release_transforms())
+
+
 def live_plans() -> int:
     """FINUFFT plans made and not yet destroyed.
 
@@ -342,6 +368,18 @@ def normals_built() -> tuple[int, int]:
 
     lib = library()
     return int(lib.bartorch_toeplitz_counter(0)), int(lib.bartorch_toeplitz_counter(1))
+
+
+def functions_compressed() -> int:
+    """Toeplitz functions built compressed since the counters were reset.
+
+    Whether a function is compressed is decided when it is built, from how much
+    of the grid the samples reach, so the arguments alone do not say -- this is
+    how a caller or a test finds out.
+    """
+    from bartorch._lib import library
+
+    return int(library().bartorch_toeplitz_counter(2))
 
 
 def reset_counters() -> None:

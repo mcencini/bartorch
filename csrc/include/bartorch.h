@@ -130,6 +130,12 @@ BARTORCH_API int bartorch_nufft_compress_psf(void);
 BARTORCH_API void bartorch_nufft_set_overlap_psf(int enable);
 BARTORCH_API int bartorch_nufft_overlap_psf(void);
 
+/* Let the device's transform pair go at the first normal: with a Toeplitz
+ * function built a normal reads neither the plans nor the points, and a
+ * transform asked for afterwards plans again.  On by default. */
+BARTORCH_API void bartorch_nufft_set_release_transforms(int enable);
+BARTORCH_API int bartorch_nufft_release_transforms(void);
+
 /* Host memory a copy engine can read directly, so an asynchronous copy out of
  * it is one.  Ordinary memory when it is not asked for, or where there is no
  * card: page-locking is not free, and only a crossing that overlaps something
@@ -194,7 +200,9 @@ BARTORCH_API bartorch_linop* bartorch_linop_nufft(int N, const long* ksp_dims, c
  * coils a slab at a time.  A NULL trajectory makes the Cartesian operator. */
 BARTORCH_API bartorch_linop* bartorch_linop_sense(const long* max_dims, const long* ksp_dims,
 		const long* sens_dims, const void* sens, int kernels,
-		const long* traj_dims, const void* traj, int toeplitz);
+		const long* traj_dims, const void* traj,
+		const long* wgh_dims, const void* weights,
+		const long* bas_dims, const void* basis, int toeplitz);
 BARTORCH_API bartorch_linop* bartorch_linop_chain(const bartorch_linop* a, const bartorch_linop* b);
 BARTORCH_API bartorch_linop* bartorch_linop_plus(const bartorch_linop* a, const bartorch_linop* b);
 BARTORCH_API int bartorch_linop_domain(const bartorch_linop* h, int N, long* dims);
