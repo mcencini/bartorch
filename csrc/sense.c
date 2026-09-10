@@ -341,7 +341,20 @@ static void stream_wait(void) { }
 
 /* What one slab does, whichever way the operator is being applied. */
 typedef void (*slab_fn)(const struct sense_s* d, long coil, const complex float* map,
-		const long* mstrs, void* ctx);
+		const long* mstrs, bool last, void* ctx);
+
+/* Slab buffers kept from one walk over the coils to the next.
+ *
+ * Every set of frequencies walks the same coils, so a walk that starts where
+ * the one before ended finds that slab already put together.  Taken in
+ * alternate directions, each set after the first skips one slab -- the one
+ * that would otherwise be put together with nothing to overlap it. */
+struct slab_walk {
+
+	complex float* buf[2];
+	long holds[2];		/* the first coil each buffer holds, or -1 */
+	bool reverse;
+};
 
 /* Walk the coils a slab at a time, putting the next one together while the
  * current one is worked on.
@@ -355,77 +368,104 @@ typedef void (*slab_fn)(const struct sense_s* d, long coil, const complex float*
  *
  * With the sensitivities already beside the arithmetic there is nothing to
  * hide, and the loop reads them where they lie. */
-static void drive_slabs(const struct sense_s* d, const void* ref, slab_fn fn, void* ctx)
+static void drive_slabs(const struct sense_s* d, const void* ref, slab_fn fn, void* ctx, struct slab_walk* walk)
 {
 	if (!assembled(d, ref)) {
 
 		for (long c = 0; c < d->coils; c += d->batch)
-			fn(d, c, d->maps + slab_at(d->map_slab_offset, c), d->map_strs, ctx);
+			fn(d, c, d->maps + slab_at(d->map_slab_offset, c), d->map_strs, c + d->batch >= d->coils, ctx);
 
 		return;
 	}
 
-	complex float* slab[2] = { slab_buffer(d, ref), NULL };
+	struct slab_walk own = { { NULL, NULL }, { -1, -1 }, false };
+	struct slab_walk* w = (NULL != walk) ? walk : &own;
+
+	if (NULL == w->buf[0])
+		w->buf[0] = slab_buffer(d, ref);
+
 	const long* mstrs = d->slab_map_strs;
 
 	bool overlap = (1 < stream_count()) && (d->batch < d->coils);
 
-	if (overlap) {
+	if (overlap && (NULL == w->buf[1]))
+		w->buf[1] = slab_buffer(d, ref);
 
-		slab[1] = slab_buffer(d, ref);
-		overlap = (NULL != slab[1]);
+	overlap = overlap && (NULL != w->buf[1]);
+
+	long slabs = (d->coils + d->batch - 1) / d->batch;
+	long order[slabs];
+
+	for (long t = 0; t < slabs; t++)
+		order[t] = (w->reverse ? slabs - 1 - t : t) * d->batch;
+
+	/* The buffer the first slab is in, if the walk before left it there. */
+	int b = (order[0] == w->holds[0]) ? 0 : (overlap && (order[0] == w->holds[1])) ? 1 : -1;
+
+	if (-1 == b) {
+
+		b = 0;
+		fetch_slab(d, order[0], w->buf[0]);
+		w->holds[0] = order[0];
 	}
 
-	fetch_slab(d, 0, slab[0]);
+	for (long t = 0; t < slabs; t++) {
 
-	if (!overlap) {
+		long c = order[t];
+		bool last = (t + 1 == slabs);
 
-		fn(d, 0, slab[0], mstrs, ctx);
+		if (!overlap) {
 
-		for (long c = d->batch; c < d->coils; c += d->batch) {
+			if (w->holds[0] != c) {
 
-			fetch_slab(d, c, slab[0]);
-			fn(d, c, slab[0], mstrs, ctx);
+				fetch_slab(d, c, w->buf[0]);
+				w->holds[0] = c;
+			}
+
+			fn(d, c, w->buf[0], mstrs, last, ctx);
+			continue;
 		}
 
-	} else {
+		long next = last ? -1 : order[t + 1];
 
-		int turn = 0;
-
-		for (long c = 0; c < d->coils; c += d->batch, turn++) {
-
-			long next = c + d->batch;
-
-			/* Armed here rather than once: BART forgets which
-			 * level owns the streams as soon as anything asks for
-			 * one from below it, and the fetch of the first slab
-			 * does exactly that. */
-			(void)stream_count();
+		/* Armed here rather than once: BART forgets which level owns
+		 * the streams as soon as anything asks for one from below it,
+		 * and the fetch of the first slab does exactly that. */
+		(void)stream_count();
 
 #pragma omp parallel num_threads(2)
-			{
-				if (0 == omp_get_thread_num()) {
+		{
+			if (0 == omp_get_thread_num()) {
 
-					fn(d, c, slab[turn % 2], mstrs, ctx);
+				fn(d, c, w->buf[b], mstrs, last, ctx);
 
-					/* The barrier below waits for the host,
-					 * not the card, and the next turn fills
-					 * the buffer this one is still reading:
-					 * what has been asked of the card has
-					 * to have happened before then. */
-					stream_wait();
+				/* The barrier below waits for the host, not the
+				 * card, and the next turn fills the buffer this
+				 * one is still reading: what has been asked of
+				 * the card has to have happened before then. */
+				stream_wait();
 
-				} else if (next < d->coils) {
+			} else if (0 <= next) {
 
-					fetch_slab(d, next, slab[(turn + 1) % 2]);
-					stream_wait();
-				}
+				fetch_slab(d, next, w->buf[b ^ 1]);
+				stream_wait();
 			}
+		}
+
+		if (0 <= next) {
+
+			w->holds[b ^ 1] = next;
+			b ^= 1;
 		}
 	}
 
-	md_free(slab[1]);
-	md_free(slab[0]);
+	w->reverse = !w->reverse;
+
+	if (NULL == walk) {
+
+		md_free(own.buf[1]);
+		md_free(own.buf[0]);
+	}
 }
 
 /* An operand where the arithmetic is.
@@ -482,8 +522,9 @@ struct slab_ctx {
 };
 
 static void forward_slab(const struct sense_s* d, long coil, const complex float* map,
-		const long* mstrs, void* _c)
+		const long* mstrs, bool last, void* _c)
 {
+	(void)last;
 	struct slab_ctx* c = _c;
 
 	md_ztenmul2(DIMS, d->slab_dims, d->cim_strs, c->cim, d->img_strs, c->src, mstrs, map);
@@ -495,8 +536,9 @@ static void forward_slab(const struct sense_s* d, long coil, const complex float
 }
 
 static void adjoint_slab(const struct sense_s* d, long coil, const complex float* map,
-		const long* mstrs, void* _c)
+		const long* mstrs, bool last, void* _c)
 {
+	(void)last;
 	struct slab_ctx* c = _c;
 
 	md_copy2(DIMS, d->out_dims, d->out_strs, c->out,
@@ -508,9 +550,10 @@ static void adjoint_slab(const struct sense_s* d, long coil, const complex float
 }
 
 static void normal_slab(const struct sense_s* d, long coil, const complex float* map,
-		const long* mstrs, void* _c)
+		const long* mstrs, bool last, void* _c)
 {
 	(void)coil;
+	(void)last;
 	struct slab_ctx* c = _c;
 
 	md_ztenmul2(DIMS, d->slab_dims, d->cim_strs, c->cim, d->img_strs, c->src, mstrs, map);
@@ -528,14 +571,15 @@ static void normal_slab(const struct sense_s* d, long coil, const complex float*
  * pass over the coil images, which is what walking the sets outside costs --
  * against the whole function crossing again, which is what it saves. */
 static void normal_slab_coset(const struct sense_s* d, long coil, const complex float* map,
-		const long* mstrs, void* _c)
+		const long* mstrs, bool last, void* _c)
 {
+	(void)coil;
 	struct slab_ctx* c = _c;
 
 	md_ztenmul2(DIMS, d->slab_dims, d->cim_strs, c->cim, d->img_strs, c->src, mstrs, map);
 
 	md_clear(DIMS, d->cim_dims, c->nrm, CFL_SIZE);
-	bartorch_nufft_coset_normal(d->slab, c->nrm, c->cim, coil + d->batch >= d->coils);
+	bartorch_nufft_coset_normal(d->slab, c->nrm, c->cim, last);
 
 	md_zfmacc2(DIMS, d->slab_dims, d->img_strs, c->dst, d->cim_strs, c->nrm, mstrs, map);
 }
@@ -548,11 +592,12 @@ static void normal_slab_coset(const struct sense_s* d, long coil, const complex 
  * have landed in is ever made.  At 256^3 over four coefficients each of those
  * is half a gigabyte. */
 static void normal_slab_folded(const struct sense_s* d, long coil, const complex float* map,
-		const long* mstrs, void* _c)
+		const long* mstrs, bool last, void* _c)
 {
+	(void)coil;
 	struct slab_ctx* c = _c;
 
-	bartorch_nufft_coset_normal_sense(d->slab, c->dst, c->src, mstrs, map, coil + d->batch >= d->coils);
+	bartorch_nufft_coset_normal_sense(d->slab, c->dst, c->src, mstrs, map, last);
 }
 
 static void sense_forward(const linop_data_t* _d, complex float* dst, const complex float* src)
@@ -568,7 +613,7 @@ static void sense_forward(const linop_data_t* _d, complex float* dst, const comp
 		.out = md_alloc_sameplace(DIMS, d->out_dims, CFL_SIZE, src_on),
 	};
 
-	drive_slabs(d, src_on, forward_slab, &c);
+	drive_slabs(d, src_on, forward_slab, &c, NULL);
 
 	md_free(c.out);
 	md_free(c.cim);
@@ -599,7 +644,7 @@ static void sense_adjoint(const linop_data_t* _d, complex float* dst, const comp
 
 	md_clear(DIMS, d->img_dims, dst_on, CFL_SIZE);
 
-	drive_slabs(d, dst_on, adjoint_slab, &c);
+	drive_slabs(d, dst_on, adjoint_slab, &c, NULL);
 
 	md_free(c.out);
 	md_free(c.cim);
@@ -653,19 +698,26 @@ static void sense_normal(const linop_data_t* _d, complex float* dst, const compl
 
 	if (0 == cosets) {
 
-		drive_slabs(d, dst_on, normal_slab, &c);
+		drive_slabs(d, dst_on, normal_slab, &c, NULL);
 
 	} else {
+
+		/* Each set walks the coils the other way round from the one
+		 * before, so it starts on the slab the last one ended on. */
+		struct slab_walk walk = { { NULL, NULL }, { -1, -1 }, false };
 
 		bartorch_nufft_coset_begin(d->slab, dst_on);
 
 		for (int i = 0; i < cosets; i++) {
 
 			bartorch_nufft_coset_use(d->slab, i);
-			drive_slabs(d, dst_on, folds ? normal_slab_folded : normal_slab_coset, &c);
+			drive_slabs(d, dst_on, folds ? normal_slab_folded : normal_slab_coset, &c, &walk);
 		}
 
 		bartorch_nufft_coset_end(d->slab);
+
+		md_free(walk.buf[1]);
+		md_free(walk.buf[0]);
 	}
 
 	if (NULL != c.nrm)
