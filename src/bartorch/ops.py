@@ -16,7 +16,6 @@ allocated here.
 
 from __future__ import annotations
 
-import ctypes
 import logging
 import traceback
 import weakref
@@ -25,7 +24,7 @@ from typing import Any
 
 import torch
 
-from bartorch import _buffer, _cuda
+from bartorch import _buffer, _cuda, _marshal
 from bartorch._lib import APPLY_FN, DIMS, library
 from bartorch.core.graph import BartError, _ensure_ready, _lock, _on_device
 
@@ -36,17 +35,12 @@ _log = logging.getLogger("bartorch.ops")
 Shape = tuple[int, ...]
 
 
-def _dims(shape: Shape) -> ctypes.Array:
-    """BART dimension vector, padded to DIMS, of a C-order shape."""
-    rev = list(shape)[::-1]
-    if len(rev) > DIMS:
-        raise ValueError(f"BART supports at most {DIMS} dimensions, got {len(rev)}")
-    return (ctypes.c_long * DIMS)(*(rev + [1] * (DIMS - len(rev))))
+_dims = _marshal.padded_dims
 
 
 def _check_dims(query, ptr: int, shape: Shape, what: str) -> None:
     """Verify that BART's view of an operator matches the C-order shape recorded for it."""
-    dims = (ctypes.c_long * DIMS)()
+    dims = _marshal.dim_vector()
     query(ptr, DIMS, dims)
     bart = [int(dims[i]) for i in range(DIMS)]
     if bart != list(_dims(shape)):
@@ -185,7 +179,11 @@ class LinearOperator:
         oshape, ishape = tuple(oshape), tuple(ishape)
         fwd = _callback(forward, ishape, oshape, "forward")
         adj = _callback(adjoint, oshape, ishape, "adjoint")
-        nrm = _callback(normal, ishape, ishape, "normal") if normal is not None else None
+        nrm = (
+            _callback(normal, ishape, ishape, "normal")
+            if normal is not None
+            else _marshal.null_apply()
+        )
         with _lock:
             ptr = library().bartorch_linop_callback(
                 DIMS,
@@ -194,9 +192,9 @@ class LinearOperator:
                 _dims(ishape),
                 fwd,
                 adj,
-                ctypes.cast(nrm, ctypes.c_void_p) if nrm else None,
+                nrm,
                 None,
-                None,
+                _marshal.null_release(),
             )
         return cls._create(ptr, ishape, oshape, (fwd, adj, nrm, forward, adjoint, normal))
 
@@ -608,7 +606,15 @@ class NonlinearOperator:
         adj = _callback(adjoint, oshape, ishape, "adjoint")
         with _lock:
             ptr = library().bartorch_nlop_callback(
-                DIMS, _dims(oshape), DIMS, _dims(ishape), fwd, der, adj, None, None
+                DIMS,
+                _dims(oshape),
+                DIMS,
+                _dims(ishape),
+                fwd,
+                der,
+                adj,
+                None,
+                _marshal.null_release(),
             )
         return cls._create(ptr, ishape, oshape, (fwd, der, adj, forward, derivative, adjoint))
 

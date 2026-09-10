@@ -23,7 +23,6 @@ and nothing else happens to the data.
 from __future__ import annotations
 
 import contextlib
-import ctypes
 import logging
 import threading
 from typing import Any
@@ -31,7 +30,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from bartorch import _backend, _cuda
+from bartorch import _backend, _cuda, _marshal
 from bartorch._lib import ALLOC_FN, DIMS, FREE_FN, LOG_FN, library
 
 __all__ = [
@@ -372,12 +371,7 @@ def build_argv(
 # --- tensors ----------------------------------------------------------------
 
 
-def _bart_dims(shape: tuple[int, ...]) -> tuple[int, ctypes.Array]:
-    """BART rank and dimension vector of a C-order shape: reversed, at least one axis."""
-    rev = list(shape)[::-1] or [1]
-    if len(rev) > DIMS:
-        raise ValueError(f"BART supports at most {DIMS} dimensions, got {len(rev)}")
-    return len(rev), (ctypes.c_long * len(rev))(*rev)
+_bart_dims = _marshal.dims
 
 
 # The tools that work on the memory they are handed.
@@ -445,20 +439,16 @@ def _as_input(x: Any) -> torch.Tensor:
     return x.contiguous()
 
 
-def _output_shape(dims: ctypes.Array, min_ndim: int) -> list[int]:
-    rev = [int(dims[i]) for i in range(DIMS)][::-1]
-    while len(rev) > max(1, min_ndim) and rev[0] == 1:
-        rev.pop(0)
-    return rev
+_output_shape = _marshal.shape_from_dims
 
 
 def run_command(argv: list[str]) -> tuple[int, str, str]:
     """Run one tool with a fully formed argv; return (code, stdout, error text)."""
     _ensure_ready()
     lib = library()
-    c_argv = (ctypes.c_char_p * len(argv))(*[a.encode() for a in argv])
-    out = ctypes.create_string_buffer(1 << 16)
-    err = ctypes.create_string_buffer(4096)
+    c_argv = _marshal.argv(argv)
+    out = _marshal.text_buffer(1 << 16)
+    err = _marshal.text_buffer(4096)
     code = lib.bartorch_command(len(argv), c_argv, out, len(out), err, len(err))
     return code, out.value.decode(errors="replace"), err.value.decode(errors="replace")
 
@@ -559,9 +549,12 @@ def dispatch(
                 return text.strip() if text else None
             results = []
             for out_name in out_names:
-                dims = (ctypes.c_long * DIMS)()
-                ptr = ctypes.c_void_p()
-                if lib.bartorch_lookup(out_name.encode(), DIMS, dims, ctypes.byref(ptr)) != 0:
+                dims = _marshal.dim_vector()
+                ptr = _marshal.out_pointer()
+                found = lib.bartorch_lookup(
+                    out_name.encode(), DIMS, dims, _marshal.by_reference(ptr)
+                )
+                if found != 0:
                     raise BartError(f"bart {op_name} did not write {out_name}")
                 out = _allocator.take(ptr.value).reshape(_output_shape(dims, min_ndim))
                 results.append(out.to(device) if device.type != "cpu" else out)

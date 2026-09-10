@@ -8,10 +8,11 @@ as a real pair per element and :func:`torch.view_as_complex` folds back.
 
 from __future__ import annotations
 
-import ctypes
 from typing import Any
 
 import torch
+
+from bartorch import _marshal
 
 Shape = tuple[int, ...]
 
@@ -40,14 +41,14 @@ def view(ptr: int, shape: Shape) -> torch.Tensor:
     from bartorch._lib import library
 
     lib = library()
-    if lib.bartorch_on_device(ctypes.c_void_p(ptr)):
+    if lib.bartorch_on_device(ptr):
         device = lib.bartorch_cuda_device()
         pairs = torch.as_tensor(
             _DeviceArray(ptr, numel), device=torch.device("cuda", max(device, 0))
         )
         return torch.view_as_complex(pairs).reshape(shape)
 
-    buf = (ctypes.c_float * (2 * numel)).from_address(ptr)
+    buf = _marshal.float_buffer(ptr, 2 * numel)
     return torch.frombuffer(buf, dtype=torch.complex64).reshape(shape)
 
 
@@ -59,17 +60,17 @@ def real_view(ptr: int, numel: int) -> torch.Tensor:
     from bartorch._lib import library
 
     lib = library()
-    if lib.bartorch_on_device(ctypes.c_void_p(ptr)):
+    if lib.bartorch_on_device(ptr):
         device = lib.bartorch_cuda_device()
         pairs = torch.as_tensor(
             _DeviceArray(ptr, (numel + 1) // 2), device=torch.device("cuda", max(device, 0))
         )
         return pairs.reshape(-1)[:numel]
 
-    buf = (ctypes.c_float * numel).from_address(ptr)
+    buf = _marshal.float_buffer(ptr, numel)
     return torch.frombuffer(buf, dtype=torch.float32)
 
 
 def as_pointer(x: Any) -> int:
-    """The address a ctypes pointer argument carries, or zero."""
-    return 0 if not x else ctypes.cast(x, ctypes.c_void_p).value or 0
+    """The address a pointer argument carries, or zero."""
+    return _marshal.address_of(x)
