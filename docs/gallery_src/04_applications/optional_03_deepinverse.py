@@ -7,40 +7,25 @@ synthetic examples. Requires DeepInverse and the base CPU installation. No
 pretrained weights are downloaded. This demonstrates gradient plumbing, not
 clinical reconstruction quality or a reproduction of MoDL.
 
-See the `DeepInverse custom physics tutorial
+:meth:`~bartorch.linop.LinearOperator.to_deepinv` is the whole adapter: an
+operator already differentiates in torch, with the adjoint as its backward
+pass, and what the wrapper adds is DeepInverse's batch axis and ``A_dagger``
+as BART's conjugate gradients. See the `DeepInverse custom physics tutorial
 <https://deepinv.org/auto_examples/basics/demo_custom_physics.html>`_ for the
-forward/adjoint interface. Native BART calls need an explicit autograd adapter.
+forward/adjoint interface it expects.
 """
 
 import deepinv as dinv
 import matplotlib.pyplot as plt
 import torch
 from torch import nn
-from torch.autograd.function import once_differentiable
 
 import bartorch
-from bartorch.ops import LinearOperator
+from bartorch import linop
 
 bartorch.set_num_threads(1)
 torch.set_num_threads(1)
 torch.manual_seed(7)
-
-
-class FixedEncoding(torch.autograd.Function):
-    """First-order input gradients for a fixed complex linear operator."""
-
-    @staticmethod
-    def forward(ctx, tensor, encoding, adjoint):
-        ctx.encoding, ctx.adjoint = encoding, adjoint
-        apply = encoding.adjoint if adjoint else encoding
-        # Batch is a DeepInverse axis, separate from the native operator shape.
-        return torch.stack([apply(item) for item in tensor])
-
-    @staticmethod
-    @once_differentiable
-    def backward(ctx, gradient):
-        apply = ctx.encoding if ctx.adjoint else ctx.encoding.adjoint
-        return torch.stack([apply(item) for item in gradient]), None, None
 
 
 n = 16
@@ -48,11 +33,9 @@ shape = (1, n, n)
 mask = torch.zeros(shape, dtype=torch.complex64)
 mask[:, ::2, :] = 1
 mask[:, n // 2 - 2 : n // 2 + 2, :] = 1
-A = LinearOperator.sampling(mask, shape) @ LinearOperator.fft(shape, axes=(-2, -1))
-physics = dinv.physics.LinearPhysics(
-    A=lambda x, **kwargs: FixedEncoding.apply(x, A, False),
-    A_adjoint=lambda y, **kwargs: FixedEncoding.apply(y, A, True),
-)
+A = linop.Sampling(mask, shape) @ linop.FFT(shape, axes=(-2, -1))
+physics = A.to_deepinv()
+assert isinstance(physics, dinv.physics.LinearPhysics)
 
 # %%
 # Check the adapter against an independent torch-only Fourier expression,

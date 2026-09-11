@@ -12,7 +12,7 @@ import torch
 
 import bartorch
 import bartorch.tools as bt
-from bartorch.ops import LinearOperator
+from bartorch import linop
 
 bartorch.set_num_threads(1)
 
@@ -20,13 +20,13 @@ bartorch.set_num_threads(1)
 def make_encoding(shape, phase):
     """Construct a fixed phase modulation followed by Fourier encoding."""
     modulation = torch.exp(1j * phase).to(torch.complex64)
-    W = LinearOperator.from_callbacks(
+    W = linop.Callback(
         shape,
         shape,
         forward=lambda image: modulation * image,
         adjoint=lambda data: modulation.conj() * data,
     )
-    return LinearOperator.fft(shape, axes=(-2, -1)) @ W
+    return linop.FFT(shape, axes=(-2, -1)) @ W
 
 
 n = 32

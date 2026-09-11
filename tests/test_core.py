@@ -25,10 +25,16 @@ def test_build_info_names_the_nested_function_mode():
 
 
 def test_argv_flags_positionals_inputs_output_in_that_order():
+    # Real options of a real command: a flag that is refused before BART sees
+    # it cannot be used to check the order of what reaches it.
     argv = build_argv(
-        "fft", ["a.mem"], "o.mem", [3], {"u": True, "i": False, "x": (1, 2), "long_name": 4}
+        "nufft",
+        ["t.mem", "a.mem"],
+        "o.mem",
+        [],
+        {"a": True, "i": False, "d": (1, 2, 3), "lowmem": True},
     )
-    assert argv == ["fft", "-u", "-x", "1:2", "--long-name", "4", "3", "a.mem", "o.mem"]
+    assert argv == ["nufft", "-a", "-d", "1:2:3", "--lowmem", "t.mem", "a.mem", "o.mem"]
 
 
 def test_list_flags_repeat():
@@ -204,14 +210,18 @@ def test_a_failed_assertion_inside_bart_reaches_the_caller():
     """BART checks its arguments with assert, and assert must not end the process.
 
     Coil images and k-space that disagree on their dimensions trip an
-    assertion deep inside BART's own NUFFT.  glibc's assert would abort, so
-    the library answers __assert_fail itself and puts it back on BART's error
-    path, where the error catcher turns it into a return code.
+    assertion deep inside BART's own NUFFT.  The platform's assert would
+    abort, so the library answers the function assert expands to and puts it
+    back on BART's error path, where the error catcher turns it into a return
+    code.  Which function that is differs: __assert_fail on glibc and musl,
+    __assert_rtn on Apple's libc.  Answering only the first is why this test
+    could not be reached on macOS -- the abort came earlier, while the suite
+    was still being collected.
     """
     import bartorch.tools as bt
-    from bartorch.ops import LinearOperator
+    from bartorch import linop
 
     n = 16
     traj = bt.traj(x=n, y=8, r=True)
     with pytest.raises(bartorch.BartError):
-        LinearOperator.nufft(traj, (8, 1, n, n), toeplitz=False)
+        linop.NUFFT(traj, (8, 1, n, n), toeplitz=False)

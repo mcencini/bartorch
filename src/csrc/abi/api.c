@@ -15,7 +15,7 @@
 #include "noncart/nufft.h"
 
 #include "include/bartorch.h"
-#include "backend.h"
+#include "substitute/backend.h"
 
 extern int bart_command(int len, char* buf, int argc, char* argv[]);
 
@@ -24,18 +24,40 @@ extern int bart_command(int len, char* buf, int argc, char* argv[]);
  * BART checks its arguments with assert() and routes it through error() --
  * which the error catcher turns into a return code -- only under USE_DWARF,
  * which also wants libdw and libunwind for backtraces.  Without that define
- * assert() is glibc's, and glibc's calls abort(), so a shape a caller got
- * wrong would take the interpreter down with it.  Answering __assert_fail
- * here puts those assertions back on BART's own error path and needs neither
- * the define nor the libraries; the symbol is hidden, so it binds inside this
- * library and nothing outside it changes.
+ * assert() is the platform's, and the platform's calls abort(), so a shape a
+ * caller got wrong would take the interpreter down with it.  Answering the
+ * function assert() expands to puts those assertions back on BART's own error
+ * path and needs neither the define nor the libraries; the symbol is hidden,
+ * so it binds inside this library and nothing outside it changes.
+ *
+ * Which function that is, is the platform's business and not the same
+ * everywhere: glibc and musl call __assert_fail(expr, file, line, func), and
+ * Apple's libc calls __assert_rtn(func, file, line, expr) -- a different name,
+ * a different order, and a different type for the line.  Answering only the
+ * first left every one of BART's assertions aborting on macOS, which is a
+ * process death where every other platform gets an exception.
  */
+#ifdef __APPLE__
+
+__attribute__((noreturn))
+void __assert_rtn(const char* function, const char* file, int line, const char* assertion);
+
+__attribute__((noreturn))
+void __assert_rtn(const char* function, const char* file, int line, const char* assertion)
+{
+	error("Assertion '%s' failed in %s:%d (%s)\n", assertion, file, line, function);
+}
+
+#else
+
 void __assert_fail(const char* assertion, const char* file, unsigned int line, const char* function);
 
 void __assert_fail(const char* assertion, const char* file, unsigned int line, const char* function)
 {
 	error("Assertion '%s' failed in %s:%u (%s)\n", assertion, file, line, function);
 }
+
+#endif
 
 #ifndef BARTORCH_BUILD_INFO
 #define BARTORCH_BUILD_INFO "unknown"

@@ -12,8 +12,8 @@ import torch
 
 import bartorch
 import bartorch.tools as bt
+from bartorch import linop
 from bartorch._lib import library
-from bartorch.ops import LinearOperator
 
 
 @pytest.fixture
@@ -42,10 +42,10 @@ def test_a_cartesian_reconstruction_is_the_same_whatever_the_slab(batch, restore
     kspace = bt.fft(image, axes=(-2, -1))
 
     bartorch.set_coil_batch(0)
-    reference = bt.pics(kspace, maps, iter_=30)
+    reference = bt.pics(kspace, maps, maxiter=30)
 
     bartorch.set_coil_batch(batch)
-    torch.testing.assert_close(bt.pics(kspace, maps, iter_=30), reference, rtol=1e-5, atol=1e-6)
+    torch.testing.assert_close(bt.pics(kspace, maps, maxiter=30), reference, rtol=1e-5, atol=1e-6)
 
 
 @pytest.mark.parametrize("batch", BATCHES)
@@ -55,10 +55,10 @@ def test_a_non_cartesian_reconstruction_is_the_same_whatever_the_slab(batch, res
     kspace = bt.nufft(traj, image)
 
     bartorch.set_coil_batch(0)
-    reference = bt.pics(kspace, maps, t=traj, iter_=30)
+    reference = bt.pics(kspace, maps, t=traj, maxiter=30)
 
     bartorch.set_coil_batch(batch)
-    got = bt.pics(kspace, maps, t=traj, iter_=30)
+    got = bt.pics(kspace, maps, t=traj, maxiter=30)
 
     scale = float(reference.abs().max())
     assert float((got - reference).abs().max()) / scale < 1e-4
@@ -73,13 +73,13 @@ def test_the_slab_is_actually_taken(restore_batch):
 
     bartorch.set_coil_batch(0)
     lib.bartorch_sense_reset_counters()
-    bt.pics(kspace, maps, t=traj, iter_=3)
+    bt.pics(kspace, maps, t=traj, maxiter=3)
     assert (lib.bartorch_sense_counter(0), lib.bartorch_sense_counter(1)) == (0, 1)
 
     bartorch.set_coil_batch(2)
     lib.bartorch_sense_reset_counters()
-    bt.pics(kspace, maps, t=traj, iter_=3)
-    bt.pics(bt.fft(image, axes=(-2, -1)), maps, iter_=3)
+    bt.pics(kspace, maps, t=traj, maxiter=3)
+    bt.pics(bt.fft(image, axes=(-2, -1)), maps, maxiter=3)
     assert lib.bartorch_sense_counter(0) == 2, "both SENSE operators walk their coils"
     assert lib.bartorch_sense_counter(1) == 0
 
@@ -94,7 +94,7 @@ def test_a_single_coil_goes_back_to_barts_own_operator(restore_batch):
 
     bartorch.set_coil_batch(1)
     lib.bartorch_sense_reset_counters()
-    bt.pics(bt.fft(image, axes=(-2, -1)), maps, iter_=3)
+    bt.pics(bt.fft(image, axes=(-2, -1)), maps, maxiter=3)
     assert lib.bartorch_sense_counter(0) == 0
     assert lib.bartorch_sense_counter(1) == 1
 
@@ -144,8 +144,8 @@ def test_a_kernel_bank_applies_as_the_maps_it_stands_for():
     kernels, maps = _smooth_bank(n=n, coils=coils)
     x = bt.phantom([n, n]).reshape(1, n, n)
 
-    dense = LinearOperator.sense(maps, (coils, n, n))
-    compact = LinearOperator.sense(kernels, (coils, n, n), kernels=True)
+    dense = linop.Sense(maps, (coils, n, n))
+    compact = linop.Sense(kernels, (coils, n, n), kernels=True)
 
     assert dense.ishape == compact.ishape
     assert dense.oshape == compact.oshape
@@ -161,8 +161,8 @@ def test_a_kernel_bank_applies_off_the_grid_too():
     traj = bt.traj(x=n, y=48, r=True)
     x = bt.phantom([n, n]).reshape(1, n, n)
 
-    dense = LinearOperator.sense(maps, (coils, n, n), traj=traj)
-    compact = LinearOperator.sense(kernels, (coils, n, n), kernels=True, traj=traj)
+    dense = linop.Sense(maps, (coils, n, n), traj=traj)
+    compact = linop.Sense(kernels, (coils, n, n), kernels=True, traj=traj)
 
     torch.testing.assert_close(compact(x), dense(x), rtol=1e-3, atol=1e-4)
 
@@ -175,7 +175,7 @@ def test_the_operator_is_the_sensitivities_and_the_transform():
     x = bt.phantom([n, n]).reshape(1, n, n)
     coil_images = (x * maps).reshape(coils, 1, n, n)
 
-    grid = LinearOperator.sense(maps, (coils, n, n))
+    grid = linop.Sense(maps, (coils, n, n))
     torch.testing.assert_close(
         grid(x).reshape(coils, 1, n, n),
         bt.fft(coil_images, axes=(-2, -1), unitary=True),
@@ -184,7 +184,7 @@ def test_the_operator_is_the_sensitivities_and_the_transform():
     )
 
     traj = bt.traj(x=n, y=48, r=True)
-    off = LinearOperator.sense(maps, (coils, n, n), traj=traj)
+    off = linop.Sense(maps, (coils, n, n), traj=traj)
     torch.testing.assert_close(
         off(x).reshape(coils, 48, n, 1), bt.nufft(traj, coil_images), rtol=1e-4, atol=1e-5
     )
@@ -207,8 +207,8 @@ def test_a_bank_left_on_the_host_is_brought_over_a_slab_at_a_time():
     traj = bt.traj(x=n, y=48, r=True)
     x = bt.phantom([n, n]).reshape(1, n, n)
 
-    resident = LinearOperator.sense(maps.cuda(), (coils, n, n), traj=traj.cuda())
-    staged = LinearOperator.sense(maps, (coils, n, n), traj=traj.cuda())
+    resident = linop.Sense(maps.cuda(), (coils, n, n), traj=traj.cuda())
+    staged = linop.Sense(maps, (coils, n, n), traj=traj.cuda())
 
     # A staged slab is dense where a resident one is a window on to the bank,
     # so the sum that ends the adjoint runs in a different order and the last
@@ -242,14 +242,14 @@ def test_fetching_a_slab_alongside_the_arithmetic_changes_nothing():
 
     was = bartorch.cuda.streams()
     try:
-        resident = LinearOperator.sense(maps.cuda(), (coils, n, n), traj=traj)
+        resident = linop.Sense(maps.cuda(), (coils, n, n), traj=traj)
         reference = resident.normal(x)
 
         bartorch.cuda.set_streams(1)
-        one = LinearOperator.sense(maps, (coils, n, n), traj=traj).normal(x)
+        one = linop.Sense(maps, (coils, n, n), traj=traj).normal(x)
 
         bartorch.cuda.set_streams(2)
-        two = LinearOperator.sense(maps, (coils, n, n), traj=traj).normal(x)
+        two = linop.Sense(maps, (coils, n, n), traj=traj).normal(x)
     finally:
         bartorch.cuda.set_streams(was)
 
@@ -273,8 +273,8 @@ def test_a_kernel_bank_serves_a_subspace_operator_as_the_maps_it_stands_for():
     basis[1, :, 0, 0, 0, 0, 0] = torch.linspace(-1, 1, frames)
     kernels, maps = _smooth_bank(n=n, coils=coils)
 
-    dense = LinearOperator.sense(maps, (coils, n, n), traj=traj, basis=basis)
-    compact = LinearOperator.sense(kernels, (coils, n, n), traj=traj, basis=basis, kernels=True)
+    dense = linop.Sense(maps, (coils, n, n), traj=traj, basis=basis)
+    compact = linop.Sense(kernels, (coils, n, n), traj=traj, basis=basis, kernels=True)
     assert dense.ishape == (coeffs, 1, 1, 1, 1, n, n)
 
     torch.manual_seed(0)
@@ -308,10 +308,10 @@ def test_an_operator_on_a_card_takes_and_returns_host_arrays():
     basis[1, :, 0, 0, 0, 0, 0] = torch.linspace(-1, 1, frames)
     kernels, _ = _smooth_bank(n=n, coils=coils)
 
-    on_card = LinearOperator.sense(
+    on_card = linop.Sense(
         kernels.cuda(), (coils, n, n), traj=traj.cuda(), basis=basis.cuda(), kernels=True
     )
-    from_host = LinearOperator.sense(
+    from_host = linop.Sense(
         kernels, (coils, n, n), traj=traj, basis=basis, kernels=True, device="cuda"
     )
     assert from_host.device.type == "cuda"
@@ -358,8 +358,8 @@ def test_a_three_dimensional_kernel_bank_applies_as_the_maps_it_stands_for():
     maps = bartorch.kernels_to_maps(kernels, (n, n, n))
     x = torch.randn(1, n, n, n, dtype=torch.complex64)
 
-    dense = LinearOperator.sense(maps, (coils, n, n, n))
-    compact = LinearOperator.sense(kernels, (coils, n, n, n), kernels=True)
+    dense = linop.Sense(maps, (coils, n, n, n))
+    compact = linop.Sense(kernels, (coils, n, n, n), kernels=True)
 
     torch.testing.assert_close(compact(x), dense(x), rtol=1e-4, atol=1e-5)
 
@@ -382,9 +382,11 @@ def test_a_kernel_bank_inflated_on_a_card_is_the_maps_it_stands_for(n, size):
     maps = bartorch.kernels_to_maps(kernels, (n, n, n))
     x = torch.randn(1, n, n, n, dtype=torch.complex64)
 
-    dense = LinearOperator.sense(maps, (coils, n, n, n))
-    compact = LinearOperator.sense(kernels.cuda(), (coils, n, n, n), kernels=True)
+    dense = linop.Sense(maps, (coils, n, n, n))
+    compact = linop.Sense(kernels.cuda(), (coils, n, n, n), kernels=True)
 
     y = dense(x)
     torch.testing.assert_close(compact(x.cuda()).cpu(), y, rtol=1e-4, atol=1e-5)
-    torch.testing.assert_close(compact.adjoint(y.cuda()).cpu(), dense.adjoint(y), rtol=1e-4, atol=1e-5)
+    torch.testing.assert_close(
+        compact.adjoint(y.cuda()).cpu(), dense.adjoint(y), rtol=1e-4, atol=1e-5
+    )

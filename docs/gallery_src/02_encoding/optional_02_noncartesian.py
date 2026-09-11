@@ -2,9 +2,10 @@
 Radial encoding and a direct Fourier reference
 ==============================================
 
-Generate a radial trajectory and evaluate a NUFFT. Requires ``bartorch[finufft]``
-and the base plotting dependencies. Explicitly select optional examples to run
-this page. No density compensation is used: an adjoint is not an inverse.
+Generate a radial trajectory and evaluate a NUFFT. Needs FINUFFT, which is a
+dependency of ``bartorch`` rather than an extra, and the base plotting
+dependencies. Explicitly select optional examples to run this page. No density
+compensation is used: an adjoint is not an inverse.
 """
 
 import matplotlib.pyplot as plt
@@ -12,14 +13,14 @@ import torch
 
 import bartorch
 import bartorch.tools as bt
-from bartorch.ops import LinearOperator
+from bartorch import linop
 
 bartorch.set_num_threads(1)
 bartorch.finufft.configure(tolerance=1e-6, upsampling=2.0)
 n = 16
 trajectory = bt.traj(x=n, y=12, r=True)
 image = bt.phantom([n, n]).reshape(1, n, n)
-A = LinearOperator.nufft(trajectory, image.shape, toeplitz=False)
+A = linop.NUFFT(trajectory, image.shape, toeplitz=False)
 samples = A(image)
 
 # %%

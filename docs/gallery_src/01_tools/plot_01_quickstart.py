@@ -23,7 +23,7 @@ print("image:", image.shape, image.dtype, image.device)
 # Keep the coil and slice axes for BART tools. Calibration estimates spatial
 # sensitivity maps from fully sampled central k-space; it does not create a
 # universal set of maps independent of the acquisition.
-coil_kspace = bt.phantom([32, 32], kspace=True, ncoils=4)
+coil_kspace = bt.phantom([32, 32], kspace=True, coils=4)
 maps = bt.ecalib(coil_kspace, calib_size=16, maps=1)
 print("coil k-space:", coil_kspace.shape, "maps:", maps.shape)
 

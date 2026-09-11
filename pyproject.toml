@@ -15,6 +15,17 @@ dependencies = [
     # what torch links, and SciPy's cython_blas / cython_lapack tables.
     "scipy>=1.10",
     "torch>=2.1",
+    # FINUFFT is the NUFFT.  Every non-Cartesian transform BART makes goes
+    # through the substitution under `nufft_create`, and nothing reaches BART's
+    # own gridder without having been sent there, so a bartorch without FINUFFT
+    # is one that cannot do non-Cartesian work at all.  That is a dependency,
+    # and there is no extra to ask for it with.
+    #
+    # It carries no marker because it needs none: a wheel is built only for the
+    # platforms FINUFFT ships a wheel for too, so installing one never starts a
+    # build.  Anywhere else -- Linux on aarch64, an Intel Mac -- the install is
+    # from the sdist, and compiling BART is already the price of entry there.
+    "finufft>=2.2",
 ]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
@@ -28,31 +39,37 @@ classifiers = [
 [project.optional-dependencies]
 # MKL covers every BLAS and LAPACK routine BART calls and is about twice as
 # fast as the alternatives on the work that leans on LAPACK.  There is no MKL
-# wheel for macOS, where SciPy's OpenBLAS and Accelerate serve instead.
+# wheel for macOS, where SciPy's OpenBLAS and Accelerate serve instead, and
+# Windows is not a target: BART does not build there.
 mkl = [
     "mkl>=2024; sys_platform == 'linux' and platform_machine == 'x86_64'",
-    "mkl>=2024; sys_platform == 'win32' and platform_machine == 'AMD64'",
 ]
-# FINUFFT is about twice as fast as BART's gridder on the host, and cuFINUFFT
-# is the device counterpart.  Both wheels carry a compiled library, so nothing
-# is built here.
-finufft = ["finufft>=2.2"]
-# cuFINUFFT is taken through the C API its wheel exports: a sample count of
-# int64 in `cufinufftf_setpts` and defaults filled from the options struct
-# alone.  That is the API from 2.3 on.
+# There is no `finufft` extra: it is a dependency, above.  An old
+# `pip install 'bartorch[finufft]'` still installs FINUFFT, and pip warns that
+# the extra is not provided -- which is the right thing to hear.
+# cuFINUFFT stays optional: it serves a transform on a card, and there is no
+# card on most machines.  It is taken through the C API its wheel exports: a
+# sample count of int64 in `cufinufftf_setpts` and defaults filled from the
+# options struct alone.  That is the API from 2.3 on.
 cufinufft = ["cufinufft>=2.3"]
+# deepinv is an adapter, not a base class: LinearOperator.to_deepinv() hands an
+# operator over as a LinearPhysics, and nothing in the package imports deepinv
+# until it is called.
+deepinv = ["deepinv>=0.2"]
 dev = [
     "pytest>=7",
     "ruff",
+    "deepinv>=0.2",
 ]
+# Kept the same as docs/requirements.txt, which builds the reference on its
+# own: `docs/conf.py` extracts the API from the checkout rather than from an
+# installed package, so rendering needs neither torch nor a compiled library.
 docs = [
-    "sphinx>=7.0",
-    "sphinx-book-theme",
-    "nbsphinx",
-    "sphinx-copybutton",
-    "nbconvert",
-    "ipykernel",
-    "matplotlib",
+    "sphinx>=8.1,<9",
+    "sphinx-book-theme>=1.1,<2",
+    "sphinx-gallery>=0.17,<0.20",
+    "sphinx-copybutton>=0.5,<1",
+    "matplotlib>=3.7,<4",
 ]
 
 # The compiled library is pure C reached through ctypes, so one wheel per
@@ -71,9 +88,17 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
 
+[tool.ruff.format]
+# Written by scripts/gen_abi.py and scripts/gen_catalogue.py, and held against
+# those generators by tests/test_abi.py and tests/test_catalogue.py.  A
+# formatter that rewrote them would fail that test rather than fix anything;
+# how they are laid out is the generator's business.
+exclude = ["src/bartorch/_abi.py", "src/bartorch/_catalogue.py"]
+
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["F401"]
-"src/bartorch/tools/_generated.py" = ["E501", "E741"]
+# A help string BART wrote can be longer than any line length on its own.
+"src/bartorch/_catalogue.py" = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

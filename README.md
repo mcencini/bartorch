@@ -20,7 +20,7 @@ The wheel carries one C library holding all of BART, and depends on `numpy`,
 process, so no numerical work is ever done in Python.
 
 ```bash
-pip install "bartorch[mkl]"     # Linux and Windows: MKL for every routine
+pip install "bartorch[mkl]"     # Linux: MKL for every routine
 ```
 
 MKL is worth the extra where it exists. It is the only source covering all
@@ -83,9 +83,12 @@ place of the forward-adjoint pair.
 
 ## FINUFFT
 
+FINUFFT is a dependency, not an extra: `pip install bartorch` brings it, and
+there is nothing to ask for.  cuFINUFFT serves a transform on a card, and most
+machines have no card, so that one stays optional.
+
 ```bash
-pip install "bartorch[finufft]"      # host
-pip install "bartorch[cufinufft]"    # device
+pip install "bartorch[cufinufft]"    # a transform on a card
 ```
 
 ```python
@@ -142,7 +145,7 @@ a pip install and nothing more.
 
 ## How it is built
 
-- `csrc/include/bartorch.h` is a plain C ABI. Nothing compiled links against
+- `src/csrc/include/bartorch.h` is a plain C ABI. Nothing compiled links against
   Python or torch, so one wheel per platform serves every interpreter and
   every torch version, and the extension is reached through ctypes.
 - Every BART translation unit is compiled unchanged from the submodule. A
@@ -203,11 +206,20 @@ rather than hundreds of megabytes of vendored libraries.
 
 Linux and macOS on the host, and a CUDA build walked through on an RTX 4060 by
 `scripts/check_device.py`: tools and operators on the card, cuFINUFFT serving
-its transforms, `pics` with and without the Toeplitz normal. Windows and the
-remaining solver entry points are next; see `AGENTS.md`.
+its transforms, `pics` with and without the Toeplitz normal. The remaining
+solver entry points are next; see `AGENTS.md`.
+
+Linux is what this is developed and measured on. macOS works, minus FINUFFT:
+torch and the FINUFFT wheel each carry an OpenMP runtime, LLVM's ends the
+process rather than run beside a second copy of itself, so the substitution
+declines there and BART's own gridder computes the non-Cartesian transforms.
+It says so at warning level, and
+[`docs/guides/user/installation.rst`](docs/guides/user/installation.rst) says
+why and what the alternative would cost. Windows is not a target: BART does not
+build on it, and WSL2 is a Linux install like any other.
 
 ## License
 
-MIT. BART is distributed under its own BSD license; see `bart/LICENSE`.
+MIT. BART is distributed under its own BSD license; see `external/bart/LICENSE`.
 pocketfft is BSD-3 and BlocksRuntime is MIT; both are vendored under
-`third_party/` with their licenses.
+`external/` with their licenses.

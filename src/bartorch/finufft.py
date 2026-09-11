@@ -4,7 +4,7 @@ BART builds every non-Cartesian transform through ``nufft_create``, and that
 is the seam: ``nufft``, ``pics``, ``nlinv`` and ``moba`` compute their forward
 and adjoint transforms with FINUFFT's type 2 and type 1 rather than with
 BART's Kaiser-Bessel gridder and oversampled FFT, and so does
-:meth:`bartorch.ops.LinearOperator.nufft`.  A trajectory that varies across
+:class:`bartorch.linop.NUFFT`.  A trajectory that varies across
 frames is part of that -- the frames join the point set rather than splitting
 it, so one plan serves them -- and a subspace basis contracts its coefficients
 away on the k-space side of the pair.
@@ -29,6 +29,7 @@ from bartorch._finufft import (
     decline_reason,
     normals_built,
     operators_built,
+    required_but_missing,
     reset_counters,
     set_threads,
     stream_psf,
@@ -49,6 +50,7 @@ __all__ = [
     "enabled",
     "normals_built",
     "operators_built",
+    "required_but_missing",
     "reset_counters",
     "set_threads",
     "stream_psf",

@@ -7,7 +7,7 @@ made once per operator and reused, which is what makes this worth doing inside
 an iterative solve.
 
 The scaling and sign follow BART's own NUFFT, so an operator from here is
-interchangeable with :meth:`bartorch.ops.LinearOperator.nufft`: a type-2
+interchangeable with :class:`bartorch.linop.NUFFT`: a type-2
 transform with a negative exponent, divided by the square root of the number
 of voxels.
 """
@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import contextlib
 import importlib
+import logging
+import sys
 from pathlib import Path
 
 import torch
@@ -32,6 +34,21 @@ def available() -> bool:
     except ImportError:
         return False
     return True
+
+
+def required_but_missing() -> str:
+    """Why there is no FINUFFT here, given that there should always be one.
+
+    It is a dependency rather than an extra, so its absence is a broken
+    install and never a choice -- which is worth saying, because the obvious
+    reading of "FINUFFT is not in use" is that some option was left off.
+    """
+    return (
+        "FINUFFT computes every non-Cartesian transform here: BART's own "
+        "gridder is not reachable from this package's surface.  It is a "
+        "dependency of bartorch rather than an extra, so it should already be "
+        "installed and something has removed it.  pip install finufft"
+    )
 
 
 def cuda_available() -> bool:
@@ -57,11 +74,56 @@ def _library_path(package: str, stem: str) -> str | None:
     except ImportError:
         return None
     here = Path(module.__file__).resolve().parent
-    for name in (f"lib{stem}.so", f"lib{stem}.dylib", f"{stem}.dll", f"lib{stem}.dll"):
+    for name in (f"lib{stem}.so", f"lib{stem}.dylib"):
         candidate = here / name
         if candidate.exists():
             return str(candidate)
     return None
+
+
+#: What an OpenMP runtime's library is called, whoever built it.
+_OPENMP_LIBRARIES = ("libomp.", "libiomp5.", "libgomp.")
+
+
+def openmp_runtimes() -> list[str]:
+    """The OpenMP runtimes loaded into this process, by path.
+
+    Only macOS answers: LLVM's runtime refuses to initialise where another
+    copy already has, and refuses by calling ``abort()`` -- so two of them in
+    one process is not a warning to weigh but the end of the interpreter,
+    with the reason on a stderr that whoever is capturing output never shows.
+    Linux is not asked because glibc's loader resolves the duplicate instead
+    of dying on it.
+
+    Returns
+    -------
+    list of str
+        One path per loaded runtime, in load order.  Empty off macOS.
+    """
+    import ctypes as c
+
+    if sys.platform != "darwin":
+        return []
+
+    try:
+        dyld = c.CDLL(None)
+        dyld._dyld_image_count.restype = c.c_uint32
+        dyld._dyld_image_count.argtypes = []
+        dyld._dyld_get_image_name.restype = c.c_char_p
+        dyld._dyld_get_image_name.argtypes = [c.c_uint32]
+        loaded = [dyld._dyld_get_image_name(i) for i in range(dyld._dyld_image_count())]
+    except (AttributeError, OSError):  # pragma: no cover - macOS only
+        return []
+
+    found = []
+    for name in loaded:
+        if name is None:
+            continue
+        path = name.decode(errors="replace")
+        base = path.rsplit("/", 1)[-1]
+        if base.startswith(_OPENMP_LIBRARIES):
+            found.append(path)
+    return found
 
 
 def _load_symbols() -> bool:
@@ -180,7 +242,7 @@ def use_in_tools(
         return False
 
     if not available():
-        raise ImportError("this needs the finufft package: pip install 'bartorch[finufft]'")
+        raise ImportError(required_but_missing())
 
     if _cuda.available() and not cuda_available():
         raise ImportError(
@@ -192,6 +254,26 @@ def use_in_tools(
         raise ImportError(
             "the finufft package is installed but its library did not hand over the entry "
             "points this needs; check that it matches the version pyproject.toml asks for"
+        )
+
+    # Loading FINUFFT's library is safe; calling into it is what starts its
+    # OpenMP runtime, and starting a second one is what LLVM's answers with
+    # abort().  torch brings one and the macOS FINUFFT wheel brings its own,
+    # so on that platform the pair is checked before the first call rather
+    # than found out by the process ending.  Continuing anyway is what
+    # KMP_DUPLICATE_LIB_OK asks for, and what it buys is a crash later or a
+    # wrong answer quietly -- neither of which a reconstruction should risk.
+    runtimes = openmp_runtimes()
+    if len(runtimes) > 1:
+        lib.bartorch_finufft_use_in_tools(0)
+        lib.bartorch_nufft_allow_fallback(1)
+        raise RuntimeError(
+            "this process has loaded more than one OpenMP runtime ("
+            + ", ".join(runtimes)
+            + "), and calling FINUFFT would start the second, which LLVM's runtime ends "
+            "the process over (OMP: Error #15).  BART's own gridder serves the transforms "
+            "instead.  One runtime is the fix: a FINUFFT built against the same libomp "
+            "torch carries, or a torch built against FINUFFT's"
         )
 
     lib.bartorch_finufft_set_tolerance(float(tolerance))
@@ -626,8 +708,10 @@ def install_once() -> None:
 
     A caller who has the package should not have to ask for it, and one who
     does not should hear about it when a transform wants it rather than get a
-    quieter answer from BART.  What went wrong is left to the transform to
-    report, because most of what BART does needs no NUFFT at all.
+    quieter answer from BART.  Failing to install it is not an error here,
+    because most of what BART does needs no NUFFT at all -- but it is said
+    once, at warning level, because a substitution that quietly did not happen
+    is the hardest kind of difference to find later.
     """
     global _installed
     if _installed:
@@ -637,5 +721,9 @@ def install_once() -> None:
         return
     try:
         use_in_tools(True)
-    except (ImportError, RuntimeError):
-        pass
+    except (ImportError, RuntimeError) as exc:
+        logging.getLogger("bartorch.finufft").warning(
+            "FINUFFT is installed but was not put in BART's place, so its transforms "
+            "will be BART's own gridder: %s",
+            exc,
+        )

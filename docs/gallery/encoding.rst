@@ -18,36 +18,36 @@ Available building blocks
      - Current Python surface
      - Role and important convention
    * - Coil encoding / contraction
-     - ``LinearOperator.multiply_sum``
+     - ``linop.MultiplySum``
      - Multiply by a tensor, sum axes missing from the output; conjugate in
        the adjoint. Supports sensitivity and subspace contractions.
    * - Cartesian FFT
-     - ``LinearOperator.fft``; ``tools.fft/ifft``
+     - ``linop.FFT``; ``tools.fft/ifft``
      - Operator is centered/unitary; tool needs ``unitary=True`` for that scale.
    * - Sampling
-     - ``LinearOperator.sampling``
+     - ``linop.Sampling``
      - Mask on a full grid, with broadcast-compatible singleton axes.
    * - Phase / weights
-     - ``LinearOperator.diagonal``
+     - ``linop.Diagonal``
      - Complex pointwise multiplication; the adjoint uses the conjugate.
    * - Non-Cartesian transform
-     - ``LinearOperator.nufft``; ``tools.traj/nufft``
+     - ``linop.NUFFT``; ``tools.traj/nufft``
      - Grid-unit trajectories. FINUFFT/cuFINUFFT backend; weights and temporal
        basis can be carried by the NUFFT. Toeplitz normals are approximations
        whose agreement with an explicit forward/adjoint pair should be checked.
    * - Custom encoding
-     - ``LinearOperator.from_callbacks``
+     - ``linop.Callback``
      - Supply forward and adjoint; optionally a cheaper normal. Callbacks see
        working-buffer views and should not modify their inputs.
    * - Operator algebra
      - ``A @ B``, ``A + B``, ``A.to_nonlinear()``
      - Rightmost operator runs first; match domain/codomain shapes and devices.
    * - Signal models
-     - ``NonlinearOperator.from_torch/from_callbacks``
+     - ``nlop.FromTorch``, ``nlop.Callback``
      - Nonlinear model with derivative/adjoint callbacks; evaluate the forward
        model at the current parameters before using its local derivative.
    * - Solvers
-     - ``LinearOperator.lstsq``; ``NonlinearOperator.irgnm``
+     - ``linop.LinearOperator.lstsq``; ``nlop.NonlinearOperator.irgnm``
      - Conjugate gradients for quadratic least squares; regularized Gauss-Newton
        for parameter fitting. Broader proximal solvers are not yet exposed here.
    * - Prepackaged reconstructions
@@ -55,7 +55,7 @@ Available building blocks
      - Whole BART applications, with command-specific layouts and options.
        A generated wrapper is not a dedicated composable encoding class.
 
-See :doc:`/api/generated/operators` and the executable
+See :doc:`/api/generated/linops` and the executable
 :doc:`Cartesian example </auto_examples/02_encoding/plot_01_cartesian>`.
 For weighted least squares, apply a factor :math:`W` to both model and data:
 :math:`\|W(Ax-y)\|^2`. If the objective uses statistical weights :math:`w`, then
@@ -112,8 +112,8 @@ and samples the acquired echo/phase-encode ordering. Wave-Shuffling adds the
 wave modulation and extended readout FOV; the result is a time-resolved inverse
 problem, not a wave FFT applied to a static reconstruction. The
 :func:`bartorch.tools.wshfl` wrapper accepts maps, wave response, temporal basis,
-reordering and acquired-data table. No dedicated ``LinearOperator.wave`` or
-``LinearOperator.epi`` constructor exists in this checkout.
+reordering and acquired-data table. No dedicated ``linop.Wave`` or
+``linop.EPI`` class exists in this checkout.
 
 For each new model, check units, axis order, complex adjoint identity, independent
 forward predictions, and reconstruction residuals before moving to measured data.

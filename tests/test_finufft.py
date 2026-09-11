@@ -11,11 +11,46 @@ import torch
 
 import bartorch
 import bartorch.tools as bt
-from bartorch import _finufft
+from bartorch import _finufft, linop
 from bartorch._lib import library
-from bartorch.ops import LinearOperator
 
-requires_finufft = pytest.mark.skipif(not _finufft.available(), reason="finufft is not installed")
+
+# FINUFFT is a dependency, so its absence is a broken install rather than a
+# choice -- which test_dependencies.py fails on, loudly and once.  Skipping the
+# rest keeps that one failure readable instead of burying it in seventeen.
+def _no_substitution_to_test() -> str:
+    """Why there is nothing here to test, or the empty string.
+
+    Two different absences, and they are not the same news.  Not installed is
+    a broken environment, and `test_dependencies.py` is where that is said
+    once and loudly.  Installed but unable to take BART's place is a platform:
+    macOS loads torch's OpenMP runtime and the FINUFFT wheel's own, and LLVM's
+    runtime ends the process rather than run beside itself -- so the
+    substitution declines, BART's gridder answers, and a test of the
+    substitution has no subject.
+    """
+    if not _finufft.available():
+        return "finufft is not installed, and it is a dependency: see test_dependencies.py"
+    try:
+        # The substitution installs itself the first time the library is
+        # brought up, and asking before that would say no for the wrong reason.
+        from bartorch.core.graph import _ensure_ready
+
+        _ensure_ready()
+        if not _finufft.used_in_tools():
+            return (
+                "finufft is installed but could not be put in BART's place here, so there "
+                f"is no substitution to test: {_finufft.decline_reason()}"
+            )
+    except Exception as exc:  # the library did not come up; other tests say so
+        return f"the library could not be asked whether FINUFFT is in use: {exc}"
+    return ""
+
+
+requires_finufft = pytest.mark.skipif(
+    bool(_no_substitution_to_test()),
+    reason=_no_substitution_to_test() or "finufft is in use",
+)
 requires_cuda = pytest.mark.skipif(
     not bartorch.cuda.available(), reason="no CUDA device, or the library was built without CUDA"
 )
@@ -65,7 +100,7 @@ def test_matches_an_explicit_dft_on_a_radial_trajectory():
     n = 64
     traj = bt.traj(x=n, y=32, r=True)
     img = bt.phantom([n, n]).reshape(1, n, n)
-    y = LinearOperator.nufft(traj, (1, n, n), toeplitz=False)(img)
+    y = linop.NUFFT(traj, (1, n, n), toeplitz=False)(img)
 
     trj = traj.numpy().real
     im = img.numpy().reshape(n, n)
@@ -90,9 +125,9 @@ def test_agrees_with_barts_own_gridder():
     traj = bt.traj(x=n, y=32, r=True)
     img = bt.phantom([n, n]).reshape(1, n, n)
 
-    fast = LinearOperator.nufft(traj, (1, n, n), toeplitz=False)
+    fast = linop.NUFFT(traj, (1, n, n), toeplitz=False)
     with _finufft.barts_own_gridder():
-        bart = LinearOperator.nufft(traj, (1, n, n), toeplitz=False)
+        bart = linop.NUFFT(traj, (1, n, n), toeplitz=False)
     assert fast.ishape == bart.ishape and fast.oshape == bart.oshape
     a, b = bart(img), fast(img)
     assert (a - b).norm().item() / a.norm().item() < 5e-3
@@ -102,7 +137,7 @@ def test_agrees_with_barts_own_gridder():
 def test_adjoint_identity_holds():
     n = 32
     traj = bt.traj(x=n, y=16, r=True)
-    A = LinearOperator.nufft(traj, (1, n, n), toeplitz=False)
+    A = linop.NUFFT(traj, (1, n, n), toeplitz=False)
     x = torch.randn(*A.ishape, dtype=torch.complex64)
     y = torch.randn(*A.oshape, dtype=torch.complex64)
     assert _inner(A(x), y) == pytest.approx(_inner(x, A.adjoint(y)), rel=1e-3)
@@ -114,12 +149,12 @@ def test_it_carries_coils_through_one_plan():
     # coil image is (coils, 1, y, x) and its k-space (coils, spokes, readout, 1).
     n, ncoils, spokes = 32, 4, 16
     traj = bt.traj(x=n, y=spokes, r=True)
-    A = LinearOperator.nufft(traj, (ncoils, 1, n, n), (ncoils, spokes, n, 1), toeplitz=False)
+    A = linop.NUFFT(traj, (ncoils, 1, n, n), (ncoils, spokes, n, 1), toeplitz=False)
     assert A.oshape[0] == ncoils
     x = torch.randn(ncoils, 1, n, n, dtype=torch.complex64)
     y = A(x)
     # Each coil must transform independently of the others.
-    single = LinearOperator.nufft(traj, (1, 1, n, n), (1, spokes, n, 1), toeplitz=False)
+    single = linop.NUFFT(traj, (1, 1, n, n), (1, spokes, n, 1), toeplitz=False)
     for c in range(ncoils):
         torch.testing.assert_close(
             y[c].reshape(-1), single(x[c : c + 1]).reshape(-1), rtol=1e-4, atol=1e-4
@@ -133,7 +168,7 @@ def test_bart_solves_against_a_finufft_operator():
     n = 32
     traj = bt.traj(x=n, y=64, r=True)
     img = bt.phantom([n, n]).reshape(1, n, n)
-    A = LinearOperator.nufft(traj, (1, n, n), toeplitz=False)
+    A = linop.NUFFT(traj, (1, n, n), toeplitz=False)
     y = A(img)
     x = A.lstsq(y, lambda_=1e-3, maxiter=30)
     assert x.shape == img.shape
@@ -147,8 +182,16 @@ def in_tools():
     That is where the library starts, so what this restores afterwards is the
     substitution rather than BART's gridder: a test that turns it off must not
     leave the next one quietly on it.
+
+    A platform where it cannot be installed at all has nothing here to test.
+    It declines two ways -- an answer of False, or the exception that says
+    why -- and both are the same thing to a test of the substitution.
     """
-    if not _finufft.use_in_tools():
+    try:
+        installed = _finufft.use_in_tools()
+    except (ImportError, RuntimeError) as exc:
+        pytest.skip(f"the substitution declined to install itself: {exc}")
+    if not installed:
         pytest.skip("the substitution declined to install itself")
     yield
     _finufft.use_in_tools(True)
@@ -250,7 +293,7 @@ def test_the_normal_solves_the_normal_equations(in_tools):
     kspace = bt.nufft(traj, image)
 
     _finufft.reset_counters()
-    got = bt.nufft(traj, kspace, inverse=True, image_dims=(n, n, 1), l2_reg=lam, max_iter=200)
+    got = bt.nufft(traj, kspace, inverse=True, image_dims=(n, n, 1), l2=lam, maxiter=200)
     assert _finufft.normals_built() == (1, 0), "the solve did not run on a point spread function"
 
     trj = traj.numpy().real
@@ -320,7 +363,7 @@ def test_the_operator_is_unaffected_by_the_substitution():
     n = 32
     traj = bt.traj(x=n, y=16, r=True)
     img = bt.phantom([n, n]).reshape(1, n, n)
-    A = LinearOperator.nufft(traj, (1, n, n), toeplitz=False)
+    A = linop.NUFFT(traj, (1, n, n), toeplitz=False)
 
     _finufft.use_in_tools(False)
     y = A(img)
@@ -377,7 +420,7 @@ def test_one_operator_serves_both_sides_of_the_bus(in_tools):
     image = bt.phantom([n, n]).reshape(1, n, n)
 
     _finufft.reset_counters()
-    A = LinearOperator.nufft(traj, (1, n, n), toeplitz=False)
+    A = linop.NUFFT(traj, (1, n, n), toeplitz=False)
     _all_finufft()
 
     on_card = A(image.cuda())
@@ -406,9 +449,7 @@ def test_more_frames_than_a_batch_of_one_thousand_are_still_finuffts(in_tools):
     image[..., n // 2, n // 2] = 1.0  # a point source at the centre of every frame
 
     _finufft.reset_counters()
-    A = LinearOperator.nufft(
-        traj, (frames, 1, n, n), kspace_shape=(frames, 8, n, 1), toeplitz=False
-    )
+    A = linop.NUFFT(traj, (frames, 1, n, n), kspace_shape=(frames, 8, n, 1), toeplitz=False)
     _all_finufft()
 
     y = A(image)
@@ -430,7 +471,9 @@ def _subspace(n, spokes, frames, coeffs, read=None):
     ``n`` grid unless ``read`` says how many samples it has.
     """
     read = n if read is None else read
-    traj = bt.traj(x=read, y=spokes * frames, r=True).reshape(frames, spokes, read, 3)[:, None, None]
+    traj = bt.traj(x=read, y=spokes * frames, r=True).reshape(frames, spokes, read, 3)[
+        :, None, None
+    ]
     basis = torch.zeros(coeffs, frames, 1, 1, 1, 1, 1, dtype=torch.complex64)
     basis[0, :, 0, 0, 0, 0, 0] = 1.0
     basis[1, :, 0, 0, 0, 0, 0] = torch.linspace(-1, 1, frames)
@@ -585,7 +628,7 @@ def test_barts_oversampling_is_finuffts_upsampling(in_tools):
 
     for oversampling in (1.25, 1.5, 2.0):
         _finufft.reset_counters()
-        A = LinearOperator.nufft(traj, (1, n, n), toeplitz=False, oversampling=oversampling)
+        A = linop.NUFFT(traj, (1, n, n), toeplitz=False, oversampling=oversampling)
         _all_finufft()
         got = A(img).numpy().reshape(ref.shape)
         rel = np.linalg.norm(got - ref) / np.linalg.norm(ref)
@@ -613,7 +656,7 @@ def test_a_kernel_width_asked_for_buys_the_accuracy_that_width_buys(in_tools):
     errors = {}
     for width in (2.0, 3.0, 4.0):
         _finufft.reset_counters()
-        A = LinearOperator.nufft(traj, (1, n, n), toeplitz=False, width=width)
+        A = linop.NUFFT(traj, (1, n, n), toeplitz=False, width=width)
         _all_finufft()
         got = A(img).numpy().reshape(ref.shape)
         errors[width] = np.linalg.norm(got - ref) / nref
@@ -644,7 +687,7 @@ def test_precision_can_be_traded_for_a_transform_that_fits():
 
     def error():
         _finufft.reset_counters()
-        A = LinearOperator.nufft(traj, (1, n, n), toeplitz=False)
+        A = linop.NUFFT(traj, (1, n, n), toeplitz=False)
         _all_finufft()
         return np.linalg.norm(A(img).numpy().reshape(ref.shape) - ref) / nref
 
@@ -706,7 +749,7 @@ def test_a_subspace_operator_needs_no_tool_and_no_fallback():
     img = torch.randn(coeffs, 1, 1, 1, 1, n, n, dtype=torch.complex64)
 
     _finufft.reset_counters()
-    A = LinearOperator.nufft(
+    A = linop.NUFFT(
         traj,
         (coeffs, 1, 1, 1, 1, n, n),
         kspace_shape=(frames, 1, 1, spokes, n, 1),
@@ -744,7 +787,7 @@ def test_oversampling_and_width_compose(in_tools):
     nref = np.linalg.norm(ref)
 
     def error(**kw):
-        A = LinearOperator.nufft(traj, (1, n, n), toeplitz=False, **kw)
+        A = linop.NUFFT(traj, (1, n, n), toeplitz=False, **kw)
         _finufft.reset_counters()
         out = A(img)
         return np.linalg.norm(out.numpy().reshape(ref.shape) - ref) / nref
@@ -777,7 +820,7 @@ def test_the_grid_a_caller_asks_for_is_the_grid_they_get(in_tools):
     nref = np.linalg.norm(ref)
 
     def error(**kw):
-        A = LinearOperator.nufft(traj, (1, n, n), toeplitz=False, **kw)
+        A = linop.NUFFT(traj, (1, n, n), toeplitz=False, **kw)
         return np.linalg.norm(A(img).numpy().reshape(ref.shape) - ref) / nref
 
     assert _finufft.upsampling() == pytest.approx(1.25), "a quarter over by default"
@@ -820,14 +863,14 @@ def test_a_tool_that_calibrates_gets_the_careful_transform(in_tools):
 
     n, spokes, coils = 32, 32, 2
     traj = bt.traj(x=n, y=spokes, r=True)
-    ksp = bt.nufft(traj, bt.phantom([n, n], ncoils=coils))
+    ksp = bt.nufft(traj, bt.phantom([n, n], coils=coils))
 
-    careful = bt.nlinv(ksp, t=traj, iter_=4)
+    careful = bt.nlinv(ksp, t=traj, maxiter=4)
 
     was = graph._CALIBRATES
     graph._CALIBRATES = frozenset()
     try:
-        cheap = bt.nlinv(ksp, t=traj, iter_=4)
+        cheap = bt.nlinv(ksp, t=traj, maxiter=4)
     finally:
         graph._CALIBRATES = was
 
@@ -843,11 +886,11 @@ def test_a_point_spread_function_is_the_substituted_transforms(in_tools):
 
     BART reaches it through `nufft.c`'s own `nufft_create2`, which the rename
     sends to its gridder along with everything else in that file, so
-    `csrc/psf.c` answers to the three entry points instead.  What that buys is
+    `src/csrc/substitute/psf.c` answers to the three entry points instead.  What that buys is
     in the numbers: on the un-doubled grid BART's own PSF is two per cent from
     the sum it is supposed to be, and this one is at its tolerance.
     """
-    from bartorch.tools import _generated as g
+    import bartorch.tools as g
 
     n, spokes = 16, 12
     traj = bt.traj(x=n, y=spokes, r=True)
@@ -888,7 +931,7 @@ def test_every_psf_the_tool_offers_is_served(in_tools, flags):
     shifted trajectory and its own image, which is a stack of transforms
     rather than one plan over frames.
     """
-    from bartorch.tools import _generated as g
+    import bartorch.tools as g
 
     n, spokes = 16, 12
     traj = bt.traj(x=n, y=spokes, r=True)
@@ -923,7 +966,7 @@ def test_the_toeplitz_normal_is_the_transform_pair_it_stands_for(in_tools):
     try:
         for eps, upsampling in ((1e-3, 1.25), (1e-6, 2.0)):
             _finufft.use_in_tools(True, tolerance=eps, upsampling=upsampling)
-            A = LinearOperator.nufft(traj, (1, n, n), toeplitz=True)
+            A = linop.NUFFT(traj, (1, n, n), toeplitz=True)
             errors[eps] = float((A.normal(x) - A.adjoint(A(x))).norm() / A.adjoint(A(x)).norm())
     finally:
         _finufft.use_in_tools(True)
@@ -942,7 +985,7 @@ def test_nothing_builds_barts_own_nufft(in_tools):
     """
     n, spokes, coils = 32, 32, 2
     traj = bt.traj(x=n, y=spokes, r=True)
-    img = bt.phantom([n, n], ncoils=coils)
+    img = bt.phantom([n, n], coils=coils)
     ksp = bt.nufft(traj, img)
     maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
 
@@ -950,8 +993,8 @@ def test_nothing_builds_barts_own_nufft(in_tools):
         ("nufft", lambda: bt.nufft(traj, img)),
         ("nufft -i", lambda: bt.nufft(traj, ksp, inverse=True, image_dims=(n, n, 1))),
         ("pics", lambda: bt.pics(ksp, maps, t=traj)),
-        ("nlinv", lambda: bt.nlinv(ksp, t=traj, iter_=3)),
-        ("operator", lambda: LinearOperator.nufft(traj, (1, n, n), toeplitz=True)),
+        ("nlinv", lambda: bt.nlinv(ksp, t=traj, maxiter=3)),
+        ("operator", lambda: linop.NUFFT(traj, (1, n, n), toeplitz=True)),
     ):
         _finufft.reset_counters()
         run()
@@ -974,7 +1017,7 @@ def test_every_way_bart_stores_a_point_spread_function_is_served(in_tools, mode)
     """
     n, spokes, coils = 32, 48, 2
     traj = bt.traj(x=n, y=spokes, r=True)
-    img = bt.phantom([n, n], ncoils=coils)
+    img = bt.phantom([n, n], coils=coils)
     ksp = bt.nufft(traj, img)
     maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
 
@@ -1010,7 +1053,7 @@ def test_an_upper_triangular_subspace_function_is_served(in_tools):
     comes back in -- and `nufft_create_normal` asserts that shape against the
     linear phases it would have built, which is what checks it.
     """
-    from bartorch.tools import _generated as g
+    import bartorch.tools as g
 
     n, spokes, frames, coeffs, coils = 16, 5, 4, 2, 2
     traj, basis = _subspace(n, spokes, frames, coeffs)
@@ -1040,7 +1083,7 @@ def test_a_compressed_function_keeps_what_this_transform_put_there(in_tools):
     """
     n, spokes, coils = 32, 48, 2
     traj = bt.traj(x=n, y=spokes, r=True)
-    ksp = bt.nufft(traj, bt.phantom([n, n], ncoils=coils))
+    ksp = bt.nufft(traj, bt.phantom([n, n], coils=coils))
     maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
 
     def cost():
@@ -1069,7 +1112,7 @@ def test_the_mask_lands_where_barts_does(in_tools, caplog):
     """
     n, spokes, coils = 64, 64, 2
     traj = bt.traj(x=n, y=spokes, r=True)
-    ksp = bt.nufft(traj, bt.phantom([n, n], ncoils=coils))
+    ksp = bt.nufft(traj, bt.phantom([n, n], coils=coils))
     maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
 
     def kept():
@@ -1117,7 +1160,7 @@ def test_the_mask_is_the_width_and_not_the_upsampling(in_tools, caplog):
     """
     n, spokes, coils = 64, 64, 2
     traj = bt.traj(x=n, y=spokes, r=True)
-    ksp = bt.nufft(traj, bt.phantom([n, n], ncoils=coils))
+    ksp = bt.nufft(traj, bt.phantom([n, n], coils=coils))
     maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
 
     try:
@@ -1148,7 +1191,7 @@ def test_the_toeplitz_kernel_is_the_doubled_grid_whatever_the_upsampling(in_tool
     nothing else, so a looser one has to give the same function to within the
     tolerance rather than a different-shaped one.
     """
-    from bartorch.tools import _generated as g
+    import bartorch.tools as g
 
     n = 32
     traj = bt.traj(x=n, y=48, r=True)
@@ -1185,14 +1228,14 @@ def test_a_plan_lives_exactly_as_long_as_what_asked_for_it(in_tools):
     """
     n, spokes, coils = 32, 48, 2
     traj = bt.traj(x=n, y=spokes, r=True)
-    image = bt.phantom([n, n], ncoils=coils)
+    image = bt.phantom([n, n], coils=coils)
     ksp = bt.nufft(traj, image)
     maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
     x = torch.randn(1, n, n, dtype=torch.complex64)
 
     assert _finufft.live_plans() == 0
 
-    held = LinearOperator.nufft(traj, (1, n, n), toeplitz=False)
+    held = linop.NUFFT(traj, (1, n, n), toeplitz=False)
     held(x)
     assert _finufft.live_plans() > 0, "an operator that has transformed holds a plan"
     del held
@@ -1201,7 +1244,7 @@ def test_a_plan_lives_exactly_as_long_as_what_asked_for_it(in_tools):
     # A Toeplitz operator makes more of them -- the pair, the transform behind
     # the point spread function, and one spreader per frequency set for the
     # mask -- and each is freed where it was made.
-    LinearOperator.nufft(traj, (1, n, n), toeplitz=True).normal(x)
+    linop.NUFFT(traj, (1, n, n), toeplitz=True).normal(x)
     assert _finufft.live_plans() == 0
 
     for run in (
@@ -1210,7 +1253,7 @@ def test_a_plan_lives_exactly_as_long_as_what_asked_for_it(in_tools):
         lambda: bt.psf(traj),
         lambda: bt.pics(ksp, maps, t=traj),
         lambda: bt.pics(ksp, maps, t=traj, no_toeplitz=True),
-        lambda: bt.nlinv(ksp, t=traj, iter_=3),
+        lambda: bt.nlinv(ksp, t=traj, maxiter=3),
     ):
         run()
         assert _finufft.live_plans() == 0
@@ -1224,13 +1267,13 @@ def test_a_device_plan_is_given_back_too(in_tools):
     """A cuFINUFFT plan holds device memory, which is the scarcer of the two."""
     n, spokes, coils = 32, 48, 2
     traj = bt.traj(x=n, y=spokes, r=True).cuda()
-    ksp = bt.nufft(traj, bt.phantom([n, n], ncoils=coils).cuda())
+    ksp = bt.nufft(traj, bt.phantom([n, n], coils=coils).cuda())
     maps = (torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5).cuda()
     x = torch.randn(1, n, n, dtype=torch.complex64, device="cuda")
 
     assert _finufft.live_plans() == 0
 
-    LinearOperator.nufft(traj, (1, n, n), toeplitz=True).normal(x)
+    linop.NUFFT(traj, (1, n, n), toeplitz=True).normal(x)
     assert _finufft.live_plans() == 0
 
     bt.pics(ksp, maps, t=traj)
@@ -1289,7 +1332,7 @@ def test_a_function_with_no_imaginary_part_is_stored_without_one(in_tools):
     image = (bt.phantom([n, n])[None] * maps).reshape(coils, 1, n, n)
     kspace = bt.nufft(traj, image)
 
-    from bartorch.tools import _generated as g
+    import bartorch.tools as g
 
     automatic = g.pics(kspace, maps.reshape(1, coils, 1, n, n), t=traj, i=5)
     asked_for = g.pics(kspace, maps.reshape(1, coils, 1, n, n), t=traj, i=5, nufft_conf="real-psf")
@@ -1311,7 +1354,7 @@ def test_a_subspace_function_over_symmetric_sampling_is_real_too(in_tools, basis
     basis carries it through as well, because ``conj(i a) (i b)`` is ``a b``.
     So both are stored as floats, and asking for that changes nothing.
     """
-    from bartorch.tools import _generated as g
+    import bartorch.tools as g
 
     n, coils, frames, coeffs, spokes = 32, 4, 8, 3, 16
     torch.manual_seed(0)
@@ -1343,7 +1386,7 @@ def test_sampling_that_is_not_symmetric_is_still_real(in_tools):
     grid being of even length and holding one end without its partner, and
     taking the real part is the projection back onto what the function is.
     """
-    from bartorch.tools import _generated as g
+    import bartorch.tools as g
 
     n, coils, frames, coeffs, spokes = 32, 4, 6, 3, 8
     traj, basis = _subspace(n, spokes, frames, coeffs)
@@ -1366,7 +1409,7 @@ def test_a_basis_that_is_really_complex_keeps_the_function_complex(in_tools):
     every component turns through the same angle.  A basis that does not is a
     function with an imaginary part of its own, and it is kept.
     """
-    from bartorch.tools import _generated as g
+    import bartorch.tools as g
 
     n, coils, frames, coeffs, spokes = 32, 4, 6, 3, 8
     traj, _ = _subspace(n, spokes, frames, coeffs)
@@ -1396,7 +1439,7 @@ def test_a_basis_real_to_single_precision_keeps_the_function_real(in_tools):
     such a basis is real to the same precision, so it is stored as floats.  A
     basis with an imaginary part of its own is not.
     """
-    from bartorch.tools import _generated as g
+    import bartorch.tools as g
 
     n, coils, frames, coeffs, spokes = 32, 4, 6, 3, 8
     traj, _ = _subspace(n, spokes, frames, coeffs)
@@ -1426,7 +1469,7 @@ def test_a_subspace_function_is_stored_as_its_upper_triangle(in_tools):
     Storing only that is exact rather than an approximation, which is why it
     needs no asking for -- so asking has to change nothing.
     """
-    from bartorch.tools import _generated as g
+    import bartorch.tools as g
 
     n, coils, frames, coeffs, spokes = 32, 4, 6, 3, 8
     traj, basis = _subspace(n, spokes, frames, coeffs)
@@ -1460,7 +1503,7 @@ def test_the_function_can_be_kept_off_the_card_and_brought_over_in_sets(in_tools
     1e-04 after twenty-five.  A comparison between two ways of computing the
     same operator has to sit below that, not above it.
     """
-    from bartorch.tools import _generated as g
+    import bartorch.tools as g
 
     lib = library()
     n, coils = 32, 4
@@ -1501,7 +1544,7 @@ def test_compressing_a_radial_function_costs_less_than_the_embedding_itself(in_t
     the pair of transforms it stands for.  No sampling pattern is given, so
     every sample counts.
     """
-    from bartorch.ops import LinearOperator
+    from bartorch import linop
 
     n, spokes, frames, coeffs, coils = 64, 256, 8, 4, 4
     traj = bt.traj(x=n, y=spokes * frames, r=True, flag_3=True)
@@ -1517,7 +1560,7 @@ def test_compressing_a_radial_function_costs_less_than_the_embedding_itself(in_t
 
     def build(compress, toeplitz):
         _finufft.compress_psf(compress)
-        return LinearOperator.sense(maps, (coils, n, n, n), traj=traj, basis=basis, toeplitz=toeplitz)
+        return linop.Sense(maps, (coils, n, n, n), traj=traj, basis=basis, toeplitz=toeplitz)
 
     try:
         before = _finufft.functions_compressed()
@@ -1548,7 +1591,7 @@ def test_a_set_crossing_while_another_is_convolved_answers_the_same(in_tools):
     once the card has said it has finished reading it, and getting that wrong
     would convolve against a set half replaced.
     """
-    from bartorch.tools import _generated as g
+    import bartorch.tools as g
 
     n, spokes, frames, coeffs, coils = 24, 96, 4, 3, 2
     traj, basis = _subspace(n, spokes, frames, coeffs)
@@ -1589,7 +1632,7 @@ def test_a_sensitivity_folded_into_the_transform_answers_the_same(in_tools):
     which is the arrangement that reads a coefficient at a time and so the
     only one that folds.
     """
-    from bartorch.tools import _generated as g
+    import bartorch.tools as g
 
     lib = library()
 
@@ -1631,13 +1674,13 @@ def test_a_transform_asked_for_after_the_normal_plans_again(in_tools):
     forward applied afterwards has to plan again and answer as an operator
     that never let them go.
     """
-    from bartorch.ops import LinearOperator
+    from bartorch import linop
 
     assert _finufft.releasing_transforms(), "it is what happens unless it is turned off"
 
     n = 24
     traj = bt.traj(x=n, y=32, r=True).cuda()
-    A = LinearOperator.nufft(traj, (1, n, n), toeplitz=True)
+    A = linop.NUFFT(traj, (1, n, n), toeplitz=True)
     x = bt.phantom([n, n]).reshape(1, n, n).to(torch.complex64).cuda()
 
     before = A(x)
@@ -1658,12 +1701,14 @@ def test_the_passes_inside_the_transforms_answer_as_the_passes_on_their_own(in_t
     cuFFT's transforms or on their own, the normals agree to rounding, and the
     image the normal is applied to is left as it was.
     """
-    from bartorch.ops import LinearOperator
+    from bartorch import linop
 
     n, spokes, frames, coeffs, coils = (32, 24, 4, 3, 2) if dims == 2 else (24, 48, 4, 3, 2)
     read = n // 2
     three = {"flag_3": True} if dims == 3 else {}
-    traj = bt.traj(x=read, y=spokes * frames, r=True, **three).reshape(frames, spokes, read, 3)[:, None, None]
+    traj = bt.traj(x=read, y=spokes * frames, r=True, **three).reshape(frames, spokes, read, 3)[
+        :, None, None
+    ]
     basis = torch.zeros(coeffs, frames, 1, 1, 1, 1, 1, dtype=torch.complex64)
     for c in range(coeffs):
         basis[c, :, 0, 0, 0, 0, 0] = torch.cos(torch.pi * c * (torch.arange(frames) + 0.5) / frames)
@@ -1674,7 +1719,7 @@ def test_the_passes_inside_the_transforms_answer_as_the_passes_on_their_own(in_t
     maps = maps / maps.abs().pow(2).sum(0, keepdim=True).sqrt()
 
     compressed = _finufft.functions_compressed()
-    A = LinearOperator.sense(maps.cuda(), shape, traj=traj.cuda(), basis=basis.cuda())
+    A = linop.Sense(maps.cuda(), shape, traj=traj.cuda(), basis=basis.cuda())
     assert _finufft.functions_compressed() > compressed, "the function was compressed"
 
     x = torch.randn(A.ishape, dtype=torch.complex64, device="cuda")
@@ -1697,7 +1742,9 @@ def test_the_passes_inside_the_transforms_answer_as_the_passes_on_their_own(in_t
 
 @requires_finufft
 @requires_cuda
-@pytest.mark.skipif(not _finufft.paired_built(), reason="built without the pair kernels (BARTORCH_MATHDX_DIR)")
+@pytest.mark.skipif(
+    not _finufft.paired_built(), reason="built without the pair kernels (BARTORCH_MATHDX_DIR)"
+)
 def test_sets_convolved_in_pairs_answer_as_sets_one_at_a_time(in_tools):
     """Two sets that differ only along x share their passes along z and y.
 
@@ -1705,10 +1752,12 @@ def test_sets_convolved_in_pairs_answer_as_sets_one_at_a_time(in_tools):
     pairing, the same operator convolves them a set at a time.  The normals
     agree to rounding, and the image the normal is applied to is left alone.
     """
-    from bartorch.ops import LinearOperator
+    from bartorch import linop
 
     n, read, spokes, frames, coeffs, coils = 32, 16, 48, 4, 4, 2
-    traj = bt.traj(x=read, y=spokes * frames, r=True, flag_3=True).reshape(frames, spokes, read, 3)[:, None, None]
+    traj = bt.traj(x=read, y=spokes * frames, r=True, flag_3=True).reshape(frames, spokes, read, 3)[
+        :, None, None
+    ]
     basis = torch.zeros(coeffs, frames, 1, 1, 1, 1, 1, dtype=torch.complex64)
     for c in range(coeffs):
         basis[c, :, 0, 0, 0, 0, 0] = torch.cos(torch.pi * c * (torch.arange(frames) + 0.5) / frames)
@@ -1723,7 +1772,7 @@ def test_sets_convolved_in_pairs_answer_as_sets_one_at_a_time(in_tools):
         _finufft.pair_sets(pair)
         _finufft.bfloat16_function(False)
         try:
-            A = LinearOperator.sense(maps.cuda(), (coils, n, n, n), traj=traj.cuda(), basis=basis.cuda())
+            A = linop.Sense(maps.cuda(), (coils, n, n, n), traj=traj.cuda(), basis=basis.cuda())
             before = _finufft.pairs_convolved()
             out = A.normal(x)
             return out, _finufft.pairs_convolved() - before
@@ -1742,7 +1791,9 @@ def test_sets_convolved_in_pairs_answer_as_sets_one_at_a_time(in_tools):
 
 @requires_finufft
 @requires_cuda
-@pytest.mark.skipif(not _finufft.paired_built(), reason="built without the pair kernels (BARTORCH_MATHDX_DIR)")
+@pytest.mark.skipif(
+    not _finufft.paired_built(), reason="built without the pair kernels (BARTORCH_MATHDX_DIR)"
+)
 def test_a_function_kept_in_bfloat16_answers_as_one_kept_in_floats(in_tools):
     """bfloat16 keeps a float's range and rounds each value to 2^-9 of itself.
 
@@ -1751,10 +1802,12 @@ def test_a_function_kept_in_bfloat16_answers_as_one_kept_in_floats(in_tools):
     coil without a map takes inside a pair.  They differ by the rounding and by
     no more.
     """
-    from bartorch.ops import LinearOperator
+    from bartorch import linop
 
     n, read, spokes, frames, coeffs, coils = 32, 16, 48, 4, 4, 2
-    traj = bt.traj(x=read, y=spokes * frames, r=True, flag_3=True).reshape(frames, spokes, read, 3)[:, None, None]
+    traj = bt.traj(x=read, y=spokes * frames, r=True, flag_3=True).reshape(frames, spokes, read, 3)[
+        :, None, None
+    ]
     basis = torch.zeros(coeffs, frames, 1, 1, 1, 1, 1, dtype=torch.complex64)
     for c in range(coeffs):
         basis[c, :, 0, 0, 0, 0, 0] = torch.cos(torch.pi * c * (torch.arange(frames) + 0.5) / frames)
@@ -1768,7 +1821,7 @@ def test_a_function_kept_in_bfloat16_answers_as_one_kept_in_floats(in_tools):
         _finufft.bfloat16_function(bf16)
         try:
             before = _finufft.functions_bfloat16()
-            A = LinearOperator.sense(maps.cuda(), (coils, n, n, n), traj=traj.cuda(), basis=basis.cuda())
+            A = linop.Sense(maps.cuda(), (coils, n, n, n), traj=traj.cuda(), basis=basis.cuda())
             return A.normal(x), _finufft.functions_bfloat16() - before
         finally:
             _finufft.bfloat16_function(True)
@@ -1792,7 +1845,7 @@ def test_the_contraction_kernel_is_barts_contraction(in_tools):
     against each other on a subspace function that is compressed, the normals
     agree to rounding.
     """
-    from bartorch.ops import LinearOperator
+    from bartorch import linop
 
     n, read, spokes, frames, coeffs, coils = 32, 16, 24, 4, 3, 2
     traj, basis = _subspace(n, spokes, frames, coeffs, read=read)
@@ -1802,7 +1855,7 @@ def test_the_contraction_kernel_is_barts_contraction(in_tools):
     maps = maps / maps.abs().pow(2).sum(0, keepdim=True).sqrt()
 
     before = _finufft.functions_compressed()
-    A = LinearOperator.sense(maps.cuda(), (coils, n, n), traj=traj.cuda(), basis=basis.cuda())
+    A = linop.Sense(maps.cuda(), (coils, n, n), traj=traj.cuda(), basis=basis.cuda())
     assert _finufft.functions_compressed() > before, "the function was compressed"
 
     x = torch.randn(A.ishape, dtype=torch.complex64, device="cuda")

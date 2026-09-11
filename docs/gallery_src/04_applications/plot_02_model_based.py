@@ -13,7 +13,7 @@ import torch
 
 import bartorch
 import bartorch.tools as bt
-from bartorch.ops import LinearOperator, NonlinearOperator
+from bartorch import linop, nlop
 
 bartorch.set_num_threads(1)
 n, nechoes = 8, 6
@@ -26,8 +26,8 @@ def signal(parameters):
     return parameters[0][None] * torch.exp(-parameters[1][None] * times[:, None, None])
 
 
-M = NonlinearOperator.from_torch(signal, (2, n, n), (nechoes, n, n))
-F = LinearOperator.fft((nechoes, n, n), axes=(-2, -1))
+M = nlop.FromTorch(signal, (2, n, n), (nechoes, n, n))
+F = linop.FFT((nechoes, n, n), axes=(-2, -1))
 A = F @ M
 # Simulate using the analytic signal and an independent Fourier implementation.
 data = torch.fft.fftshift(

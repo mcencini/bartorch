@@ -22,7 +22,7 @@ import torch
 
 import bartorch
 import bartorch.tools as bt
-from bartorch.ops import LinearOperator
+from bartorch.linop import NUFFT
 
 CHECKS: list = []
 
@@ -215,7 +215,7 @@ def _memcache():
         bartorch.cuda.use_memcache(cache)
         torch.cuda.empty_cache()
         before = bartorch.cuda.free_memory()
-        op = LinearOperator.nufft(traj, (1, n, n))
+        op = NUFFT(traj, (1, n, n))
         del op
         torch.cuda.empty_cache()
         held[cache] = before - bartorch.cuda.free_memory()

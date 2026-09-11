@@ -2,9 +2,9 @@ name: Lint
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, bart-pytorch-extension]
   pull_request:
-    branches: [main, develop]
+    branches: [main, develop, bart-pytorch-extension]
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -22,8 +22,5 @@ jobs:
       - name: Install ruff
         run: pip install ruff
 
-      - name: Ruff check
-        run: ruff check src/ tests/
-
-      - name: Ruff format check
-        run: ruff format --check src/ tests/
+      - name: Ruff
+        run: ./scripts/lint.sh

@@ -6,25 +6,51 @@ C library with a small C ABI; Python reaches it through ctypes.
 
 ## The shape of the repository
 
+Four directories at the top, and a file belongs to whichever it is: `src/` is
+everything written here, `external/` everything that is not, `tests/` and
+`docs/` the rest.  Nothing of ours sits outside `src/`, and nothing of anyone
+else's sits inside it.
+
 | Path | What is in it |
 | --- | --- |
-| `bart/` | BART, as a git submodule, compiled unchanged. |
-| `csrc/include/bartorch.h` | The C ABI. The only header a host sees. Plain C: no complex types, no variable-length arrays. |
-| `csrc/api.c` | Command execution under BART's error catcher, log capture, threads. |
-| `csrc/memcfl.c` | The in-memory array registry, replacing `bart/src/misc/memcfl.c`. Arrays BART creates come from the host's allocator callback. |
-| `csrc/sense.c` | The SENSE operators, walking their coils a slab at a time, over maps or k-space kernels. |
-| `csrc/fft.cpp` | The FFTW guru interface BART plans with, executed by MKL where the process has it. |
-| `csrc/backend.[ch]`, `ref_blas.c`, `cblas_shim.c`, `lapacke_shim.c` | CBLAS and LAPACKE as BART calls them, forwarded to a table of Fortran-ABI routines with reference BLAS as the fallback. |
-| `csrc/ops.c` | Operators: host callbacks as BART linops and nlops, BART's own operators as handles, least squares and Gauss-Newton. |
-| `csrc/cuda.c` | Device selection, stream ordering against the caller's stream, and BART's memory cache. Present in both builds; the CPU build reports that it has no CUDA. |
-| `csrc/host_reads.c` | The entry points BART reads element by element, answered over a host copy when a tool is on a card. |
-| `csrc/psf.c` | The three `compute_psf*` entry points, so that the adjoint transform a point spread function is comes from the substitution. |
-| `csrc/nufft_finufft.c` | ... and the normal, which stores one of those in BART's operator through `noncart/nufft_priv.h` rather than letting it grid one. |
-| `csrc/finufft.c`, `nufft_finufft.c` | FINUFFT's and cuFINUFFT's entry points, and BART's NUFFT operator built out of a pair of their plans. |
-| `csrc/compat/` | The `cblas.h`, `lapacke.h` and `fftw3.h` BART includes. |
-| `third_party/` | pocketfft and BlocksRuntime, vendored with their licenses. |
-| `src/bartorch/` | The package: `_lib.py` (ctypes), `_backend.py` (which library serves BLAS and LAPACK), `_buffer.py` (a tensor over one of BART's buffers, host or device), `core/graph.py` (tools on tensors), `ops.py` (operators), `finufft.py` (the substitution), `tools/` (one function per BART command). |
-| `build_tools/gen_tools.py` | Generates `tools/_generated.py` from the BART sources. |
+| `external/bart/` | BART, as a git submodule, compiled unchanged. |
+| `external/pocketfft/`, `external/blocksruntime/` | Vendored with their licenses. |
+| `src/bartorch/` | The Python package. |
+| `src/csrc/` | The compiled library. |
+| `scripts/` | Everything a developer runs by hand: the two generators, the docs build, the suite, the device check. |
+| `cmake/` | What the build system runs and a person does not. |
+| `tests/`, `docs/`, `examples/` | The rest. |
+
+`src/csrc/` is three things, and a file belongs to whichever it is: `abi/` is
+the boundary -- what the host calls, and what BART's environment asks of the
+host in return; `ops/` is what the host builds and drives; `substitute/` is
+what runs in BART's place, both its own computations and the libraries it
+would otherwise have been linked against.
+
+| Path | What is in it |
+| --- | --- |
+| `src/csrc/include/bartorch.h` | The C ABI. The only header a host sees. Plain C: no complex types, no variable-length arrays. |
+| `src/csrc/compat/` | The `cblas.h`, `lapacke.h` and `fftw3.h` BART includes. |
+| `src/csrc/abi/api.c` | Command execution under BART's error catcher, log capture, threads. |
+| `src/csrc/abi/memcfl.c` | The in-memory array registry, replacing `external/bart/src/misc/memcfl.c`. Arrays BART creates come from the host's allocator callback. |
+| `src/csrc/abi/cuda.c` | Device selection, stream ordering against the caller's stream, and BART's memory cache. Present in both builds; the CPU build reports that it has no CUDA. |
+| `src/csrc/abi/host_reads.c` | The entry points BART reads element by element, answered over a host copy when a tool is on a card. |
+| `src/csrc/ops/ops.c` | Operators: host callbacks as BART linops and nlops, BART's own operators as handles, least squares and Gauss-Newton. |
+| `src/csrc/ops/sense.c` | The SENSE operators, walking their coils a slab at a time, over maps or k-space kernels, with the CUDA kernels beside it that the streamed normal is made of. |
+| `src/csrc/ops/iter.c` | The solve `pics` runs -- `italgo_config`, `lsqr2` -- over an operator and terms the host assembled. |
+| `src/csrc/substitute/fft.cpp` | The FFTW guru interface BART plans with, executed by MKL where the process has it. |
+| `src/csrc/substitute/backend.[ch]`, `ref_blas.c`, `cblas_shim.c`, `lapacke_shim.c` | CBLAS and LAPACKE as BART calls them, forwarded to a table of Fortran-ABI routines with reference BLAS as the fallback. |
+| `src/csrc/substitute/finufft.c`, `nufft_finufft.c` | FINUFFT's and cuFINUFFT's entry points, and BART's NUFFT operator built out of a pair of their plans -- and the normal, which stores one of those in BART's operator through `noncart/nufft_priv.h` rather than letting it grid one. |
+| `src/csrc/substitute/psf.c` | The three `compute_psf*` entry points, so that the adjoint transform a point spread function is comes from the substitution. |
+| `src/bartorch/` | The package: `_abi.py` (the ctypes signatures, generated from the header), `_lib.py` (finding and loading the library), `_marshal.py` (what an ABI argument looks like), `_backend.py` (which library serves BLAS and LAPACK), `_buffer.py` (a tensor over one of BART's buffers, host or device), `core/graph.py` (tools on tensors), `_operator.py` (what every operator shares), `linop/` and `nlop/` (a class per operator), `prox/` (BART's regularization terms, as objects), `alg/` (BART's own solve, driven from here), `interop/` (handing them to other libraries), `finufft.py` (the substitution), `_catalogue.py` and `_options.py` (what BART declares, and what each option is called here), `tools/` (one function per BART command: hand-written where it needed a judgement, built from the catalogue otherwise). |
+| `scripts/gen_abi.py` | Generates `_abi.py` from `src/csrc/include/bartorch.h`. Run after changing the header; `tests/test_abi.py` fails when the checked-in file is not what it writes. |
+| `scripts/gen_catalogue.py` | Generates `_catalogue.py` from the BART sources: every command, its arguments, and every option with both spellings. Run after a submodule bump. |
+| `scripts/run_tests.sh` | Builds whatever changed on the C side, then runs the suite against `src/`, without installing. |
+| `scripts/sources.py` | What the library is built from, in one place, so the script and `tests/test_build.py` cannot disagree about it. |
+| `scripts/lint.sh` | Ruff over `src/` and `tests/`, which is what the lint workflow runs; `--fix` writes. |
+| `scripts/build_docs.sh` | Builds the reference the way the workflow does. |
+| `scripts/check_device.py` | Everything a card can answer that a host cannot, in dependency order. |
+| `cmake/embed.cmake` | Writes a file's bytes into a C array, for the LTO-IR the CUDA build links. |
 | `attic/prototype/` | An earlier pybind11 extension, kept for reference and not built. |
 
 ## Design rules
@@ -72,10 +98,10 @@ On a device none of this applies: BART calls cuBLAS directly, and it has no
 GPU LAPACK, so eigendecompositions and SVDs come back to the host table.
 
 The FFT is planned through the FFTW guru interface and executed by MKL's DFTI,
-filled from the same table, which on Linux and Windows is torch's own MKL and
-needs nothing installed. MKL's FFTW interface is not used: it refuses more than
+filled from the same table, which on Linux is torch's own MKL and needs nothing
+installed. MKL's FFTW interface is not used: it refuses more than
 one loop dimension and BART passes one per dimension it is not transforming, so
-DFTI takes the transformed axes and the longest loop axis and `csrc/fft.cpp`
+DFTI takes the transformed axes and the longest loop axis and `src/csrc/substitute/fft.cpp`
 walks whatever is left. It is given one thread: MKL is fast enough serially to
 beat a threaded pocketfft, and a thread team of its own is a second OpenMP
 runtime spinning against BART's, which inside a tool costs several times more
@@ -99,18 +125,56 @@ A tensor on a card selects that card for the length of the call, which is what
 path on: `bart_use_gpu` is what `-g` sets on the command line, so passing `-g`
 to a tool as well changes nothing.
 
-**FINUFFT arrives the same way MKL does.** The `finufft` and `cufinufft`
-wheels each carry a compiled shared library with a plain C plan API, so they
-are a pip extra and nothing is built or vendored. `csrc/finufft.c` holds the
+**FINUFFT is a dependency; cuFINUFFT is an extra.** The `finufft` and
+`cufinufft` wheels each carry a compiled shared library with a plain C plan
+API, so nothing is built or vendored either way. `src/csrc/substitute/finufft.c` holds the
 entry points and `_finufft.py` hands them over along with the byte offset of
 FINUFFT's options struct, read from the same package so a release that moves a
 field cannot silently corrupt it.
+
+The two are not optional in the same way. FINUFFT *is* the NUFFT here -- every
+non-Cartesian transform goes through the substitution under `nufft_create` --
+so a bartorch without it does non-Cartesian work slowly rather than well,
+which is a dependency and not a choice. cuFINUFFT serves a transform on a
+card, and most machines have no card, so it stays an extra.
+
+**Except on macOS, where it cannot be taken up.** torch carries an OpenMP
+runtime and the FINUFFT wheel carries its own, and LLVM's runtime ends the
+process rather than run beside a second copy of itself (`OMP: Error #15`).
+`_finufft.openmp_runtimes()` reads the loaded images for that pair before the
+first call into FINUFFT; more than one and the substitution declines, BART's
+own gridder answers, and `install_once` says so at warning level.  The same
+collision is open upstream in mri-nufft with no fix, so it is the dependency
+pair rather than anything here.  `KMP_DUPLICATE_LIB_OK=TRUE` makes it run and
+is documented by the runtime's own authors as unsafe -- a crash later or a
+wrong answer quietly -- which is the wrong trade for a reconstruction, so it
+is neither set nor suggested.  Linux is not asked: its loader resolves the
+duplicate instead of dying on it.
+
+The requirement carries no marker, and that is a decision about which wheels
+exist rather than an oversight. FINUFFT ships none for Linux on aarch64 -- it
+never has -- and dropped the Intel Mac after 2.4.0; its sdist wants CMake,
+ninja, a C++ compiler and a fetched FFTW. A bartorch wheel for a platform
+FINUFFT has no wheel for could only either install something that cannot do
+non-Cartesian work, or start a source build for someone who asked for a wheel.
+So no such wheel is built: `publish.yml` builds Linux x86_64 and macOS arm64,
+which are platforms FINUFFT ships wheels for too, and aarch64 is served by the
+sdist -- where compiling BART is already the price of entry, and compiling
+FINUFFT beside it costs nothing new.
+
+There is no `finufft` extra. An old `pip install 'bartorch[finufft]'` still
+installs FINUFFT, and pip warns that the extra is not provided, which is the
+right thing to hear. `tests/test_dependencies.py` holds all of this: that the
+requirement is there, that it is unconditional, that no extra shadows it, and
+that the metadata pip was actually given promises what pyproject does.
+`_finufft.required_but_missing()` is the message for an absent one, and says
+it is a broken install rather than a choice.
 
 **Underneath BART's own tools the seam is `nufft_create`, not the gridder.**
 `nufft.c` is compiled with `nufft_create`, `nufft_create2`, `nufft_get_psf*`
 and `nufft_update_*` renamed, and `precond.c` with `nufft_precond_create`
 renamed, so BART's own operator survives as `bart_nufft_*` and
-`csrc/nufft_finufft.c` answers to the original names. What it returns is a
+`src/csrc/substitute/nufft_finufft.c` answers to the original names. What it returns is a
 `linop_create` whose forward is FINUFFT's type 2 with a negative exponent and
 whose adjoint is type 1 with a positive one, both scaled by one over the square
 root of the voxel count. Nothing about gridding kernels or deapodisation has to
@@ -137,7 +201,8 @@ as it starts, before anyone has mentioned FINUFFT.
 BART's own gridder is not reachable from the package's surface at all. What is
 left of it is `_finufft.barts_own_gridder()`, a context manager the agreement
 check uses and the tests hold the substitution against; there is nothing a
-caller can pass to end up there. `configure` raises when `finufft` is missing,
+caller can pass to end up there. `configure` raises when `finufft` is missing
+-- which on a platform it ships a wheel for means the install has lost it --
 or when `cufinufft` is missing on a machine whose card BART would otherwise
 use. A test that enters that block would carry it into the next test, so
 `tests/conftest.py` puts the substitution back after every one.
@@ -171,7 +236,7 @@ than one plan over all of them.
 one by taking the adjoint NUFFT of ones over a doubled trajectory, and reaches
 that transform through its own `nufft_create2`, which the rename sends to
 BART's gridder along with everything else in that file. So `compute_psf`,
-`compute_psf2` and `compute_psf2_decomposed` are renamed too and `csrc/psf.c`
+`compute_psf2` and `compute_psf2_decomposed` are renamed too and `src/csrc/substitute/psf.c`
 answers to them: the same squared weights and basis, the same doubled grid,
 shifts and decomposition, with the transform in the middle being whichever
 `nufft_create2` answers. `nlinv`, `moba`, `rtnlinv`, `noir/model2` and the
@@ -194,7 +259,7 @@ reach it, so `toeplitz_for` turns that off: `conf.nopsf` is the switch
 `pics --psf_import` uses to bring a function in from outside, and with it set
 BART grids nothing. What is left is to make the function -- `compute_psf2`,
 whose transform is the substitution's -- and to store it the way the operator
-wants, which `csrc/nufft_finufft.c` does over the dimensions the operator
+wants, which `src/csrc/substitute/nufft_finufft.c` does over the dimensions the operator
 worked out for itself, through `noncart/nufft_priv.h`.
 
 Everything BART does with the function afterwards is still BART's, and every
@@ -408,7 +473,7 @@ and `pics` over the same data, agreeing with BART's own reconstruction to
 | BART | 1.66 s | 6.44 s |
 | FINUFFT | 1.06 s | 2.33 s |
 
-**cuFINUFFT is the same table.** `csrc/finufft.c` holds two of them, filled
+**cuFINUFFT is the same table.** `src/csrc/substitute/finufft.c` holds two of them, filled
 from the `finufft` and `cufinufft` wheels; without the `cufinufft` wheel a
 transform BART would run on a card stays with BART's own operator rather than
 quietly running on the host.
@@ -471,7 +536,7 @@ trailing axes are spatial and how many are coils.
 things stand between a BART tool and the memory it was handed. The few entry
 points that read an array element by element rather than through `md_` --
 `estimate_im_dims` sizing an image from a trajectory, `estimate_scaling_norm`
-taking a median of k-space -- are answered in `csrc/host_reads.c` over a host
+taking a median of k-space -- are answered in `src/csrc/abi/host_reads.c` over a host
 copy of that one array, which is what BART already does for its own virtual
 pointers. What cannot be reached that way is a tool that allocates a temporary
 of its own on the host and mixes it with its input: `pocsense` takes its
@@ -506,11 +571,10 @@ configure time. BART's own `NOEXEC_STACK` workaround does not help here: it
 parses a trampoline layout GCC emits only for non-PIC executables, not for a
 shared library. Both compilers are built and tested in CI.
 
-MSVC cannot compile BART. It does not have to: nothing here is a Python
-extension module, so a Windows build is a plain DLL that ctypes loads
-whatever compiler torch was built with. That DLL comes from clang or
-mingw-w64 GCC 14, and BART already carries the `src/win/` shims (`mmap`,
-`fmemopen`) such a build needs.
+Windows is not a platform here. BART does not build on it, and nothing in
+this repository carries a path toward one: no `.dll` among the names the
+loader tries, no `__declspec(dllexport)`, no `win32` branch picking a
+different library. WSL2 is a Linux install and is the answer.
 
 The compiler's own runtime is linked statically on Linux, because otherwise
 the toolchain's floor becomes the target system's: a GCC 14 build asks
@@ -530,21 +594,148 @@ That includes assertions, which is how BART checks the arguments a caller is
 most likely to get wrong. BART routes `assert` through `error()` only under
 `USE_DWARF`, which also wants libdw and libunwind for backtraces; without it
 glibc's `assert` calls `abort()` and a wrong shape takes the interpreter down.
-`csrc/api.c` answers `__assert_fail` instead, which needs neither the define
+`src/csrc/abi/api.c` answers `__assert_fail` instead, which needs neither the define
 nor the libraries, and the symbol is hidden so it binds inside this library
 alone.
 
-## Commands
+## The operator layer
+
+`LinearOperator` is an interface, not a namespace: two shapes, a forward, an
+adjoint, a normal. Everything written against an operator -- a solver, a torch
+model, `deepinv` -- is written against that, and an operator of one's own is a
+subclass with two methods, which then chains with BART's own and is solved by
+BART's own.
+
+`BartLinearOperator` is one that a BART handle stands behind, and every
+concrete operator is one: `FFT`, `Diagonal`, `Sampling`, `MultiplySum`,
+`NUFFT`, `Sense`, `Callback`. Each says only which of BART's constructors
+makes it, in `_create`; the lock BART is called under, the device it is built
+on, the handle's lifetime and the tensors the handle holds by pointer and must
+outlive are all in `_operator.py`. A new operator is the call and nothing
+around it.
+
+Composition builds BART's composite rather than a Python chain, so a chain of
+five applies as one call and a solver iterating on it never returns to Python.
+An operator written in Python joins the same way -- `as_bart()` wraps it as a
+pair of callbacks -- which is what lets BART's conjugate gradients drive it.
+
+`.H` is the exception that proves the rule: BART has no adjoint-of-an-operator
+constructor, so `Adjoint` is the operator read the other way round rather than
+a second handle, and applying it costs what `adjoint` costs. Only composing it
+needs a handle, and only then is one made.
+
+**A backward pass is the adjoint, not the transpose.** Torch stores conjugate
+Wirtinger gradients: what it wants back for `y = A x` is `A^H g`. The near
+miss is silent and a real-valued test would never see it, so
+`tests/test_linop.py` compares against torch's own gradient for a
+multiplication torch can do, and asserts that the transpose would have
+disagreed.
+
+**`deepinv` is an adapter, not a base class.** An operator carries `A`,
+`A_adjoint` and `A_dagger` under `deepinv`'s names, and `to_deepinv()` returns
+a real `LinearPhysics` built the first time it is asked for. Inheriting
+instead would put that import in the path of every operator and tie releases
+here to releases there. The wrapper's own work is `deepinv`'s batch axis,
+which a BART operator does not have, and `A_dagger` as BART's conjugate
+gradients.
+
+## Nothing here is an algorithm
+
+The rule the whole package is under: everything is a wrapper around BART,
+except the substitutions that exist to be faster than it -- FINUFFT and
+cuFINUFFT under `nufft_create`, the coil-slab SENSE operator, the normal
+operators beside them. Anything else written here would be a second
+implementation that drifts, and a result that is nearly BART's is worth less
+than no result.
+
+So `alg.solve` iterates nothing, and `prox/` computes nothing. A term fills
+the table `opt_reg_configure` reads -- which kind, over which axes, with what
+weight -- from an object rather than from a `-R` string, and holds the
+proximal operator and the transform BART makes of it. The solver is handed
+those, not a description to rebuild from, so solving twice with a term builds
+nothing the second time. The letters are BART's own, and a test holds every
+one this package offers against `grecon/optreg.c`, because a term BART does
+not know is answered with `error()` and that leaves the library spinning.
+
+Three of BART's terms are absent: TGV and the two infimal convolutions extend
+the optimisation variable, and what they add is counted across the whole set
+(`ropts->svars`, and the assertion at the end of `opt_reg_configure`), so one
+cannot be built alone. `tools.pics` reaches them.
+
+**The order costs nothing.** A C-order tensor of shape `(a, b, c)` and a BART
+array of dims `[c, b, a]` are the same bytes, so the boundary reverses the
+dimension vector and hands over `data_ptr()`; an operator never copies. The
+one copy is defensive and only for tools: BART maps its inputs
+copy-on-write and some tools write into them, so `dispatch` clones unless
+`set_copy_inputs(False)` says not to.
+
+ `pics` turns its arguments into three things
+and hands them to `lsqr2`: the proximal operators its `-R` strings name, the
+algorithm its solver flag chooses, and the encoding. `src/csrc/ops/iter.c` does the
+same with the same functions, in the same order, over an operator assembled
+here. The loop runs where `pics`'s does, and an operator BART built is handed
+over as it stands rather than wrapped, so there is no crossing per step --
+`tests/test_solve.py` asserts both: one call into the library however many
+iterations it runs, and `as_bart()` returning the operator itself.
+
+**And it is exact end to end.** `pics` does work around its solve, and an
+assembled reconstruction does the same work in Python: the sampling pattern
+applied to the k-space, `ifftmod` on it, and the scaling `pics` estimates
+unless `-w` says otherwise, which is `alg.data_scaling`. What is left is what
+`italgo_config` is handed, and three of those the tool fills in rather than
+BART: the 0.95 step of its proximal-gradient iterations, the random cycle
+spinning it does unless `-n`, and PRIDU's `sigma_tau_ratio`.
+`tests/test_solve.py` holds nine configurations of `pics` against the
+assembly with `torch.equal`, and they are equal.
+
+One thing is not bit-exact and cannot be: `-e` estimates the largest
+eigenvalue by a power iteration whose starting vector comes from BART's
+process-global generator, so a solve here and a `pics` call in the same
+process start it from different places. They agree to the power method's own
+convergence. A fresh `bart` process starts that generator from a constant,
+which is why the tool agrees with itself across runs and not across calls.
+
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
-BARTORCH_LIBRARY=$PWD/build/libbartorch.so PYTHONPATH=src pytest tests/
-pip install -e .                    # the same through scikit-build-core
+./scripts/run_tests.sh              # build into build/local, regenerate, run it all
+./scripts/run_tests.sh tests/test_solve.py -k pics    # anything else goes to pytest
+./scripts/run_tests.sh --rebuild    # after a source file moves; CMake caches the list
+./scripts/build_docs.sh             # the reference, warnings as errors
+pip install -e .                    # the same build through scikit-build-core
 pip install -e . --config-settings=cmake.define.BARTORCH_CUDA=ON   # with device code
 python scripts/check_device.py      # everything a card can answer that a host cannot
-python build_tools/gen_tools.py     # after a submodule bump
-ruff format src tests build_tools && ruff check src tests build_tools
+python scripts/gen_catalogue.py     # after a submodule bump
+python scripts/gen_abi.py           # after changing the C header
+./scripts/lint.sh                   # what the lint workflow runs
+./scripts/lint.sh --fix             # format, and apply what ruff can fix itself
 ```
+
+What `run_tests.sh` does by hand, for when it is in the way:
+
+```sh
+cmake -S . -B build/local -DCMAKE_BUILD_TYPE=Release && cmake --build build/local -j
+BARTORCH_LIBRARY=$PWD/build/local/libbartorch.so PYTHONPATH=src pytest tests/
+```
+
+Three things a fresh checkout needs before that first line works, each of
+which fails with a message that does not say which:
+
+* **A compiler that puts BART's nested functions on the heap.** GCC 14 or
+  newer, for `-ftrampoline-impl=heap`, or clang -- `cmake -DCMAKE_C_COMPILER=clang
+  -DCMAKE_CXX_COMPILER=clang++`. CMake says so and stops; GCC 13 is not enough.
+* **OpenMP for whichever of those it is.** `libomp-dev` beside clang. Without
+  it the build still works and the overlapped walks in `src/csrc/ops/sense.c` run in
+  sequence.
+* **FINUFFT**, which `pip install -e .` brings on every platform it ships a
+  wheel for. Working from a source checkout on `PYTHONPATH` instead, install
+  it by hand: without it seventeen tests fail rather than skip, because
+  nothing reaches BART's own gridder without having been sent there and the
+  substitution declining is an error, not a fallback.
+
+With those, and `pip install torch numpy scipy pytest`, the suite is green
+apart from the CUDA tests, which skip without a card. `pip install mkl
+deepinv` covers the rest: the FFT tests that assert MKL planned, and the
+``LinearPhysics`` adapter.
 
 ## Tests
 
@@ -615,13 +806,16 @@ Returns, Raises.
 
 ## What is not done
 
-Windows, tools with optional extra outputs, and the wider solver surface
-(ADMM, FISTA, proximal operators) through the operator layer.
+Tools with optional extra outputs, and the wider solver surface (ADMM, FISTA,
+proximal operators) through the operator layer.
+
+Windows is not on this list because it is not a target: BART does not build
+there, and WSL2 is a Linux install like any other.
 
 A tool that takes device memory as it stands. BART guards the host reads that
 would break -- `estimate_im_dims` copies to the host when it is handed one --
 for its own virtual pointers, not for a raw device pointer, so the route in is
-`csrc/memcfl.c` handing BART a `vptr_wrap_cfl` rather than the pointer itself,
+`src/csrc/abi/memcfl.c` handing BART a `vptr_wrap_cfl` rather than the pointer itself,
 and then finding out which of BART's guards are complete.
 
 Two of mrtoeplitz's ideas have no route in from here: a transfer that stays on
@@ -630,7 +824,7 @@ what crosses the bus. Both are decisions about how the point spread function
 is stored, which lives inside `nufft.c`, so neither is reachable by
 substituting an entry point -- they would need a BART edit or a normal
 operator written here. The seam is one function: `toeplitz_for` in
-`csrc/nufft_finufft.c` decides what the operator's normal is, and an
+`src/csrc/substitute/nufft_finufft.c` decides what the operator's normal is, and an
 mrtoeplitz kernel behind a host callback would go there. What BART does have
 is `compress_psf`, `decomposed_psf` and `lowmem`, and its own overlap:
 `bartorch.cuda.set_streams` sets `cuda_num_streams`, which is what puts BART's

@@ -15,7 +15,7 @@ import torch.nn.functional as functional
 
 import bartorch
 import bartorch.tools as bt
-from bartorch.ops import LinearOperator
+from bartorch import linop
 
 bartorch.set_num_threads(1)
 torch.manual_seed(2)
@@ -28,20 +28,20 @@ basis = basis.to(torch.complex64)
 image_shape = (1, rank, 1, n, n, n)
 echo_shape = (echoes, 1, 1, n, n, n)
 extended_shape = (echoes, 1, 1, n, n, wx)
-Phi = LinearOperator.multiply_sum(basis.reshape(echoes, rank, 1, 1, 1, 1), image_shape, echo_shape)
+Phi = linop.MultiplySum(basis.reshape(echoes, rank, 1, 1, 1, 1), image_shape, echo_shape)
 padding = (wx - n) // 2
-R = LinearOperator.from_callbacks(
+R = linop.Callback(
     extended_shape,
     echo_shape,
     forward=lambda x: functional.pad(x, (padding, padding)),
     adjoint=lambda y: y[..., padding : padding + n].contiguous(),
 )
-Fx = LinearOperator.fft(extended_shape, axes=-1)
+Fx = linop.FFT(extended_shape, axes=-1)
 kybrid = torch.linspace(-torch.pi, torch.pi, wx)
 wave_phase = 1.5 * yy[..., :1] * torch.sin(kybrid) + 1.5 * zz[..., :1] * torch.cos(kybrid)
 response = torch.exp(1j * wave_phase).reshape(1, 1, 1, n, n, wx)
-W = LinearOperator.diagonal(response, extended_shape)
-Fyz = LinearOperator.fft(extended_shape, axes=(-3, -2))
+W = linop.Diagonal(response, extended_shape)
+Fyz = linop.FFT(extended_shape, axes=(-3, -2))
 A = Fyz @ W @ Fx @ R @ Phi
 
 # %%

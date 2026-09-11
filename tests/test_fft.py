@@ -88,7 +88,7 @@ def test_a_reconstruction_agrees_whichever_transform_serves_it():
     n, coils = 32, 2
     torch.manual_seed(0)
     traj = bt.traj(x=n, y=48, r=True)
-    image = bt.phantom([n, n], ncoils=coils)
+    image = bt.phantom([n, n], coils=coils)
     ksp = bt.nufft(traj, image)
     maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
 
@@ -108,12 +108,12 @@ def test_every_plan_a_reconstruction_makes_goes_to_mkl():
     lib = library()
     n, coils = 32, 2
     traj = bt.traj(x=n, y=48, r=True)
-    ksp = bt.nufft(traj, bt.phantom([n, n], ncoils=coils))
+    ksp = bt.nufft(traj, bt.phantom([n, n], coils=coils))
     maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
 
     lib.bartorch_fft_reset_counters()
     bt.pics(ksp, maps, t=traj)
-    bt.nlinv(ksp, t=traj, iter_=3)
+    bt.nlinv(ksp, t=traj, maxiter=3)
 
     by_mkl, by_built_in = lib.bartorch_fft_counter(0), lib.bartorch_fft_counter(1)
     assert by_mkl > 0
