@@ -40,7 +40,7 @@ kspace = bt.phantom(128, coils=8, kspace=True)        # (8, 1, 128, 128)
 maps = bt.ecalib(kspace, maps=1)
 
 # BART's own application ...
-image = bt.pics(kspace, maps, regularizers="W:3:0:0.005", solver="fista")
+image = bt.pics(kspace, maps, regularizers=prox.Wavelet((-1, -2), 0.005), solver="fista")
 
 # ... or the same problem assembled from an operator and a solver.
 # pics also scales the data first; see optim.data_scaling.
@@ -51,9 +51,9 @@ spectrum = bartorch.fft(bt.phantom(128), axes=(-2, -1), unitary=True)
 ```
 
 Shapes are C order, so the last axis is the one BART calls the first, and
-wherever BART takes a bitmask a function here takes axis indices.  BART
-bitmasks survive only inside strings passed through to BART, such as the
-`regularizers` of `pics`.
+wherever BART takes a bitmask or a dimension number a function here takes
+axis indices; `pics` takes `bartorch.prox` terms where BART takes `-R`
+strings.
 
 ## License
 

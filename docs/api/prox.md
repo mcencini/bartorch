@@ -75,6 +75,22 @@ are functions on images.
    ImageNIHT
 ```
 
+## Terms for pics only
+
+{func}`bartorch.tools.pics` takes these; a solver in {mod}`bartorch.optim`
+does not, because they add variables BART counts across the whole set of
+terms.
+
+```{eval-rst}
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   TotalGeneralizedVariation
+   InfimalConvolutionTV
+   InfimalConvolutionTGV
+```
+
 ## Denoisers
 
 ```{eval-rst}

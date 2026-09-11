@@ -50,7 +50,8 @@ def ecalib(
         Also return the eigenvalue map, which BART writes as a second array
         only when asked.
     **extra
-        Further BART ``ecalib`` flags, by name.
+        Further BART ``ecalib`` options, by name.  ``e``, the axis the second
+        step is split along, takes an axis of ``kspace``.
 
     Returns
     -------
@@ -61,7 +62,7 @@ def ecalib(
     --------
     >>> maps = ecalib(kspace, maps=1, crop=0.8)
     """
-    flags: dict = dict(extra)
+    flags: dict = _call.translate("ecalib", dict(extra), [kspace])
     if maps is not None:
         flags["m"] = maps
     if calib_size is not None:

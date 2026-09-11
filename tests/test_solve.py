@@ -188,29 +188,48 @@ def test_a_term_is_built_once_and_handed_over_as_it_stands():
     assert term.build((8, 8)) == first
 
 
-def test_a_term_bart_configures_with_the_whole_set_is_declined():
+@pytest.mark.parametrize(
+    "term",
+    [
+        prox.TotalGeneralizedVariation((-1, -2), 0.01),
+        prox.InfimalConvolutionTV((-1, -2), 0.01),
+        prox.InfimalConvolutionTGV((-1, -2), 0.01),
+    ],
+    ids=repr,
+)
+def test_a_term_bart_configures_with_the_whole_set_is_left_to_pics(term):
     """Total generalized variation and the infimal convolutions extend the
     optimization variable, which BART counts across every term, so one cannot
-    be built alone.  ``tools.pics`` reaches them."""
-    assert not hasattr(prox, "TotalGeneralizedVariation")
+    be built alone.  ``tools.pics`` takes them."""
+    with pytest.raises(TypeError, match="tools.pics"):
+        optim.ADMM(term)
 
 
-def test_a_term_carries_what_the_string_carried():
+@pytest.mark.parametrize(
+    "term,ndim,string",
+    [
+        (prox.Wavelet(axes=(-1, -2), weight=0.01), 2, "W:3:0:0.01"),
+        (prox.Wavelet(axes=(-1, -2), weight=0.01, joint_axes=0), 3, "W:3:4:0.01"),
+        (prox.Wavelet(axes=0, weight=0.01), 3, "W:4:0:0.01"),
+        (prox.L1(0.02, joint_axes=-3), 3, "I:4:0.02"),
+        (prox.L2(0.5), 2, "Q:0.5"),
+        (prox.NonNegative(), 2, "S"),
+        (prox.WaveletNIHT(axes=(-1, -2), count=10), 2, "H:3:0:10"),
+        (prox.TotalGeneralizedVariation((-1, -2), 0.01), 2, "G:3:0:0.01"),
+    ],
+    ids=lambda v: v if isinstance(v, str) else "",
+)
+def test_a_term_is_the_string_the_parser_reads(term, ndim, string):
     """``-R W:3:0:0.01`` is a letter, two bitmasks and a weight, and so is the
     object, with the axes written as axes."""
-    term = prox.Wavelet(axes=(-1, -2), weight=0.01)
-    assert term.kind == "W"
-    assert term.flags(ndim=2) == (3, 0)
-    assert term.weight == 0.01
-    joint = prox.Wavelet(axes=(-1, -2), weight=0.01, joint_axes=0)
-    assert joint.flags(ndim=3) == (3, 4)
+    assert term._argument(ndim) == string
 
 
 def test_an_axis_is_an_axis_and_not_a_bitmask():
     term = prox.Wavelet(axes=(-1, -2), weight=0.01)
-    assert term.flags(ndim=2) == (3, 0)
-    assert term.flags(ndim=3) == (3, 0)
-    assert prox.Wavelet(axes=0, weight=0.01).flags(ndim=3) == (4, 0)
+    assert term._flags(ndim=2) == (3, 0)
+    assert term._flags(ndim=3) == (3, 0)
+    assert prox.Wavelet(axes=0, weight=0.01)._flags(ndim=3) == (4, 0)
 
 
 def test_a_string_says_what_to_use_instead():
@@ -304,51 +323,53 @@ def _wavelet(**kwargs):
     return prox.Wavelet(axes=(-1, -2), weight=0.01, **kwargs)
 
 
-#: One configuration of ``pics``, as the tool's flags and as a solver built
-#: from the data scaling (which only PRIDU reads).
+def _tv(weight=0.01):
+    return prox.TotalVariation(axes=(-1, -2), weight=weight)
+
+
+def _llr():
+    return prox.LocallyLowRank(axes=(-1, -2), weight=0.01, block=4)
+
+
+#: One configuration of ``pics``, as the tool's arguments and as a solver built
+#: from the data scaling (which only PRIDU reads).  The same terms go to both.
 _CONFIGURATIONS = [
     ("plain", {}, lambda scale: optim.CG(maxiter=20)),
-    ("tikhonov", {"r": 0.1}, lambda scale: optim.CG(0.1, maxiter=20)),
+    ("tikhonov", {"l2": 0.1}, lambda scale: optim.CG(0.1, maxiter=20)),
     (
         "wavelet admm",
-        {"regularizers": "W:3:0:0.01", "solver": "admm"},
+        {"regularizers": _wavelet(), "solver": "admm"},
         lambda scale: optim.ADMM(_wavelet(), maxiter=20),
     ),
     (
         "wavelet fista",
-        {"regularizers": "W:3:0:0.01", "solver": "fista"},
+        {"regularizers": _wavelet(), "solver": "fista"},
         lambda scale: optim.FISTA(_wavelet(), maxiter=20),
     ),
     (
         "wavelet ist",
-        {"regularizers": "W:3:0:0.01", "solver": "ist"},
+        {"regularizers": _wavelet(), "solver": "ist"},
         lambda scale: optim.IST(_wavelet(), maxiter=20),
     ),
     (
         "no cycle spinning",
-        {"regularizers": "W:3:0:0.01", "solver": "fista", "n": True},
+        {"regularizers": _wavelet(randshift=False), "solver": "fista"},
         lambda scale: optim.FISTA(_wavelet(randshift=False), maxiter=20),
     ),
     (
         "tv pridu",
-        {"regularizers": "T:3:0:0.01", "solver": "pridu"},
-        lambda scale: optim.PRIDU(
-            prox.TotalVariation(axes=(-1, -2), weight=0.01), maxiter=20, sigma_tau_ratio=scale
-        ),
+        {"regularizers": _tv(), "solver": "pridu"},
+        lambda scale: optim.PRIDU(_tv(), maxiter=20, sigma_tau_ratio=scale),
     ),
     (
         "locally low rank",
-        {"regularizers": "L:3:0:0.01", "solver": "admm", "b": 4},
-        lambda scale: optim.ADMM(
-            prox.LocallyLowRank(axes=(-1, -2), weight=0.01, block=4), maxiter=20
-        ),
+        {"regularizers": _llr(), "solver": "admm"},
+        lambda scale: optim.ADMM(_llr(), maxiter=20),
     ),
     (
         "two terms",
-        {"regularizers": ["W:3:0:0.01", "T:3:0:0.005"], "solver": "admm"},
-        lambda scale: optim.ADMM(
-            [_wavelet(), prox.TotalVariation(axes=(-1, -2), weight=0.005)], maxiter=20
-        ),
+        {"regularizers": [_wavelet(), _tv(0.005)], "solver": "admm"},
+        lambda scale: optim.ADMM([_wavelet(), _tv(0.005)], maxiter=20),
     ),
 ]
 

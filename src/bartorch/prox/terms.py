@@ -1,9 +1,9 @@
 """BART's regularization terms, one class per ``pics -R`` letter.
 
-Total generalized variation and the two infimal convolutions are absent: they
-extend the optimization variable, which BART counts across the whole set of
-terms, so they cannot be built one at a time.  :func:`bartorch.tools.pics`
-reaches them.
+Total generalized variation and the two infimal convolutions extend the
+optimization variable, which BART counts across the whole set of terms, so
+they cannot be built one at a time: :func:`bartorch.tools.pics` takes them,
+and a solver in :mod:`bartorch.optim` does not.
 """
 
 from __future__ import annotations
@@ -15,11 +15,14 @@ __all__ = [
     "ImageNIHT",
     "ImaginaryL1",
     "ImaginaryL2",
+    "InfimalConvolutionTGV",
+    "InfimalConvolutionTV",
     "L1",
     "L2",
     "Laplace",
     "LocallyLowRank",
     "NonNegative",
+    "TotalGeneralizedVariation",
     "TotalVariation",
     "Wavelet",
     "WaveletNIHT",
@@ -80,6 +83,9 @@ class Wavelet(_Weighted):
     def _options(self) -> tuple[int, str, int]:
         return 8, self.family, int(self.randshift)
 
+    def _settings(self) -> dict[str, object]:
+        return {"family": self.family, "randshift": self.randshift}
+
 
 class TotalVariation(_Weighted):
     """l1 norm of the finite differences over ``axes`` (``pics -R T``)."""
@@ -124,6 +130,9 @@ class LocallyLowRank(_Weighted):
 
     def _options(self) -> tuple[int, str, int]:
         return self.block, "dau2", 2 if self.overlapping else int(self.randshift)
+
+    def _settings(self) -> dict[str, object]:
+        return {"block": self.block, "randshift": self.randshift, "overlapping": self.overlapping}
 
 
 class Laplace(_Weighted):
@@ -216,8 +225,101 @@ class WaveletNIHT(_Counted):
     def _options(self) -> tuple[int, str, int]:
         return 8, self.family, int(self.randshift)
 
+    def _settings(self) -> dict[str, object]:
+        return {"family": self.family, "randshift": self.randshift}
+
 
 class ImageNIHT(_Counted):
     """Keep the ``count`` largest image entries (``pics -R N``)."""
 
     kind = "N"
+
+
+def _pair(values, name: str) -> tuple[float, float]:
+    pair = tuple(float(v) for v in values)
+    if len(pair) != 2:
+        raise ValueError(f"{name} is a pair of weights, not {values!r}")
+    return pair
+
+
+class TotalGeneralizedVariation(_Weighted):
+    """Total generalized variation over ``axes`` (``pics -R G``).
+
+    Only :func:`bartorch.tools.pics` takes it; see the module's introduction.
+
+    Parameters
+    ----------
+    axes : int or tuple of int
+        Axes to differentiate, as indices into the image's shape.
+    weight : float
+    joint_axes : int or tuple of int, optional
+    alpha : tuple of float
+        BART's ``alpha1:alpha0`` pair (``pics --alpha``).
+    """
+
+    kind = "G"
+    _extends = True
+
+    def __init__(self, axes, weight: float, joint_axes=(), *, alpha=(1.0, 3.0**0.5)):
+        super().__init__(axes, weight, joint_axes)
+        self.alpha = _pair(alpha, "alpha")
+
+    def _settings(self) -> dict[str, object]:
+        return {"alpha": self.alpha}
+
+
+class InfimalConvolutionTV(_Weighted):
+    """Infimal convolution of total variation over ``axes`` (``pics -R C``).
+
+    Only :func:`bartorch.tools.pics` takes it; see the module's introduction.
+
+    Parameters
+    ----------
+    axes : int or tuple of int
+        Axes to differentiate, as indices into the image's shape.
+    weight : float
+    joint_axes : int or tuple of int, optional
+    gamma : tuple of float
+        BART's ``gamma1:gamma2`` pair (``pics --gamma``).
+    """
+
+    kind = "C"
+    _extends = True
+
+    def __init__(self, axes, weight: float, joint_axes=(), *, gamma=(1.0, 1.0)):
+        super().__init__(axes, weight, joint_axes)
+        self.gamma = _pair(gamma, "gamma")
+
+    def _settings(self) -> dict[str, object]:
+        return {"gamma": self.gamma}
+
+
+class InfimalConvolutionTGV(_Weighted):
+    """Infimal convolution of total generalized variation over ``axes`` (``pics -R V``).
+
+    Only :func:`bartorch.tools.pics` takes it; see the module's introduction.
+
+    Parameters
+    ----------
+    axes : int or tuple of int
+        Axes to differentiate, as indices into the image's shape.
+    weight : float
+    joint_axes : int or tuple of int, optional
+    alpha : tuple of float
+        BART's ``alpha1:alpha0`` pair (``pics --alpha``).
+    gamma : tuple of float
+        BART's ``gamma1:gamma2`` pair (``pics --gamma``).
+    """
+
+    kind = "V"
+    _extends = True
+
+    def __init__(
+        self, axes, weight: float, joint_axes=(), *, alpha=(1.0, 3.0**0.5), gamma=(1.0, 1.0)
+    ):
+        super().__init__(axes, weight, joint_axes)
+        self.alpha = _pair(alpha, "alpha")
+        self.gamma = _pair(gamma, "gamma")
+
+    def _settings(self) -> dict[str, object]:
+        return {"alpha": self.alpha, "gamma": self.gamma}
