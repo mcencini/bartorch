@@ -298,8 +298,18 @@ def _on_device(device: torch.device):
 def _value_str(val: Any) -> str:
     if isinstance(val, bool):
         return "1" if val else "0"
+    if isinstance(val, torch.Tensor):
+        if val.numel() != 1:
+            raise ValueError(
+                f"a command-line value is one number, not an array of {val.numel()}"
+            )
+        val = val.reshape(()).item()
     if isinstance(val, (tuple, list)):
         return ":".join(_value_str(v) for v in val)
+    if isinstance(val, complex):
+        # BART reads `1.5`, `2i` or `1.5+2i`, and nothing that looks like
+        # Python's own `(1.5+2j)`.
+        return f"{val.real!r}{'+' if val.imag >= 0 else '-'}{abs(val.imag)!r}i"
     if isinstance(val, float):
         return repr(val)
     return str(val)
