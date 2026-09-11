@@ -23,7 +23,7 @@ C library with a small C ABI; Python reaches it through ctypes.
 | `csrc/finufft.c`, `nufft_finufft.c` | FINUFFT's and cuFINUFFT's entry points, and BART's NUFFT operator built out of a pair of their plans. |
 | `csrc/compat/` | The `cblas.h`, `lapacke.h` and `fftw3.h` BART includes. |
 | `third_party/` | pocketfft and BlocksRuntime, vendored with their licenses. |
-| `src/bartorch/` | The package: `_abi.py` (the ctypes signatures, generated from the header), `_lib.py` (finding and loading the library), `_marshal.py` (what an ABI argument looks like), `_backend.py` (which library serves BLAS and LAPACK), `_buffer.py` (a tensor over one of BART's buffers, host or device), `core/graph.py` (tools on tensors), `_operator.py` (what every operator shares), `linop/` and `nlop/` (a class per operator), `interop/` (handing them to other libraries), `finufft.py` (the substitution), `_catalogue.py` and `_options.py` (what BART declares, and what each option is called here), `tools/` (one function per BART command: hand-written where it needed a judgement, built from the catalogue otherwise), `ops.py` (a deprecation shim). |
+| `src/bartorch/` | The package: `_abi.py` (the ctypes signatures, generated from the header), `_lib.py` (finding and loading the library), `_marshal.py` (what an ABI argument looks like), `_backend.py` (which library serves BLAS and LAPACK), `_buffer.py` (a tensor over one of BART's buffers, host or device), `core/graph.py` (tools on tensors), `_operator.py` (what every operator shares), `linop/` and `nlop/` (a class per operator), `prox/` and `alg/` (proximal steps and iterations, in torch), `interop/` (handing them to other libraries), `finufft.py` (the substitution), `_catalogue.py` and `_options.py` (what BART declares, and what each option is called here), `tools/` (one function per BART command: hand-written where it needed a judgement, built from the catalogue otherwise), `ops.py` (a deprecation shim). |
 | `build_tools/gen_abi.py` | Generates `_abi.py` from `csrc/include/bartorch.h`. |
 | `build_tools/gen_catalogue.py` | Generates `_catalogue.py` from the BART sources: every command, its arguments, and every option with both spellings. |
 | `attic/prototype/` | An earlier pybind11 extension, kept for reference and not built. |
@@ -602,6 +602,25 @@ instead would put that import in the path of every operator and tie releases
 here to releases there. The wrapper's own work is `deepinv`'s batch axis,
 which a BART operator does not have, and `A_dagger` as BART's conjugate
 gradients.
+
+## prox and alg
+
+BART's solvers are already reachable twice over -- `tools.pics` and
+`tools.nlinv` for the assembled problem, `LinearOperator.lstsq` and
+`NonlinearOperator.irgnm` for an operator -- and they are faster than anything
+in `alg/`, because their loop never returns to Python between steps. Anything
+that is a reconstruction should use one of those.
+
+What they cannot be is part of a torch graph, and that is what `prox/` and
+`alg/` are for. Each algorithm is a step rather than a loop, so an unrolled
+network drives `update()` itself; with a learned proximal operator in place of
+one of `prox/`'s, the gradient of the whole unrolled loop comes back through
+the encoding, because a `LinearOperator` differentiates.
+
+So the fork is not between two implementations of one thing. It is: the C loop
+reconstructs, the torch loop trains. `tests/test_alg.py` checks the torch loop
+against BART's own answer to the same problem, which is the only way to know
+it is the same problem.
 
 ## Commands
 

@@ -13,7 +13,7 @@ inputs the way the command line does and some read them there --
 first.  What puts the work back on the card is BART's own device path:
 tensors on a device select it, and BART allocates there and runs its kernels
 there for as long as the tool does.  The operator layer in
-:mod:`bartorch.ops` is the one that takes device memory as it stands.
+:mod:`bartorch.linop` is the one that takes device memory as it stands.
 
 Axis convention: a C-order tensor of shape ``(a, b, c)`` and a BART array of
 dims ``[c, b, a]`` are the same bytes, so a shape is reversed at this boundary

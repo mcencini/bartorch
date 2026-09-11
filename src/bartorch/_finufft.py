@@ -7,7 +7,7 @@ made once per operator and reused, which is what makes this worth doing inside
 an iterative solve.
 
 The scaling and sign follow BART's own NUFFT, so an operator from here is
-interchangeable with :meth:`bartorch.ops.LinearOperator.nufft`: a type-2
+interchangeable with :class:`bartorch.linop.NUFFT`: a type-2
 transform with a negative exponent, divided by the square root of the number
 of voxels.
 """

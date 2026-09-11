@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError, version
 
-from bartorch import cuda, finufft, interop, linop, nlop
+from bartorch import alg, cuda, finufft, interop, linop, nlop, prox
 from bartorch.core.graph import (
     BartError,
     coil_batch,
@@ -62,11 +62,13 @@ def backend_sources() -> dict[str, str]:
 
 __all__ = [
     "BartError",
+    "alg",
     "cuda",
     "finufft",
     "interop",
     "linop",
     "nlop",
+    "prox",
     "__version__",
     "backend_sources",
     "bart_version",

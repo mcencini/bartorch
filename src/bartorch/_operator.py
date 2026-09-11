@@ -27,7 +27,7 @@ from bartorch.core.graph import BartError, _ensure_ready, _lock, _on_device
 
 __all__ = ["Built", "Operator", "Shape"]
 
-_log = logging.getLogger("bartorch.ops")
+_log = logging.getLogger("bartorch.operator")
 
 Shape = tuple[int, ...]
 
