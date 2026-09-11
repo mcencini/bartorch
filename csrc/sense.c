@@ -973,6 +973,37 @@ const struct linop_s* bartorch_sense_operator(const long max_dims[DIMS], const l
 	md_copy_dims(DIMS, ksp_dims2, ksp_dims);
 	ksp_dims2[COEFF_DIM] = max_dims[COEFF_DIM];
 
+	/* The same condition the tools' own entry points apply before they slice.
+	 * Without it a slab of no coils -- which is what `set_coil_batch(0)`
+	 * asks for, and what it means by leaving BART its own operator -- walks
+	 * the bank in steps of nothing. */
+	bool sliced = sliceable(max_dims, map_dims, ksp_dims2, 0UL)
+		&& ((NULL == weights) || (1 == wgh_dims[COIL_DIM]))
+		&& ((NULL == basis) || (1 == bas_dims[COIL_DIM]));
+
+	if (!sliced) {
+
+		if (0 != kernels)
+			error("bartorch: sensitivities held as kernels are what the coil loop is "
+				"for, and this arrangement cannot be sliced into one; inflate "
+				"them with bartorch.kernels_to_maps first\n");
+
+		chained();
+
+		if (NULL == traj) {
+
+			/* The flags `pics` gives it, so that what comes back is
+			 * the operator the tool builds and not one like it. */
+			unsigned long map_flags = FFT_FLAGS | SENS_FLAGS
+				| md_nontriv_dims(DIMS, sens_dims);
+
+			return bart_sense_init(0UL, max_dims, map_flags, sens);
+		}
+
+		return bart_sense_nc_init(max_dims, map_dims, sens, ksp_dims, traj_dims, traj, conf,
+				wgh_dims, weights, bas_dims, basis, NULL, 0UL);
+	}
+
 	struct sense_s* d = sense_slabs(max_dims, map_dims, ksp_dims2, 0UL);
 
 	if (0 != kernels) {
