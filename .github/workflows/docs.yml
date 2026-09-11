@@ -15,14 +15,14 @@ name: Docs (ReadTheDocs)
 
 on:
   push:
-    branches: [main]
+    branches: [main, bart-pytorch-extension]
     paths:
       - "docs/**"
       - "src/**"
       - "*.md"
       - "*.rst"
   pull_request:
-    branches: [main, develop]
+    branches: [main, develop, bart-pytorch-extension]
     paths:
       - "docs/**"
       - "src/**"

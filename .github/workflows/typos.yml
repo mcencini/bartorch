@@ -2,9 +2,9 @@ name: Typos
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, bart-pytorch-extension]
   pull_request:
-    branches: [main, develop]
+    branches: [main, develop, bart-pytorch-extension]
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
