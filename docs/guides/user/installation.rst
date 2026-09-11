@@ -49,10 +49,9 @@ alone does not guarantee every step executes on the GPU. CPU and CUDA are the
 current device paths; Apple MPS is not supported by the wrappers.
 
 Non-Cartesian reconstruction uses FINUFFT and, on CUDA, cuFINUFFT. FINUFFT is
-a dependency rather than an extra -- it computes every non-Cartesian transform,
-and BART's own gridder is not reachable from this package -- so ``pip install
-bartorch`` already brings it and there is nothing to ask for. cuFINUFFT serves
-a transform on a card and stays an extra::
+a dependency rather than an extra -- it computes every non-Cartesian transform
+that it can serve -- so ``pip install bartorch`` already brings it and there is
+nothing to ask for. cuFINUFFT serves a transform on a card and stays an extra::
 
    python -m pip install 'bartorch[cufinufft]'
 
@@ -66,5 +65,33 @@ The NUFFT substitution raises when a required backend is missing or a
 configuration cannot be served. See :doc:`../../api/generated/finufft` for
 configuration and diagnostics. The ``mkl`` extra is optional on supported
 platforms; it is not required for the Cartesian examples.
+
+Platforms
+---------
+
+Linux is the platform this is developed and measured on, and the one the CUDA
+path is written for.
+
+**macOS works, with one thing missing.** Both torch and the FINUFFT wheel carry
+an OpenMP runtime of their own, and LLVM's runtime will not run beside a second
+copy of itself -- it ends the process, with ``OMP: Error #15``. So on macOS the
+substitution checks for that pair before the first call into FINUFFT, declines
+when it finds it, and BART's own gridder computes the non-Cartesian transforms
+instead. It says so once, at warning level. Everything else is unaffected;
+what is lost is FINUFFT's speed, not an answer. ``bartorch.finufft.enabled()``
+reports whether it was taken up, and ``bartorch.finufft.decline_reason()`` says
+why it was not.
+
+The same collision is `open upstream in mri-nufft
+<https://github.com/mind-inria/mri-nufft/issues/333>`_ with no fix, so this is
+the dependency pair rather than anything here. ``KMP_DUPLICATE_LIB_OK=TRUE``
+makes it run, and is documented by the people who wrote the runtime as unsafe
+-- a crash later, or a wrong answer quietly. That is the wrong trade for a
+reconstruction, so this package does not set it and does not suggest it. A
+conda environment where one OpenMP runtime serves both packages is the way to
+get FINUFFT on macOS; it is untested here.
+
+**Windows is not a target.** BART does not build on it, so neither does this.
+WSL2 is the path, and is a Linux install like any other.
 
 Next: :doc:`conventions` and :doc:`../../auto_examples/index`.

@@ -98,8 +98,8 @@ On a device none of this applies: BART calls cuBLAS directly, and it has no
 GPU LAPACK, so eigendecompositions and SVDs come back to the host table.
 
 The FFT is planned through the FFTW guru interface and executed by MKL's DFTI,
-filled from the same table, which on Linux and Windows is torch's own MKL and
-needs nothing installed. MKL's FFTW interface is not used: it refuses more than
+filled from the same table, which on Linux is torch's own MKL and needs nothing
+installed. MKL's FFTW interface is not used: it refuses more than
 one loop dimension and BART passes one per dimension it is not transforming, so
 DFTI takes the transformed axes and the longest loop axis and `src/csrc/substitute/fft.cpp`
 walks whatever is left. It is given one thread: MKL is fast enough serially to
@@ -133,11 +133,23 @@ FINUFFT's options struct, read from the same package so a release that moves a
 field cannot silently corrupt it.
 
 The two are not optional in the same way. FINUFFT *is* the NUFFT here -- every
-non-Cartesian transform goes through the substitution under `nufft_create`,
-and BART's own gridder is not reachable from the package's surface -- so a
-bartorch without it cannot do non-Cartesian work at all, which is a
-dependency and not a choice. cuFINUFFT serves a transform on a card, and most
-machines have no card, so it stays an extra.
+non-Cartesian transform goes through the substitution under `nufft_create` --
+so a bartorch without it does non-Cartesian work slowly rather than well,
+which is a dependency and not a choice. cuFINUFFT serves a transform on a
+card, and most machines have no card, so it stays an extra.
+
+**Except on macOS, where it cannot be taken up.** torch carries an OpenMP
+runtime and the FINUFFT wheel carries its own, and LLVM's runtime ends the
+process rather than run beside a second copy of itself (`OMP: Error #15`).
+`_finufft.openmp_runtimes()` reads the loaded images for that pair before the
+first call into FINUFFT; more than one and the substitution declines, BART's
+own gridder answers, and `install_once` says so at warning level.  The same
+collision is open upstream in mri-nufft with no fix, so it is the dependency
+pair rather than anything here.  `KMP_DUPLICATE_LIB_OK=TRUE` makes it run and
+is documented by the runtime's own authors as unsafe -- a crash later or a
+wrong answer quietly -- which is the wrong trade for a reconstruction, so it
+is neither set nor suggested.  Linux is not asked: its loader resolves the
+duplicate instead of dying on it.
 
 The requirement carries no marker, and that is a decision about which wheels
 exist rather than an oversight. FINUFFT ships none for Linux on aarch64 -- it
@@ -559,11 +571,12 @@ configure time. BART's own `NOEXEC_STACK` workaround does not help here: it
 parses a trampoline layout GCC emits only for non-PIC executables, not for a
 shared library. Both compilers are built and tested in CI.
 
-MSVC cannot compile BART. It does not have to: nothing here is a Python
-extension module, so a Windows build is a plain DLL that ctypes loads
-whatever compiler torch was built with. That DLL comes from clang or
-mingw-w64 GCC 14, and BART already carries the `src/win/` shims (`mmap`,
-`fmemopen`) such a build needs.
+MSVC cannot compile BART. It would not have to: nothing here is a Python
+extension module, so a Windows build would be a plain DLL that ctypes loads
+whatever compiler torch was built with, from clang or mingw-w64 GCC 14, and
+BART carries `src/win/` shims (`mmap`, `fmemopen`) toward it. None of that is
+being pursued -- upstream does not build on Windows, and WSL2 is the answer --
+but it is what the attempt would start from.
 
 The compiler's own runtime is linked statically on Linux, because otherwise
 the toolchain's floor becomes the target system's: a GCC 14 build asks
@@ -795,8 +808,13 @@ Returns, Raises.
 
 ## What is not done
 
-Windows, tools with optional extra outputs, and the wider solver surface
-(ADMM, FISTA, proximal operators) through the operator layer.
+Tools with optional extra outputs, and the wider solver surface (ADMM, FISTA,
+proximal operators) through the operator layer.
+
+Windows is not on this list because it is not a target: BART does not build
+there, and WSL2 is a Linux install like any other.  The note below about what a
+Windows DLL would take stays as the record of what it would cost, not as work
+waiting to be done.
 
 A tool that takes device memory as it stands. BART guards the host reads that
 would break -- `estimate_im_dims` copies to the host when it is handed one --

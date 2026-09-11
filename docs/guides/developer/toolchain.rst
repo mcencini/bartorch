@@ -6,8 +6,8 @@ Native development needs Git with submodules, CMake 3.18+, Ninja or Make, and
 Clang or GCC 14+. The CMake configuration is authoritative: Clang uses Blocks,
 while GCC 14+ uses heap trampolines. Linux OpenMP builds need the matching
 compiler's OpenMP runtime. CUDA builds also need a compatible toolkit with nvcc;
-a PyTorch CUDA wheel alone is not a compiler. Windows support remains a
-development item.
+a PyTorch CUDA wheel alone is not a compiler. Windows is not a target -- BART
+does not build on it -- and WSL2 is a Linux toolchain like any other.
 
 Fork and clone
 --------------
