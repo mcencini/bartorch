@@ -6,26 +6,42 @@ C library with a small C ABI; Python reaches it through ctypes.
 
 ## The shape of the repository
 
+Four directories at the top, and a file belongs to whichever it is: `src/` is
+everything written here, `external/` everything that is not, `tests/` and
+`docs/` the rest.  Nothing of ours sits outside `src/`, and nothing of anyone
+else's sits inside it.
+
 | Path | What is in it |
 | --- | --- |
-| `bart/` | BART, as a git submodule, compiled unchanged. |
-| `csrc/include/bartorch.h` | The C ABI. The only header a host sees. Plain C: no complex types, no variable-length arrays. |
-| `csrc/api.c` | Command execution under BART's error catcher, log capture, threads. |
-| `csrc/memcfl.c` | The in-memory array registry, replacing `bart/src/misc/memcfl.c`. Arrays BART creates come from the host's allocator callback. |
-| `csrc/sense.c` | The SENSE operators, walking their coils a slab at a time, over maps or k-space kernels. |
-| `csrc/fft.cpp` | The FFTW guru interface BART plans with, executed by MKL where the process has it. |
-| `csrc/backend.[ch]`, `ref_blas.c`, `cblas_shim.c`, `lapacke_shim.c` | CBLAS and LAPACKE as BART calls them, forwarded to a table of Fortran-ABI routines with reference BLAS as the fallback. |
-| `csrc/ops.c` | Operators: host callbacks as BART linops and nlops, BART's own operators as handles, least squares and Gauss-Newton. |
-| `csrc/iter.c` | The solve `pics` runs -- `opt_reg_configure`, `italgo_config`, `lsqr2` -- over an operator the host assembled. |
-| `csrc/cuda.c` | Device selection, stream ordering against the caller's stream, and BART's memory cache. Present in both builds; the CPU build reports that it has no CUDA. |
-| `csrc/host_reads.c` | The entry points BART reads element by element, answered over a host copy when a tool is on a card. |
-| `csrc/psf.c` | The three `compute_psf*` entry points, so that the adjoint transform a point spread function is comes from the substitution. |
-| `csrc/nufft_finufft.c` | ... and the normal, which stores one of those in BART's operator through `noncart/nufft_priv.h` rather than letting it grid one. |
-| `csrc/finufft.c`, `nufft_finufft.c` | FINUFFT's and cuFINUFFT's entry points, and BART's NUFFT operator built out of a pair of their plans. |
-| `csrc/compat/` | The `cblas.h`, `lapacke.h` and `fftw3.h` BART includes. |
-| `third_party/` | pocketfft and BlocksRuntime, vendored with their licenses. |
-| `src/bartorch/` | The package: `_abi.py` (the ctypes signatures, generated from the header), `_lib.py` (finding and loading the library), `_marshal.py` (what an ABI argument looks like), `_backend.py` (which library serves BLAS and LAPACK), `_buffer.py` (a tensor over one of BART's buffers, host or device), `core/graph.py` (tools on tensors), `_operator.py` (what every operator shares), `linop/` and `nlop/` (a class per operator), `prox/` (BART's regularization terms, as objects), `alg/` (BART's own solve, driven from here), `interop/` (handing them to other libraries), `finufft.py` (the substitution), `_catalogue.py` and `_options.py` (what BART declares, and what each option is called here), `tools/` (one function per BART command: hand-written where it needed a judgement, built from the catalogue otherwise), `ops.py` (a deprecation shim). |
-| `build_tools/gen_abi.py` | Generates `_abi.py` from `csrc/include/bartorch.h`. |
+| `external/bart/` | BART, as a git submodule, compiled unchanged. |
+| `external/pocketfft/`, `external/blocksruntime/` | Vendored with their licenses. |
+| `src/bartorch/` | The Python package. |
+| `src/csrc/` | The compiled library. |
+| `tests/`, `docs/`, `build_tools/` | The rest. |
+
+`src/csrc/` is three things, and a file belongs to whichever it is: `abi/` is
+the boundary -- what the host calls, and what BART's environment asks of the
+host in return; `ops/` is what the host builds and drives; `substitute/` is
+what runs in BART's place, both its own computations and the libraries it
+would otherwise have been linked against.
+
+| Path | What is in it |
+| --- | --- |
+| `src/csrc/include/bartorch.h` | The C ABI. The only header a host sees. Plain C: no complex types, no variable-length arrays. |
+| `src/csrc/compat/` | The `cblas.h`, `lapacke.h` and `fftw3.h` BART includes. |
+| `src/csrc/abi/api.c` | Command execution under BART's error catcher, log capture, threads. |
+| `src/csrc/abi/memcfl.c` | The in-memory array registry, replacing `external/bart/src/misc/memcfl.c`. Arrays BART creates come from the host's allocator callback. |
+| `src/csrc/abi/cuda.c` | Device selection, stream ordering against the caller's stream, and BART's memory cache. Present in both builds; the CPU build reports that it has no CUDA. |
+| `src/csrc/abi/host_reads.c` | The entry points BART reads element by element, answered over a host copy when a tool is on a card. |
+| `src/csrc/ops/ops.c` | Operators: host callbacks as BART linops and nlops, BART's own operators as handles, least squares and Gauss-Newton. |
+| `src/csrc/ops/sense.c` | The SENSE operators, walking their coils a slab at a time, over maps or k-space kernels, with the CUDA kernels beside it that the streamed normal is made of. |
+| `src/csrc/ops/iter.c` | The solve `pics` runs -- `italgo_config`, `lsqr2` -- over an operator and terms the host assembled. |
+| `src/csrc/substitute/fft.cpp` | The FFTW guru interface BART plans with, executed by MKL where the process has it. |
+| `src/csrc/substitute/backend.[ch]`, `ref_blas.c`, `cblas_shim.c`, `lapacke_shim.c` | CBLAS and LAPACKE as BART calls them, forwarded to a table of Fortran-ABI routines with reference BLAS as the fallback. |
+| `src/csrc/substitute/finufft.c`, `nufft_finufft.c` | FINUFFT's and cuFINUFFT's entry points, and BART's NUFFT operator built out of a pair of their plans -- and the normal, which stores one of those in BART's operator through `noncart/nufft_priv.h` rather than letting it grid one. |
+| `src/csrc/substitute/psf.c` | The three `compute_psf*` entry points, so that the adjoint transform a point spread function is comes from the substitution. |
+| `src/bartorch/` | The package: `_abi.py` (the ctypes signatures, generated from the header), `_lib.py` (finding and loading the library), `_marshal.py` (what an ABI argument looks like), `_backend.py` (which library serves BLAS and LAPACK), `_buffer.py` (a tensor over one of BART's buffers, host or device), `core/graph.py` (tools on tensors), `_operator.py` (what every operator shares), `linop/` and `nlop/` (a class per operator), `prox/` (BART's regularization terms, as objects), `alg/` (BART's own solve, driven from here), `interop/` (handing them to other libraries), `finufft.py` (the substitution), `_catalogue.py` and `_options.py` (what BART declares, and what each option is called here), `tools/` (one function per BART command: hand-written where it needed a judgement, built from the catalogue otherwise). |
+| `build_tools/gen_abi.py` | Generates `_abi.py` from `src/csrc/include/bartorch.h`. |
 | `build_tools/gen_catalogue.py` | Generates `_catalogue.py` from the BART sources: every command, its arguments, and every option with both spellings. |
 | `attic/prototype/` | An earlier pybind11 extension, kept for reference and not built. |
 
@@ -77,7 +93,7 @@ The FFT is planned through the FFTW guru interface and executed by MKL's DFTI,
 filled from the same table, which on Linux and Windows is torch's own MKL and
 needs nothing installed. MKL's FFTW interface is not used: it refuses more than
 one loop dimension and BART passes one per dimension it is not transforming, so
-DFTI takes the transformed axes and the longest loop axis and `csrc/fft.cpp`
+DFTI takes the transformed axes and the longest loop axis and `src/csrc/substitute/fft.cpp`
 walks whatever is left. It is given one thread: MKL is fast enough serially to
 beat a threaded pocketfft, and a thread team of its own is a second OpenMP
 runtime spinning against BART's, which inside a tool costs several times more
@@ -103,7 +119,7 @@ to a tool as well changes nothing.
 
 **FINUFFT is a dependency; cuFINUFFT is an extra.** The `finufft` and
 `cufinufft` wheels each carry a compiled shared library with a plain C plan
-API, so nothing is built or vendored either way. `csrc/finufft.c` holds the
+API, so nothing is built or vendored either way. `src/csrc/substitute/finufft.c` holds the
 entry points and `_finufft.py` hands them over along with the byte offset of
 FINUFFT's options struct, read from the same package so a release that moves a
 field cannot silently corrupt it.
@@ -138,7 +154,7 @@ it is a broken install rather than a choice.
 `nufft.c` is compiled with `nufft_create`, `nufft_create2`, `nufft_get_psf*`
 and `nufft_update_*` renamed, and `precond.c` with `nufft_precond_create`
 renamed, so BART's own operator survives as `bart_nufft_*` and
-`csrc/nufft_finufft.c` answers to the original names. What it returns is a
+`src/csrc/substitute/nufft_finufft.c` answers to the original names. What it returns is a
 `linop_create` whose forward is FINUFFT's type 2 with a negative exponent and
 whose adjoint is type 1 with a positive one, both scaled by one over the square
 root of the voxel count. Nothing about gridding kernels or deapodisation has to
@@ -200,7 +216,7 @@ than one plan over all of them.
 one by taking the adjoint NUFFT of ones over a doubled trajectory, and reaches
 that transform through its own `nufft_create2`, which the rename sends to
 BART's gridder along with everything else in that file. So `compute_psf`,
-`compute_psf2` and `compute_psf2_decomposed` are renamed too and `csrc/psf.c`
+`compute_psf2` and `compute_psf2_decomposed` are renamed too and `src/csrc/substitute/psf.c`
 answers to them: the same squared weights and basis, the same doubled grid,
 shifts and decomposition, with the transform in the middle being whichever
 `nufft_create2` answers. `nlinv`, `moba`, `rtnlinv`, `noir/model2` and the
@@ -223,7 +239,7 @@ reach it, so `toeplitz_for` turns that off: `conf.nopsf` is the switch
 `pics --psf_import` uses to bring a function in from outside, and with it set
 BART grids nothing. What is left is to make the function -- `compute_psf2`,
 whose transform is the substitution's -- and to store it the way the operator
-wants, which `csrc/nufft_finufft.c` does over the dimensions the operator
+wants, which `src/csrc/substitute/nufft_finufft.c` does over the dimensions the operator
 worked out for itself, through `noncart/nufft_priv.h`.
 
 Everything BART does with the function afterwards is still BART's, and every
@@ -437,7 +453,7 @@ and `pics` over the same data, agreeing with BART's own reconstruction to
 | BART | 1.66 s | 6.44 s |
 | FINUFFT | 1.06 s | 2.33 s |
 
-**cuFINUFFT is the same table.** `csrc/finufft.c` holds two of them, filled
+**cuFINUFFT is the same table.** `src/csrc/substitute/finufft.c` holds two of them, filled
 from the `finufft` and `cufinufft` wheels; without the `cufinufft` wheel a
 transform BART would run on a card stays with BART's own operator rather than
 quietly running on the host.
@@ -500,7 +516,7 @@ trailing axes are spatial and how many are coils.
 things stand between a BART tool and the memory it was handed. The few entry
 points that read an array element by element rather than through `md_` --
 `estimate_im_dims` sizing an image from a trajectory, `estimate_scaling_norm`
-taking a median of k-space -- are answered in `csrc/host_reads.c` over a host
+taking a median of k-space -- are answered in `src/csrc/abi/host_reads.c` over a host
 copy of that one array, which is what BART already does for its own virtual
 pointers. What cannot be reached that way is a tool that allocates a temporary
 of its own on the host and mixes it with its input: `pocsense` takes its
@@ -559,7 +575,7 @@ That includes assertions, which is how BART checks the arguments a caller is
 most likely to get wrong. BART routes `assert` through `error()` only under
 `USE_DWARF`, which also wants libdw and libunwind for backtraces; without it
 glibc's `assert` calls `abort()` and a wrong shape takes the interpreter down.
-`csrc/api.c` answers `__assert_fail` instead, which needs neither the define
+`src/csrc/abi/api.c` answers `__assert_fail` instead, which needs neither the define
 nor the libraries, and the symbol is hidden so it binds inside this library
 alone.
 
@@ -636,7 +652,7 @@ copy-on-write and some tools write into them, so `dispatch` clones unless
 
  `pics` turns its arguments into three things
 and hands them to `lsqr2`: the proximal operators its `-R` strings name, the
-algorithm its solver flag chooses, and the encoding. `csrc/iter.c` does the
+algorithm its solver flag chooses, and the encoding. `src/csrc/ops/iter.c` does the
 same with the same functions, in the same order, over an operator assembled
 here. The loop runs where `pics`'s does, and an operator BART built is handed
 over as it stands rather than wrapped, so there is no crossing per step --
@@ -669,7 +685,7 @@ which fails with a message that does not say which:
   newer, for `-ftrampoline-impl=heap`, or clang -- `cmake -DCMAKE_C_COMPILER=clang
   -DCMAKE_CXX_COMPILER=clang++`. CMake says so and stops; GCC 13 is not enough.
 * **OpenMP for whichever of those it is.** `libomp-dev` beside clang. Without
-  it the build still works and the overlapped walks in `csrc/sense.c` run in
+  it the build still works and the overlapped walks in `src/csrc/ops/sense.c` run in
   sequence.
 * **FINUFFT**, which `pip install -e .` brings on every platform it ships a
   wheel for. Working from a source checkout on `PYTHONPATH` instead, install
@@ -757,7 +773,7 @@ Windows, tools with optional extra outputs, and the wider solver surface
 A tool that takes device memory as it stands. BART guards the host reads that
 would break -- `estimate_im_dims` copies to the host when it is handed one --
 for its own virtual pointers, not for a raw device pointer, so the route in is
-`csrc/memcfl.c` handing BART a `vptr_wrap_cfl` rather than the pointer itself,
+`src/csrc/abi/memcfl.c` handing BART a `vptr_wrap_cfl` rather than the pointer itself,
 and then finding out which of BART's guards are complete.
 
 Two of mrtoeplitz's ideas have no route in from here: a transfer that stays on
@@ -766,7 +782,7 @@ what crosses the bus. Both are decisions about how the point spread function
 is stored, which lives inside `nufft.c`, so neither is reachable by
 substituting an entry point -- they would need a BART edit or a normal
 operator written here. The seam is one function: `toeplitz_for` in
-`csrc/nufft_finufft.c` decides what the operator's normal is, and an
+`src/csrc/substitute/nufft_finufft.c` decides what the operator's normal is, and an
 mrtoeplitz kernel behind a host callback would go there. What BART does have
 is `compress_psf`, `decomposed_psf` and `lowmem`, and its own overlap:
 `bartorch.cuda.set_streams` sets `cuda_num_streams`, which is what puts BART's

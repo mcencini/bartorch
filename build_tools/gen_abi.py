@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate ``src/bartorch/_abi.py`` from ``csrc/include/bartorch.h``.
+"""Generate ``src/bartorch/_abi.py`` from ``src/csrc/include/bartorch.h``.
 
 The header is the only interface the host sees, and it is deliberately plain
 C: no complex types, no variable-length arrays, no GNU extensions.  That is
@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-HEADER = ROOT / "csrc" / "include" / "bartorch.h"
+HEADER = ROOT / "src" / "csrc" / "include" / "bartorch.h"
 OUTPUT = ROOT / "src" / "bartorch" / "_abi.py"
 
 #: The line length the project lints at, so the generated file passes too.
@@ -194,7 +194,7 @@ def render(spec: dict) -> str:
     lines = [
         '"""The C ABI, as ctypes sees it.',
         "",
-        "Generated from ``csrc/include/bartorch.h`` by ``build_tools/gen_abi.py``.",
+        "Generated from ``src/csrc/include/bartorch.h`` by ``build_tools/gen_abi.py``.",
         "Do not edit: run the generator instead.  ``tests/test_abi.py`` fails when",
         "this file is not what the header produces.",
         '"""',

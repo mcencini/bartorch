@@ -24,7 +24,7 @@ sys.path.insert(0, str(ROOT / "build_tools"))
 
 import gen_catalogue  # noqa: E402
 
-BART_SRC = ROOT / "bart" / "src"
+BART_SRC = ROOT / "external" / "bart" / "src"
 needs_bart = pytest.mark.skipif(
     not (BART_SRC / "bart.c").exists(),
     reason="the BART submodule is not checked out",
@@ -192,5 +192,6 @@ def test_a_flag_that_takes_no_value_says_so():
 def test_the_version_it_was_read_from_is_recorded():
     """A submodule bump that is not regenerated should be visible."""
     assert catalogue.BART_VERSION
-    if (ROOT / "bart" / "version.txt").exists():
-        assert catalogue.BART_VERSION == (ROOT / "bart" / "version.txt").read_text().strip()
+    stated = ROOT / "external" / "bart" / "version.txt"
+    if stated.exists():
+        assert catalogue.BART_VERSION == stated.read_text().strip()

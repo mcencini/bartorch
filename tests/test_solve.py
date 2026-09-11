@@ -262,7 +262,8 @@ def test_the_terms_are_the_ones_barts_parser_knows():
     import re
     from pathlib import Path
 
-    source = Path(__file__).resolve().parent.parent / "bart" / "src" / "grecon" / "optreg.c"
+    root = Path(__file__).resolve().parent.parent
+    source = root / "external" / "bart" / "src" / "grecon" / "optreg.c"
     if not source.exists():
         pytest.skip("the BART submodule is not checked out")
     bart_knows = set(re.findall(r'strcmp\(rt, "([A-Za-z0-9]+)"\)', source.read_text()))

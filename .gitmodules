@@ -1,5 +1,5 @@
 [submodule "bart"]
-	path = bart
+	path = external/bart
 	# Canonical upstream: https://codeberg.org/mrirecon/bart.git
 	# The GitHub mirror (https://github.com/mrirecon/bart) is used here
 	# because Codeberg may not be reachable in all CI/CD environments.

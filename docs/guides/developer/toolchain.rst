@@ -45,12 +45,20 @@ extras for tests that require them.
 Repository architecture
 -----------------------
 
-* ``bart/``: pinned upstream submodule, compiled without local source edits.
-* ``csrc/include/bartorch.h``: plain C ABI; ``csrc/`` implements array
-  registration, backend integration, operators and execution.
+Everything written here lives under ``src/`` and everything that is not lives
+under ``external/``.
+
+* ``external/bart/``: pinned upstream submodule, compiled without local source
+  edits.  ``external/pocketfft/`` and ``external/blocksruntime/`` are vendored
+  with their licenses.
+* ``src/csrc/include/bartorch.h``: the plain C ABI, and the only header a host
+  sees.  The implementation beside it is in three parts: ``abi/`` is the
+  boundary, ``ops/`` the operators and the solve the host drives, and
+  ``substitute/`` what runs in BART's place -- its transforms, and the
+  libraries it would otherwise have been linked against.
 * ``src/bartorch/``: Python tools, dispatch, operators and utilities.
-* ``build_tools/gen_tools.py``: BART metadata extraction into committed wrappers
-  and NumPy-style docstrings.
+* ``build_tools/``: BART metadata extraction into committed wrappers, and the
+  ctypes signatures generated from the ABI header.
 * ``tests/``: numerical and interoperability checks.
 * ``docs/``: guides, gallery scripts, build configuration and API extraction.
 

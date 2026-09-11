@@ -19,7 +19,7 @@
 #include "misc/misc.h"
 
 #include "include/bartorch.h"
-#include "backend.h"
+#include "substitute/backend.h"
 
 enum owner { OWNER_HOST, OWNER_HOST_ALLOC, OWNER_XMALLOC };
 

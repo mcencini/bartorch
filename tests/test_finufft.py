@@ -848,7 +848,7 @@ def test_a_point_spread_function_is_the_substituted_transforms(in_tools):
 
     BART reaches it through `nufft.c`'s own `nufft_create2`, which the rename
     sends to its gridder along with everything else in that file, so
-    `csrc/psf.c` answers to the three entry points instead.  What that buys is
+    `src/csrc/substitute/psf.c` answers to the three entry points instead.  What that buys is
     in the numbers: on the un-doubled grid BART's own PSF is two per cent from
     the sum it is supposed to be, and this one is at its tolerance.
     """

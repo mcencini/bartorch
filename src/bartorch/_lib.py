@@ -1,6 +1,6 @@
 """The compiled library, loaded through ctypes.
 
-``libbartorch`` is plain C reached through the ABI in ``csrc/include/bartorch.h``;
+``libbartorch`` is plain C reached through the ABI in ``src/csrc/include/bartorch.h``;
 nothing here depends on the Python or torch version.  ``BARTORCH_LIBRARY``
 overrides the search when the library lives outside the package directory.
 

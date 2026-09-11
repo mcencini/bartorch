@@ -1,6 +1,6 @@
 """The seam between the header and ctypes.
 
-``src/bartorch/_abi.py`` is generated from ``csrc/include/bartorch.h``.  A
+``src/bartorch/_abi.py`` is generated from ``src/csrc/include/bartorch.h``.  A
 signature written twice is a signature that drifts, and a wrong one is a
 silently truncated pointer rather than an error, so what is checked here is
 that the generated file is still what the header produces and that every entry
@@ -36,7 +36,7 @@ CTYPES_MODULES = {
 def test_the_generated_abi_is_what_the_header_produces():
     checked_in = gen_abi.OUTPUT.read_text()
     assert checked_in == gen_abi.generate(), (
-        "src/bartorch/_abi.py is out of date with csrc/include/bartorch.h; "
+        "src/bartorch/_abi.py is out of date with src/csrc/include/bartorch.h; "
         "run `python build_tools/gen_abi.py`"
     )
 

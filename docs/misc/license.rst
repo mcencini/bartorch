@@ -12,14 +12,14 @@ Bundled components
 ------------------
 
 The pinned BART submodule carries a BSD-style, three-clause license in
-``bart/LICENSE`` and additional file-level notices. The local vendored notices
-are ``third_party/pocketfft/LICENSE.md`` and
-``third_party/blocksruntime/LICENSE.TXT``. Consult these files for the exact
+``external/bart/LICENSE`` and additional file-level notices. The local vendored notices
+are ``external/pocketfft/LICENSE.md`` and
+``external/blocksruntime/LICENSE.TXT``. Consult these files for the exact
 terms applicable to the checkout and preserve them when redistributing bundled
 code. Optional FINUFFT, cuFINUFFT, MKL, PyTorch and DeepInverse distributions
 carry their own notices.
 
-.. literalinclude:: ../../bart/LICENSE
+.. literalinclude:: ../../external/bart/LICENSE
    :language: text
 
 Workshop datasets, pretrained models and paper figures have independent terms.

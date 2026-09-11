@@ -25,7 +25,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-BART_SRC = ROOT / "bart" / "src"
+BART_SRC = ROOT / "external" / "bart" / "src"
 OUTPUT = ROOT / "src" / "bartorch" / "_catalogue.py"
 
 LINE_LENGTH = 100
@@ -37,7 +37,7 @@ class Unknown(Exception):
 
 # --- what each macro's arguments mean --------------------------------------
 #
-# From bart/src/misc/opts.h.  The index of each field in the macro's argument
+# From external/bart/src/misc/opts.h.  The index of each field in the macro's argument
 # list; a field the macro does not have is absent.  `c` is the short option
 # character, `s` the long name, `argname` the metavar BART prints in its help,
 # and `value` the constant a SELECT writes.

@@ -7,14 +7,14 @@ project(bartorch LANGUAGES C CXX)
 # One shared library, libbartorch, holding every BART translation unit from
 # the submodule plus the handful of units that give BART its FFT, BLAS,
 # LAPACK and in-memory I/O.  Nothing links against PyTorch or Python: the
-# host reaches the library through the C ABI in csrc/include/bartorch.h.
+# host reaches the library through the C ABI in src/csrc/include/bartorch.h.
 #
 # BART is written against GNU C.  The nested functions it uses become Blocks
 # under clang, with the vendored runtime on platforms that lack one, which
 # keeps the library loadable without an executable stack.
 # ---------------------------------------------------------------------------
 
-set(BART_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/bart" CACHE PATH "BART source tree")
+set(BART_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/external/bart" CACHE PATH "BART source tree")
 set(BART_SRC "${BART_ROOT}/src")
 
 if(NOT EXISTS "${BART_SRC}/bart.c")
@@ -39,7 +39,7 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
 endif()
 
-# BART checks its arguments with assert and csrc/api.c puts those on its error
+# BART checks its arguments with assert and src/csrc/abi/api.c puts those on its error
 # path, so NDEBUG must not remove them.
 set(CMAKE_C_FLAGS_RELEASE "-O2")
 set(CMAKE_CXX_FLAGS_RELEASE "-O2")
@@ -57,9 +57,9 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang")
     set(BARTORCH_NESTED "clang-blocks")
     if(NOT APPLE)
         add_library(blocksruntime STATIC
-            third_party/blocksruntime/runtime.c
-            third_party/blocksruntime/data.c)
-        target_include_directories(blocksruntime PUBLIC third_party/blocksruntime)
+            external/blocksruntime/runtime.c
+            external/blocksruntime/data.c)
+        target_include_directories(blocksruntime PUBLIC external/blocksruntime)
         list(APPEND BART_EXTRA_LIBS blocksruntime)
     endif()
 elseif(CMAKE_C_COMPILER_ID STREQUAL "GNU")
@@ -177,7 +177,7 @@ message(STATUS "BART ${BART_VERSION}: ${_ntools} tools, nested functions via ${B
 # ---------------------------------------------------------------------------
 # Sources: every module directory and every tool, minus what needs a
 # library this build does not provide, and minus misc/memcfl.c which
-# csrc/memcfl.c replaces.
+# src/csrc/abi/memcfl.c replaces.
 # ---------------------------------------------------------------------------
 set(BART_SOURCES "")
 file(GLOB _module_dirs LIST_DIRECTORIES true "${BART_SRC}/*")
@@ -205,31 +205,38 @@ list(REMOVE_ITEM BART_SOURCES
     "${BART_SRC}/ismrmrd.c"
     "${BART_SRC}/misc/memcfl.c")
 
+# Three things, and a file belongs to whichever it is.  `abi/` is the boundary:
+# what the host calls, and what BART's environment asks of the host in return.
+# `ops/` is what the host builds and drives -- the operators and the solve.
+# `substitute/` is what runs in BART's place: its transforms, and the libraries
+# it would otherwise have been linked against.
 set(BARTORCH_SOURCES
-    csrc/api.c
-    csrc/backend.c
-    csrc/cblas_shim.c
-    csrc/lapacke_shim.c
-    csrc/cuda.c
-    csrc/finufft.c
-    csrc/host_reads.c
-    csrc/nufft_finufft.c
-    csrc/psf.c
-    csrc/sense.c
-    csrc/memcfl.c
-    csrc/ops.c
-    csrc/iter.c
-    csrc/ref_blas.c
-    csrc/fft.cpp)
+    src/csrc/abi/api.c
+    src/csrc/abi/cuda.c
+    src/csrc/abi/host_reads.c
+    src/csrc/abi/memcfl.c
+
+    src/csrc/ops/ops.c
+    src/csrc/ops/sense.c
+    src/csrc/ops/iter.c
+
+    src/csrc/substitute/backend.c
+    src/csrc/substitute/ref_blas.c
+    src/csrc/substitute/cblas_shim.c
+    src/csrc/substitute/lapacke_shim.c
+    src/csrc/substitute/fft.cpp
+    src/csrc/substitute/finufft.c
+    src/csrc/substitute/nufft_finufft.c
+    src/csrc/substitute/psf.c)
 
 if(BARTORCH_CUDA)
-    list(APPEND BARTORCH_SOURCES csrc/kernels.cu csrc/fft_callbacks.cu)
+    list(APPEND BARTORCH_SOURCES src/csrc/ops/kernels.cu src/csrc/ops/fft_callbacks.cu)
 
     # The passes around a volume's transform, which cuFFT links into the
-    # transform when a plan is made (csrc/fft_callbacks.cu).  It takes them as
-    # LTO-IR at run time, so csrc/fft_callbacks_lto.cu is compiled to that
+    # transform when a plan is made (src/csrc/ops/fft_callbacks.cu).  It takes them as
+    # LTO-IR at run time, so src/csrc/ops/fft_callbacks_lto.cu is compiled to that
     # alone and embedded in the library as an array.
-    set(_lto_src "${CMAKE_CURRENT_SOURCE_DIR}/csrc/fft_callbacks_lto.cu")
+    set(_lto_src "${CMAKE_CURRENT_SOURCE_DIR}/src/csrc/ops/fft_callbacks_lto.cu")
     set(_lto_bin "${CMAKE_CURRENT_BINARY_DIR}/fft_callbacks_lto.fatbin")
     set(_lto_hdr "${CMAKE_CURRENT_BINARY_DIR}/fft_callbacks_lto.h")
     set(_lto_arch "")
@@ -243,17 +250,17 @@ if(BARTORCH_CUDA)
     add_custom_command(
         OUTPUT "${_lto_hdr}"
         COMMAND "${CMAKE_CUDA_COMPILER}" ${_lto_ccbin} -std=c++17 -dc -fatbin ${_lto_arch}
-                -I "${CMAKE_CURRENT_SOURCE_DIR}/csrc" -o "${_lto_bin}" "${_lto_src}"
+                -I "${CMAKE_CURRENT_SOURCE_DIR}/src/csrc" -o "${_lto_bin}" "${_lto_src}"
         COMMAND "${CMAKE_COMMAND}" "-DIN=${_lto_bin}" "-DOUT=${_lto_hdr}"
                 -DNAME=bartorch_fft_callbacks_lto
                 -P "${CMAKE_CURRENT_SOURCE_DIR}/build_tools/embed.cmake"
-        DEPENDS "${_lto_src}" "${CMAKE_CURRENT_SOURCE_DIR}/csrc/coset.cuh"
+        DEPENDS "${_lto_src}" "${CMAKE_CURRENT_SOURCE_DIR}/src/csrc/ops/coset.cuh"
                 "${CMAKE_CURRENT_SOURCE_DIR}/build_tools/embed.cmake"
         VERBATIM)
     list(APPEND BARTORCH_SOURCES "${_lto_hdr}")
 endif()
 
-# The paired Toeplitz kernels (csrc/paired.cu) are cuFFTDx, which is headers
+# The paired Toeplitz kernels (src/csrc/ops/paired.cu) are cuFFTDx, which is headers
 # only and comes with MathDx: BARTORCH_MATHDX_DIR names its nvidia/mathdx
 # directory -- `pip install nvidia-mathdx` puts one in site-packages -- and
 # the kernels are compiled for the cubic grid sizes in BARTORCH_PAIRED_SIZES,
@@ -283,14 +290,14 @@ if(BARTORCH_CUDA AND BARTORCH_MATHDX_DIR)
     # Compiled on their own and for the listed architectures only: PTX of a
     # template instantiated once per grid size is megabytes, and a card newer
     # than the list is served by the transforms the library has otherwise.
-    add_library(bartorch_paired OBJECT csrc/paired.cu)
+    add_library(bartorch_paired OBJECT src/csrc/ops/paired.cu)
     set_target_properties(bartorch_paired PROPERTIES
         CUDA_ARCHITECTURES "${_paired_archs}"
         POSITION_INDEPENDENT_CODE ON)
     target_include_directories(bartorch_paired PRIVATE
         "${BARTORCH_MATHDX_DIR}/include"
         "${BARTORCH_MATHDX_DIR}/external/cutlass/include"
-        "${CMAKE_CURRENT_SOURCE_DIR}/csrc"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/csrc"
         "${BART_SRC}"
         "${BART_GEN}"
         "${BART_GEN}/misc"
@@ -309,7 +316,7 @@ if(TARGET bartorch_paired)
 endif()
 
 # BART's NUFFT operator keeps its implementation under another name, so
-# csrc/nufft_finufft.c can answer with FINUFFT's transform and still hand back
+# src/csrc/substitute/nufft_finufft.c can answer with FINUFFT's transform and still hand back
 # anything it does not serve.  The rename applies to these files, not to their
 # callers, so every tool that builds a NUFFT goes through the substitution and
 # nufft.c's own internal uses stay with BART's operator.
@@ -317,7 +324,7 @@ set_source_files_properties("${BART_SRC}/noncart/nufft.c" PROPERTIES
     COMPILE_DEFINITIONS "nufft_create=bart_nufft_create;nufft_create2=bart_nufft_create2;nufft_get_psf_dims=bart_nufft_get_psf_dims;nufft_get_psf=bart_nufft_get_psf;nufft_get_psf2=bart_nufft_get_psf2;nufft_update_psf=bart_nufft_update_psf;nufft_update_psf2=bart_nufft_update_psf2;nufft_update_traj=bart_nufft_update_traj;compute_psf=bart_compute_psf;compute_psf2=bart_compute_psf2;compute_psf2_decomposed=bart_compute_psf2_decomposed")
 
 # The SENSE operators keep their implementations under another name, so
-# csrc/sense.c can walk the coils a slab at a time and still hand back BART's
+# src/csrc/ops/sense.c can walk the coils a slab at a time and still hand back BART's
 # own chain for an arrangement it cannot serve.
 set_source_files_properties("${BART_SRC}/sense/modelnc.c" PROPERTIES
     COMPILE_DEFINITIONS "sense_nc_init=bart_sense_nc_init")
@@ -329,7 +336,7 @@ set_source_files_properties("${BART_SRC}/noncart/precond.c" PROPERTIES
     COMPILE_DEFINITIONS "nufft_precond_create=bart_nufft_precond_create")
 
 # The few entry points BART reads element by element rather than through md_
-# operations; csrc/host_reads.c answers them over a host copy when a tool is
+# operations; src/csrc/abi/host_reads.c answers them over a host copy when a tool is
 # handed memory on a card.
 set_source_files_properties("${BART_SRC}/misc/mri2.c" PROPERTIES
     COMPILE_DEFINITIONS "estimate_im_dims=bart_estimate_im_dims;estimate_fast_sq_im_dims=bart_estimate_fast_sq_im_dims")
@@ -338,9 +345,9 @@ set_source_files_properties("${BART_SRC}/sense/optcom.c" PROPERTIES
     COMPILE_DEFINITIONS "estimate_scaling_norm=bart_estimate_scaling_norm")
 
 target_include_directories(bartorch PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}/csrc"
-    "${CMAKE_CURRENT_SOURCE_DIR}/csrc/compat"
-    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/pocketfft"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/csrc"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/csrc/compat"
+    "${CMAKE_CURRENT_SOURCE_DIR}/external/pocketfft"
     "${BART_SRC}"
     "${BART_GEN}"
     "${BART_GEN}/misc"

@@ -41,7 +41,7 @@
 #include "iter/lsqr.h"
 
 #include "include/bartorch.h"
-#include "backend.h"
+#include "substitute/backend.h"
 
 struct bartorch_linop_s { const struct linop_s* op; };
 

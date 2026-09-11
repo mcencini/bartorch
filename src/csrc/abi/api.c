@@ -15,7 +15,7 @@
 #include "noncart/nufft.h"
 
 #include "include/bartorch.h"
-#include "backend.h"
+#include "substitute/backend.h"
 
 extern int bart_command(int len, char* buf, int argc, char* argv[]);
 

@@ -145,7 +145,7 @@ a pip install and nothing more.
 
 ## How it is built
 
-- `csrc/include/bartorch.h` is a plain C ABI. Nothing compiled links against
+- `src/csrc/include/bartorch.h` is a plain C ABI. Nothing compiled links against
   Python or torch, so one wheel per platform serves every interpreter and
   every torch version, and the extension is reached through ctypes.
 - Every BART translation unit is compiled unchanged from the submodule. A
@@ -211,6 +211,6 @@ remaining solver entry points are next; see `AGENTS.md`.
 
 ## License
 
-MIT. BART is distributed under its own BSD license; see `bart/LICENSE`.
+MIT. BART is distributed under its own BSD license; see `external/bart/LICENSE`.
 pocketfft is BSD-3 and BlocksRuntime is MIT; both are vendored under
-`third_party/` with their licenses.
+`external/` with their licenses.

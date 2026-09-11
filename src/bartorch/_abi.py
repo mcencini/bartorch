@@ -1,6 +1,6 @@
 """The C ABI, as ctypes sees it.
 
-Generated from ``csrc/include/bartorch.h`` by ``build_tools/gen_abi.py``.
+Generated from ``src/csrc/include/bartorch.h`` by ``build_tools/gen_abi.py``.
 Do not edit: run the generator instead.  ``tests/test_abi.py`` fails when
 this file is not what the header produces.
 """
