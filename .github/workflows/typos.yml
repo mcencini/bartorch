@@ -27,4 +27,4 @@ jobs:
         # `cudaDevAttrMaxSharedMemoryPerBlockOptin`.  `build` and
         # `docs/_build` are outputs a fresh checkout does not have and a
         # local run does.
-        run: codespell --skip="./attic,./external,./.git,./build,./docs/_build,*.ipynb,pyproject.toml" --ignore-words-list=ist,te,reconet,pyramide,nd,optin
+        run: codespell --skip="./attic,./external,./.git,./build,./docs/_build,*.ipynb,pyproject.toml" --ignore-words-list=ist,te,reconet,pyramide,nd,optin,lamda
