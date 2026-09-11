@@ -148,9 +148,7 @@ def solve(
             terms = [regularizers]
     for term in terms:
         if not isinstance(term, Regularizer):
-            raise TypeError(
-                f"a regularizer is one of the terms in bartorch.prox, not {term!r}"
-            )
+            raise TypeError(f"a regularizer is one of the terms in bartorch.prox, not {term!r}")
 
     bart_op = A.as_bart()
     y = as_operand(y, bart_op.oshape, "y")

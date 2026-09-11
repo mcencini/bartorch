@@ -210,6 +210,4 @@ def nlinv(
         flags["real_constraint"] = True
     if normalize:
         flags["N"] = True
-    return dispatch(
-        "nlinv", [kspace], None, _n_out=2 if return_sensitivities else 1, **flags
-    )
+    return dispatch("nlinv", [kspace], None, _n_out=2 if return_sensitivities else 1, **flags)

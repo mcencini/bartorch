@@ -46,6 +46,7 @@ would otherwise have been linked against.
 | `scripts/gen_abi.py` | Generates `_abi.py` from `src/csrc/include/bartorch.h`. Run after changing the header; `tests/test_abi.py` fails when the checked-in file is not what it writes. |
 | `scripts/gen_catalogue.py` | Generates `_catalogue.py` from the BART sources: every command, its arguments, and every option with both spellings. Run after a submodule bump. |
 | `scripts/run_tests.sh` | Builds into `build/local` and runs the suite against `src/`, without installing. |
+| `scripts/lint.sh` | Ruff over `src/` and `tests/`, which is what the lint workflow runs; `--fix` writes. |
 | `scripts/build_docs.sh` | Builds the reference the way the workflow does. |
 | `scripts/check_device.py` | Everything a card can answer that a host cannot, in dependency order. |
 | `cmake/embed.cmake` | Writes a file's bytes into a C array, for the LTO-IR the CUDA build links. |
@@ -693,7 +694,8 @@ pip install -e . --config-settings=cmake.define.BARTORCH_CUDA=ON   # with device
 python scripts/check_device.py      # everything a card can answer that a host cannot
 python scripts/gen_catalogue.py     # after a submodule bump
 python scripts/gen_abi.py           # after changing the C header
-ruff format src tests scripts && ruff check src tests scripts
+./scripts/lint.sh                   # what the lint workflow runs
+./scripts/lint.sh --fix             # format, and apply what ruff can fix itself
 ```
 
 What `run_tests.sh` does by hand, for when it is in the way:

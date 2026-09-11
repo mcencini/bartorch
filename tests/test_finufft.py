@@ -411,9 +411,7 @@ def test_more_frames_than_a_batch_of_one_thousand_are_still_finuffts(in_tools):
     image[..., n // 2, n // 2] = 1.0  # a point source at the centre of every frame
 
     _finufft.reset_counters()
-    A = linop.NUFFT(
-        traj, (frames, 1, n, n), kspace_shape=(frames, 8, n, 1), toeplitz=False
-    )
+    A = linop.NUFFT(traj, (frames, 1, n, n), kspace_shape=(frames, 8, n, 1), toeplitz=False)
     _all_finufft()
 
     y = A(image)
@@ -435,7 +433,9 @@ def _subspace(n, spokes, frames, coeffs, read=None):
     ``n`` grid unless ``read`` says how many samples it has.
     """
     read = n if read is None else read
-    traj = bt.traj(x=read, y=spokes * frames, r=True).reshape(frames, spokes, read, 3)[:, None, None]
+    traj = bt.traj(x=read, y=spokes * frames, r=True).reshape(frames, spokes, read, 3)[
+        :, None, None
+    ]
     basis = torch.zeros(coeffs, frames, 1, 1, 1, 1, 1, dtype=torch.complex64)
     basis[0, :, 0, 0, 0, 0, 0] = 1.0
     basis[1, :, 0, 0, 0, 0, 0] = torch.linspace(-1, 1, frames)
@@ -1668,7 +1668,9 @@ def test_the_passes_inside_the_transforms_answer_as_the_passes_on_their_own(in_t
     n, spokes, frames, coeffs, coils = (32, 24, 4, 3, 2) if dims == 2 else (24, 48, 4, 3, 2)
     read = n // 2
     three = {"flag_3": True} if dims == 3 else {}
-    traj = bt.traj(x=read, y=spokes * frames, r=True, **three).reshape(frames, spokes, read, 3)[:, None, None]
+    traj = bt.traj(x=read, y=spokes * frames, r=True, **three).reshape(frames, spokes, read, 3)[
+        :, None, None
+    ]
     basis = torch.zeros(coeffs, frames, 1, 1, 1, 1, 1, dtype=torch.complex64)
     for c in range(coeffs):
         basis[c, :, 0, 0, 0, 0, 0] = torch.cos(torch.pi * c * (torch.arange(frames) + 0.5) / frames)
@@ -1702,7 +1704,9 @@ def test_the_passes_inside_the_transforms_answer_as_the_passes_on_their_own(in_t
 
 @requires_finufft
 @requires_cuda
-@pytest.mark.skipif(not _finufft.paired_built(), reason="built without the pair kernels (BARTORCH_MATHDX_DIR)")
+@pytest.mark.skipif(
+    not _finufft.paired_built(), reason="built without the pair kernels (BARTORCH_MATHDX_DIR)"
+)
 def test_sets_convolved_in_pairs_answer_as_sets_one_at_a_time(in_tools):
     """Two sets that differ only along x share their passes along z and y.
 
@@ -1713,7 +1717,9 @@ def test_sets_convolved_in_pairs_answer_as_sets_one_at_a_time(in_tools):
     from bartorch import linop
 
     n, read, spokes, frames, coeffs, coils = 32, 16, 48, 4, 4, 2
-    traj = bt.traj(x=read, y=spokes * frames, r=True, flag_3=True).reshape(frames, spokes, read, 3)[:, None, None]
+    traj = bt.traj(x=read, y=spokes * frames, r=True, flag_3=True).reshape(frames, spokes, read, 3)[
+        :, None, None
+    ]
     basis = torch.zeros(coeffs, frames, 1, 1, 1, 1, 1, dtype=torch.complex64)
     for c in range(coeffs):
         basis[c, :, 0, 0, 0, 0, 0] = torch.cos(torch.pi * c * (torch.arange(frames) + 0.5) / frames)
@@ -1747,7 +1753,9 @@ def test_sets_convolved_in_pairs_answer_as_sets_one_at_a_time(in_tools):
 
 @requires_finufft
 @requires_cuda
-@pytest.mark.skipif(not _finufft.paired_built(), reason="built without the pair kernels (BARTORCH_MATHDX_DIR)")
+@pytest.mark.skipif(
+    not _finufft.paired_built(), reason="built without the pair kernels (BARTORCH_MATHDX_DIR)"
+)
 def test_a_function_kept_in_bfloat16_answers_as_one_kept_in_floats(in_tools):
     """bfloat16 keeps a float's range and rounds each value to 2^-9 of itself.
 
@@ -1759,7 +1767,9 @@ def test_a_function_kept_in_bfloat16_answers_as_one_kept_in_floats(in_tools):
     from bartorch import linop
 
     n, read, spokes, frames, coeffs, coils = 32, 16, 48, 4, 4, 2
-    traj = bt.traj(x=read, y=spokes * frames, r=True, flag_3=True).reshape(frames, spokes, read, 3)[:, None, None]
+    traj = bt.traj(x=read, y=spokes * frames, r=True, flag_3=True).reshape(frames, spokes, read, 3)[
+        :, None, None
+    ]
     basis = torch.zeros(coeffs, frames, 1, 1, 1, 1, 1, dtype=torch.complex64)
     for c in range(coeffs):
         basis[c, :, 0, 0, 0, 0, 0] = torch.cos(torch.pi * c * (torch.arange(frames) + 0.5) / frames)

@@ -69,9 +69,7 @@ def test_every_option_can_be_spelled():
 def test_a_long_name_survives_beside_the_short_one():
     """Taking the letter and dropping the word is how `pics` ends up with an
     argument called ``U`` instead of ``lowmem``."""
-    both = {
-        (o.short, o.long) for o in catalogue.COMMANDS["pics"].options if o.short and o.long
-    }
+    both = {(o.short, o.long) for o in catalogue.COMMANDS["pics"].options if o.short and o.long}
     assert ("U", "lowmem") in both
     assert ("m", "admm") in both
 

@@ -300,9 +300,7 @@ def _value_str(val: Any) -> str:
         return "1" if val else "0"
     if isinstance(val, torch.Tensor):
         if val.numel() != 1:
-            raise ValueError(
-                f"a command-line value is one number, not an array of {val.numel()}"
-            )
+            raise ValueError(f"a command-line value is one number, not an array of {val.numel()}")
         val = val.reshape(()).item()
     if isinstance(val, (tuple, list)):
         return ":".join(_value_str(v) for v in val)

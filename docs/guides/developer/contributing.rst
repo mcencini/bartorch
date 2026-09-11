@@ -10,7 +10,8 @@ topic branch in your fork, and keep a PR focused enough to review independently.
    Avoid hand edits to generated wrappers.
 3. Run appropriate checks. ``./scripts/run_tests.sh`` builds and runs the suite
    without installing anything, and takes pytest arguments; Python changes also
-   use ``ruff format src tests scripts`` and ``ruff check src tests scripts``.
+   run ``./scripts/lint.sh``, or ``./scripts/lint.sh --fix`` to have ruff write
+   what it can.
    Run the full suite for broad native changes and
    ``python scripts/check_device.py`` for device changes on suitable hardware.
 4. For documentation, run ``./scripts/build_docs.sh``, which is the strict build

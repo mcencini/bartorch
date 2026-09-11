@@ -50,8 +50,6 @@ for _name in sorted(_coverage.derived_names()):
 
 #: The name each wrapper goes by, which is the command's own except where a
 #: command's name is not an identifier.
-__all__ = sorted(
-    {"describe", *(n for n in globals() if n in COMMANDS or n in ("ifft",))}
-)
+__all__ = sorted({"describe", *(n for n in globals() if n in COMMANDS or n in ("ifft",))})
 
 del _name

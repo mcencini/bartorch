@@ -387,4 +387,6 @@ def test_a_kernel_bank_inflated_on_a_card_is_the_maps_it_stands_for(n, size):
 
     y = dense(x)
     torch.testing.assert_close(compact(x.cuda()).cpu(), y, rtol=1e-4, atol=1e-5)
-    torch.testing.assert_close(compact.adjoint(y.cuda()).cpu(), dense.adjoint(y), rtol=1e-4, atol=1e-5)
+    torch.testing.assert_close(
+        compact.adjoint(y.cuda()).cpu(), dense.adjoint(y), rtol=1e-4, atol=1e-5
+    )

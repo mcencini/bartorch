@@ -150,12 +150,20 @@ def test_a_heavier_weight_shrinks_the_answer():
     # one is the right step; BART's default without `-s` or `-e` diverges here
     # and warns that it will, which is the tool's behaviour too.
     light = alg.solve(
-        A, y, regularizers=prox.Wavelet(axes=(-1, -2), weight=0.001),
-        solver="fista", maxiter=30, step=1.0,
+        A,
+        y,
+        regularizers=prox.Wavelet(axes=(-1, -2), weight=0.001),
+        solver="fista",
+        maxiter=30,
+        step=1.0,
     )
     heavy = alg.solve(
-        A, y, regularizers=prox.Wavelet(axes=(-1, -2), weight=0.5),
-        solver="fista", maxiter=30, step=1.0,
+        A,
+        y,
+        regularizers=prox.Wavelet(axes=(-1, -2), weight=0.5),
+        solver="fista",
+        maxiter=30,
+        step=1.0,
     )
     assert heavy.abs().sum() < light.abs().sum()
 

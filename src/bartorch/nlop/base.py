@@ -122,9 +122,7 @@ class NonlinearOperator(abc.ABC):
         xref : tensor, optional
             The regularisation centre, when it is not ``x0``.
         """
-        return self.as_bart().irgnm(
-            y, x0, iterations, alpha, alpha_min, redu, cgiter, cgtol, xref
-        )
+        return self.as_bart().irgnm(y, x0, iterations, alpha, alpha_min, redu, cgiter, cgtol, xref)
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}({self.ishape} -> {self.oshape})"

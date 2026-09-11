@@ -27,9 +27,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def _pyproject() -> dict:
-    tomllib = pytest.importorskip(
-        "tomllib", reason="pyproject is read with tomllib, a 3.11 module"
-    )
+    tomllib = pytest.importorskip("tomllib", reason="pyproject is read with tomllib, a 3.11 module")
     return tomllib.loads((ROOT / "pyproject.toml").read_text())
 
 

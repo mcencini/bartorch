@@ -79,9 +79,7 @@ def ecalib(
         flags["S"] = True
     if intensity_correction:
         flags["I"] = True
-    return dispatch(
-        "ecalib", [kspace], None, _n_out=2 if return_eigenvalues else 1, **flags
-    )
+    return dispatch("ecalib", [kspace], None, _n_out=2 if return_eigenvalues else 1, **flags)
 
 
 @curated("caldir")

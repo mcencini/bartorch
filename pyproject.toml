@@ -88,6 +88,13 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
 
+[tool.ruff.format]
+# Written by scripts/gen_abi.py and scripts/gen_catalogue.py, and held against
+# those generators by tests/test_abi.py and tests/test_catalogue.py.  A
+# formatter that rewrote them would fail that test rather than fix anything;
+# how they are laid out is the generator's business.
+exclude = ["src/bartorch/_abi.py", "src/bartorch/_catalogue.py"]
+
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["F401"]
 # A help string BART wrote can be longer than any line length on its own.

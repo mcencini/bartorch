@@ -42,6 +42,7 @@ def curated(command: str):
 
     return mark
 
+
 #: What a catalogue kind is in Python.
 ANNOTATIONS = {
     "INT": "int",
@@ -132,9 +133,7 @@ def _parameters(command: Command) -> tuple[list[inspect.Parameter], dict[str, Op
                 annotation="bool" if flag else f"{annotation(option.kind)} | None",
             )
         )
-    parameters.append(
-        inspect.Parameter("extra", inspect.Parameter.VAR_KEYWORD, annotation="Any")
-    )
+    parameters.append(inspect.Parameter("extra", inspect.Parameter.VAR_KEYWORD, annotation="Any"))
     return parameters, options
 
 
