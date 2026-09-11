@@ -62,10 +62,16 @@ jobs:
           # test matrix below.
           CIBW_BUILD: "cp312-*"
           CIBW_SKIP: "*-musllinux_*"
-          # BART's nested functions need a heap trampoline, which is GCC 14
-          # or clang's Blocks; manylinux images ship clang via dnf.
-          CIBW_BEFORE_ALL_LINUX: dnf install -y clang || yum install -y clang
-          CIBW_ENVIRONMENT_LINUX: CC=clang CXX=clang++
+          # BART's nested functions need heap trampolines -- GCC 14 -- or
+          # clang's Blocks.  cibuildwheel's default Linux image has neither:
+          # manylinux2014 is CentOS 7, whose GCC is 10 and whose `clang` is
+          # 3.4.2, so old that it cannot link a hello world against the
+          # devtoolset runtime it is installed beside.  manylinux_2_28 is the
+          # image the CUDA wheel below already builds in, and its default cc
+          # is GCC 14.2.1: nothing to install, and no compiler to override.
+          # The floor it sets, glibc 2.28, is the one torch and FINUFFT
+          # already ship their own Linux wheels against.
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           # FINUFFT is a dependency, so installing the wheel brings it and the
           # non-Cartesian tests run.
           CIBW_TEST_REQUIRES: pytest numpy scipy
@@ -170,10 +176,11 @@ jobs:
             --extra-index-url https://pypi.org/simple
           /opt/python/cp312-cp312/bin/python -c "
           import bartorch
+          from bartorch import _cuda
           info = bartorch.build_info()
           print(info)
           assert 'cuda=ON' in info, info
-          print('devices:', bartorch.cuda.device_count())
+          print('devices:', _cuda.device_count())
           "
       - uses: actions/upload-artifact@v4
         with:
