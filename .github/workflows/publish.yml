@@ -6,7 +6,7 @@ name: Publish to PyPI
 # trusted publisher on a version tag.
 #
 # One-time setup on PyPI: add a trusted publisher for owner mcencini,
-# repository bartpy, workflow publish.yml, environment pypi, and create the
+# repository bartorch, workflow publish.yml, environment pypi, and create the
 # "pypi" environment in this repository's settings.
 
 on:
@@ -22,6 +22,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          # setuptools-scm reads the version from the tag history.
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -50,6 +52,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          # setuptools-scm reads the version from the tag history.
+          fetch-depth: 0
       - uses: pypa/cibuildwheel@v2.23
         env:
           # One build per platform: the wheel is tagged py3 and carries no
@@ -105,7 +109,7 @@ jobs:
   # cuBLAS.  It has the same name, version and platform tag as the CPU wheel,
   # which PyPI cannot hold twice, so it goes to the release instead:
   #
-  #     pip install https://github.com/mcencini/bartpy/releases/download/<tag>/<wheel>
+  #     pip install https://github.com/mcencini/bartorch/releases/download/<tag>/<wheel>
   #
   # The runners have no card, so this proves the wheel loads and reports the
   # absence of one; scripts/check_device.py is what a machine with a card runs.
@@ -118,6 +122,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          # setuptools-scm reads the version from the tag history.
+          fetch-depth: 0
       - name: Install the CUDA toolkit
         run: |
           dnf install -y dnf-plugins-core

@@ -11,13 +11,13 @@ wheel is not a compiler.  Windows is not a target -- BART does not build on it
 
 ## Fork and clone
 
-Fork [mcencini/bartpy](https://github.com/mcencini/bartpy) on GitHub, and
+Fork [mcencini/bartorch](https://github.com/mcencini/bartorch) on GitHub, and
 replace `YOUR-USERNAME` with your account name:
 
 ```bash
-git clone --recurse-submodules https://github.com/YOUR-USERNAME/bartpy.git
-cd bartpy
-git remote add upstream https://github.com/mcencini/bartpy.git
+git clone --recurse-submodules https://github.com/YOUR-USERNAME/bartorch.git
+cd bartorch
+git remote add upstream https://github.com/mcencini/bartorch.git
 git switch -c docs/my-improvement
 python -m pip install -e '.[dev]'
 ```

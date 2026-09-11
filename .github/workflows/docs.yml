@@ -1,28 +1,22 @@
-name: Docs (ReadTheDocs)
+name: Docs
 
-# This workflow triggers a ReadTheDocs build whenever documentation-relevant
-# files are updated on the main branch.
+# Builds the reference on every pull request, and publishes it to GitHub Pages
+# from `main`.  Both use the same `./scripts/build_docs.sh` a contributor runs,
+# so a page that renders here rendered for them too.
 #
-# Setup instructions:
-# 1. Create an account at https://readthedocs.org and import this repository.
-# 2. In your RTD project settings, go to Integrations and copy the webhook URL.
-# 3. Add it as a repository secret: Settings → Secrets → READTHEDOCS_WEBHOOK_TOKEN
-#    (RTD uses a token in the URL, not a separate header secret).
-# 4. Uncomment the "Trigger ReadTheDocs build" step below.
-#
-# The workflow also validates that the docs build without errors using a local
-# Sphinx build on every pull request.
+# One-time setup: Settings -> Pages -> Source: "GitHub Actions".  Nothing else;
+# the deploy job below carries its own permissions and environment.
 
 on:
   push:
-    branches: [main, bart-pytorch-extension]
+    branches: [main]
     paths:
       - "docs/**"
       - "src/**"
       - "*.md"
       - "*.rst"
   pull_request:
-    branches: [main, develop, bart-pytorch-extension]
+    branches: [main]
     paths:
       - "docs/**"
       - "src/**"
@@ -66,3 +60,29 @@ jobs:
           name: sphinx-html
           path: docs/_build/html/
           retention-days: 7
+
+      # The same HTML again, in the layout Pages deploys from.  Uploaded on
+      # pull requests too, so that a change which breaks the packaging step
+      # says so on the pull request rather than on main.
+      - name: Package the site for Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/_build/html/
+
+  # Only from `main`, and only on a push: a pull request builds the site and
+  # says whether it would deploy, but does not publish it.
+  deploy:
+    name: Publish to GitHub Pages
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build-docs
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

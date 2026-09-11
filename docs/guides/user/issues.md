@@ -1,6 +1,6 @@
 # Issue reports
 
-Search the [issue tracker](https://github.com/mcencini/bartpy/issues) for the
+Search the [issue tracker](https://github.com/mcencini/bartorch/issues) for the
 error and function name before opening a report.  Include:
 
 - expected and observed results, with the complete traceback;
