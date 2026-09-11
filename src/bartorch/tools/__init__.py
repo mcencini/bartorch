@@ -27,7 +27,9 @@ Tool layers
 
 from __future__ import annotations
 
-__all__: list[str] = []
+from bartorch._options import describe
+
+__all__: list[str] = ["describe"]
 
 # Full suite: auto-generated wrappers + special-case overrides.
 # Missing when the package has not been built; silently ignored.
@@ -35,6 +37,6 @@ try:
     from bartorch.tools._commands import *  # noqa: F401,F403
     from bartorch.tools._commands import __all__ as _commands_all
 
-    __all__ = [*_commands_all]
+    __all__ = ["describe", *_commands_all]
 except ImportError:
     pass

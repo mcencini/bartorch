@@ -30,7 +30,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from bartorch import _backend, _cuda, _marshal
+from bartorch import _backend, _cuda, _marshal, _options
 from bartorch._lib import ALLOC_FN, DIMS, FREE_FN, LOG_FN, library
 
 __all__ = [
@@ -316,16 +316,31 @@ def _expand_list_flags(kwargs: dict[str, Any]) -> list[tuple[str, Any]]:
     return out
 
 
-def _flag_string(key: str) -> str:
+def _flag_string(key: str, op_name: str = "") -> str:
     """The flag a keyword stands for.
 
-    ``x`` is ``-x`` and ``psf_export`` is ``--psf-export``.  A flag BART
-    spells with a digit takes a ``flag_`` prefix, so ``flag_3`` is ``-3``, and
-    a trailing digit otherwise repeats a flag: ``R_1`` and ``R_2`` are both
-    ``-R``.
+    Asked of the catalogue first, because BART spells some long options with
+    hyphens (``--no-toeplitz``) and others with underscores (``--psf_export``)
+    and no rule over the keyword can be right for both -- which is why
+    ``psf_export=`` used to reach for ``--psf-export`` and BART rejected it.
+
+    The guess below is what is left for a flag the catalogue has no entry for:
+    one the caller is passing through, or a command from a BART newer than the
+    catalogue was read from.  ``x`` is ``-x``.  A flag BART spells with a digit
+    takes a ``flag_`` prefix, so ``flag_3`` is ``-3``, and a trailing digit
+    otherwise repeats a flag: ``R_1`` and ``R_2`` are both ``-R``.
     """
     stem, _, suffix = key.rpartition("_")
-    if stem and stem != "flag" and suffix.isdigit():
+    repeated = bool(stem) and stem != "flag" and suffix.isdigit()
+    if op_name:
+        # The whole keyword first: BART has options called `--kfilter-1` and
+        # `--kfilter-2`, and reading the digit as a repetition would send both
+        # to a `--kfilter` that does not exist.
+        for candidate in (key, stem) if repeated else (key,):
+            known = _options.flag_for(op_name, candidate)
+            if known is not None:
+                return known
+    if repeated:
         key = stem
     if key.startswith("flag_") and len(key) > 5:
         return "-" + key[5:]
@@ -353,7 +368,7 @@ def build_argv(
     for index, (key, val) in enumerate(_expand_list_flags(kwargs)):
         if val is None or val is False:
             continue
-        argv.append(_flag_string(key))
+        argv.append(_flag_string(key, op_name))
         if flag_arrays is not None and index in flag_arrays:
             argv.append(flag_arrays[index])
         elif val is not True:
@@ -443,8 +458,22 @@ _output_shape = _marshal.shape_from_dims
 
 
 def run_command(argv: list[str]) -> tuple[int, str, str]:
-    """Run one tool with a fully formed argv; return (code, stdout, error text)."""
+    """Run one tool with a fully formed argv; return (code, stdout, error text).
+
+    A request for help is refused rather than passed on.  BART answers one by
+    printing its usage and calling ``exit``, and BART is in this process, so
+    the exit is the interpreter's: the session would end with no message and
+    no traceback.  :func:`bartorch.tools.describe` answers the same question
+    from the catalogue.
+    """
     _ensure_ready()
+    asked_for_help = _options.HELP_FLAGS.intersection(argv[1:])
+    if asked_for_help:
+        flag = sorted(asked_for_help)[0]
+        raise ValueError(
+            f"bart {argv[0]} {flag} would print its usage and exit, which in this "
+            f"process ends the interpreter; use bartorch.tools.describe({argv[0]!r})"
+        )
     lib = library()
     c_argv = _marshal.argv(argv)
     out = _marshal.text_buffer(1 << 16)

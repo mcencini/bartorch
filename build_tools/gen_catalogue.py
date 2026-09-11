@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate ``src/bartorch/tools/_catalogue.py`` from BART's own sources.
+"""Generate ``src/bartorch/_catalogue.py`` from BART's own sources.
 
 Every BART tool declares its arguments and options as a table of macros, and
 this reads those tables: what each option is called, both ways; what kind of
@@ -26,7 +26,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 BART_SRC = ROOT / "bart" / "src"
-OUTPUT = ROOT / "src" / "bartorch" / "tools" / "_catalogue.py"
+OUTPUT = ROOT / "src" / "bartorch" / "_catalogue.py"
 
 LINE_LENGTH = 100
 
@@ -68,12 +68,21 @@ OPTION_MACROS: dict[str, dict[str, int]] = {
 TYPED_KINDS = (
     "INT UINT LONG ULONG ULLONG PINT FLOAT DOUBLE STRING "
     "INFILE OUTFILE INOUTFILE CFL "
-    "VEC2 VEC3 VECN FLVEC2 FLVEC3 FLVEC4 FLVECN DOVEC3"
+    "VEC2 VEC3 VECN FLVEC2 FLVEC3 FLVEC4 FLVECN DOVEC3 DOVECN"
 ).split()
 
+#: The two that take a variable number of values and so have no metavar of
+#: their own -- BART prints `[f:]*f` for them.  One argument fewer than the
+#: rest, and reading them like the rest puts the description in the metavar.
+VARIADIC_KINDS = {"VECN", "FLVECN", "DOVECN"}
+
 for _kind in TYPED_KINDS:
-    OPTION_MACROS[f"OPT_{_kind}"] = {"c": 0, "argname": 2, "descr": 3, "kind": _kind}
-    OPTION_MACROS[f"OPTL_{_kind}"] = {"c": 0, "s": 1, "argname": 3, "descr": 4, "kind": _kind}
+    if _kind in VARIADIC_KINDS:
+        OPTION_MACROS[f"OPT_{_kind}"] = {"c": 0, "descr": 2, "kind": _kind}
+        OPTION_MACROS[f"OPTL_{_kind}"] = {"c": 0, "s": 1, "descr": 3, "kind": _kind}
+    else:
+        OPTION_MACROS[f"OPT_{_kind}"] = {"c": 0, "argname": 2, "descr": 3, "kind": _kind}
+        OPTION_MACROS[f"OPTL_{_kind}"] = {"c": 0, "s": 1, "argname": 3, "descr": 4, "kind": _kind}
 
 #: ARG_<KIND>(required, ptr, argname).  ARG_TUPLE is variadic and is recorded
 #: by its kind alone; nothing in the wrappers takes one yet.
@@ -88,7 +97,7 @@ def strip_comments(text: str) -> str:
 
 
 #: What a C escape means in a one-line description: a break is a space.
-ESCAPES = {"n": " ", "t": " ", "r": " ", "f": " ", "v": " "}
+ESCAPES = {"n": " ", "t": " ", "r": " ", "f": " ", "v": " ", "b": ""}
 
 
 def unescape(body: str) -> str:
@@ -204,6 +213,43 @@ def read_option(name: str, args: list[str]) -> dict:
     return record
 
 
+#: The fields of an option BART writes out as a brace initialiser rather than
+#: through a macro, from `struct opt_s` in misc/opts.h:
+#: { char, long, arg_required, type, conv, ptr, argname, descr }
+SPECIAL_FIELDS = {"c": 0, "s": 1, "argname": 6, "descr": 7}
+
+
+def read_special(entry: str) -> dict | None:
+    """One hand-written option table entry, or ``None`` if it cannot be read.
+
+    `pics -R` is one of these -- the generalized regularization option, and the
+    one people reach for most -- so they are worth reading even though they are
+    not macros.
+    """
+    args = split_arguments(entry.strip().removeprefix("{").removesuffix("}"))
+    if len(args) <= max(SPECIAL_FIELDS.values()):
+        return None
+
+    def field(key: str) -> str:
+        return args[SPECIAL_FIELDS[key]]
+
+    short = field("c").strip()
+    short = short[1:-1] if short.startswith("'") and short.endswith("'") else ""
+    long = joined_string(field("s"))
+    if not short and not long:
+        # The character is an expression rather than a literal -- `nlinv` picks
+        # one of two depending on the compatibility version -- and there is no
+        # word to fall back on.
+        return None
+    return {
+        "short": short,
+        "long": long,
+        "kind": "SPECIAL",
+        "arg": joined_string(field("argname")),
+        "help": joined_string(field("descr")),
+    }
+
+
 def read_argument(name: str, args: list[str]) -> dict:
     """One positional-argument macro as a record."""
     kind = name.removeprefix("ARG_")
@@ -228,17 +274,30 @@ def read_command(name: str, source: Path) -> dict:
             {f"ARG_{k}" for k in ARGUMENT_KINDS},
         )
     ]
-    options = [
-        read_option(macro, args)
-        for macro, args in macro_calls(
-            table(code, r"struct\s+opt_s\s+opts\s*\[\s*\]"), set(OPTION_MACROS)
-        )
-    ]
+    options: list[dict] = []
+    unread: list[str] = []
+    for entry in split_arguments(table(code, r"struct\s+opt_s\s+opts\s*\[\s*\]")):
+        entry = entry.strip()
+        if not entry or entry == "OPT_END":
+            continue
+        call = re.match(r"^([A-Z][A-Z0-9_]*)\s*\((.*)\)$", entry, re.S)
+        if call and call.group(1) in OPTION_MACROS:
+            options.append(read_option(call.group(1), split_arguments(call.group(2))))
+        elif entry.startswith("{"):
+            special = read_special(entry)
+            if special is not None:
+                options.append(special)
+            else:
+                unread.append(re.sub(r"\s+", " ", entry)[:60])
+        else:
+            unread.append(re.sub(r"\s+", " ", entry)[:60])
+
     return {
         "name": name,
         "help": joined_string(helped.group(1)) if helped else "",
         "arguments": arguments,
         "options": options,
+        "unread": unread,
     }
 
 
@@ -430,6 +489,19 @@ def render(commands: dict[str, dict], bart_version: str) -> str:
             lines.append("        ),")
         lines.append("    ),")
 
+    lines.append("}")
+    lines.append("")
+    lines.append("#: Entries in a command's option table that the reader could not")
+    lines.append("#: make sense of, by command.  Nothing is dropped quietly: a construct")
+    lines.append("#: BART starts using shows up here and fails a test rather than")
+    lines.append("#: leaving an option missing with nothing to say so.")
+    lines.append("UNREAD: dict[str, tuple[str, ...]] = {")
+    for name, command in commands.items():
+        if command.get("unread"):
+            lines.append(f"    {literal(name)}: (")
+            for entry in command["unread"]:
+                lines.append(f"        {literal(entry)},")
+            lines.append("    ),")
     lines.append("}")
     lines.append("")
     lines.append("#: Every command BART builds a tool for.")

@@ -153,11 +153,11 @@ COMMANDS: dict[str, Command] = {
                 'o',
                 'order',
                 'VECN',
-                'Flagged Dimensions in the order in which they should be looped over (fastest first).',
                 '',
+                'Flagged Dimensions in the order in which they should be looped over (fastest first).',
             ),
-            Option('s', 'start', 'VECN', 'Start index of range for looping (default: 0)', ''),
-            Option('e', 'end', 'VECN', 'End index of range for looping (default: start + 1)', ''),
+            Option('s', 'start', 'VECN', '', 'Start index of range for looping (default: 0)'),
+            Option('e', 'end', 'VECN', '', 'End index of range for looping (default: start + 1)'),
             Option('t', 'threads', 'INT', 'nthreads', 'Set threads for parallelization'),
             Option(
                 'r',
@@ -187,8 +187,8 @@ COMMANDS: dict[str, Command] = {
                 '',
                 'md-loop-dims',
                 'VECN',
-                'loop md-functions along selected dimensions sequentially (low memory mode)',
                 '',
+                'loop md-functions along selected dimensions sequentially (low memory mode)',
             ),
             Option(
                 '',
@@ -294,6 +294,9 @@ COMMANDS: dict[str, Command] = {
             Argument('func', 'STRING', True),
             Argument('input', 'INFILE', True),
             Argument('output', 'OUTFILE', True),
+        ),
+        options=(
+            Option('L', '', 'SPECIAL', '', 'Print a list of all supported functions'),
         ),
     ),
     'caldir': Command(
@@ -561,7 +564,15 @@ COMMANDS: dict[str, Command] = {
             Argument('output', 'OUTFILE', True),
         ),
         options=(
+            Option('l', '', 'SPECIAL', '1/-l2', 'toggle l1-wavelet or l2 regularization.'),
             Option('r', '', 'FLOAT', 'lambda', 'regularization parameter'),
+            Option(
+                'R',
+                '',
+                'SPECIAL',
+                '<T>:A:B:C',
+                'generalized regularization options (-Rh for help)',
+            ),
             Option('s', '', 'FLOAT', 'step', 'iteration stepsize'),
             Option('i', '', 'PINT', 'iter', 'max. number of iterations'),
             Option('n', '', 'CLEAR', '', 'disable random wavelet cycle spinning'),
@@ -577,15 +588,15 @@ COMMANDS: dict[str, Command] = {
                 '',
                 'tvscales',
                 'FLVECN',
-                'Scaling of derivatives in TV or TGV regularization',
                 '',
+                'Scaling of derivatives in TV or TGV regularization',
             ),
             Option(
                 '',
                 'tvscales2',
                 'FLVECN',
-                'Scaling of secondary derivatives in ICTV reconstruction',
                 '',
+                'Scaling of secondary derivatives in ICTV reconstruction',
             ),
             Option(
                 '',
@@ -982,7 +993,7 @@ COMMANDS: dict[str, Command] = {
         options=(
             Option('k', '', 'SET', '', 'Compute k-space grid'),
             Option('t', '', 'INFILE', 'Trajectory file', 'Sampling trajectory for k-space'),
-            Option('D', '', 'VECN', 'Size of x-space / k-space', ''),
+            Option('D', '', 'VECN', '', 'Size of x-space / k-space'),
             Option('T', '', 'LONG', 'T', 'Number of time points'),
             Option('', 'b1', 'FLVEC3', 'f1:f2:f3', 'First basis vector'),
             Option('', 'b2', 'FLVEC3', 'f1:f2:f3', 'Second basis vector'),
@@ -1051,8 +1062,8 @@ COMMANDS: dict[str, Command] = {
         options=(
             Option('i', '', 'PINT', 'i', 'max. iterations'),
             Option('u', '', 'FLOAT', 'rho', 'rho in ADMM'),
-            Option('', 'tvscales', 'FLVECN', 'Scaling of derivatives of the first gradient', ''),
-            Option('', 'tvscales2', 'FLVECN', 'Scaling of derivatives of the second gradient', ''),
+            Option('', 'tvscales', 'FLVECN', '', 'Scaling of derivatives of the first gradient'),
+            Option('', 'tvscales2', 'FLVECN', '', 'Scaling of derivatives of the second gradient'),
             Option(
                 '',
                 'gamma',
@@ -1331,6 +1342,13 @@ COMMANDS: dict[str, Command] = {
         ),
         options=(
             Option(
+                'r',
+                '',
+                'SPECIAL',
+                '<T>:A:B:C',
+                'generalized regularization options (-rh for help)',
+            ),
+            Option(
                 'L',
                 '',
                 'SELECT',
@@ -1392,7 +1410,7 @@ COMMANDS: dict[str, Command] = {
                 'model',
                 'Select the MGRE model from enum { WF = 0, WFR2S, WF2R2S, R2S, PHASEDIFF, ..., WF_fB0, WF_R2S, T1_R2S, W_T1_F_T1_RS2 } [default: WFR2S]',
             ),
-            Option('l', '', 'PINT', 'b1/-l2', 'toggle l1-wavelet or l2 regularization.'),
+            Option('l', '', 'PINT', '1/-l2', 'toggle l1-wavelet or l2 regularization.'),
             Option('i', '', 'PINT', 'iter', 'Number of Newton steps'),
             Option('R', 'reduction', 'FLOAT', 'redu', 'reduction factor'),
             Option('j', '', 'FLOAT', 'minreg', 'Minimum regularization parameter'),
@@ -1513,18 +1531,8 @@ COMMANDS: dict[str, Command] = {
             Argument('coefficients', 'OUTFILE', False),
         ),
         options=(
-            Option('F', '', 'SELECT', '', 'FLASH', '&seq', 'FLASH'),
             Option('B', '', 'SELECT', '', 'bSSFP', '&seq', 'BSSFP'),
             Option('M', '', 'SELECT', '', 'MOLLI', '&seq', 'MOLLI'),
-            Option(
-                'T',
-                '',
-                'SELECT',
-                '',
-                'Multi-Echo Spin Echo: f(M0, R2) = M0 * exp(-t * R2)',
-                '&seq',
-                'TSE',
-            ),
             Option(
                 'I',
                 '',
@@ -1568,10 +1576,10 @@ COMMANDS: dict[str, Command] = {
                 '',
                 'init',
                 'FLVECN',
-                'Initial values of parameters in model-based reconstruction',
                 '',
+                'Initial values of parameters in model-based reconstruction',
             ),
-            Option('', 'scale', 'FLVECN', 'Scaling', ''),
+            Option('', 'scale', 'FLVECN', '', 'Scaling'),
             Option(
                 '',
                 'levenberg-marquardt',
@@ -1596,13 +1604,13 @@ COMMANDS: dict[str, Command] = {
                 'flags',
                 'Apply maximum magnitude constraint on selected maps',
             ),
-            Option('', 'min', 'FLVECN', 'Min bound (map must be selected with "min-flag")', ''),
+            Option('', 'min', 'FLVECN', '', 'Min bound (map must be selected with "min-flag")'),
             Option(
                 '',
                 'max',
                 'FLVECN',
-                'Max bound (map must be selected with "max-flag" or "max-mag-flag")',
                 '',
+                'Max bound (map must be selected with "max-flag" or "max-mag-flag")',
             ),
             Option('', 'b1map', 'INFILE', '[deg]', 'Input B1 map as cfl file'),
             Option('', 'b0map', 'INFILE', '[rad/s]', 'Input B0 map as cfl file'),
@@ -1910,7 +1918,13 @@ COMMANDS: dict[str, Command] = {
                 'l',
                 'also use network input scaled by l as reference',
             ),
-            Option('', 'temporal-train-mask', 'VEC2', 's:e', ''),
+            Option(
+                '',
+                'temporal-train-mask',
+                'VEC2',
+                's:e',
+                'Only use data in [s, e) as train reference',
+            ),
             Option(
                 '',
                 'average-coils-loss',
@@ -2176,7 +2190,15 @@ COMMANDS: dict[str, Command] = {
             Argument('output', 'OUTFILE', True),
         ),
         options=(
+            Option('l', '', 'SPECIAL', '1/-l2', 'toggle l1-wavelet or l2 regularization.'),
             Option('r', '', 'FLOAT', 'lambda', 'regularization parameter'),
+            Option(
+                'R',
+                '',
+                'SPECIAL',
+                '<T>:A:B:C',
+                'generalized regularization options (-Rh for help)',
+            ),
             Option('c', '', 'SET', '', 'real-value constraint'),
             Option('s', '', 'FLOAT', 'step', 'iteration stepsize'),
             Option('i', '', 'PINT', 'iter', 'max. number of iterations'),
@@ -2197,15 +2219,15 @@ COMMANDS: dict[str, Command] = {
                 '',
                 'tvscales',
                 'FLVECN',
-                'Scaling of derivatives in TV or TGV regularization',
                 '',
+                'Scaling of derivatives in TV or TGV regularization',
             ),
             Option(
                 '',
                 'tvscales2',
                 'FLVECN',
-                'Scaling of secondary derivatives in ICTV reconstruction',
                 '',
+                'Scaling of secondary derivatives in ICTV reconstruction',
             ),
             Option(
                 '',
@@ -2657,7 +2679,7 @@ COMMANDS: dict[str, Command] = {
             Argument('denoised samples (i.e. mmse estimate)', 'OUTFILE', False),
         ),
         options=(
-            Option('', 'dims', 'VECN', 'image dimensions', ''),
+            Option('', 'dims', 'VECN', '', 'image dimensions'),
             Option('g', '', 'SET', '', 'use gpu'),
             Option('s', '', 'UINT', 's', 'seed'),
             Option(
@@ -2889,8 +2911,9 @@ COMMANDS: dict[str, Command] = {
                 '&gradient_mode',
                 'GRAD_WHISPER',
             ),
-            Option('', 'CUSTOM_LONG', 'VECN', 'custom long parameters', ''),
-            Option('', 'LOOP', 'VECN', 'sequence loop dimensions', ''),
+            Option('', 'CUSTOM_LONG', 'VECN', '', 'custom long parameters'),
+            Option('', 'CUSTOM_DOUBLE', 'DOVECN', '', 'custom double parameters'),
+            Option('', 'LOOP', 'VECN', '', 'sequence loop dimensions'),
         ),
     ),
     'show': Command(
@@ -3064,7 +3087,15 @@ COMMANDS: dict[str, Command] = {
             Argument('output', 'OUTFILE', True),
         ),
         options=(
+            Option('l', '', 'SPECIAL', '1/-l2', 'toggle l1-wavelet or l2 regularization.'),
             Option('r', '', 'FLOAT', 'lambda', 'regularization parameter'),
+            Option(
+                'R',
+                '',
+                'SPECIAL',
+                '<T>:A:B:C',
+                'generalized regularization options (-Rh for help)',
+            ),
             Option('s', '', 'FLOAT', 'step', 'iteration stepsize'),
             Option('i', '', 'PINT', 'iter', 'max. number of iterations'),
             Option('t', '', 'INFILE', 'file', 'k-space trajectory'),
@@ -3213,7 +3244,7 @@ COMMANDS: dict[str, Command] = {
             Argument('output', 'OUTFILE', True),
         ),
         options=(
-            Option('', 'tvscales', 'FLVECN', 'Scaling of derivatives', ''),
+            Option('', 'tvscales', 'FLVECN', '', 'Scaling of derivatives'),
             Option(
                 '',
                 'alpha',
@@ -3335,7 +3366,7 @@ COMMANDS: dict[str, Command] = {
             Option('H', '', 'SET', '', 'half-circle golden-ratio sampling'),
             Option('s', '', 'INT', '# tiny GA', 'tiny golden angle'),
             Option('A', '', 'SET', '', 'rational approximation of golden angles'),
-            Option('D', '', 'SET', '', ''),
+            Option('D', '', 'SET', '', 'projection angle in [0,360°), else in [0,180°)'),
             Option('', 'double-base', 'SET', '', 'define GA over 2Pi base instead of default Pi.'),
             Option('o', '', 'FLOAT', 'o', 'oversampling factor'),
             Option('R', '', 'FLOAT', 'phi', 'rotate [°]'),
@@ -3606,6 +3637,13 @@ COMMANDS: dict[str, Command] = {
             Argument('output', 'OUTFILE', True),
         ),
         options=(
+            Option(
+                'R',
+                '',
+                'SPECIAL',
+                '<T>:A:B:C',
+                'Generalized regularization options. (-Rh for help)',
+            ),
             Option('b', '', 'PINT', 'blkdim', 'Block size for locally low rank.'),
             Option('i', '', 'INT', 'mxiter', 'Maximum number of iterations.'),
             Option('j', '', 'INT', 'cgiter', 'Maximum number of CG iterations in ADMM.'),
@@ -3645,6 +3683,20 @@ COMMANDS: dict[str, Command] = {
         options=(
             Option('i', '', 'SET', '', 'imaginary'),
         ),
+    ),
+}
+
+#: Entries in a command's option table that the reader could not
+#: make sense of, by command.  Nothing is dropped quietly: a construct
+#: BART starts using shows up here and fails a test rather than
+#: leaving an option missing with nothing to say so.
+UNREAD: dict[str, tuple[str, ...]] = {
+    'mobafit': (
+        '#if 0 OPT_SELECT(\'F\', enum seq_type, &seq, FLASH, "FLASH")',
+        '#endif OPT_SELECT(\'T\', enum seq_type, &seq, TSE, "Multi-Echo',
+    ),
+    'nlinv': (
+        '{ rR[1], NULL, true, OPT_SPECIAL, opt_reg, conf.regs, "<T>:A',
     ),
 }
 

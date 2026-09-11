@@ -1,6 +1,6 @@
 """The catalogue is what BART's sources say, and stays that way.
 
-``src/bartorch/tools/_catalogue.py`` is generated from the BART submodule.  It
+``src/bartorch/_catalogue.py`` is generated from the BART submodule.  It
 is a description of BART rather than a Python API on purpose: the wrappers
 people call are written by hand against it, so a name in Python is chosen
 rather than transliterated, and a command nobody has wrapped is still
@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from bartorch.tools import _catalogue as catalogue
+from bartorch import _catalogue as catalogue
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "build_tools"))
@@ -34,7 +34,7 @@ needs_bart = pytest.mark.skipif(
 @needs_bart
 def test_the_catalogue_is_what_barts_sources_say():
     assert gen_catalogue.OUTPUT.read_text() == gen_catalogue.generate(), (
-        "src/bartorch/tools/_catalogue.py is out of date with the BART submodule; "
+        "src/bartorch/_catalogue.py is out of date with the BART submodule; "
         "run `python build_tools/gen_catalogue.py`"
     )
 
@@ -105,6 +105,35 @@ def test_an_optional_output_is_an_output_and_not_a_path():
     string takes a filename, which is the one thing this package does not have."""
     exports = [o for o in catalogue.COMMANDS["pics"].options if o.long == "psf_export"]
     assert exports and exports[0].kind == "OUTFILE"
+
+
+def test_a_metavar_is_not_a_description():
+    """``OPT_FLVECN`` takes no metavar, one argument fewer than the options
+    beside it, and reading it like them puts the description where the metavar
+    goes -- which is silent, and shows up only in a docstring nobody reads.
+    A metavar is a word or two; a description is a sentence."""
+    for command in catalogue.COMMANDS.values():
+        for option in command.options:
+            assert len(option.arg) < 32, f"{command.name} {option.flag}: {option.arg!r}"
+
+
+def test_an_option_bart_writes_out_by_hand_is_read_too():
+    """``pics -R`` is a brace initialiser rather than a macro, and it is the
+    regularization option people reach for first."""
+    by_flag = {o.flag: o for o in catalogue.COMMANDS["pics"].options}
+    assert "-R" in by_flag
+    assert by_flag["-R"].arg == "<T>:A:B:C"
+    assert "regularization" in by_flag["-R"].help
+
+
+def test_nothing_is_dropped_without_saying_so():
+    """Whatever the reader cannot make sense of is named, so that a construct
+    BART starts using fails here instead of leaving an option missing."""
+    assert set(catalogue.UNREAD) == {"mobafit", "nlinv"}
+    # Two of mobafit's are inside `#if 0`, so BART does not compile them
+    # either; nlinv's picks its letter from the compatibility version.
+    assert len(catalogue.UNREAD["mobafit"]) == 2
+    assert len(catalogue.UNREAD["nlinv"]) == 1
 
 
 # --- the shape a wrapper reads off it ---------------------------------------
