@@ -23,6 +23,7 @@ and :func:`bartorch.tools.pics` where the problem is one the tool can name.
 
 from __future__ import annotations
 
+from bartorch.alg.scaling import data_scaling
 from bartorch.alg.solve import ALGORITHMS, solve
 
-__all__ = ["ALGORITHMS", "solve"]
+__all__ = ["ALGORITHMS", "data_scaling", "solve"]
