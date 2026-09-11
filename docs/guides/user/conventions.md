@@ -18,10 +18,13 @@ not move the coil dimension in BART's commands.  Use `squeeze()` for display,
 after reconstruction.
 
 Axis arguments are indices, negative ones included:
-`bartorch.fft(x, axes=(-2, -1))`.  Strings passed through to BART keep BART's
-grammar: in `pics(..., regularizers="W:7:0:0.005")`, `7` is a BART bitmask,
-not an axis.  Trajectories carry `kx, ky, kz` in grid units, not radians or
-cycles per metre.
+`bartorch.fft(x, axes=(-2, -1))`, and no argument takes a BART bitmask.  A
+set of indices that are not axes -- coil channels, parameter maps -- is a
+tuple of indices too.  Regularization is a list of `bartorch.prox` terms,
+never a `-R` string: `pics(..., regularizers=prox.Wavelet((-1, -2), 0.005))`.
+A command that reads no array, such as `seq`, counts axes from the last one
+and takes negative axes only.  Trajectories carry `kx, ky, kz` in grid units,
+not radians or cycles per metre.
 
 ## Tools and operators
 

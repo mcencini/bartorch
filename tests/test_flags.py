@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from bartorch._flags import _axes_to_flags as axes_to_flags
+from bartorch._flags import _indices_to_flags as indices_to_flags
 
 __all__: list[str] = []
 
@@ -126,3 +127,30 @@ def test_roundtrip_all_axes():
         expected = (1 << ndim) - 1
         assert axes_to_flags(list(range(ndim)), ndim=ndim) == expected
         assert axes_to_flags(list(range(-ndim, 0)), ndim=ndim) == expected
+
+
+# ---------------------------------------------------------------------------
+# No array to count from, and index sets
+# ---------------------------------------------------------------------------
+
+
+def test_a_negative_axis_needs_no_array():
+    """Axis -1 is BART's dimension 0 whatever the number of axes."""
+    assert axes_to_flags((-1, -3), ndim=None) == axes_to_flags((-1, -3), ndim=5) == 5
+
+
+def test_a_non_negative_axis_needs_an_array():
+    with pytest.raises(ValueError, match="negative"):
+        axes_to_flags(0, ndim=None)
+
+
+def test_an_index_set_is_not_reversed():
+    assert indices_to_flags((0, 2)) == 5
+    assert indices_to_flags(3) == 8
+
+
+def test_an_index_set_refuses_what_is_not_an_index():
+    with pytest.raises(ValueError, match="repeated"):
+        indices_to_flags((1, 1))
+    with pytest.raises(ValueError, match="non-negative"):
+        indices_to_flags(-1)

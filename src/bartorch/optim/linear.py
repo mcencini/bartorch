@@ -15,32 +15,12 @@ from bartorch import _marshal
 from bartorch._dispatch import BartError, _ensure_ready, _lock, _on_device
 from bartorch._lib import library
 from bartorch._operator import as_operand
-from bartorch.prox.base import Regularizer
+from bartorch.prox.base import Regularizer, _as_terms
 from bartorch.prox.terms import L2
 
 __all__ = ["ADMM", "CG", "EulerMaruyama", "FISTA", "IST", "NIHT", "PRIDU"]
 
 Regularizers = Regularizer | Iterable[Regularizer] | None
-
-
-def _terms(regularizers: Regularizers) -> list[Regularizer]:
-    if isinstance(regularizers, str):
-        raise TypeError(
-            f"a regularizer is a term from bartorch.prox, not the string {regularizers!r}; "
-            "`prox.Wavelet(axes=(-1, -2), weight=...)` is what `-R W:3:0:...` says"
-        )
-    if regularizers is None:
-        return []
-    if isinstance(regularizers, Regularizer):
-        return [regularizers]
-    try:
-        terms = list(regularizers)
-    except TypeError:
-        terms = [regularizers]
-    for term in terms:
-        if not isinstance(term, Regularizer):
-            raise TypeError(f"a regularizer is a term from bartorch.prox, not {term!r}")
-    return terms
 
 
 def _solve(
@@ -74,7 +54,7 @@ def _solve(
     _ensure_ready()
     lib = library()
     ndim = len(op.ishape)
-    flags = [term.flags(ndim) for term in terms]
+    flags = [term._flags(ndim) for term in terms]
     handles = [term.build(op.ishape) for term in terms]
     p, q, r = pqr if pqr is not None else (-1.0, -1.0, -1.0)
 
@@ -119,7 +99,13 @@ class _Solver:
     _algorithm = ""
 
     def __init__(self, regularizers: Regularizers, maxiter: int, cclambda: float):
-        self.regularizers = _terms(regularizers)
+        self.regularizers = _as_terms(regularizers)
+        for term in self.regularizers:
+            if term._extends:
+                raise TypeError(
+                    f"{type(term).__name__} adds variables to the optimization, which BART "
+                    "configures only for the whole set of terms at once; tools.pics takes it"
+                )
         self.maxiter = int(maxiter)
         self.cclambda = float(cclambda)
 

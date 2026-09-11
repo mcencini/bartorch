@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 import torch
 
 from bartorch import _call
 from bartorch._call import curated
 from bartorch._dispatch import dispatch
+from bartorch.prox.base import Regularizer, _as_terms, _command_line
 
 __all__ = ["nlinv", "pics"]
 
@@ -19,13 +22,24 @@ SOLVERS = {
     "eulermaruyama": "eulermaruyama",
 }
 
+#: ``pics`` options the terms set, and where each is set instead.
+_SET_BY_TERMS = {
+    "R": "the regularizers argument",
+    "n": "the terms' randshift",
+    "N": "LocallyLowRank(overlapping=True)",
+    "b": "LocallyLowRank(block=...)",
+    "wavelet": "the terms' family",
+    "alpha": "the terms' alpha",
+    "gamma": "the terms' gamma",
+}
+
 
 @curated("pics")
 def pics(
     kspace: torch.Tensor,
     sensitivities: torch.Tensor,
     *,
-    regularizers: str | list[str] | None = None,
+    regularizers: Regularizer | Iterable[Regularizer] | None = None,
     l2: float | None = None,
     solver: str | None = None,
     maxiter: int | None = None,
@@ -51,12 +65,12 @@ def pics(
         Under-sampled k-space, C order.
     sensitivities : torch.Tensor
         Coil sensitivities, as :func:`ecalib` or :func:`caldir` produce them.
-    regularizers : str or list of str, optional
-        BART's generalized regularization, ``<T>:A:B:C`` (``-R``), one or
-        several.  The bitmasks in it are BART's: ``"W:7:0:0.005"`` is wavelet
-        regularization over BART's first three dimensions (the last three
-        C-order axes) with weight 0.005.  :mod:`bartorch.optim` with
-        :mod:`bartorch.prox` terms takes axes instead.
+    regularizers : Regularizer or iterable of Regularizer, optional
+        :mod:`bartorch.prox` terms (``-R``).  Their axes index ``kspace``'s
+        shape, negative ones counting from the last axis.  A setting ``pics``
+        takes once for every term -- ``randshift``, ``family``, a
+        :class:`~bartorch.prox.LocallyLowRank` ``block`` -- has to agree
+        across the terms.
     l2 : float, optional
         Plain Tikhonov weight (``-r``).
     solver : {'ist', 'fista', 'admm', 'pridu', 'eulermaruyama'}, optional
@@ -91,7 +105,8 @@ def pics(
     eigen_step : bool
         Scale the step size by the largest eigenvalue (``-e``).
     **extra
-        Further BART ``pics`` flags, by name.
+        Further BART ``pics`` options, by name.  One that picks dimensions
+        (``L``, ``shared_img_dims``) takes axes of ``kspace``.
 
     Returns
     -------
@@ -101,12 +116,27 @@ def pics(
     Examples
     --------
     >>> image = pics(kspace, maps, l2=0.01, maxiter=50)
-    >>> image = pics(kspace, maps, regularizers="W:7:0:0.005", solver="fista")
+    >>> image = pics(kspace, maps, regularizers=prox.Wavelet((-1, -2), 0.005), solver="fista")
     >>> image = pics(kspace, maps, traj=trajectory, basis=subspace)
     """
-    flags: dict = dict(extra)
+    for keyword in sorted(_SET_BY_TERMS.keys() & extra.keys()):
+        raise TypeError(f"pics takes {keyword} from {_SET_BY_TERMS[keyword]}")
+    flags: dict = _call.translate("pics", dict(extra), [kspace, sensitivities])
     if regularizers is not None:
-        flags["R"] = [regularizers] if isinstance(regularizers, str) else list(regularizers)
+        arguments, shared = _command_line(_as_terms(regularizers), kspace.ndim, "pics")
+        flags["R"] = arguments
+        if "randshift" in shared:
+            flags["n"] = True
+        if shared.get("overlapping"):
+            flags["N"] = True
+        for setting, keyword in (
+            ("block", "b"),
+            ("family", "wavelet"),
+            ("alpha", "alpha"),
+            ("gamma", "gamma"),
+        ):
+            if setting in shared:
+                flags[keyword] = shared[setting]
     if l2 is not None:
         flags["r"] = l2
     if solver is not None:
@@ -184,14 +214,15 @@ def nlinv(
     return_sensitivities : bool
         Also return the sensitivities, which BART writes as a second array.
     **extra
-        Further BART ``nlinv`` flags, by name.
+        Further BART ``nlinv`` options, by name.  ``s``, the axes the
+        sensitivities are constant along, takes axes of ``kspace``.
 
     Returns
     -------
     torch.Tensor or tuple of torch.Tensor
         The image, and the sensitivities when asked for.
     """
-    flags: dict = dict(extra)
+    flags: dict = _call.translate("nlinv", dict(extra), [kspace])
     if maxiter is not None:
         flags["i"] = maxiter
     if maps is not None:

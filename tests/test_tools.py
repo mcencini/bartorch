@@ -6,6 +6,7 @@ all of them, so a command arriving with a BART update has to be placed.
 """
 
 import inspect
+import re
 from importlib import import_module
 from pathlib import Path
 
@@ -14,8 +15,10 @@ import torch
 
 import bartorch
 import bartorch.tools as bt
+import bartorch.tools.recon as recon
+from bartorch import _call, _coverage, prox
 from bartorch import _catalogue as catalogue
-from bartorch import _coverage
+from bartorch._dispatch import dispatch
 from bartorch._options import describe
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -116,7 +119,8 @@ def test_pics_can_choose_its_solver(solver):
     """With a regularizer, because IST and FISTA assert on exactly one penalty."""
     kspace = bt.phantom(24, coils=2, kspace=True)
     maps = bt.ecalib(kspace, maps=1)
-    image = bt.pics(kspace, maps, regularizers="W:3:0:0.01", solver=solver, maxiter=5)
+    term = prox.Wavelet((-1, -2), 0.01)
+    image = bt.pics(kspace, maps, regularizers=term, solver=solver, maxiter=5)
     assert tuple(image.shape) == (24, 24)
 
 
@@ -130,6 +134,136 @@ def test_pics_refuses_a_solver_bart_does_not_have():
 def test_an_axis_is_an_axis_and_not_a_bitmask():
     x = torch.randn(4, 8, dtype=torch.complex64)
     torch.testing.assert_close(bartorch.fft(x, axes=-1), bartorch.fft(x, axes=1))
+
+
+# --- axes, index sets and terms where BART takes bitmasks -------------------
+
+#: What reads as dimensions in BART's help: a bitmask, flags, dims.
+_READS_AS_DIMENSIONS = re.compile(
+    r"bitmask|flags?\b|\bdims?\b|dimension|squash|shared|loop over|unknowns|subset|group|<T>",
+    re.I,
+)
+_INTEGERS = frozenset({"INT", "UINT", "PINT", "LONG", "ULONG", "ULLONG"})
+
+#: Arguments whose help reads as dimensions but which are not, with why.
+_NOT_DIMENSIONS = {
+    ("phantom", "-x"): "a size",
+    ("poisson", "-Y"): "a size",
+    ("poisson", "-Z"): "a size",
+    ("seq", "-z"): "a count of partitions",
+    ("pics", "-R"): "refused: pics takes the terms as its regularizers argument",
+}
+
+
+def _reachable_arguments():
+    """(command, flag or positional name, BART's words for it) for each integer
+    or ``-R`` argument a caller can give: every one of a derived wrapper, and
+    the options of a curated one that passes the rest through by name."""
+
+    def options(command):
+        for option in command.options:
+            if option.kind in _INTEGERS or "<T>" in option.arg:
+                yield command.name, option.flag, f"{option.arg} {option.help}"
+
+    for name in sorted(_coverage.derived_names()):
+        command = catalogue.COMMANDS[name]
+        for argument in command.arguments:
+            if argument.kind in _INTEGERS:
+                yield name, argument.name, argument.name
+        yield from options(command)
+    for name, wrappers in sorted(_coverage.curated_wrappers().items()):
+        if any(
+            p.kind is p.VAR_KEYWORD
+            for w in wrappers
+            for p in inspect.signature(w).parameters.values()
+        ):
+            yield from options(catalogue.COMMANDS[name])
+
+
+def test_every_argument_bart_takes_as_dimensions_takes_axes():
+    """Each is in ``_call.TRANSLATED`` or said here not to be dimensions."""
+    missed = [
+        (name, key, said)
+        for name, key, said in _reachable_arguments()
+        if _READS_AS_DIMENSIONS.search(said)
+        and (name, key) not in _call.TRANSLATED
+        and (name, key) not in _NOT_DIMENSIONS
+    ]
+    assert not missed, missed
+
+
+def test_every_translated_argument_is_one_a_caller_can_give():
+    reachable = {(name, key) for name, key, _ in _reachable_arguments()}
+    assert not set(_call.TRANSLATED) - reachable
+
+
+def test_a_derived_wrapper_takes_axes_where_bart_takes_a_bitmask():
+    kspace = bt.phantom(24, coils=2, kspace=True)
+    ours = bt.pattern(kspace, s=0)
+    assert torch.equal(ours, dispatch("pattern", [kspace], None, s=8))
+    assert "Axes to squash." in bt.pattern.__doc__
+    assert "bitmask" not in bt.pattern.__doc__
+
+
+def test_without_an_array_to_count_from_an_axis_is_negative():
+    with pytest.raises(ValueError, match="negative"):
+        bt.seq(raga_flags=1)
+
+
+def test_what_a_curated_wrapper_passes_through_takes_axes(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(recon, "dispatch", lambda *args, **kwargs: seen.update(kwargs))
+    kspace = torch.zeros(2, 3, 8, 8, dtype=torch.complex64)
+    bt.pics(kspace, kspace, L=-3)
+    assert seen["L"] == 4
+    bt.nlinv(kspace, s=(0, -1))
+    assert seen["s"] == 8 | 1
+
+
+def _pics_data():
+    kspace = bt.phantom(24, coils=2, kspace=True)
+    return kspace, bt.ecalib(kspace, maps=1)
+
+
+@pytest.mark.parametrize(
+    "term,flags",
+    [
+        (prox.Wavelet((-1, -2), 0.01, randshift=False), {"R": ["W:3:0:0.01"], "n": True}),
+        (prox.LocallyLowRank((-1, -2), 0.01, block=4), {"R": ["L:3:0:0.01"], "b": 4}),
+        (prox.TotalGeneralizedVariation((-1, -2), 0.01), {"R": ["G:3:0:0.01"]}),
+    ],
+    ids=["wavelet", "locally low rank", "tgv"],
+)
+def test_pics_is_given_each_term_as_bart_would_be(term, flags):
+    """The same bits as the command line the term stands for, shared
+    settings included."""
+    kspace, maps = _pics_data()
+    ours = bt.pics(kspace, maps, regularizers=term, maxiter=5)
+    theirs = dispatch("pics", [kspace, maps], None, i=5, **flags)
+    assert torch.equal(ours, theirs)
+
+
+def test_pics_takes_terms_and_not_strings():
+    kspace, maps = _pics_data()
+    with pytest.raises(TypeError, match="prox.Wavelet"):
+        bt.pics(kspace, maps, regularizers="W:3:0:0.01")
+    with pytest.raises(TypeError, match="regularizers"):
+        bt.pics(kspace, maps, R="W:3:0:0.01")
+    with pytest.raises(TypeError, match="randshift"):
+        bt.pics(kspace, maps, n=True)
+
+
+def test_a_setting_pics_gives_once_has_to_agree_across_terms():
+    kspace, maps = _pics_data()
+    terms = [prox.Wavelet((-1, -2), 0.01), prox.Wavelet((-1, -2), 0.01, family="haar")]
+    with pytest.raises(ValueError, match="family"):
+        bt.pics(kspace, maps, regularizers=terms)
+
+
+def test_a_command_refuses_a_term_its_parser_does_not_know():
+    kspace, maps = _pics_data()
+    with pytest.raises(TypeError, match="sqpics does not take"):
+        bt.sqpics(kspace, maps, R=prox.TotalGeneralizedVariation((-1, -2), 0.01))
 
 
 def test_a_derived_wrapper_is_shaped_like_the_command_line():
