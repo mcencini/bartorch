@@ -31,8 +31,16 @@ For CUDA::
    python -m pip install -e '.[dev,finufft,cufinufft]' \
        --config-settings=cmake.define.BARTORCH_CUDA=ON
 
-Keep compiler/CUDA configurations in separate build directories. For an explicit
-CMake build::
+Keep compiler/CUDA configurations in separate build directories.
+``./scripts/run_tests.sh`` does the usual one -- build into ``build/local``,
+regenerate the committed generated files, run the suite against ``src/`` -- and
+passes anything else to pytest::
+
+   ./scripts/run_tests.sh
+   ./scripts/run_tests.sh tests/test_solve.py -k pics
+   BARTORCH_BUILD_DIR=$PWD/build-clang CC=clang ./scripts/run_tests.sh --rebuild
+
+The same by hand::
 
    cmake -S . -B build-docdev -DCMAKE_BUILD_TYPE=Release \
        -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
@@ -57,8 +65,12 @@ under ``external/``.
   ``substitute/`` what runs in BART's place -- its transforms, and the
   libraries it would otherwise have been linked against.
 * ``src/bartorch/``: Python tools, dispatch, operators and utilities.
-* ``build_tools/``: BART metadata extraction into committed wrappers, and the
-  ctypes signatures generated from the ABI header.
+* ``scripts/``: everything run by hand.  ``gen_catalogue.py`` extracts BART's
+  metadata into the committed catalogue and ``gen_abi.py`` the ctypes
+  signatures from the ABI header; ``run_tests.sh`` and ``build_docs.sh`` are
+  the suite and the reference; ``check_device.py`` is what a machine with a
+  card runs.
+* ``cmake/``: what the build system runs and a person does not.
 * ``tests/``: numerical and interoperability checks.
 * ``docs/``: guides, gallery scripts, build configuration and API extraction.
 

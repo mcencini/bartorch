@@ -253,9 +253,9 @@ if(BARTORCH_CUDA)
                 -I "${CMAKE_CURRENT_SOURCE_DIR}/src/csrc" -o "${_lto_bin}" "${_lto_src}"
         COMMAND "${CMAKE_COMMAND}" "-DIN=${_lto_bin}" "-DOUT=${_lto_hdr}"
                 -DNAME=bartorch_fft_callbacks_lto
-                -P "${CMAKE_CURRENT_SOURCE_DIR}/build_tools/embed.cmake"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed.cmake"
         DEPENDS "${_lto_src}" "${CMAKE_CURRENT_SOURCE_DIR}/src/csrc/ops/coset.cuh"
-                "${CMAKE_CURRENT_SOURCE_DIR}/build_tools/embed.cmake"
+                "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed.cmake"
         VERBATIM)
     list(APPEND BARTORCH_SOURCES "${_lto_hdr}")
 endif()

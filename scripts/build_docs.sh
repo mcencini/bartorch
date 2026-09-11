@@ -2,9 +2,9 @@
 #
 # Build the reference locally, the way the docs workflow builds it.
 #
-#   ./build_docs.sh                  render, warnings are errors
-#   ./build_docs.sh --execute        run the gallery examples as well
-#   ./build_docs.sh --clean --serve  start over, then serve the result
+#   ./scripts/build_docs.sh                  render, warnings are errors
+#   ./scripts/build_docs.sh --execute        run the gallery examples as well
+#   ./scripts/build_docs.sh --clean --serve  start over, then serve the result
 #
 # Rendering needs neither torch nor the compiled library: `docs/conf.py`
 # extracts the API from the checkout rather than from an installed package.
@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="${ROOT}/docs/_build/html"
 PYTHON="${PYTHON:-python3}"
 

@@ -17,7 +17,9 @@ else's sits inside it.
 | `external/pocketfft/`, `external/blocksruntime/` | Vendored with their licenses. |
 | `src/bartorch/` | The Python package. |
 | `src/csrc/` | The compiled library. |
-| `tests/`, `docs/`, `build_tools/` | The rest. |
+| `scripts/` | Everything a developer runs by hand: the two generators, the docs build, the suite, the device check. |
+| `cmake/` | What the build system runs and a person does not. |
+| `tests/`, `docs/`, `examples/` | The rest. |
 
 `src/csrc/` is three things, and a file belongs to whichever it is: `abi/` is
 the boundary -- what the host calls, and what BART's environment asks of the
@@ -41,8 +43,12 @@ would otherwise have been linked against.
 | `src/csrc/substitute/finufft.c`, `nufft_finufft.c` | FINUFFT's and cuFINUFFT's entry points, and BART's NUFFT operator built out of a pair of their plans -- and the normal, which stores one of those in BART's operator through `noncart/nufft_priv.h` rather than letting it grid one. |
 | `src/csrc/substitute/psf.c` | The three `compute_psf*` entry points, so that the adjoint transform a point spread function is comes from the substitution. |
 | `src/bartorch/` | The package: `_abi.py` (the ctypes signatures, generated from the header), `_lib.py` (finding and loading the library), `_marshal.py` (what an ABI argument looks like), `_backend.py` (which library serves BLAS and LAPACK), `_buffer.py` (a tensor over one of BART's buffers, host or device), `core/graph.py` (tools on tensors), `_operator.py` (what every operator shares), `linop/` and `nlop/` (a class per operator), `prox/` (BART's regularization terms, as objects), `alg/` (BART's own solve, driven from here), `interop/` (handing them to other libraries), `finufft.py` (the substitution), `_catalogue.py` and `_options.py` (what BART declares, and what each option is called here), `tools/` (one function per BART command: hand-written where it needed a judgement, built from the catalogue otherwise). |
-| `build_tools/gen_abi.py` | Generates `_abi.py` from `src/csrc/include/bartorch.h`. |
-| `build_tools/gen_catalogue.py` | Generates `_catalogue.py` from the BART sources: every command, its arguments, and every option with both spellings. |
+| `scripts/gen_abi.py` | Generates `_abi.py` from `src/csrc/include/bartorch.h`. Run after changing the header; `tests/test_abi.py` fails when the checked-in file is not what it writes. |
+| `scripts/gen_catalogue.py` | Generates `_catalogue.py` from the BART sources: every command, its arguments, and every option with both spellings. Run after a submodule bump. |
+| `scripts/run_tests.sh` | Builds into `build/local` and runs the suite against `src/`, without installing. |
+| `scripts/build_docs.sh` | Builds the reference the way the workflow does. |
+| `scripts/check_device.py` | Everything a card can answer that a host cannot, in dependency order. |
+| `cmake/embed.cmake` | Writes a file's bytes into a C array, for the LTO-IR the CUDA build links. |
 | `attic/prototype/` | An earlier pybind11 extension, kept for reference and not built. |
 
 ## Design rules
@@ -659,23 +665,42 @@ over as it stands rather than wrapped, so there is no crossing per step --
 `tests/test_solve.py` asserts both: one call into the library however many
 iterations it runs, and `as_bart()` returning the operator itself.
 
-What is not yet exact is the comparison with the tool end to end. `pics` does
-work around its solve that the assembled path does not: `ifftmod` on the
-k-space, and a scaling it estimates from the data unless `-w` says otherwise.
-Until those are either reproduced or deliberately declined, the tests hold the
-assembled solve against `pics` to the scale of the reconstruction and not to
-the last bit. That gap is the remaining work, not a property of the design.
+**And it is exact end to end.** `pics` does work around its solve, and an
+assembled reconstruction does the same work in Python: the sampling pattern
+applied to the k-space, `ifftmod` on it, and the scaling `pics` estimates
+unless `-w` says otherwise, which is `alg.data_scaling`. What is left is what
+`italgo_config` is handed, and three of those the tool fills in rather than
+BART: the 0.95 step of its proximal-gradient iterations, the random cycle
+spinning it does unless `-n`, and PRIDU's `sigma_tau_ratio`.
+`tests/test_solve.py` holds nine configurations of `pics` against the
+assembly with `torch.equal`, and they are equal.
+
+One thing is not bit-exact and cannot be: `-e` estimates the largest
+eigenvalue by a power iteration whose starting vector comes from BART's
+process-global generator, so a solve here and a `pics` call in the same
+process start it from different places. They agree to the power method's own
+convergence. A fresh `bart` process starts that generator from a constant,
+which is why the tool agrees with itself across runs and not across calls.
 
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
-BARTORCH_LIBRARY=$PWD/build/libbartorch.so PYTHONPATH=src pytest tests/
-pip install -e .                    # the same through scikit-build-core
+./scripts/run_tests.sh              # build into build/local, regenerate, run it all
+./scripts/run_tests.sh tests/test_solve.py -k pics    # anything else goes to pytest
+./scripts/run_tests.sh --rebuild    # after a source file moves; CMake caches the list
+./scripts/build_docs.sh             # the reference, warnings as errors
+pip install -e .                    # the same build through scikit-build-core
 pip install -e . --config-settings=cmake.define.BARTORCH_CUDA=ON   # with device code
 python scripts/check_device.py      # everything a card can answer that a host cannot
-python build_tools/gen_catalogue.py # after a submodule bump
-python build_tools/gen_abi.py       # after changing the C header
-ruff format src tests build_tools && ruff check src tests build_tools
+python scripts/gen_catalogue.py     # after a submodule bump
+python scripts/gen_abi.py           # after changing the C header
+ruff format src tests scripts && ruff check src tests scripts
+```
+
+What `run_tests.sh` does by hand, for when it is in the way:
+
+```sh
+cmake -S . -B build/local -DCMAKE_BUILD_TYPE=Release && cmake --build build/local -j
+BARTORCH_LIBRARY=$PWD/build/local/libbartorch.so PYTHONPATH=src pytest tests/
 ```
 
 Three things a fresh checkout needs before that first line works, each of

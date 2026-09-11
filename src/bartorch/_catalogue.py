@@ -1,6 +1,6 @@
 """Every BART command, as BART's own sources declare it.
 
-Generated from the BART submodule by ``build_tools/gen_catalogue.py``.
+Generated from the BART submodule by ``scripts/gen_catalogue.py``.
 Do not edit: run the generator instead.  ``tests/test_catalogue.py`` fails
 when this file is not what the sources produce.
 

@@ -8,7 +8,7 @@ signatures are generated from it rather than written twice.
 
 Run it after changing the header::
 
-    python build_tools/gen_abi.py
+    python scripts/gen_abi.py
 
 ``tests/test_abi.py`` regenerates in memory and fails when the checked-in file
 is not what this produces, so a signature cannot drift away from the header
@@ -194,7 +194,7 @@ def render(spec: dict) -> str:
     lines = [
         '"""The C ABI, as ctypes sees it.',
         "",
-        "Generated from ``src/csrc/include/bartorch.h`` by ``build_tools/gen_abi.py``.",
+        "Generated from ``src/csrc/include/bartorch.h`` by ``scripts/gen_abi.py``.",
         "Do not edit: run the generator instead.  ``tests/test_abi.py`` fails when",
         "this file is not what the header produces.",
         '"""',
@@ -255,7 +255,7 @@ def main() -> int:
     text = generate()
     if args.check:
         if not OUTPUT.exists() or OUTPUT.read_text() != text:
-            print(f"{OUTPUT} is out of date; run python build_tools/gen_abi.py", file=sys.stderr)
+            print(f"{OUTPUT} is out of date; run python scripts/gen_abi.py", file=sys.stderr)
             return 1
         return 0
     OUTPUT.write_text(text)

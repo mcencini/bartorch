@@ -20,7 +20,7 @@ import pytest
 from bartorch import _catalogue as catalogue
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "build_tools"))
+sys.path.insert(0, str(ROOT / "scripts"))
 
 import gen_catalogue  # noqa: E402
 
@@ -35,7 +35,7 @@ needs_bart = pytest.mark.skipif(
 def test_the_catalogue_is_what_barts_sources_say():
     assert gen_catalogue.OUTPUT.read_text() == gen_catalogue.generate(), (
         "src/bartorch/_catalogue.py is out of date with the BART submodule; "
-        "run `python build_tools/gen_catalogue.py`"
+        "run `python scripts/gen_catalogue.py`"
     )
 
 

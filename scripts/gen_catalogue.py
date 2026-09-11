@@ -11,7 +11,7 @@ test saying which commands changed.
 
 Run it after moving the submodule::
 
-    python build_tools/gen_catalogue.py
+    python scripts/gen_catalogue.py
 
 ``tests/test_catalogue.py`` regenerates in memory and fails when the
 checked-in file is not what BART's sources produce.
@@ -343,7 +343,7 @@ def render(commands: dict[str, dict], bart_version: str) -> str:
     lines = [
         '"""Every BART command, as BART\'s own sources declare it.',
         "",
-        "Generated from the BART submodule by ``build_tools/gen_catalogue.py``.",
+        "Generated from the BART submodule by ``scripts/gen_catalogue.py``.",
         "Do not edit: run the generator instead.  ``tests/test_catalogue.py`` fails",
         "when this file is not what the sources produce.",
         "",
@@ -534,7 +534,7 @@ def main() -> int:
     if args.check:
         if not OUTPUT.exists() or OUTPUT.read_text() != text:
             print(
-                f"{OUTPUT} is out of date; run python build_tools/gen_catalogue.py",
+                f"{OUTPUT} is out of date; run python scripts/gen_catalogue.py",
                 file=sys.stderr,
             )
             return 1

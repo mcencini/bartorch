@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "build_tools"))
+sys.path.insert(0, str(ROOT / "scripts"))
 
 import gen_abi  # noqa: E402
 
@@ -37,7 +37,7 @@ def test_the_generated_abi_is_what_the_header_produces():
     checked_in = gen_abi.OUTPUT.read_text()
     assert checked_in == gen_abi.generate(), (
         "src/bartorch/_abi.py is out of date with src/csrc/include/bartorch.h; "
-        "run `python build_tools/gen_abi.py`"
+        "run `python scripts/gen_abi.py`"
     )
 
 

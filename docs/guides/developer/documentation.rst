@@ -35,8 +35,10 @@ run the wrapper generator or load native code. References describe the checkout,
 not an unrelated installed wheel.
 
 BART's ``help_str``, argument macros and option descriptions already feed
-``build_tools/gen_tools.py``. That is the existing C-to-Python documentation
-pipeline; arbitrary C comments do not necessarily describe a safe Python API.
+``scripts/gen_catalogue.py``, whose output is what a derived wrapper and its
+reference page are both built from. That is the existing C-to-Python
+documentation pipeline; arbitrary C comments do not necessarily describe a safe
+Python API.
 Python overrides take precedence because they translate arguments and axes.
 Documentation-only NumPy-style supplements live in ``docs/_docstrings/`` and
 take precedence during rendering. PICS currently needs one because its initial

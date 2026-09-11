@@ -36,7 +36,7 @@ jobs:
   # Nothing is compiled: docs/conf.py extracts the reference from the checkout
   # rather than from an installed package, and the gallery is rendered without
   # being executed unless BARTORCH_DOCS_EXECUTE says otherwise.  This is what
-  # ./build_docs.sh runs locally.
+  # ./scripts/build_docs.sh runs locally.
   # -------------------------------------------------------------------------
   build-docs:
     name: Build Sphinx docs
@@ -57,7 +57,7 @@ jobs:
         run: pip install -r docs/requirements.txt
 
       - name: Build Sphinx HTML
-        run: ./build_docs.sh
+        run: ./scripts/build_docs.sh
 
       - name: Upload docs artifact
         uses: actions/upload-artifact@v4

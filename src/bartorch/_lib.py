@@ -5,7 +5,7 @@ nothing here depends on the Python or torch version.  ``BARTORCH_LIBRARY``
 overrides the search when the library lives outside the package directory.
 
 Finding and loading the library is what this module does.  The signatures come
-from :mod:`bartorch._abi`, which ``build_tools/gen_abi.py`` writes from the
+from :mod:`bartorch._abi`, which ``scripts/gen_abi.py`` writes from the
 header, so a signature cannot drift away from the C it describes.  Nothing
 else in the package imports ctypes: an operator handle crosses as an integer
 and a buffer as its address, which is what would let this module be a compiled
