@@ -12,15 +12,15 @@ import torch
 
 import bartorch
 import bartorch.tools as bt
-from bartorch import linop
+from bartorch import _dispatch, linop, optim
 from bartorch._lib import library
 
 
 @pytest.fixture
 def restore_batch():
-    was = bartorch.coil_batch()
+    was = _dispatch.coil_batch()
     yield
-    bartorch.set_coil_batch(was)
+    _dispatch.set_coil_batch(was)
 
 
 def _problem(n=32, coils=8, seed=0):
@@ -39,12 +39,12 @@ BATCHES = [1, 2, 4, 8, 16]
 @pytest.mark.parametrize("batch", BATCHES)
 def test_a_cartesian_reconstruction_is_the_same_whatever_the_slab(batch, restore_batch):
     image, maps = _problem()
-    kspace = bt.fft(image, axes=(-2, -1))
+    kspace = bartorch.fft(image, axes=(-2, -1))
 
-    bartorch.set_coil_batch(0)
+    _dispatch.set_coil_batch(0)
     reference = bt.pics(kspace, maps, maxiter=30)
 
-    bartorch.set_coil_batch(batch)
+    _dispatch.set_coil_batch(batch)
     torch.testing.assert_close(bt.pics(kspace, maps, maxiter=30), reference, rtol=1e-5, atol=1e-6)
 
 
@@ -52,12 +52,12 @@ def test_a_cartesian_reconstruction_is_the_same_whatever_the_slab(batch, restore
 def test_a_non_cartesian_reconstruction_is_the_same_whatever_the_slab(batch, restore_batch):
     image, maps = _problem()
     traj = bt.traj(x=32, y=48, r=True)
-    kspace = bt.nufft(traj, image)
+    kspace = bartorch.nufft(image, traj)
 
-    bartorch.set_coil_batch(0)
+    _dispatch.set_coil_batch(0)
     reference = bt.pics(kspace, maps, t=traj, maxiter=30)
 
-    bartorch.set_coil_batch(batch)
+    _dispatch.set_coil_batch(batch)
     got = bt.pics(kspace, maps, t=traj, maxiter=30)
 
     scale = float(reference.abs().max())
@@ -69,17 +69,17 @@ def test_the_slab_is_actually_taken(restore_batch):
     lib = library()
     image, maps = _problem()
     traj = bt.traj(x=32, y=48, r=True)
-    kspace = bt.nufft(traj, image)
+    kspace = bartorch.nufft(image, traj)
 
-    bartorch.set_coil_batch(0)
+    _dispatch.set_coil_batch(0)
     lib.bartorch_sense_reset_counters()
     bt.pics(kspace, maps, t=traj, maxiter=3)
     assert (lib.bartorch_sense_counter(0), lib.bartorch_sense_counter(1)) == (0, 1)
 
-    bartorch.set_coil_batch(2)
+    _dispatch.set_coil_batch(2)
     lib.bartorch_sense_reset_counters()
     bt.pics(kspace, maps, t=traj, maxiter=3)
-    bt.pics(bt.fft(image, axes=(-2, -1)), maps, maxiter=3)
+    bt.pics(bartorch.fft(image, axes=(-2, -1)), maps, maxiter=3)
     assert lib.bartorch_sense_counter(0) == 2, "both SENSE operators walk their coils"
     assert lib.bartorch_sense_counter(1) == 0
 
@@ -92,18 +92,34 @@ def test_a_single_coil_goes_back_to_barts_own_operator(restore_batch):
     image = bt.phantom([n, n]).reshape(1, 1, n, n)
     maps = torch.ones(1, 1, 1, n, n, dtype=torch.complex64)
 
-    bartorch.set_coil_batch(1)
+    _dispatch.set_coil_batch(1)
     lib.bartorch_sense_reset_counters()
-    bt.pics(bt.fft(image, axes=(-2, -1)), maps, maxiter=3)
+    bt.pics(bartorch.fft(image, axes=(-2, -1)), maps, maxiter=3)
     assert lib.bartorch_sense_counter(0) == 0
     assert lib.bartorch_sense_counter(1) == 1
 
 
 def test_the_setting_reports_itself(restore_batch):
-    bartorch.set_coil_batch(3)
-    assert bartorch.coil_batch() == 3
-    bartorch.set_coil_batch(0)
-    assert bartorch.coil_batch() == 0
+    _dispatch.set_coil_batch(3)
+    assert _dispatch.coil_batch() == 3
+    _dispatch.set_coil_batch(0)
+    assert _dispatch.coil_batch() == 0
+
+
+def test_the_batch_is_the_operators_own(restore_batch):
+    """Building a Sense leaves the default BART's tools use untouched."""
+    lib = library()
+    n, coils = 16, 4
+    maps = torch.randn(coils, n, n, dtype=torch.complex64)
+    _dispatch.set_coil_batch(1)
+
+    lib.bartorch_sense_reset_counters()
+    linop.Sense(maps, (coils, n, n), coil_batch=0)
+    assert (lib.bartorch_sense_counter(0), lib.bartorch_sense_counter(1)) == (0, 1)
+
+    linop.Sense(maps, (coils, n, n), coil_batch=2)
+    assert lib.bartorch_sense_counter(0) == 1
+    assert _dispatch.coil_batch() == 1
 
 
 # --- sensitivities held as kernels ------------------------------------------
@@ -178,7 +194,7 @@ def test_the_operator_is_the_sensitivities_and_the_transform():
     grid = linop.Sense(maps, (coils, n, n))
     torch.testing.assert_close(
         grid(x).reshape(coils, 1, n, n),
-        bt.fft(coil_images, axes=(-2, -1), unitary=True),
+        bartorch.fft(coil_images, axes=(-2, -1), unitary=True),
         rtol=1e-4,
         atol=1e-5,
     )
@@ -186,12 +202,12 @@ def test_the_operator_is_the_sensitivities_and_the_transform():
     traj = bt.traj(x=n, y=48, r=True)
     off = linop.Sense(maps, (coils, n, n), traj=traj)
     torch.testing.assert_close(
-        off(x).reshape(coils, 48, n, 1), bt.nufft(traj, coil_images), rtol=1e-4, atol=1e-5
+        off(x).reshape(coils, 48, n, 1), bartorch.nufft(coil_images, traj), rtol=1e-4, atol=1e-5
     )
 
 
 @pytest.mark.skipif(
-    not bartorch.cuda.available(), reason="no CUDA device, or the library was built without CUDA"
+    not bartorch._cuda.available(), reason="no CUDA device, or the library was built without CUDA"
 )
 def test_a_bank_left_on_the_host_is_brought_over_a_slab_at_a_time():
     """The card never holds the bank, only the slab being used.
@@ -223,7 +239,7 @@ def test_a_bank_left_on_the_host_is_brought_over_a_slab_at_a_time():
 
 
 @pytest.mark.skipif(
-    not bartorch.cuda.available(), reason="no CUDA device, or the library was built without CUDA"
+    not bartorch._cuda.available(), reason="no CUDA device, or the library was built without CUDA"
 )
 def test_fetching_a_slab_alongside_the_arithmetic_changes_nothing():
     """With a stream to spare, the next slab is fetched while this one is used.
@@ -240,18 +256,18 @@ def test_fetching_a_slab_alongside_the_arithmetic_changes_nothing():
     traj = bt.traj(x=n, y=48, r=True).cuda()
     x = bt.phantom([n, n]).reshape(1, n, n).cuda()
 
-    was = bartorch.cuda.streams()
+    was = bartorch._cuda.streams()
     try:
         resident = linop.Sense(maps.cuda(), (coils, n, n), traj=traj)
         reference = resident.normal(x)
 
-        bartorch.cuda.set_streams(1)
+        bartorch._cuda.set_streams(1)
         one = linop.Sense(maps, (coils, n, n), traj=traj).normal(x)
 
-        bartorch.cuda.set_streams(2)
+        bartorch._cuda.set_streams(2)
         two = linop.Sense(maps, (coils, n, n), traj=traj).normal(x)
     finally:
-        bartorch.cuda.set_streams(was)
+        bartorch._cuda.set_streams(was)
 
     torch.testing.assert_close(one, reference, rtol=1e-4, atol=1e-5)
     torch.testing.assert_close(two, one, rtol=1e-4, atol=1e-5)
@@ -290,7 +306,7 @@ def test_a_kernel_bank_serves_a_subspace_operator_as_the_maps_it_stands_for():
 
 
 @pytest.mark.skipif(
-    not bartorch.cuda.available(), reason="no CUDA device, or the library was built without CUDA"
+    not bartorch._cuda.available(), reason="no CUDA device, or the library was built without CUDA"
 )
 def test_an_operator_on_a_card_takes_and_returns_host_arrays():
     """The card holds the operator; the caller's arrays stay where they are.
@@ -334,19 +350,18 @@ def test_an_operator_on_a_card_takes_and_returns_host_arrays():
     assert from_host.normal(x, out=reused) is reused
     torch.testing.assert_close(reused, on_card.normal(x.cuda()).cpu(), rtol=1e-5, atol=1e-6)
 
-    solved = from_host.lstsq(y, maxiter=5)
+    cg = optim.CG(maxiter=5)
+    solved = cg(y, from_host)
     assert solved.device.type == "cpu"
-    torch.testing.assert_close(
-        solved, on_card.lstsq(y.cuda(), maxiter=5).cpu(), rtol=1e-4, atol=1e-5
-    )
+    torch.testing.assert_close(solved, cg(y.cuda(), on_card).cpu(), rtol=1e-4, atol=1e-5)
 
-    bartorch.cuda.use_memcache(False)
+    bartorch._cuda.use_memcache(False)
     torch.cuda.synchronize()
     before, _ = torch.cuda.mem_get_info()
     from_host.normal(x)
     torch.cuda.synchronize()
     after, _ = torch.cuda.mem_get_info()
-    bartorch.cuda.use_memcache(True)
+    bartorch._cuda.use_memcache(True)
     assert after >= before - (16 << 20), "a normal left nothing of the caller's on the card"
 
 
@@ -365,7 +380,7 @@ def test_a_three_dimensional_kernel_bank_applies_as_the_maps_it_stands_for():
 
 
 @pytest.mark.skipif(
-    not bartorch.cuda.available(), reason="no CUDA device, or the library was built without CUDA"
+    not bartorch._cuda.available(), reason="no CUDA device, or the library was built without CUDA"
 )
 @pytest.mark.parametrize("n, size", [(16, 6), (20, 7), (15, 5)])
 def test_a_kernel_bank_inflated_on_a_card_is_the_maps_it_stands_for(n, size):

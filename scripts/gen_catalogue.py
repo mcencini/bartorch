@@ -1,20 +1,12 @@
 #!/usr/bin/env python3
-"""Generate ``src/bartorch/_catalogue.py`` from BART's own sources.
+"""Generate ``src/bartorch/_catalogue.py`` from BART's sources.
 
-Every BART tool declares its arguments and options as a table of macros, and
-this reads those tables: what each option is called, both ways; what kind of
-value it takes; what BART's own help says about it.  That is a description of
-BART, not a Python API, and it is deliberately not one -- the wrappers people
-call are written by hand against this, so that the names are chosen rather
-than transliterated, and so that a submodule bump is a regeneration plus a
-test saying which commands changed.
-
-Run it after moving the submodule::
+Reads each command's argument and option tables: both spellings, the kind of
+value, and BART's help text.  Run after updating BART::
 
     python scripts/gen_catalogue.py
 
-``tests/test_catalogue.py`` regenerates in memory and fails when the
-checked-in file is not what BART's sources produce.
+``tests/test_catalogue.py`` fails when the checked-in file differs from this output.
 """
 
 from __future__ import annotations
@@ -86,9 +78,7 @@ for _kind in TYPED_KINDS:
 
 #: ARG_<KIND>(required, ptr, argname).  ARG_TUPLE is variadic and is recorded
 #: by its kind alone; nothing in the wrappers takes one yet.
-ARGUMENT_KINDS = (
-    "INFILE OUTFILE INOUTFILE CFL INT LONG ULONG FLOAT STRING VEC3 TUPLE"
-).split()
+ARGUMENT_KINDS = ("INFILE OUTFILE INOUTFILE CFL INT LONG ULONG FLOAT STRING VEC3 TUPLE").split()
 
 
 def strip_comments(text: str) -> str:
@@ -378,8 +368,8 @@ def render(commands: dict[str, dict], bart_version: str) -> str:
         "    def is_array(self) -> bool:",
         '        """Whether it is an array rather than a number or a string.',
         "",
-        '        ``ARG_CFL`` is not one: it is a complex scalar read from the',
-        '        command line, as in ``bart scale <factor> <input> <output>``.',
+        "        ``ARG_CFL`` is not one: it is a complex scalar read from the",
+        "        command line, as in ``bart scale <factor> <input> <output>``.",
         '        """',
         '        return self.kind in ("INFILE", "OUTFILE", "INOUTFILE")',
         "",

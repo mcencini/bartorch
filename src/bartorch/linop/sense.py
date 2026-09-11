@@ -1,64 +1,65 @@
-"""The SENSE encoding, over one slab of coils at a time."""
+"""The SENSE encoding, applied a slab of coils at a time."""
 
 from __future__ import annotations
 
 import torch
 
+from bartorch._dispatch import _lock
 from bartorch._lib import library
 from bartorch._operator import Built, Shape, as_operand, dims
-from bartorch.linop.base import BartLinearOperator
+from bartorch.linop.base import LinearOperator
 
 __all__ = ["Sense"]
 
 
-class Sense(BartLinearOperator):
-    """Sensitivities and a transform, walking the coils a slab at a time.
+class Sense(LinearOperator):
+    """Sensitivities followed by a Fourier transform, applied ``coil_batch`` coils at a time.
 
-    The coils are independent until the sum that ends the adjoint, so this
-    applies a slab of sensitivities, transforms that slab and sums it in.
-    What is resident is a slab rather than the whole bank, and the transform
-    is built for a slab, so the grid its Toeplitz normal convolves on shrinks
-    with it.  :func:`bartorch.set_coil_batch` is how many coils a slab holds.
+    Memory held -- and, behind a non-Cartesian transform, the grid the Toeplitz
+    normal convolves on -- scales with ``coil_batch`` rather than with the
+    number of coils.
 
     Parameters
     ----------
     sensitivities : tensor
-        Coil sensitivities of shape ``(coils, *image_shape[1:])``, or the
-        k-space kernels they band-limit to when ``kernels`` is set.  A bank
-        left on the host while the transform is on a card is brought over a
-        slab at a time, so the bank itself never has to fit.
+        Coil sensitivities of shape ``(coils, *image_shape[1:])``, or their
+        k-space kernels when ``kernels`` is set.  A bank on the host while the
+        transform is on a card is transferred a slab at a time.
     image_shape : tuple of int
         Coil-image shape, C order, for instance ``(coils, y, x)``.
     traj : tensor, optional
-        Trajectory in grid units; without one this is the Cartesian operator
-        and the transform is the centred unitary FFT, which is
-        ``bartorch.tools.fft(..., unitary=True)``.
+        Trajectory in grid units.  Without one the transform is the centred
+        unitary FFT, ``bartorch.fft(..., unitary=True)``.
     kspace_shape : tuple of int, optional
         Sample shape; by default the trajectory's, or the image's on a grid.
     kernels : bool
-        Read ``sensitivities`` as kernels: the centre of each map's spectrum,
-        which is all a smooth map carries.  A slab is padded back on to the
-        image grid and transformed when it is needed, so a bank that would not
-        fit is never held.  What the operator applies is then the maps
-        band-limited to the kernel, which :func:`bartorch.maps_to_kernels`
-        reports the error of.
+        Read ``sensitivities`` as k-space kernels, zero-padded to the image grid
+        and transformed a slab at a time.  The operator then applies the maps
+        band-limited to the kernel; :func:`bartorch.maps_to_kernels` makes such
+        kernels and :func:`bartorch.kernels_to_maps` gives the maps they stand for.
     toeplitz : bool
-        Apply the normal through the Toeplitz embedding.
+        Apply the normal as a convolution with a point spread function.
     weights : tensor, optional
-        A diagonal in k-space, as :class:`~bartorch.linop.NUFFT` takes it.
+        Diagonal in k-space, as :class:`~bartorch.linop.NUFFT` takes it.
     basis : tensor, optional
-        A subspace basis over frames and coefficients, as
-        :class:`~bartorch.linop.NUFFT` takes it: ``(coeffs, frames, 1, 1, 1, 1, 1)``.
-        The image then carries one volume per coefficient,
-        ``(coeffs, 1, 1, 1, *spatial)``, and the samples one set per frame.
+        Subspace basis ``(coeffs, frames, 1, 1, 1, 1, 1)``, as
+        :class:`~bartorch.linop.NUFFT` takes it.  The image then has shape
+        ``(coeffs, 1, 1, 1, *spatial)`` and the samples one set per frame.
     device : device, optional
-        Where the operator is built and does its arithmetic.  Without one,
-        that is where the trajectory is, or the sensitivities on a grid.
-        Given a card, every operand may be on the host: an image crosses
-        whole, once each way, the samples cross a slab at a time, and between
-        two applications the card holds the operator and nothing of the
-        caller's -- so a solver that keeps its vectors on the host uses the
-        card for the operator alone.
+        Where the operator is built and does its arithmetic; by default where the
+        trajectory is, or the sensitivities for a Cartesian operator.  With a card
+        here, operands may stay on the host: the image crosses once each way per
+        application, the samples a slab at a time, and between applications the
+        card holds the operator only.
+    coil_batch : int
+        Coils applied at once; 0 uses BART's own operator over all coils.  A
+        larger batch is faster and holds proportionally more.  A single-coil
+        operator is always BART's own.
+    fold_maps : bool
+        Apply the sensitivities inside the transform of the normal, which saves
+        two coil images per batch.  Takes effect only where the transform works
+        one coefficient at a time, the gathered arrangement of a compressed
+        Toeplitz function.
     """
 
     def __init__(
@@ -72,6 +73,8 @@ class Sense(BartLinearOperator):
         weights: torch.Tensor | None = None,
         basis: torch.Tensor | None = None,
         device: torch.device | str | None = None,
+        coil_batch: int = 1,
+        fold_maps: bool = True,
     ):
         image_shape = tuple(image_shape)
         if len(image_shape) < 3:
@@ -104,6 +107,10 @@ class Sense(BartLinearOperator):
         )
         self.basis = None if basis is None else as_operand(basis, tuple(basis.shape), "basis")
         self._sens_shape = (coils, *sens_spatial)
+        if coil_batch < 0:
+            raise ValueError(f"coil_batch is a number of coils, not {coil_batch}")
+        self.coil_batch = int(coil_batch)
+        self.fold_maps = bool(fold_maps)
 
         # A basis puts the coefficients on BART's COEFF axis, three past the
         # coils, and the image carries that axis where the coils do not.
@@ -149,8 +156,24 @@ class Sense(BartLinearOperator):
 
     def _create(self) -> Built:
         t, w, b = self.traj, self.weights, self.basis
-        ptr = self._under_lock(
-            library().bartorch_linop_sense,
+        lib = library()
+        # The library reads both settings from process-wide state when it builds
+        # an operator, so they are set for this build and restored after it.
+        with _lock:
+            was = lib.bartorch_sense_coil_batch(), lib.bartorch_sense_fold_maps()
+            lib.bartorch_sense_set_coil_batch(self.coil_batch)
+            lib.bartorch_sense_set_fold_maps(int(self.fold_maps))
+            try:
+                ptr = self._build_sense(lib, t, w, b)
+            finally:
+                lib.bartorch_sense_set_coil_batch(was[0])
+                lib.bartorch_sense_set_fold_maps(was[1])
+        keep = tuple(x for x in (self.sensitivities, t, w, b) if x is not None)
+        return Built(ptr, self.ishape, self.kspace_shape, keep=keep, device=self.device)
+
+    def _build_sense(self, lib, t, w, b) -> int:
+        return self._under_lock(
+            lib.bartorch_linop_sense,
             dims(self._max_shape),
             dims(self.kspace_shape),
             dims(self._sens_shape),
@@ -165,5 +188,3 @@ class Sense(BartLinearOperator):
             int(self.toeplitz),
             device=self.device,
         )
-        keep = tuple(x for x in (self.sensitivities, t, w, b) if x is not None)
-        return Built(ptr, self.ishape, self.kspace_shape, keep=keep, device=self.device)

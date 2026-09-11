@@ -11,7 +11,8 @@ import torch
 
 import bartorch
 import bartorch.tools as bt
-from bartorch import _finufft, linop
+from bartorch import _dispatch, _finufft, linop, optim
+from bartorch._dispatch import dispatch
 from bartorch._lib import library
 
 
@@ -34,7 +35,7 @@ def _no_substitution_to_test() -> str:
     try:
         # The substitution installs itself the first time the library is
         # brought up, and asking before that would say no for the wrong reason.
-        from bartorch.core.graph import _ensure_ready
+        from bartorch._dispatch import _ensure_ready
 
         _ensure_ready()
         if not _finufft.used_in_tools():
@@ -52,7 +53,7 @@ requires_finufft = pytest.mark.skipif(
     reason=_no_substitution_to_test() or "finufft is in use",
 )
 requires_cuda = pytest.mark.skipif(
-    not bartorch.cuda.available(), reason="no CUDA device, or the library was built without CUDA"
+    not bartorch._cuda.available(), reason="no CUDA device, or the library was built without CUDA"
 )
 
 
@@ -170,7 +171,7 @@ def test_bart_solves_against_a_finufft_operator():
     img = bt.phantom([n, n]).reshape(1, n, n)
     A = linop.NUFFT(traj, (1, n, n), toeplitz=False)
     y = A(img)
-    x = A.lstsq(y, lambda_=1e-3, maxiter=30)
+    x = optim.CG(1e-3, maxiter=30)(y, A)
     assert x.shape == img.shape
     assert (x - img).norm().item() / img.norm().item() < 0.5
 
@@ -221,7 +222,7 @@ def test_barts_nufft_tool_matches_an_explicit_dft_with_finufft_underneath(in_too
     img = bt.phantom([n, n]).reshape(1, n, n)
 
     _finufft.reset_counters()
-    y = bt.nufft(traj, img)
+    y = bartorch.nufft(img, traj)
 
     _all_finufft()
     ref = _dft(traj, img, n)
@@ -235,8 +236,8 @@ def test_the_substituted_operator_is_its_own_adjoint_pair(in_tools):
     x = torch.randn(1, n, n, dtype=torch.complex64)
     y = torch.randn(16, n, 1, dtype=torch.complex64)
 
-    ax = bt.nufft(traj, x)
-    ahy = bt.nufft(traj, y, adjoint=True, image_dims=(n, n, 1))
+    ax = bartorch.nufft(x, traj)
+    ahy = bartorch.nufft_adjoint(y, traj, (1, n, n))
 
     assert _inner(ax, y) == pytest.approx(_inner(x, ahy), rel=1e-4)
 
@@ -249,7 +250,7 @@ def test_weights_multiply_the_transform_and_their_conjugate_its_adjoint(in_tools
     weights = torch.rand(spokes, n, 1).to(torch.complex64)
 
     _finufft.reset_counters()
-    y = bt.nufft(traj, img, p=weights)
+    y = bartorch.nufft(img, traj, p=weights)
 
     _all_finufft()
     ref = _dft(traj, img, n) * weights.numpy().reshape(spokes, n)
@@ -257,8 +258,9 @@ def test_weights_multiply_the_transform_and_their_conjugate_its_adjoint(in_tools
 
     x = torch.randn(1, n, n, dtype=torch.complex64)
     k = torch.randn(spokes, n, 1, dtype=torch.complex64)
-    adjoint = bt.nufft(traj, k, adjoint=True, image_dims=(n, n, 1), p=weights)
-    assert _inner(bt.nufft(traj, x, p=weights), k) == pytest.approx(_inner(x, adjoint), rel=1e-4)
+    adjoint = bartorch.nufft_adjoint(k, traj, (1, n, n), p=weights)
+    forward = bartorch.nufft(x, traj, p=weights)
+    assert _inner(forward, k) == pytest.approx(_inner(x, adjoint), rel=1e-4)
 
 
 @requires_finufft
@@ -266,7 +268,7 @@ def test_pics_reconstructs_the_same_image_either_way(in_tools):
     n = 64
     traj = bt.traj(x=n, y=128, r=True)
     img = bt.phantom([n, n]).reshape(1, n, n)
-    kspace = bt.nufft(traj, img)
+    kspace = bartorch.nufft(img, traj)
     maps = torch.ones(1, n, n, dtype=torch.complex64)
 
     _finufft.reset_counters()
@@ -290,10 +292,10 @@ def test_the_normal_solves_the_normal_equations(in_tools):
     n, lam = 16, 1e-2
     traj = bt.traj(x=n, y=32, r=True)
     image = bt.phantom([n, n]).reshape(1, n, n)
-    kspace = bt.nufft(traj, image)
+    kspace = bartorch.nufft(image, traj)
 
     _finufft.reset_counters()
-    got = bt.nufft(traj, kspace, inverse=True, image_dims=(n, n, 1), l2=lam, maxiter=200)
+    got = dispatch("nufft", [traj, kspace], None, i=True, d=(n, n, 1), l=lam, m=200)
     assert _finufft.normals_built() == (1, 0), "the solve did not run on a point spread function"
 
     trj = traj.numpy().real
@@ -321,7 +323,7 @@ def test_the_two_normals_solve_the_same_problem(in_tools):
     n = 64
     traj = bt.traj(x=n, y=128, r=True)
     image = bt.phantom([n, n]).reshape(1, n, n)
-    kspace = bt.nufft(traj, image)
+    kspace = bartorch.nufft(image, traj)
     maps = torch.ones(1, n, n, dtype=torch.complex64)
 
     _finufft.reset_counters()
@@ -340,8 +342,8 @@ def test_barts_own_gridder_is_reachable_only_from_inside_the_package():
     """It is there for holding the substitution against, and for nothing else."""
     import bartorch
 
-    assert not hasattr(bartorch.finufft, "disable")
-    assert not hasattr(bartorch.finufft, "enable")
+    assert not hasattr(bartorch._finufft, "disable")
+    assert not hasattr(bartorch._finufft, "enable")
 
     n = 32
     traj = bt.traj(x=n, y=16, r=True)
@@ -349,11 +351,11 @@ def test_barts_own_gridder_is_reachable_only_from_inside_the_package():
 
     with _finufft.barts_own_gridder():
         _finufft.reset_counters()
-        bt.nufft(traj, img)
+        bartorch.nufft(img, traj)
         assert _finufft.operators_built() == (0, 1)
 
     _finufft.reset_counters()
-    bt.nufft(traj, img)
+    bartorch.nufft(img, traj)
     assert _finufft.operators_built() == (1, 0), "the block put it back"
     assert not _finufft.fallback_allowed()
 
@@ -379,14 +381,14 @@ def test_the_device_transform_is_offered_only_where_cufinufft_is(in_tools):
     # The two libraries are registered together and picked by where the data
     # is, so a trajectory on a card is BART's own operator's without the
     # cufinufft wheel rather than a transform that quietly runs on the host.
-    assert _finufft.used_on_device() == (_finufft.cuda_available() and bartorch.cuda.built()), (
+    assert _finufft.used_on_device() == (_finufft.cuda_available() and bartorch._cuda.built()), (
         _finufft.decline_reason()
     )
 
 
 @requires_finufft
 @pytest.mark.skipif(
-    not (bartorch.cuda.available() and _finufft.cuda_available()),
+    not (bartorch._cuda.available() and _finufft.cuda_available()),
     reason="this needs a CUDA device and the cufinufft package",
 )
 def test_a_trajectory_on_a_card_is_transformed_by_cufinufft(in_tools):
@@ -395,7 +397,7 @@ def test_a_trajectory_on_a_card_is_transformed_by_cufinufft(in_tools):
     image = bt.phantom([n, n]).reshape(1, n, n).cuda()
 
     _finufft.reset_counters()
-    y = bt.nufft(traj, image)
+    y = bartorch.nufft(image, traj)
 
     assert y.device.type == "cuda"
     _all_finufft()
@@ -405,7 +407,7 @@ def test_a_trajectory_on_a_card_is_transformed_by_cufinufft(in_tools):
 
 @requires_finufft
 @pytest.mark.skipif(
-    not (bartorch.cuda.available() and _finufft.cuda_available()),
+    not (bartorch._cuda.available() and _finufft.cuda_available()),
     reason="this needs a CUDA device and the cufinufft package",
 )
 def test_one_operator_serves_both_sides_of_the_bus(in_tools):
@@ -511,7 +513,7 @@ def test_a_subspace_adjoint_over_a_per_frame_trajectory_matches_an_explicit_sum(
     y = torch.randn(frames, 1, 1, spokes, n, 1, dtype=torch.complex64)
 
     _finufft.reset_counters()
-    x = bt.nufft(traj, y, adjoint=True, image_dims=(n, n, 1), B=basis)
+    x = bartorch.nufft_adjoint(y, traj, (1, n, n), B=basis)
     _all_finufft()
 
     phase = _phase_per_frame(traj, n, +1)
@@ -538,7 +540,7 @@ def test_a_subspace_forward_over_a_per_frame_trajectory_matches_an_explicit_sum(
     img = torch.randn(coeffs, 1, 1, 1, 1, n, n, dtype=torch.complex64)
 
     _finufft.reset_counters()
-    y = bt.nufft(traj, img, B=basis)
+    y = bartorch.nufft(img, traj, B=basis)
     _all_finufft()
 
     phase = _phase_per_frame(traj, n, -1)
@@ -554,7 +556,7 @@ def test_a_subspace_forward_over_a_per_frame_trajectory_matches_an_explicit_sum(
 
 @requires_finufft
 @pytest.mark.skipif(
-    not (bartorch.cuda.available() and _finufft.cuda_available()),
+    not (bartorch._cuda.available() and _finufft.cuda_available()),
     reason="this needs a CUDA device and the cufinufft package",
 )
 def test_a_subspace_adjoint_on_a_card_agrees_with_the_host(in_tools):
@@ -564,9 +566,9 @@ def test_a_subspace_adjoint_on_a_card_agrees_with_the_host(in_tools):
     y = torch.randn(frames, 1, 1, spokes, n, 1, dtype=torch.complex64)
 
     _finufft.reset_counters()
-    on_card = bt.nufft(traj.cuda(), y.cuda(), adjoint=True, image_dims=(n, n, 1), B=basis.cuda())
+    on_card = bartorch.nufft_adjoint(y.cuda(), traj.cuda(), (1, n, n), B=basis.cuda())
     _all_finufft()
-    on_host = bt.nufft(traj, y, adjoint=True, image_dims=(n, n, 1), B=basis)
+    on_host = bartorch.nufft_adjoint(y, traj, (1, n, n), B=basis)
     # The two libraries agree to about 2e-3 on a grid this coarse at the
     # upsampling the substitution defaults to; on a 128 grid it is 1e-5.
     _sides_agree(on_card.cpu(), on_host)
@@ -588,12 +590,12 @@ def test_a_transform_finufft_cannot_serve_is_an_error_rather_than_barts_gridder(
 
     assert not _finufft.fallback_allowed()
     with pytest.raises(bartorch.BartError, match="vary across frames"):
-        bt.nufft(traj, img)
+        bartorch.nufft(img, traj)
 
     # BART's own gridder still computes it, for whoever holds the two together.
     with _finufft.barts_own_gridder():
         _finufft.reset_counters()
-        bt.nufft(traj, img)
+        bartorch.nufft(img, traj)
         assert _finufft.operators_built() == (0, 1)
 
 
@@ -722,7 +724,7 @@ def test_nothing_reaches_barts_gridder_without_having_been_sent_there():
     img = bt.phantom([n, n]).reshape(1, n, n)
 
     _finufft.reset_counters()
-    bt.nufft(traj, img)
+    bartorch.nufft(img, traj)
     _all_finufft()
     assert not _finufft.fallback_allowed()
 
@@ -731,7 +733,7 @@ def test_nothing_reaches_barts_gridder_without_having_been_sent_there():
     varying = bt.traj(x=n, y=5 * frames, r=True).reshape(frames, 5, n, 3)[:, None, None]
     per_frame = torch.zeros(frames, 1, 2, 1, n, n, dtype=torch.complex64)
     with pytest.raises(bartorch.BartError, match="FINUFFT cannot serve"):
-        bt.nufft(varying, per_frame)
+        bartorch.nufft(per_frame, varying)
 
 
 @requires_finufft
@@ -841,7 +843,7 @@ def test_a_tools_oversampling_does_not_outlive_the_command(in_tools):
     ref = _dft(traj, img, n)
 
     def error(**kw):
-        y = bt.nufft(traj, img, **kw)
+        y = bartorch.nufft(img, traj, **kw)
         return np.linalg.norm(y.numpy().reshape(ref.shape) - ref) / np.linalg.norm(ref)
 
     before = error()
@@ -857,13 +859,13 @@ def test_a_tool_that_calibrates_gets_the_careful_transform(in_tools):
     megabytes, so it gets FINUFFT's own tolerance on it rather than the cheap
     default the rest of the library runs at.
     """
-    from bartorch.core import graph
+    from bartorch import _dispatch as graph
 
     assert "nlinv" in graph._CALIBRATES
 
     n, spokes, coils = 32, 32, 2
     traj = bt.traj(x=n, y=spokes, r=True)
-    ksp = bt.nufft(traj, bt.phantom([n, n], coils=coils))
+    ksp = bartorch.nufft(bt.phantom([n, n], coils=coils), traj)
 
     careful = bt.nlinv(ksp, t=traj, maxiter=4)
 
@@ -986,12 +988,12 @@ def test_nothing_builds_barts_own_nufft(in_tools):
     n, spokes, coils = 32, 32, 2
     traj = bt.traj(x=n, y=spokes, r=True)
     img = bt.phantom([n, n], coils=coils)
-    ksp = bt.nufft(traj, img)
+    ksp = bartorch.nufft(img, traj)
     maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
 
     for name, run in (
-        ("nufft", lambda: bt.nufft(traj, img)),
-        ("nufft -i", lambda: bt.nufft(traj, ksp, inverse=True, image_dims=(n, n, 1))),
+        ("nufft", lambda: bartorch.nufft(img, traj)),
+        ("nufft -i", lambda: dispatch("nufft", [traj, ksp], None, i=True, d=(n, n, 1))),
         ("pics", lambda: bt.pics(ksp, maps, t=traj)),
         ("nlinv", lambda: bt.nlinv(ksp, t=traj, maxiter=3)),
         ("operator", lambda: linop.NUFFT(traj, (1, n, n), toeplitz=True)),
@@ -1018,7 +1020,7 @@ def test_every_way_bart_stores_a_point_spread_function_is_served(in_tools, mode)
     n, spokes, coils = 32, 48, 2
     traj = bt.traj(x=n, y=spokes, r=True)
     img = bt.phantom([n, n], coils=coils)
-    ksp = bt.nufft(traj, img)
+    ksp = bartorch.nufft(img, traj)
     maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
 
     reference = bt.pics(ksp, maps, t=traj)
@@ -1083,7 +1085,7 @@ def test_a_compressed_function_keeps_what_this_transform_put_there(in_tools):
     """
     n, spokes, coils = 32, 48, 2
     traj = bt.traj(x=n, y=spokes, r=True)
-    ksp = bt.nufft(traj, bt.phantom([n, n], coils=coils))
+    ksp = bartorch.nufft(bt.phantom([n, n], coils=coils), traj)
     maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
 
     def cost():
@@ -1112,7 +1114,7 @@ def test_the_mask_lands_where_barts_does(in_tools, caplog):
     """
     n, spokes, coils = 64, 64, 2
     traj = bt.traj(x=n, y=spokes, r=True)
-    ksp = bt.nufft(traj, bt.phantom([n, n], coils=coils))
+    ksp = bartorch.nufft(bt.phantom([n, n], coils=coils), traj)
     maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
 
     def kept():
@@ -1160,7 +1162,7 @@ def test_the_mask_is_the_width_and_not_the_upsampling(in_tools, caplog):
     """
     n, spokes, coils = 64, 64, 2
     traj = bt.traj(x=n, y=spokes, r=True)
-    ksp = bt.nufft(traj, bt.phantom([n, n], coils=coils))
+    ksp = bartorch.nufft(bt.phantom([n, n], coils=coils), traj)
     maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
 
     try:
@@ -1229,7 +1231,7 @@ def test_a_plan_lives_exactly_as_long_as_what_asked_for_it(in_tools):
     n, spokes, coils = 32, 48, 2
     traj = bt.traj(x=n, y=spokes, r=True)
     image = bt.phantom([n, n], coils=coils)
-    ksp = bt.nufft(traj, image)
+    ksp = bartorch.nufft(image, traj)
     maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
     x = torch.randn(1, n, n, dtype=torch.complex64)
 
@@ -1248,8 +1250,8 @@ def test_a_plan_lives_exactly_as_long_as_what_asked_for_it(in_tools):
     assert _finufft.live_plans() == 0
 
     for run in (
-        lambda: bt.nufft(traj, image),
-        lambda: bt.nufft(traj, ksp, adjoint=True),
+        lambda: bartorch.nufft(image, traj),
+        lambda: bartorch.nufft_adjoint(ksp, traj),
         lambda: bt.psf(traj),
         lambda: bt.pics(ksp, maps, t=traj),
         lambda: bt.pics(ksp, maps, t=traj, no_toeplitz=True),
@@ -1261,13 +1263,13 @@ def test_a_plan_lives_exactly_as_long_as_what_asked_for_it(in_tools):
 
 @requires_finufft
 @pytest.mark.skipif(
-    not bartorch.cuda.available(), reason="no CUDA device, or the library was built without CUDA"
+    not bartorch._cuda.available(), reason="no CUDA device, or the library was built without CUDA"
 )
 def test_a_device_plan_is_given_back_too(in_tools):
     """A cuFINUFFT plan holds device memory, which is the scarcer of the two."""
     n, spokes, coils = 32, 48, 2
     traj = bt.traj(x=n, y=spokes, r=True).cuda()
-    ksp = bt.nufft(traj, bt.phantom([n, n], coils=coils).cuda())
+    ksp = bartorch.nufft(bt.phantom([n, n], coils=coils).cuda(), traj)
     maps = (torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5).cuda()
     x = torch.randn(1, n, n, dtype=torch.complex64, device="cuda")
 
@@ -1303,10 +1305,10 @@ def test_one_thread_count_covers_bart_and_the_transform(in_tools):
         n = 32
         traj = bt.traj(x=n, y=48, r=True)
         image = bt.phantom([n, n]).reshape(1, n, n)
-        reference = bt.nufft(traj, image)
+        reference = bartorch.nufft(image, traj)
 
         _finufft.set_threads(1)
-        one = bt.nufft(traj, image)
+        one = bartorch.nufft(image, traj)
     finally:
         _finufft.set_threads(0)
         bartorch.set_num_threads(os.cpu_count() or 1)
@@ -1330,7 +1332,7 @@ def test_a_function_with_no_imaginary_part_is_stored_without_one(in_tools):
     maps = torch.randn(coils, n, n, dtype=torch.complex64)
     maps = maps / maps.abs().pow(2).sum(0, keepdim=True).sqrt()
     image = (bt.phantom([n, n])[None] * maps).reshape(coils, 1, n, n)
-    kspace = bt.nufft(traj, image)
+    kspace = bartorch.nufft(image, traj)
 
     import bartorch.tools as g
 
@@ -1512,7 +1514,7 @@ def test_the_function_can_be_kept_off_the_card_and_brought_over_in_sets(in_tools
     maps = maps / maps.abs().pow(2).sum(0, keepdim=True).sqrt()
     image = (bt.phantom([n, n])[None] * maps).reshape(coils, 1, n, n)
     traj = bt.traj(x=n, y=48, r=True)
-    kspace = bt.nufft(traj, image)
+    kspace = bartorch.nufft(image, traj)
     bank = maps.reshape(1, coils, 1, n, n)
 
     assert lib.bartorch_nufft_stream_psf(), "it is what happens unless it is turned off"
@@ -1646,19 +1648,19 @@ def test_a_sensitivity_folded_into_the_transform_answers_the_same(in_tools):
     maps = torch.randn(1, coils, 1, n, n, dtype=torch.complex64)
     maps = (maps / maps.abs().pow(2).sum(1, keepdim=True).sqrt()).cuda()
 
-    assert bartorch.fold_maps(), "it is what happens unless it is turned off"
+    assert _dispatch.fold_maps(), "it is what happens unless it is turned off"
 
     try:
-        bartorch.set_fold_maps(False)
+        _dispatch.set_fold_maps(False)
         before = lib.bartorch_sense_counter(2)
         beside = g.pics(k, maps, t=traj, B=basis, i=5)
         assert lib.bartorch_sense_counter(2) == before
 
-        bartorch.set_fold_maps(True)
+        _dispatch.set_fold_maps(True)
         folded = g.pics(k, maps, t=traj, B=basis, i=5)
         assert lib.bartorch_sense_counter(2) > before, "the normals were folded"
     finally:
-        bartorch.set_fold_maps(True)
+        _dispatch.set_fold_maps(True)
 
     scale = float(beside.abs().max())
     assert float((folded - beside).abs().max()) / scale < 1e-5

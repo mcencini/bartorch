@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 import torch
 
+import bartorch
 import bartorch.tools as bt
 
 
@@ -20,7 +21,7 @@ def test_analytical_phantom_kspace_transforms_back_to_the_sampled_phantom():
     n = 64
     img = bt.phantom([n, n]).squeeze()
     ksp = bt.phantom([n, n], kspace=True).squeeze()
-    back = bt.ifft(ksp, axes=(-1, -2))
+    back = bartorch.ifft(ksp, axes=(-1, -2))
     a, b = back.abs().flatten().numpy(), img.abs().flatten().numpy()
     assert np.corrcoef(a, b)[0, 1] > 0.9
 
@@ -38,7 +39,7 @@ def test_pics_on_fully_sampled_data_matches_the_direct_inverse():
     ksp = _fully_sampled_coil_kspace()
     maps = bt.ecalib(ksp, calib_size=16, maps=1)
     reco = bt.pics(ksp, maps, l2=0.001, maxiter=30, l=2).squeeze()
-    coil_images = bt.ifft(ksp, axes=(-1, -2), unitary=True).squeeze()
+    coil_images = bartorch.ifft(ksp, axes=(-1, -2), unitary=True).squeeze()
     direct = (coil_images * maps.squeeze().conj()).sum(0)
     assert reco.shape == direct.shape
     scale = (reco.abs().max() / direct.abs().max()).item()
@@ -50,7 +51,7 @@ def test_nufft_matches_an_explicit_dft_on_a_radial_trajectory():
     n = 64
     traj = bt.traj(x=n, y=32, r=True)
     img = bt.phantom([n, n]).reshape(1, n, n)
-    ksp = bt.nufft(traj, img).squeeze()
+    ksp = bartorch.nufft(img, traj).squeeze()
     trj = traj.numpy().real  # (spokes, samples, 3): kx, ky, kz in grid units
     im = img.numpy().reshape(n, n)
     kx, ky = trj[..., 0], trj[..., 1]

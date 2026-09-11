@@ -1,11 +1,11 @@
-"""Tests for bartorch.utils.cfl (NumPy CFL read/write)."""
+"""Tests for bartorch.io (NumPy CFL read/write)."""
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from bartorch.utils.cfl import readcfl, writecfl
+from bartorch.io import readcfl, writecfl
 
 __all__: list[str] = []
 

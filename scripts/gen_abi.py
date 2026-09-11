@@ -1,18 +1,12 @@
 #!/usr/bin/env python3
-"""Generate ``src/bartorch/_abi.py`` from ``src/csrc/include/bartorch.h``.
+"""Generate ``src/bartorch/_abi.py``, the ctypes signatures, from ``src/csrc/include/bartorch.h``.
 
-The header is the only interface the host sees, and it is deliberately plain
-C: no complex types, no variable-length arrays, no GNU extensions.  That is
-what makes it readable by a parser this small, and it is why the ctypes
-signatures are generated from it rather than written twice.
-
-Run it after changing the header::
+The header is plain C -- no complex types, variable-length arrays or GNU
+extensions -- which is what this parser handles.  Run after changing it::
 
     python scripts/gen_abi.py
 
-``tests/test_abi.py`` regenerates in memory and fails when the checked-in file
-is not what this produces, so a signature cannot drift away from the header
-without a test saying so.
+``tests/test_abi.py`` fails when the checked-in file differs from this output.
 """
 
 from __future__ import annotations
@@ -177,9 +171,11 @@ def parse(header: str) -> dict:
         ret, name, params = m.group(1), m.group(2), m.group(3)
         # A `*` between the return type and the name belongs to the type.
         ret = ret.strip()
-        argtypes = [] if normalise(params) in ("", "void") else [
-            param_type(p, callbacks) for p in split_params(params)
-        ]
+        argtypes = (
+            []
+            if normalise(params) in ("", "void")
+            else [param_type(p, callbacks) for p in split_params(params)]
+        )
         functions.append((name, ctype(ret, callbacks), argtypes))
 
     return {

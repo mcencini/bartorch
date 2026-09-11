@@ -1,17 +1,7 @@
-"""What every operator shares, whichever kind it is.
-
-A BART operator is a pointer with two shapes and a lifetime.  Everything here
-is the part of that which does not depend on whether the operator is linear:
-the handle and what it must outlive, the conversion of a caller's tensor into
-something BART can be handed, and the wrapping of a Python function as a
-callback BART can drive.
-
-The classes callers use are in :mod:`bartorch.linop` and :mod:`bartorch.nlop`.
-"""
+"""Handle, lifetime and marshalling shared by linear and nonlinear operators."""
 
 from __future__ import annotations
 
-import abc
 import logging
 import traceback
 import weakref
@@ -22,8 +12,8 @@ from typing import Any
 import torch
 
 from bartorch import _buffer, _cuda, _marshal
+from bartorch._dispatch import BartError, _ensure_ready, _lock, _on_device
 from bartorch._lib import APPLY_FN, DIMS, library
-from bartorch.core.graph import BartError, _ensure_ready, _lock, _on_device
 
 __all__ = ["Built", "Operator", "Shape"]
 
@@ -37,23 +27,21 @@ dims = _marshal.padded_dims
 
 @dataclass
 class Built:
-    """What a concrete operator's :meth:`Operator._create` hands back.
+    """What :meth:`Operator._create` returns.
 
     Attributes
     ----------
     ptr : int
-        The operator BART made.  Zero means it declined, and the reason is
-        read off the error catcher.
+        The BART operator.  Zero means BART declined, and the reason is read
+        from the error catcher.
     ishape, oshape : tuple of int
         Domain and codomain, C order.
     keep : tuple
-        Everything the operator holds by pointer and must outlive: the
-        trajectory, the sensitivities, the callbacks.  They are released after
-        the handle, not before, which is the whole reason they are named here
-        rather than left as attributes.
+        Objects the operator holds by pointer -- trajectory, sensitivities,
+        callbacks.  They are released after the handle is freed.
     device : torch.device, optional
-        Where the operator does its arithmetic, when that is not simply where
-        its operands are.
+        Where the operator does its arithmetic, when that is not where its
+        operands are.
     """
 
     ptr: int
@@ -83,7 +71,7 @@ class _Handle:
 
 
 def check_dims(query, ptr: int, shape: Shape, what: str) -> None:
-    """Verify that BART's view of an operator matches the C-order shape recorded for it."""
+    """Raise if BART's dimensions for an operator differ from the recorded C-order shape."""
     vector = _marshal.dim_vector()
     query(ptr, DIMS, vector)
     bart = [int(vector[i]) for i in range(DIMS)]
@@ -106,13 +94,13 @@ def broadcast_flags(shape: Shape, full: Shape) -> int:
 
 def axes_flags(axes, ndim: int) -> int:
     """BART bitmask of a C-order axis index or tuple of them."""
-    from bartorch.utils.flags import _axes_to_flags
+    from bartorch._flags import _axes_to_flags
 
     return _axes_to_flags(axes, ndim)
 
 
 def as_operand(x: Any, shape: Shape, what: str) -> torch.Tensor:
-    """A contiguous complex64 tensor of *shape*, on a device BART can reach."""
+    """A contiguous complex64 tensor of ``shape``, on a device BART can reach."""
     if not isinstance(x, torch.Tensor):
         x = torch.as_tensor(x)
     if x.device.type == "cuda" and not _cuda.available():
@@ -131,7 +119,12 @@ def as_operand(x: Any, shape: Shape, what: str) -> torch.Tensor:
 
 
 def callback(fn: Callable[[torch.Tensor], torch.Tensor], ishape: Shape, oshape: Shape, name: str):
-    """A Python function as a callback BART can apply, over views of its own buffers."""
+    """``fn`` as a BART apply callback.
+
+    ``fn`` receives a view of BART's source buffer, without a copy, and its
+    result is copied into BART's destination buffer as complex64.  An
+    exception is logged and reported to BART as a failure.
+    """
 
     def cb(_ctx, dst, src):
         try:
@@ -147,52 +140,56 @@ def callback(fn: Callable[[torch.Tensor], torch.Tensor], ishape: Shape, oshape: 
     return APPLY_FN(cb)
 
 
-class Operator(abc.ABC):
-    """A BART operator between two C-order shapes.
+class Operator:
+    """Base of the linear and nonlinear operator classes.
 
-    A concrete operator says which of BART's constructors makes it and what
-    that constructor must be given; everything else -- the lock BART is called
-    under, the device it is built on, the handle's lifetime and what the
-    handle must outlive -- is here, so that a new operator is the call and
-    nothing around it.
-
-    Instances are made by the concrete classes in :mod:`bartorch.linop` and
-    :mod:`bartorch.nlop`, never by this class.
+    A subclass that defines :meth:`_create` is backed by a BART operator,
+    built by :meth:`_build`.  One that does not is defined in Python and has
+    no handle; :meth:`_bart` wraps its methods as callbacks whenever BART needs
+    a handle, and the wrapper is not cached.
     """
 
-    #: How BART frees this kind of operator; the concrete kind sets it.
+    #: Library functions that free this kind of handle and report its shapes.
     _free_name: str = ""
-    #: How BART reports this kind's domain and codomain.
     _domain_name: str = ""
     _codomain_name: str = ""
 
-    def __init__(self):
+    ishape: Shape
+    oshape: Shape
+    device: torch.device | None = None
+
+    @property
+    def _native(self) -> bool:
+        return type(self)._create is not Operator._create
+
+    def _create(self) -> Built:
+        """Build BART's operator from what the subclass recorded in ``__init__``.
+
+        Everything the operator holds by pointer goes in :attr:`Built.keep`.
+        """
+        raise NotImplementedError
+
+    def _build(self) -> None:
         _ensure_ready()
         built = self._create()
         lib = library()
         self._h = _Handle(built.ptr, getattr(lib, self._free_name), built.keep)
-        self.ishape: Shape = tuple(built.ishape)
-        self.oshape: Shape = tuple(built.oshape)
-        #: Where the operator does its arithmetic, when that is not simply
-        #: where its operands are.
-        self.device: torch.device | None = built.device
+        self.ishape = tuple(built.ishape)
+        self.oshape = tuple(built.oshape)
+        self.device = built.device
         check_dims(getattr(lib, self._domain_name), self._h.ptr, self.ishape, "domain")
         check_dims(getattr(lib, self._codomain_name), self._h.ptr, self.oshape, "codomain")
 
-    @abc.abstractmethod
-    def _create(self) -> Built:
-        """Build BART's operator.
+    def _bart(self) -> Operator:
+        """This operator if BART-backed, otherwise a new callback wrapper around it."""
+        return self if self._native else self._as_callbacks()
 
-        Called once, by ``__init__``, after the subclass has recorded whatever
-        it was constructed with.  Everything the operator holds by pointer
-        goes in the :class:`Built` it returns, so that it outlives the handle.
-        """
-
-    # --- calling into BART ----------------------------------------------
+    def _as_callbacks(self) -> Operator:
+        raise NotImplementedError
 
     @staticmethod
     def _under_lock(fn, *args, device: torch.device | None = None) -> int:
-        """One of BART's constructors, called under the lock and on the right device."""
+        """Call one of BART's constructors under the lock, on ``device``."""
         _ensure_ready()
         with _lock, _on_device(device or torch.device("cpu")):
             return fn(*args)
@@ -200,6 +197,10 @@ class Operator(abc.ABC):
     def _apply(
         self, fn, x: torch.Tensor, ishape: Shape, oshape: Shape, out: torch.Tensor | None = None
     ) -> torch.Tensor:
+        if not self._native:
+            raise NotImplementedError(
+                f"{type(self).__name__} defines neither _create nor this method"
+            )
         x = as_operand(x, ishape, "input")
         if out is None:
             y = torch.empty(oshape, dtype=torch.complex64, device=x.device)

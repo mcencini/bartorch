@@ -1,11 +1,8 @@
-"""A nonlinear operator as a torch function.
+"""Nonlinear operators as torch autograd functions; the backward pass is the adjoint derivative.
 
-The backward pass is the adjoint of the derivative at the point the forward
-pass evaluated, which is what BART's nonlinear operator carries and what a
-vector-Jacobian product is.  The forward pass has to be the one that fixed
-that point, so nothing may evaluate the operator between the two -- which is
-true of a single backward pass and is why the operator is not safe to share
-across two graphs evaluated in parallel.
+The derivative is the one fixed by the last forward evaluation, so the operator
+must not be evaluated elsewhere between a forward pass and its backward pass,
+and is not safe to share between graphs evaluated concurrently.
 """
 
 from __future__ import annotations

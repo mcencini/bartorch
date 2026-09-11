@@ -11,7 +11,8 @@ import numpy as np
 import pytest
 import torch
 
-from bartorch import linop, nlop
+import bartorch
+from bartorch import linop, nlop, optim
 
 
 def _rand(*shape):
@@ -28,14 +29,27 @@ def _inner(a, b):
 def test_the_base_class_is_abstract():
     with pytest.raises(TypeError):
         linop.LinearOperator()
-    with pytest.raises(TypeError):
-        linop.BartLinearOperator()
 
 
-def test_a_concrete_operator_is_both_a_linear_operator_and_a_bart_one():
+def test_a_subclass_says_how_it_is_applied():
+    """Either BART builds it or Python applies it; half of the second is neither."""
+
+    class ForwardOnly(linop.LinearOperator):
+        def __init__(self):
+            self.ishape = self.oshape = (4,)
+            super().__init__()
+
+        def forward(self, x, out=None):
+            return x
+
+    with pytest.raises(TypeError, match="forward and adjoint"):
+        ForwardOnly()
+
+
+def test_a_concrete_operator_is_backed_by_bart():
     F = linop.FFT((8, 16), axes=-1)
     assert isinstance(F, linop.LinearOperator)
-    assert isinstance(F, linop.BartLinearOperator)
+    assert F._native and F._bart() is F
     assert F.ishape == F.oshape == (8, 16)
     assert "FFT" in repr(F)
 
@@ -75,13 +89,14 @@ def test_an_operator_written_here_chains_with_one_of_barts():
     A = F @ S
     x = _rand(*shape)
     torch.testing.assert_close(A(x), F(S(x)), rtol=1e-4, atol=1e-4)
-    assert isinstance(A, linop.BartLinearOperator)
+    assert A._native
+    assert not S._native
 
 
 def test_an_operator_written_here_is_solved_by_barts_conjugate_gradients():
     A = Scale(2.0, (4, 4))
     y = _rand(4, 4)
-    torch.testing.assert_close(A.lstsq(y, maxiter=40), y / 2, rtol=1e-3, atol=1e-4)
+    torch.testing.assert_close(optim.CG(maxiter=40)(y, A), y / 2, rtol=1e-3, atol=1e-4)
 
 
 # --- the adjoint as an operator --------------------------------------------
@@ -240,7 +255,7 @@ def test_an_operator_becomes_a_linear_physics():
     maps = maps / maps.abs().square().sum(0, keepdim=True).sqrt()
     A = linop.MultiplySum(maps, (1, 8, 8), shape)
 
-    physics = A.to_deepinv()
+    physics = bartorch.to_deepinv(A)
     assert isinstance(physics, deepinv.physics.LinearPhysics)
 
     x = _rand(1, 8, 8)
@@ -257,7 +272,7 @@ def test_the_physics_walks_deepinvs_batch_axis():
     shape = (2, 8, 8)
     maps = _rand(*shape)
     maps = maps / maps.abs().square().sum(0, keepdim=True).sqrt()
-    physics = linop.MultiplySum(maps, (1, 8, 8), shape).to_deepinv()
+    physics = bartorch.to_deepinv(linop.MultiplySum(maps, (1, 8, 8), shape))
 
     batch = torch.stack([_rand(1, 8, 8) for _ in range(3)])
     y = physics.A(batch)
@@ -270,7 +285,7 @@ def test_the_physics_walks_deepinvs_batch_axis():
 def test_a_gradient_flows_through_the_physics():
     pytest.importorskip("deepinv")
     shape = (2, 8, 8)
-    physics = linop.MultiplySum(_rand(*shape), (1, 8, 8), shape).to_deepinv()
+    physics = bartorch.to_deepinv(linop.MultiplySum(_rand(*shape), (1, 8, 8), shape))
     x = torch.stack([_rand(1, 8, 8) for _ in range(2)]).requires_grad_(True)
     physics.A(x).abs().square().sum().backward()
     assert x.grad is not None and x.grad.shape == x.shape

@@ -1,88 +1,61 @@
-"""bartorch: the Berkeley Advanced Reconstruction Toolbox, in-process, on tensors.
+"""BART, the Berkeley Advanced Reconstruction Toolbox, in-process on torch tensors.
 
-Every BART tool is a function in :mod:`bartorch.tools` that takes and returns
-``torch.Tensor`` objects.  Shapes follow C order, so the last axis is the one
-BART calls the first; an axis argument is an index into that shape and a
-bitmask is never needed.
-
-The tools run inside the compiled library in this package, which carries all
-of BART.  BLAS and LAPACK come from whatever the process already loaded,
-which with torch installed is the library torch links; the FFT is pocketfft.
+Shapes are C order: an axis argument is an index into a tensor's shape, never
+a BART bitmask.
 """
 
 from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError, version
 
-from bartorch import alg, cuda, finufft, interop, linop, nlop, prox
-from bartorch.core.graph import (
-    BartError,
-    coil_batch,
-    dispatch,
-    fold_maps,
-    get_debug_level,
-    kernels_to_maps,
-    maps_to_kernels,
-    run_command,
-    set_coil_batch,
-    set_copy_inputs,
-    set_debug_level,
-    set_fold_maps,
-    set_num_threads,
+from bartorch import (
+    _settings,
+    fourier,
+    interp,
+    io,
+    linop,
+    metrics,
+    nlop,
+    optim,
+    prox,
+    registration,
+    thresh,
+    tools,
+    util,
+    wavelet,
 )
+from bartorch._deepinv import to_deepinv
+from bartorch._dispatch import BartError
+from bartorch._settings import *  # noqa: F401,F403
+from bartorch.fourier import *  # noqa: F401,F403
+from bartorch.interp import *  # noqa: F401,F403
+from bartorch.metrics import *  # noqa: F401,F403
+from bartorch.registration import *  # noqa: F401,F403
+from bartorch.thresh import *  # noqa: F401,F403
+from bartorch.util import *  # noqa: F401,F403
+from bartorch.wavelet import *  # noqa: F401,F403
 
 try:
     __version__ = version("bartorch")
 except PackageNotFoundError:
     __version__ = "0.0.0.dev0"
 
-
-def bart_version() -> str:
-    """The version string of the embedded BART."""
-    from bartorch._lib import library
-
-    return library().bartorch_bart_version().decode()
-
-
-def build_info() -> str:
-    """How the compiled library was built: BART version, compiler, nested-function mode."""
-    from bartorch._lib import library
-
-    return library().bartorch_build_info().decode()
-
-
-def backend_sources() -> dict[str, str]:
-    """Which library serves each BLAS and LAPACK routine, and the FFT."""
-    from bartorch import _backend
-    from bartorch.core.graph import _ensure_ready
-
-    _ensure_ready()
-    return _backend.sources()
-
-
 __all__ = [
     "BartError",
-    "alg",
-    "cuda",
-    "finufft",
-    "interop",
+    "__version__",
+    "io",
     "linop",
     "nlop",
+    "optim",
     "prox",
-    "__version__",
-    "backend_sources",
-    "bart_version",
-    "build_info",
-    "dispatch",
-    "get_debug_level",
-    "run_command",
-    "coil_batch",
-    "fold_maps",
-    "kernels_to_maps",
-    "maps_to_kernels",
-    "set_coil_batch",
-    "set_fold_maps",
-    "set_copy_inputs",
-    "set_debug_level",
-    "set_num_threads",
+    "to_deepinv",
+    "tools",
+    *_settings.__all__,
+    *fourier.__all__,
+    *interp.__all__,
+    *metrics.__all__,
+    *registration.__all__,
+    *thresh.__all__,
+    *util.__all__,
+    *wavelet.__all__,
 ]

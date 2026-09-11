@@ -1,12 +1,4 @@
-"""A regularization term, holding the operator BART builds for it.
-
-Nothing here computes a proximal step.  ``opt_reg_configure`` makes the
-proximal operator and the transform that goes with it -- the wavelet transform
-under a wavelet threshold, the gradient under total variation -- and a term
-here is the pair it made, built once against the shape it works on and handed
-to the solver as it stands.  Solving twice with the same term builds nothing
-the second time.
-"""
+"""The regularization term base class."""
 
 from __future__ import annotations
 
@@ -14,9 +6,9 @@ import abc
 import weakref
 
 from bartorch import _marshal
+from bartorch._dispatch import BartError, _ensure_ready, _lock
 from bartorch._lib import library
 from bartorch._operator import axes_flags
-from bartorch.core.graph import BartError, _ensure_ready, _lock
 
 __all__ = ["Regularizer"]
 
@@ -24,19 +16,21 @@ __all__ = ["Regularizer"]
 class Regularizer(abc.ABC):
     """One of BART's regularization terms.
 
+    A term holds the proximal operator and transform BART's
+    ``opt_reg_configure`` builds for it, per image shape, and hands them to a
+    solver as they are: solving twice with a term builds nothing the second
+    time.
+
     Attributes
     ----------
     kind : str
-        BART's own letter for the term, which is what ``pics -R`` writes.
-    weight : float
-        The term's weight.
+        BART's letter for the term, as ``pics -R`` writes it.
     axes : tuple of int
-        The axes it works over, as indices into the image's shape.  Empty
-        where the term has none of its own.
+        Axes the term works over, as indices into the image's shape.
     joint_axes : tuple of int
-        The axes it is joined along, which is BART's second flag.
+        Axes along which the term acts jointly; BART's second bitmask.
     count : int
-        The count an NIHT term takes, and zero for every other.
+        Entries an NIHT term keeps; zero for every other term.
     """
 
     kind: str = ""
@@ -45,48 +39,21 @@ class Regularizer(abc.ABC):
     joint_axes: tuple[int, ...] = ()
     count: int = 0
 
-    def build(
-        self,
-        shape: tuple[int, ...],
-        *,
-        block: int = 8,
-        wavelet: str = "dau2",
-        randshift: bool = True,
-        overlapping_blocks: bool = False,
-    ) -> int:
-        """The BART operator for this term over an image of *shape*, built once.
+    def build(self, shape: tuple[int, ...]) -> int:
+        """The BART operator for this term over an image of C-order ``shape``.
 
-        Parameters
-        ----------
-        shape : tuple of int
-            The image's shape, C order.
-        block : int
-            Block size for a locally low-rank term, which is ``pics -b``.
-        wavelet : str
-            Wavelet family for a wavelet term, which is ``pics --wavelet``.
-        randshift : bool
-            Cycle-spin the transform by a random shift, which is what the tool
-            does unless it is given ``pics -n``.
-        overlapping_blocks : bool
-            Fully overlapping blocks for a locally low-rank term, which is
-            ``pics -N``.  It replaces the random shift rather than joining it,
-            as it does for the tool.
-
-        Returns
-        -------
-        int
-            The handle the solver is given.  It belongs to this object and
-            lives as long as it does.
+        Built on first use for each shape.  The returned handle is owned by
+        this term and freed with it.
         """
-        shift_mode = 2 if overlapping_blocks else (1 if randshift else 0)
-        key = (tuple(shape), block, wavelet, shift_mode)
+        shape = tuple(shape)
         if not hasattr(self, "_handles"):
             self._handles = {}
-        if key in self._handles:
-            return self._handles[key]
+        if shape in self._handles:
+            return self._handles[shape]
 
         _ensure_ready()
         xflags, jflags = self.flags(len(shape))
+        block, family, shift_mode = self._options()
         out = _marshal.out_pointer()
         with _lock:
             code = library().bartorch_prox_create(
@@ -96,9 +63,9 @@ class Regularizer(abc.ABC):
                 float(self.weight),
                 int(self.count),
                 int(block),
-                wavelet.encode(),
+                family.encode(),
                 shift_mode,
-                _marshal.padded_dims(tuple(shape)),
+                _marshal.padded_dims(shape),
                 _marshal.by_reference(out),
             )
         if code != 0:
@@ -106,17 +73,21 @@ class Regularizer(abc.ABC):
             raise BartError(f"{self!r} could not be built: {said}")
 
         handle = out.value
-        self._handles[key] = handle
+        self._handles[shape] = handle
         weakref.finalize(self, _release, handle)
         return handle
 
-    def flags(self, ndim: int) -> tuple[int, int]:
-        """The two bitmasks BART reads, for an image of *ndim* axes.
+    def _options(self) -> tuple[int, str, int]:
+        """Block size, wavelet family and shift mode for ``opt_reg_configure``.
 
-        An axis is an index into the image's shape here and a bit position in
-        BART's own order there, which is the conversion the rest of the
-        package makes at every boundary.
+        Only the wavelet and locally low-rank terms read them.  Shift mode 0
+        is no shift, 1 the random cycle spinning ``pics`` does unless ``-n``,
+        2 fully overlapping blocks (``pics -N``).
         """
+        return 8, "dau2", 1
+
+    def flags(self, ndim: int) -> tuple[int, int]:
+        """BART's bitmasks for :attr:`axes` and :attr:`joint_axes`, for an ``ndim``-axis image."""
         return (
             axes_flags(self.axes, ndim) if self.axes else 0,
             axes_flags(self.joint_axes, ndim) if self.joint_axes else 0,
@@ -134,6 +105,5 @@ class Regularizer(abc.ABC):
 
 
 def _release(handle: int) -> None:
-    """Give one built term back to BART."""
     with _lock:
         library().bartorch_prox_free(handle)

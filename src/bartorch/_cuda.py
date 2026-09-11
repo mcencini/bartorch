@@ -57,36 +57,26 @@ def free_memory() -> int:
 
 
 def streams() -> int:
-    """How many streams BART runs its work on.
-
-    One by default.  A second is what lets an operator fetch the slab it will
-    need next while the card is busy with this one, so the crossing costs
-    nothing; more than two buys nothing here, because there is one fetch.
-    """
+    """Number of CUDA streams BART runs on; one by default."""
     return int(library().bartorch_cuda_get_streams())
 
 
 def set_streams(n: int) -> None:
-    """Set how many streams BART runs its work on, up to eight.
+    """Set the number of CUDA streams BART runs on, 1 to 8.
 
-    More than one lets BART overlap its transfers with its arithmetic, which
-    is what makes a consumer card with a narrow bus keep its kernels fed.
+    More than one overlaps transfers with arithmetic.
     """
     if library().bartorch_cuda_set_streams(int(n)) != 0:
         raise ValueError(f"BART takes between 1 and 8 streams, not {n}")
 
 
 def use_memcache(enable: bool) -> None:
-    """Whether BART keeps freed device blocks for reuse.
+    """Whether BART keeps freed device memory for its own reuse.
 
-    Off, BART returns memory to the driver as soon as it is done with it, so
-    torch's caching allocator can take it back, and what the driver reports is
-    what is in use.  It costs allocation latency: a normal at 256^3 over four
-    coefficients asks for hundreds of transform workspaces, and takes 8.4 s
-    with the cache off against 6.6 s with it on.  A SENSE operator whose
-    caller keeps its arrays on the host hands the cache back after each
-    application either way, so the card holds the operator alone between
-    two of them.
+    Off, memory goes back to the driver as soon as BART is done with it, where
+    torch's allocator can take it, at the cost of slower allocation.  A SENSE
+    operator whose caller keeps its arrays on the host returns the cache after
+    each application either way.
     """
     library().bartorch_cuda_use_memcache(int(bool(enable)))
 

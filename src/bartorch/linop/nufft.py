@@ -1,10 +1,4 @@
-"""The non-Cartesian transform, which is FINUFFT's underneath.
-
-There is one NUFFT here rather than a BART one beside a FINUFFT one: the
-substitution sits under BART's own ``nufft_create``, so what this operator is
-built on is whichever of the two can serve the trajectory it was given, and
-``bartorch.finufft.operators_built()`` says which answered.
-"""
+"""The non-uniform FFT operator, computed by FINUFFT through BART's ``nufft_create``."""
 
 from __future__ import annotations
 
@@ -12,7 +6,7 @@ import torch
 
 from bartorch._lib import DIMS, library
 from bartorch._operator import Built, Shape, as_operand, dims
-from bartorch.linop.base import BartLinearOperator
+from bartorch.linop.base import LinearOperator
 
 __all__ = ["NUFFT"]
 
@@ -28,31 +22,31 @@ def default_kspace_shape(traj_shape: Shape, image_shape: Shape, ndim: int) -> Sh
     return coils + tuple(traj_shape[:-1]) + (1,)
 
 
-class NUFFT(BartLinearOperator):
-    """BART's NUFFT from coil images to samples along a trajectory.
+class NUFFT(LinearOperator):
+    """Non-uniform FFT from coil images to samples along a trajectory.
 
     Parameters
     ----------
     traj : tensor
         Trajectory of shape ``(..., samples, 3)`` in grid units, as
-        :func:`bartorch.tools.traj` produces.
+        :func:`bartorch.tools.traj` produces.  Its third component being zero
+        makes the transform two-dimensional.
     image_shape : tuple of int
         Coil-image shape, C order, for instance ``(coils, y, x)``.
     kspace_shape : tuple of int, optional
-        Sample shape; by default the trajectory's shape with the coordinate
-        axis replaced by the coil axes of ``image_shape``.
+        Sample shape; by default the trajectory's, with the coordinate axis
+        replaced by the image's coil axes.
     weights : tensor, optional
-        A diagonal in k-space the transform is multiplied by on the way out
-        and its conjugate on the way back.
+        Diagonal in k-space, applied on the way out and conjugated on the way
+        back.
     basis : tensor, optional
-        A subspace basis over frames and coefficients, which contracts the
-        coefficients the images carry into the frames k-space has.  The normal
-        is a point spread function over both, which is why the weights and the
-        basis belong to the operator rather than to something chained onto it.
+        Subspace basis over frames and coefficients, contracting the image's
+        coefficients into k-space frames.  The weights and the basis are part
+        of the operator because its Toeplitz normal is built over both.
     toeplitz : bool
-        Apply the normal operator through the Toeplitz embedding.
+        Apply the normal as a convolution with a point spread function.
     oversampling, width : float
-        Grid oversampling and kernel width; zero keeps BART's defaults.
+        Grid oversampling and kernel width; zero keeps the defaults.
 
     Examples
     --------

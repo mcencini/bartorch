@@ -1,17 +1,13 @@
-"""The solve, which is BART's and not this package's.
+"""The solvers in ``bartorch.optim``, which are BART's and not this package's.
 
-``bartorch_solve`` hands BART the three things its own ``lsqr2`` takes -- the
-encoding, the proximal operators, and which of its iterations to run.  The
-first two are objects the caller already built, and the third comes from
-``italgo_config``, which is what ``pics`` calls.  Nothing here iterates.
+``bartorch_solve`` hands BART's ``lsqr2`` the encoding, the proximal operators
+and the iteration ``italgo_config`` makes, which is what ``pics`` calls.
 
 Two things are checked.  That the mechanism is BART's: the loop does not cross
-back into Python, every one of BART's iterations is reachable, a term means
-here what its ``-R`` string means on the command line, and nothing is rebuilt
-per solve.  And then the point of all of that --
-``test_an_assembled_pics_is_the_tool_to_the_last_bit`` -- that a
-reconstruction assembled out of this package's operators, terms and solve is
-``bart pics`` to the bit, across nine configurations of it.
+back into Python, every iteration is reachable, a term means what its ``-R``
+string means, and nothing is rebuilt per solve.  And that a reconstruction
+assembled from operators, terms and a solver is ``bart pics`` to the bit,
+across nine configurations (``test_an_assembled_pics_is_the_tool_to_the_last_bit``).
 """
 
 import pytest
@@ -19,7 +15,7 @@ import torch
 
 import bartorch
 import bartorch.tools as bt
-from bartorch import alg, linop, prox
+from bartorch import _dispatch, linop, optim, prox
 
 
 def _rand(*shape):
@@ -35,17 +31,14 @@ def _unitary():
 
 
 def test_a_bart_operator_is_handed_over_as_itself():
-    """The requirement: an encoding BART built is given to BART's solver as it
-    stands, so the iteration has nothing to call back into.  A wrapper around
-    it would be a crossing per application, every step."""
+    """An encoding BART built is given to BART's solver as it stands, so the
+    iteration has nothing to call back into."""
     A = _unitary()
-    assert A.as_bart() is A
+    assert A._bart() is A
 
 
 def test_an_operator_written_here_is_the_one_that_costs_a_crossing():
-    """And it is visible as one: the callbacks fire.  This is the price of
-    putting something of one's own in the encoding, and it is paid per
-    application rather than per solve."""
+    """Its callbacks fire during the solve: one crossing per application."""
     A = _unitary()
     calls = []
 
@@ -58,7 +51,7 @@ def test_an_operator_written_here_is_the_one_that_costs_a_crossing():
         return A.adjoint(x)
 
     P = linop.Callback((8, 8), (8, 8), forward, adjoint)
-    alg.solve(P, _rand(8, 8), solver="cg", maxiter=5)
+    optim.CG(maxiter=5)(_rand(8, 8), P)
     assert calls, "a Python operator was not called at all"
 
 
@@ -79,18 +72,16 @@ def test_the_solve_is_one_call_into_the_library():
 
     lib.bartorch_solve = Counting()
     try:
-        alg.solve(A, y, solver="cg", maxiter=50)
+        optim.CG(maxiter=50)(y, A)
     finally:
         lib.bartorch_solve = original
     assert entered == [1]
 
 
 def test_the_solve_builds_no_operator_of_its_own():
-    """The encoding and the terms are handed over as the objects they are.
-    BART counts every transform it builds, so a solve that built its own copy
-    would show up here -- and a non-Cartesian encoding is the case where
-    rebuilding would be most expensive and least visible."""
-    from bartorch import finufft, prox
+    """BART counts every transform it builds, so a solve that built its own
+    copy of the encoding would show up here."""
+    from bartorch import _finufft as finufft
 
     n = 16
     traj = bt.traj(readout=n, spokes=24, radial=True)
@@ -101,44 +92,46 @@ def test_the_solve_builds_no_operator_of_its_own():
     term = prox.Wavelet(axes=(-1, -2), weight=0.01)
     term.build(A.ishape)
 
-    # Everything built; from here a solve should build nothing.
     finufft.reset_counters()
-    alg.solve(A, y, regularizers=term, solver="fista", maxiter=25, eigen=True)
+    optim.FISTA(term, maxiter=25, eigen=True)(y, A)
     assert finufft.operators_built() == (0, 0)
 
 
 # --- it is BART's iteration -------------------------------------------------
 
 
-def test_the_plain_solve_is_the_one_the_operator_already_had():
-    """``lstsq`` and this reach the same answer by two of BART's own drivers,
-    so they agree to what single precision allows and not by construction."""
-    A = _unitary()
-    y = _rand(8, 8)
-    torch.testing.assert_close(
-        alg.solve(A, y, solver="cg", maxiter=15),
-        A.lstsq(y, maxiter=15),
-        rtol=1e-4,
-        atol=1e-5,
-    )
+def test_the_tolerance_stops_conjugate_gradients_early():
+    """``italgo_config`` leaves the tolerance at zero; the solve sets it."""
+    diag = torch.linspace(0.1, 1.0, 64).to(torch.complex64).reshape(8, 8)
+    A = linop.Diagonal(diag, (8, 8))
+    truth = _rand(8, 8)
+    full = optim.CG(maxiter=64)(A(truth), A)
+    early = optim.CG(maxiter=64, tol=0.5)(A(truth), A)
+    torch.testing.assert_close(full, truth, rtol=1e-3, atol=1e-3)
+    assert not torch.equal(early, full)
 
 
 def test_an_orthonormal_encoding_gives_back_what_it_was_given():
     A = _unitary()
     truth = _rand(8, 8)
-    torch.testing.assert_close(
-        alg.solve(A, A(truth), solver="cg", maxiter=40), truth, rtol=1e-3, atol=1e-4
-    )
+    torch.testing.assert_close(optim.CG(maxiter=40)(A(truth), A), truth, rtol=1e-3, atol=1e-4)
 
 
-@pytest.mark.parametrize("solver", ["cg", "ist", "fista", "admm", "pridu"])
-def test_every_iteration_bart_has_is_reachable(solver):
-    """Including the ones the tool selects with a flag of their own, which is
-    how BART writes a choice and why they were unreachable before."""
+@pytest.mark.parametrize(
+    "make",
+    [
+        lambda term: optim.CG(maxiter=5),
+        lambda term: optim.IST(term, maxiter=5),
+        lambda term: optim.FISTA(term, maxiter=5),
+        lambda term: optim.ADMM(term, maxiter=5),
+        lambda term: optim.PRIDU(term, maxiter=5),
+    ],
+    ids=["cg", "ist", "fista", "admm", "pridu"],
+)
+def test_every_iteration_bart_has_is_reachable(make):
     A = _unitary()
     y = _rand(8, 8)
-    regularizers = None if solver == "cg" else prox.Wavelet(axes=(-1, -2), weight=0.01)
-    got = alg.solve(A, y, solver=solver, regularizers=regularizers, maxiter=5)
+    got = make(prox.Wavelet(axes=(-1, -2), weight=0.01))(y, A)
     assert got.shape == A.ishape
     assert torch.isfinite(got.abs()).all()
 
@@ -146,40 +139,18 @@ def test_every_iteration_bart_has_is_reachable(solver):
 def test_a_heavier_weight_shrinks_the_answer():
     A = _unitary()
     y = _rand(8, 8)
-    # With the step spelled out.  This operator's normal is the identity, so
-    # one is the right step; BART's default without `-s` or `-e` diverges here
-    # and warns that it will, which is the tool's behaviour too.
-    light = alg.solve(
-        A,
-        y,
-        regularizers=prox.Wavelet(axes=(-1, -2), weight=0.001),
-        solver="fista",
-        maxiter=30,
-        step=1.0,
-    )
-    heavy = alg.solve(
-        A,
-        y,
-        regularizers=prox.Wavelet(axes=(-1, -2), weight=0.5),
-        solver="fista",
-        maxiter=30,
-        step=1.0,
-    )
+    # This operator's normal is the identity, so one is the right step.
+    light = optim.FISTA(prox.Wavelet(axes=(-1, -2), weight=0.001), maxiter=30, step=1.0)(y, A)
+    heavy = optim.FISTA(prox.Wavelet(axes=(-1, -2), weight=0.5), maxiter=30, step=1.0)(y, A)
     assert heavy.abs().sum() < light.abs().sum()
 
 
 def test_several_terms_are_taken_together():
-    A = _unitary()
-    got = alg.solve(
-        A,
-        _rand(8, 8),
-        regularizers=[
-            prox.Wavelet(axes=(-1, -2), weight=0.01),
-            prox.TotalVariation(axes=(-1, -2), weight=0.01),
-        ],
-        solver="admm",
-        maxiter=5,
-    )
+    terms = [
+        prox.Wavelet(axes=(-1, -2), weight=0.01),
+        prox.TotalVariation(axes=(-1, -2), weight=0.01),
+    ]
+    got = optim.ADMM(terms, maxiter=5)(_rand(8, 8), _unitary())
     assert torch.isfinite(got.abs()).all()
 
 
@@ -198,36 +169,35 @@ def test_several_terms_are_taken_together():
     ids=lambda t: type(t).__name__,
 )
 def test_every_term_bart_has_can_be_asked_for(term):
-    got = alg.solve(_unitary(), _rand(8, 8), regularizers=term, solver="admm", maxiter=5)
+    got = optim.ADMM(term, maxiter=5)(_rand(8, 8), _unitary())
     assert torch.isfinite(got.abs()).all()
 
 
 def test_a_term_is_built_once_and_handed_over_as_it_stands():
-    """The object owns what BART made of it, so a second solve builds nothing
-    and the solver is given the operator rather than a description of one."""
+    """The object owns what BART made of it, so a second solve builds nothing."""
     term = prox.Wavelet(axes=(-1, -2), weight=0.01)
     first = term.build((8, 8))
     assert term.build((8, 8)) == first
 
     A = _unitary()
     y = _rand(8, 8)
-    once = alg.solve(A, y, regularizers=term, solver="fista", maxiter=20, step=1.0)
-    twice = alg.solve(A, y, regularizers=term, solver="fista", maxiter=20, step=1.0)
+    fista = optim.FISTA(term, maxiter=20, step=1.0)
+    once = fista(y, A)
+    twice = fista(y, A)
     assert torch.equal(once, twice)
     assert term.build((8, 8)) == first
 
 
 def test_a_term_bart_configures_with_the_whole_set_is_declined():
     """Total generalized variation and the infimal convolutions extend the
-    optimisation variable, and what they add is counted across every term, so
-    one cannot be built alone.  `tools.pics` reaches them."""
+    optimization variable, which BART counts across every term, so one cannot
+    be built alone.  ``tools.pics`` reaches them."""
     assert not hasattr(prox, "TotalGeneralizedVariation")
 
 
 def test_a_term_carries_what_the_string_carried():
-    """`-R W:3:0:0.01` is a transform letter, two bitmasks and a weight, and so
-    is the object -- with the axes written as axes.  What BART builds from the
-    two is the same because it is the same table either way."""
+    """``-R W:3:0:0.01`` is a letter, two bitmasks and a weight, and so is the
+    object, with the axes written as axes."""
     term = prox.Wavelet(axes=(-1, -2), weight=0.01)
     assert term.kind == "W"
     assert term.flags(ndim=2) == (3, 0)
@@ -237,8 +207,6 @@ def test_a_term_carries_what_the_string_carried():
 
 
 def test_an_axis_is_an_axis_and_not_a_bitmask():
-    """`-R W:3:0:...` is the first two axes of a two-dimensional image; here
-    that is written as the axes themselves, and converted at the boundary."""
     term = prox.Wavelet(axes=(-1, -2), weight=0.01)
     assert term.flags(ndim=2) == (3, 0)
     assert term.flags(ndim=3) == (3, 0)
@@ -247,26 +215,32 @@ def test_an_axis_is_an_axis_and_not_a_bitmask():
 
 def test_a_string_says_what_to_use_instead():
     with pytest.raises(TypeError, match="prox.Wavelet"):
-        alg.solve(_unitary(), _rand(8, 8), regularizers="W:3:0:0.01")
+        optim.FISTA("W:3:0:0.01")
 
 
 # --- what it refuses --------------------------------------------------------
 
 
-def test_an_iteration_bart_does_not_have_is_refused_here():
-    with pytest.raises(ValueError, match="solver must be one of"):
-        alg.solve(_unitary(), _rand(8, 8), solver="newton")
+def test_niht_takes_only_hard_thresholding_terms():
+    with pytest.raises(TypeError, match="NIHT"):
+        optim.NIHT(prox.Wavelet(axes=(-1, -2), weight=0.01))
 
 
 def test_something_that_is_not_a_term_is_refused():
     with pytest.raises(TypeError, match="bartorch.prox"):
-        alg.solve(_unitary(), _rand(8, 8), regularizers=object())
+        optim.ADMM(object())
+
+
+def test_a_wavelet_family_bart_does_not_have_is_refused_here():
+    """``opt_reg_configure`` answers an unknown family with ``error()``."""
+    with pytest.raises(ValueError, match="family"):
+        prox.Wavelet(axes=(-1, -2), weight=0.01, family="db4")
 
 
 def test_the_terms_are_the_ones_barts_parser_knows():
-    """Every letter this package offers is one ``grecon/optreg.c`` reads, so a
-    term cannot be asked for that BART would answer with ``error()`` -- and
-    what that leaves behind makes the next call into the library spin."""
+    """Every letter offered here is one ``grecon/optreg.c`` reads, so a term
+    cannot be asked for that BART would answer with ``error()`` -- which leaves
+    the next call into the library spinning."""
     import re
     from pathlib import Path
 
@@ -290,99 +264,91 @@ def test_the_terms_are_the_ones_barts_parser_knows():
 def _whole_coil_operator():
     """BART's own SENSE operator, which is what the tool builds.
 
-    The coil-slab operator this package can put in its place is a different
-    computation -- the same answer, not the same arithmetic -- so the
-    comparison against the tool is made against BART's.  Process-wide, hence
+    The coil-slab operator gives the same answer by different arithmetic, so
+    the bit-for-bit comparison is made against BART's.  Process-wide, hence
     put back afterwards.
     """
-    before = bartorch.coil_batch()
-    bartorch.set_coil_batch(0)
+    before = _dispatch.coil_batch()
+    _dispatch.set_coil_batch(0)
     yield
-    bartorch.set_coil_batch(before)
+    _dispatch.set_coil_batch(before)
 
 
 def _pics_problem(size=24, coils=4, accel=2):
-    """A ``pics`` problem and the same problem assembled out of this package.
+    """A ``pics`` problem, and the same problem assembled from this package.
 
-    Everything ``pics`` does to its data before it iterates is done here,
-    because that is the whole of the difference between the tool and an
-    assembly: the sampling pattern applied to the k-space (pics.c:425), the
-    modulation that moves the FFT's centre (pics.c:437), and the scaling
-    estimated from what is left (pics.c:501).  The encoding is the tool's own
-    too -- a SENSE operator with the sampling chained on to it, which is what
-    ``grecon/model.c`` builds.
+    ``pics`` applies the sampling pattern to the k-space (pics.c:425), the
+    modulation that moves the FFT's centre (pics.c:437), and the scaling it
+    estimates from what is left (pics.c:501) before it iterates; the assembly
+    does the same.  The encoding is the one ``grecon/model.c`` builds: SENSE
+    with the sampling chained on.
     """
     kspace = bt.phantom(size, coils=coils, kspace=True)
     maps = bt.ecalib(kspace, maps=1)
 
-    # Undersample, so that the pattern is doing something.
     mask = torch.zeros(size, dtype=torch.complex64)
     mask[::accel] = 1
     mask[size // 2 - 2 : size // 2 + 2] = 1
     kspace = kspace * mask.reshape(size, 1)
 
     pattern = bt.pattern(kspace)
-    y = bt.fftmod(kspace * pattern, axes=(-1, -2, -3), inverse=True)
-    scale = alg.data_scaling(y)
+    y = bartorch.fftmod(kspace * pattern, axes=(-1, -2, -3), inverse=True)
+    scale = optim.data_scaling(y)
 
-    S = linop.Sense(maps.squeeze(1), (coils, size, size))
+    S = linop.Sense(maps.squeeze(1), (coils, size, size), coil_batch=0)
     A = linop.Sampling(pattern.squeeze(), S.oshape) @ S
     return kspace, maps, A, (y * (1.0 / scale)).squeeze(1), scale
 
 
-#: One configuration of ``pics``, as the tool's flags and as this package's
-#: objects.  Both sides say the same thing; the test is that BART agrees.
+def _wavelet(**kwargs):
+    return prox.Wavelet(axes=(-1, -2), weight=0.01, **kwargs)
+
+
+#: One configuration of ``pics``, as the tool's flags and as a solver built
+#: from the data scaling (which only PRIDU reads).
 _CONFIGURATIONS = [
-    ("plain", {}, {}),
-    ("tikhonov", {"r": 0.1}, {"regularizers": prox.L2(0.1)}),
+    ("plain", {}, lambda scale: optim.CG(maxiter=20)),
+    ("tikhonov", {"r": 0.1}, lambda scale: optim.CG(0.1, maxiter=20)),
     (
         "wavelet admm",
         {"regularizers": "W:3:0:0.01", "solver": "admm"},
-        {"regularizers": prox.Wavelet(axes=(-1, -2), weight=0.01), "solver": "admm"},
+        lambda scale: optim.ADMM(_wavelet(), maxiter=20),
     ),
     (
         "wavelet fista",
         {"regularizers": "W:3:0:0.01", "solver": "fista"},
-        {"regularizers": prox.Wavelet(axes=(-1, -2), weight=0.01), "solver": "fista"},
+        lambda scale: optim.FISTA(_wavelet(), maxiter=20),
     ),
     (
         "wavelet ist",
         {"regularizers": "W:3:0:0.01", "solver": "ist"},
-        {"regularizers": prox.Wavelet(axes=(-1, -2), weight=0.01), "solver": "ist"},
+        lambda scale: optim.IST(_wavelet(), maxiter=20),
     ),
     (
         "no cycle spinning",
         {"regularizers": "W:3:0:0.01", "solver": "fista", "n": True},
-        {
-            "regularizers": prox.Wavelet(axes=(-1, -2), weight=0.01),
-            "solver": "fista",
-            "randshift": False,
-        },
+        lambda scale: optim.FISTA(_wavelet(randshift=False), maxiter=20),
     ),
     (
         "tv pridu",
         {"regularizers": "T:3:0:0.01", "solver": "pridu"},
-        {"regularizers": prox.TotalVariation(axes=(-1, -2), weight=0.01), "solver": "pridu"},
+        lambda scale: optim.PRIDU(
+            prox.TotalVariation(axes=(-1, -2), weight=0.01), maxiter=20, sigma_tau_ratio=scale
+        ),
     ),
     (
         "locally low rank",
         {"regularizers": "L:3:0:0.01", "solver": "admm", "b": 4},
-        {
-            "regularizers": prox.LocallyLowRank(axes=(-1, -2), weight=0.01),
-            "solver": "admm",
-            "llr_block": 4,
-        },
+        lambda scale: optim.ADMM(
+            prox.LocallyLowRank(axes=(-1, -2), weight=0.01, block=4), maxiter=20
+        ),
     ),
     (
         "two terms",
         {"regularizers": ["W:3:0:0.01", "T:3:0:0.005"], "solver": "admm"},
-        {
-            "regularizers": [
-                prox.Wavelet(axes=(-1, -2), weight=0.01),
-                prox.TotalVariation(axes=(-1, -2), weight=0.005),
-            ],
-            "solver": "admm",
-        },
+        lambda scale: optim.ADMM(
+            [_wavelet(), prox.TotalVariation(axes=(-1, -2), weight=0.005)], maxiter=20
+        ),
     ),
 ]
 
@@ -391,96 +357,61 @@ _CONFIGURATIONS = [
     "theirs,ours", [(a, b) for _, a, b in _CONFIGURATIONS], ids=[n for n, _, _ in _CONFIGURATIONS]
 )
 def test_an_assembled_pics_is_the_tool_to_the_last_bit(theirs, ours, _whole_coil_operator):
-    """The requirement the package is for.
-
-    Not "close": the same bits.  Anything assembled out of this package's
-    operators, terms and solve is pushed into BART's own loop, so there is no
-    arithmetic here for an answer to differ by -- and a difference in the last
-    place would mean some step had been done twice, once by BART and once by
-    something of this package's own.
-    """
+    """Not close: the same bits.  A difference in the last place would mean
+    some step was done twice, once by BART and once by this package."""
     kspace, maps, A, y, scale = _pics_problem()
     tool = bt.pics(kspace, maps, maxiter=20, **theirs).squeeze()
-    # ``pics`` hands PRIDU the scaling it estimated, and no other iteration
-    # reads it, so it is passed here for every configuration as it is there.
-    assembled = alg.solve(A, y, maxiter=20, scaling=scale, **ours).squeeze()
+    assembled = ours(scale)(y, A).squeeze()
     assert torch.equal(assembled, tool), (
         f"maximum difference {float((assembled - tool).abs().max()):.3e}"
     )
 
 
 def test_the_estimated_scaling_is_the_one_the_tool_estimates():
-    """``pics`` divides its data by a number it works out from the k-space
-    centre, and a reconstruction assembled here has to work out the same one
-    or every weight below means something else."""
     kspace = bt.phantom(24, coils=4, kspace=True)
     pattern = bt.pattern(kspace)
-    y = bt.fftmod(kspace * pattern, axes=(-1, -2, -3), inverse=True)
-    # What the tool prints at debug level 1 for this data is 5490.628906, and
-    # what makes the solve above exact is that this is the same number.
-    assert alg.data_scaling(y) == pytest.approx(5490.628906, rel=1e-6)
+    y = bartorch.fftmod(kspace * pattern, axes=(-1, -2, -3), inverse=True)
+    # What the tool prints at debug level 1 for this data.
+    assert optim.data_scaling(y) == pytest.approx(5490.628906, rel=1e-6)
 
 
 def test_the_scaling_for_a_trajectory_is_the_other_branch():
-    """``pics`` reads a non-Cartesian scaling off ``A^H y`` instead, and BART
-    has no tool for that one, so it is reached through the library."""
+    """``pics`` reads a non-Cartesian scaling off ``A^H y``; BART has no tool
+    for it, so it is reached through the library."""
     n = 16
     traj = bt.traj(readout=n, spokes=24, radial=True)
     maps = _rand(2, n, n)
     maps = maps / maps.abs().square().sum(0, keepdim=True).sqrt()
     A = linop.Sense(maps, (2, n, n), traj=traj)
     y = A(_rand(1, n, n))
-    scale = alg.data_scaling(y, A=A)
+    scale = optim.data_scaling(y, A=A)
     assert scale > 0
-    # It is a spread of the adjoint image, so scaling the data scales it too.
-    assert alg.data_scaling(y * 4.0, A=A) == pytest.approx(4 * scale, rel=1e-5)
+    assert optim.data_scaling(y * 4.0, A=A) == pytest.approx(4 * scale, rel=1e-5)
 
 
 def test_a_wavelet_term_reused_answers_as_a_freshly_built_one():
-    """BART's wavelet threshold spins its transform by a random shift drawn
-    from a generator of its own.  The tool builds the operator once per run and
-    the generator starts where it starts; a term here is kept, so the solve
-    puts it back -- otherwise a second solve with the same term would quietly
-    be a different computation from the first."""
+    """BART's wavelet threshold draws its shifts from a generator of its own;
+    the solve rewinds it, so a kept term answers as a fresh one would."""
     A = _unitary()
     y = _rand(8, 8)
-    term = prox.Wavelet(axes=(-1, -2), weight=0.01)
-    once = alg.solve(A, y, regularizers=term, solver="fista", maxiter=20, step=1.0)
-    twice = alg.solve(A, y, regularizers=term, solver="fista", maxiter=20, step=1.0)
-    assert torch.equal(once, twice)
+    fista = optim.FISTA(_wavelet(), maxiter=20, step=1.0)
+    assert torch.equal(fista(y, A), fista(y, A))
 
 
 def test_cycle_spinning_is_on_as_it_is_for_the_tool():
-    """``pics -n`` is what turns it off there, and it changes the answer."""
+    """``pics -n`` turns it off there, and it changes the answer."""
     A = _unitary()
     y = _rand(8, 8)
-    term = prox.Wavelet(axes=(-1, -2), weight=0.05)
-    spun = alg.solve(A, y, regularizers=term, solver="fista", maxiter=20, step=1.0)
-    still = alg.solve(
-        A, y, regularizers=term, solver="fista", maxiter=20, step=1.0, randshift=False
-    )
+    spun = optim.FISTA(prox.Wavelet((-1, -2), 0.05), maxiter=20, step=1.0)(y, A)
+    still = optim.FISTA(prox.Wavelet((-1, -2), 0.05, randshift=False), maxiter=20, step=1.0)(y, A)
     assert not torch.equal(spun, still)
 
 
 def test_pridu_is_given_the_scaling_the_data_was_divided_by(_whole_coil_operator):
-    """It balances its two step sizes with it, so a reconstruction that scales
-    its own data and does not say so iterates differently from the tool."""
+    """It balances its two steps with it, so it changes the iteration."""
     kspace, maps, A, y, scale = _pics_problem()
     term = prox.TotalVariation(axes=(-1, -2), weight=0.01)
     assert not torch.equal(
-        alg.solve(A, y, maxiter=20, solver="pridu", regularizers=term, scaling=scale),
-        alg.solve(A, y, maxiter=20, solver="pridu", regularizers=term),
-    )
-
-
-def test_the_step_the_tool_settles_on_is_the_step_taken_here():
-    """``pics`` picks 0.95 for its proximal-gradient iterations when no step is
-    given; ``italgo_config`` takes whatever it is handed, so the default has to
-    be made here as well or the two iterate differently."""
-    A = _unitary()
-    y = _rand(8, 8)
-    term = prox.Wavelet(axes=(-1, -2), weight=0.01)
-    assert torch.equal(
-        alg.solve(A, y, regularizers=term, solver="fista", maxiter=10),
-        alg.solve(A, y, regularizers=term, solver="fista", maxiter=10, step=0.95),
+        optim.PRIDU(term, maxiter=20, sigma_tau_ratio=scale)(y, A),
+        optim.PRIDU(term, maxiter=20)(y, A),
     )

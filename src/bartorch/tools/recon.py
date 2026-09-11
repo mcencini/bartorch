@@ -1,21 +1,16 @@
-"""Reconstructions.
-
-Where BART writes a choice as a run of flags, this takes the choice; where it
-takes an array through a flag it calls a file, this takes a tensor.
-"""
+"""Reconstructions."""
 
 from __future__ import annotations
 
 import torch
 
-from bartorch.core.graph import dispatch
-from bartorch.tools._call import curated
+from bartorch import _call
+from bartorch._call import curated
+from bartorch._dispatch import dispatch
 
 __all__ = ["nlinv", "pics"]
 
-#: The solvers ``pics`` chooses between, which BART writes as five separate
-#: flags into one variable.  Reading them one at a time is how the choice
-#: stopped being reachable from Python at all.
+#: The solvers ``pics`` chooses between; BART writes each as a flag of its own.
 SOLVERS = {
     "ist": "ist",
     "fista": "fista",
@@ -58,13 +53,14 @@ def pics(
         Coil sensitivities, as :func:`ecalib` or :func:`caldir` produce them.
     regularizers : str or list of str, optional
         BART's generalized regularization, ``<T>:A:B:C`` (``-R``), one or
-        several.  ``"W:7:0:0.005"`` is wavelet regularization on the first
-        three axes with weight 0.005.
+        several.  The bitmasks in it are BART's: ``"W:7:0:0.005"`` is wavelet
+        regularization over BART's first three dimensions (the last three
+        C-order axes) with weight 0.005.  :mod:`bartorch.optim` with
+        :mod:`bartorch.prox` terms takes axes instead.
     l2 : float, optional
         Plain Tikhonov weight (``-r``).
     solver : {'ist', 'fista', 'admm', 'pridu', 'eulermaruyama'}, optional
-        Which solver to use.  BART spells each as its own flag; this is the
-        one choice they make between them.  ``None`` leaves BART its default.
+        ``None`` lets ``pics`` choose from the regularizers.
     maxiter : int, optional
         Iterations (``-i``).
     step : float, optional
@@ -182,8 +178,7 @@ def nlinv(
     alpha : float, optional
         Initial regularization weight (``-a``).
     real : bool
-        Constrain the image to be real (``-g`` is the GPU flag; this is
-        ``--real-constraint`` where BART has one, otherwise passed through).
+        Constrain the image to be real (``-c``).
     normalize : bool
         Normalize the sensitivities (``-N``).
     return_sensitivities : bool
@@ -207,7 +202,31 @@ def nlinv(
     if alpha is not None:
         flags["a"] = alpha
     if real:
-        flags["real_constraint"] = True
+        flags["c"] = True
     if normalize:
         flags["N"] = True
     return dispatch("nlinv", [kspace], None, _n_out=2 if return_sensitivities else 1, **flags)
+
+
+#: Commands in this section without a hand-written wrapper, built from the catalogue.
+_DERIVED = (
+    "grog",
+    "homodyne",
+    "itsense",
+    "lrmatrix",
+    "looklocker",
+    "moba",
+    "mobafit",
+    "pocsense",
+    "rtnlinv",
+    "sake",
+    "sqpics",
+    "wave",
+    "wshfl",
+)
+
+for _name in _DERIVED:
+    globals()[_name] = _call.build(_name, __name__)
+del _name
+
+__all__ = [*__all__, *_DERIVED]

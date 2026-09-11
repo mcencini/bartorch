@@ -441,40 +441,6 @@ void bartorch_linop_free(bartorch_linop* h)
 }
 
 
-/* --- least squares ---------------------------------------------------------- */
-
-struct lsqr_args {
-
-	const bartorch_linop* A; int maxiter; float lambda; float tol; int warmstart;
-	void* x; const void* y;
-};
-
-static int lsqr_worker(void* p)
-{
-	struct lsqr_args* a = p;
-
-	struct iter_conjgrad_conf cg = iter_conjgrad_defaults;
-	cg.maxiter = a->maxiter;
-	cg.l2lambda = a->lambda;
-	cg.tol = a->tol;
-
-	struct lsqr_conf conf = lsqr_defaults;
-	conf.warmstart = (0 != a->warmstart);
-
-	const struct iovec_s* dom = linop_domain(a->A->op);
-	const struct iovec_s* cod = linop_codomain(a->A->op);
-
-	lsqr(dom->N, &conf, iter_conjgrad, CAST_UP(&cg), a->A->op, NULL, dom->dims, a->x, cod->dims, a->y, NULL);
-	return 0;
-}
-
-int bartorch_lsqr(const bartorch_linop* A, int maxiter, float lambda, float tol, int warmstart, void* x, const void* y)
-{
-	struct lsqr_args a = { A, maxiter, lambda, tol, warmstart, x, y };
-	return guarded(lsqr_worker, &a);
-}
-
-
 /* --- host-defined nonlinear operator ---------------------------------------- */
 
 struct cb_nlop_data {
