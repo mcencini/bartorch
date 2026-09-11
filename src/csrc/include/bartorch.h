@@ -18,11 +18,7 @@
 extern "C" {
 #endif
 
-#if defined(_WIN32)
-#define BARTORCH_API __declspec(dllexport)
-#else
 #define BARTORCH_API __attribute__((visibility("default")))
-#endif
 
 /* Number of dimensions BART carries for every array. */
 #define BARTORCH_DIMS 16

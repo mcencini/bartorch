@@ -74,7 +74,7 @@ def _library_path(package: str, stem: str) -> str | None:
     except ImportError:
         return None
     here = Path(module.__file__).resolve().parent
-    for name in (f"lib{stem}.so", f"lib{stem}.dylib", f"{stem}.dll", f"lib{stem}.dll"):
+    for name in (f"lib{stem}.so", f"lib{stem}.dylib"):
         candidate = here / name
         if candidate.exists():
             return str(candidate)

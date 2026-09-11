@@ -71,29 +71,6 @@ jobs:
           name: wheels-${{ matrix.os }}
           path: wheelhouse/*.whl
 
-  # Windows has never been built.  MSVC cannot compile BART, so this is clang
-  # driving CMake directly, and BART's src/win shims are what it would need.
-  # It does not gate the release: until it passes, a tag still publishes the
-  # platforms that do.
-  wheels-windows:
-    name: Build wheels (windows, unproven)
-    runs-on: windows-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - uses: pypa/cibuildwheel@v2.23
-        env:
-          CIBW_BUILD: "cp312-*"
-          CIBW_ENVIRONMENT_WINDOWS: CC=clang-cl CXX=clang-cl
-          CIBW_TEST_REQUIRES: pytest numpy scipy
-          CIBW_TEST_COMMAND: pip install torch && pytest {project}/tests -q
-      - uses: actions/upload-artifact@v4
-        with:
-          name: unproven-windows-wheel
-          path: wheelhouse/*.whl
-
   # The wheel carries no interpreter, so what has to be checked across Python
   # versions is that the package drives it: ctypes signatures, the torch and
   # numpy APIs it uses, and the tools' generated wrappers.

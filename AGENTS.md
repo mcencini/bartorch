@@ -571,12 +571,10 @@ configure time. BART's own `NOEXEC_STACK` workaround does not help here: it
 parses a trampoline layout GCC emits only for non-PIC executables, not for a
 shared library. Both compilers are built and tested in CI.
 
-MSVC cannot compile BART. It would not have to: nothing here is a Python
-extension module, so a Windows build would be a plain DLL that ctypes loads
-whatever compiler torch was built with, from clang or mingw-w64 GCC 14, and
-BART carries `src/win/` shims (`mmap`, `fmemopen`) toward it. None of that is
-being pursued -- upstream does not build on Windows, and WSL2 is the answer --
-but it is what the attempt would start from.
+Windows is not a platform here. BART does not build on it, and nothing in
+this repository carries a path toward one: no `.dll` among the names the
+loader tries, no `__declspec(dllexport)`, no `win32` branch picking a
+different library. WSL2 is a Linux install and is the answer.
 
 The compiler's own runtime is linked statically on Linux, because otherwise
 the toolchain's floor becomes the target system's: a GCC 14 build asks
@@ -812,9 +810,7 @@ Tools with optional extra outputs, and the wider solver surface (ADMM, FISTA,
 proximal operators) through the operator layer.
 
 Windows is not on this list because it is not a target: BART does not build
-there, and WSL2 is a Linux install like any other.  The note below about what a
-Windows DLL would take stays as the record of what it would cost, not as work
-waiting to be done.
+there, and WSL2 is a Linux install like any other.
 
 A tool that takes device memory as it stands. BART guards the host reads that
 would break -- `estimate_im_dims` copies to the host when it is handed one --

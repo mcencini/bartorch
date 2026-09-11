@@ -103,7 +103,7 @@ endif()
 # would carry the toolchain's floor into every target system -- a GCC 14 build
 # asks for GCC_14.0.0 from libgcc_s, which no released distribution has -- and
 # that is a load-time failure, not a fallback.  Static leaves libc and libgomp.
-if(NOT APPLE AND NOT WIN32)
+if(NOT APPLE)
     list(APPEND BART_LINK_OPTIONS -static-libgcc -static-libstdc++)
 endif()
 
@@ -410,9 +410,7 @@ target_link_options(bartorch PRIVATE ${BART_LINK_OPTIONS})
 
 target_link_libraries(bartorch PRIVATE Threads::Threads ${BART_EXTRA_LIBS})
 
-if(NOT WIN32)
-    target_link_libraries(bartorch PRIVATE m)
-endif()
+target_link_libraries(bartorch PRIVATE m)
 
 set_target_properties(bartorch PROPERTIES
     OUTPUT_NAME bartorch

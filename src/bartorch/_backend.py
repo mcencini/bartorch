@@ -8,10 +8,10 @@ compiled Fortran-ABI routine, never a Python callback.  In order:
   calls and is the fastest of these on the work that leans on LAPACK: an
   ESPIRiT calibration, whose per-voxel eigendecompositions dominate it, takes
   about half as long as it does on the others.  There is no MKL wheel for
-  macOS, so this is a Linux and Windows path;
+  macOS, so this is a Linux path;
 * the BLAS and LAPACK torch itself links, which is MKL statically on Linux and
-  Windows and Accelerate on macOS.  Only the routines torch calls are
-  exported, thirteen of the thirty;
+  Accelerate on macOS.  Only the routines torch calls are exported, thirteen
+  of the thirty;
 * Accelerate directly, on macOS;
 * SciPy's ``cython_blas`` and ``cython_lapack``, which publish the whole of
   BLAS and LAPACK as function pointers into their compiled OpenBLAS, and cover
@@ -23,9 +23,9 @@ resolved to.
 
 BART's FFT is filled from the same list.  It is planned through the FFTW guru
 interface and executed by MKL's DFTI where one of these sources has it, which
-on Linux and Windows is torch's own MKL and needs nothing installed; where
-none does, which is macOS, it is executed by the transform compiled into the
-library.  ``sources()["fft"]`` says which.
+on Linux is torch's own MKL and needs nothing installed; where none does,
+which is macOS, it is executed by the transform compiled into the library.
+``sources()["fft"]`` says which.
 """
 
 from __future__ import annotations
@@ -101,17 +101,14 @@ def _mkl_library() -> Path | None:
     beside the package, and that prefix is not always ``sys.prefix``.
     """
     roots = {Path(sysconfig.get_paths()["data"]), Path(sys.prefix), Path(sys.base_prefix)}
-    roots |= {root / "Library" for root in list(roots)}  # Windows layout
     names = (
-        "mkl_rt.dll",
-        "mkl_rt.2.dll",
         "libmkl_rt.dylib",
         "libmkl_rt.so.2",
         "libmkl_rt.so.3",
         "libmkl_rt.so",
     )
     for root in sorted(roots):
-        for sub in ("lib", "lib64", "bin"):
+        for sub in ("lib", "lib64"):
             for name in names:
                 candidate = root / sub / name
                 if candidate.exists():
@@ -125,12 +122,7 @@ def _torch_library() -> Path | None:
     except ImportError:
         return None
     libdir = Path(torch.__file__).resolve().parent / "lib"
-    if sys.platform == "win32":
-        names = ["torch_cpu.dll"]
-    elif sys.platform == "darwin":
-        names = ["libtorch_cpu.dylib"]
-    else:
-        names = ["libtorch_cpu.so"]
+    names = ["libtorch_cpu.dylib"] if sys.platform == "darwin" else ["libtorch_cpu.so"]
     for name in names:
         if (libdir / name).exists():
             return libdir / name
@@ -158,8 +150,7 @@ def _torch_providers() -> list[_Provider | None]:
         found.append(
             _open("Accelerate", "/System/Library/Frameworks/Accelerate.framework/Accelerate")
         )
-    if sys.platform != "win32":
-        found.append(_open("process", None))
+    found.append(_open("process", None))
     return found
 
 
