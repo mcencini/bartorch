@@ -61,14 +61,15 @@ dev = [
     "ruff",
     "deepinv>=0.2",
 ]
+# Kept the same as docs/requirements.txt, which builds the reference on its
+# own: `docs/conf.py` extracts the API from the checkout rather than from an
+# installed package, so rendering needs neither torch nor a compiled library.
 docs = [
-    "sphinx>=7.0",
-    "sphinx-book-theme",
-    "nbsphinx",
-    "sphinx-copybutton",
-    "nbconvert",
-    "ipykernel",
-    "matplotlib",
+    "sphinx>=8.1,<9",
+    "sphinx-book-theme>=1.1,<2",
+    "sphinx-gallery>=0.17,<0.20",
+    "sphinx-copybutton>=0.5,<1",
+    "matplotlib>=3.7,<4",
 ]
 
 # The compiled library is pure C reached through ctypes, so one wheel per

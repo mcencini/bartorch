@@ -10,8 +10,13 @@ parameter documentation is rendered with Napoleon. See
    :maxdepth: 1
 
    generated/package
-   generated/operators
+   generated/linops
+   generated/nlops
+   generated/prox
+   generated/alg
+   generated/interop
    generated/tools
+   generated/not_exposed
    generated/cuda
    generated/finufft
    generated/cfl
@@ -31,6 +36,9 @@ Useful starting points
   :mod:`bartorch.nlop`, each a class of its own over
   :class:`bartorch.linop.LinearOperator` and
   :class:`bartorch.nlop.NonlinearOperator`.
+* Assembling one: a regularization term from :mod:`bartorch.prox`, BART's own
+  solve as :func:`bartorch.alg.solve`, and the scaling the tool puts around it
+  as :func:`bartorch.alg.data_scaling`.
 
 Read :doc:`../guides/user/conventions` before translating CLI arguments.
 Some raw option strings retain BART's bitmasks even though axis-oriented wrappers

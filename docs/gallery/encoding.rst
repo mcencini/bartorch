@@ -55,7 +55,7 @@ Available building blocks
      - Whole BART applications, with command-specific layouts and options.
        A generated wrapper is not a dedicated composable encoding class.
 
-See :doc:`/api/generated/operators` and the executable
+See :doc:`/api/generated/linops` and the executable
 :doc:`Cartesian example </auto_examples/02_encoding/plot_01_cartesian>`.
 For weighted least squares, apply a factor :math:`W` to both model and data:
 :math:`\|W(Ax-y)\|^2`. If the objective uses statistical weights :math:`w`, then

@@ -32,10 +32,11 @@ env:
 
 jobs:
   # -------------------------------------------------------------------------
-  # Job 1: validate docs build locally (runs on every PR and push)
-  # The C++ extension is compiled so that notebooks execute with a functional
-  # bartorch installation and cell outputs (or inline tracebacks from the
-  # Phase-1 stub) are rendered in the HTML docs.
+  # Job 1: validate that the docs build (runs on every PR and push)
+  # Nothing is compiled: docs/conf.py extracts the reference from the checkout
+  # rather than from an installed package, and the gallery is rendered without
+  # being executed unless BARTORCH_DOCS_EXECUTE says otherwise.  This is what
+  # ./build_docs.sh runs locally.
   # -------------------------------------------------------------------------
   build-docs:
     name: Build Sphinx docs
@@ -44,6 +45,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          # For `docs/misc/license.rst`, which includes BART's own.
           submodules: recursive
 
       - uses: actions/setup-python@v5
@@ -51,29 +53,11 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      - name: Install compiler, CMake and pandoc
-        run: sudo apt-get install -y cmake clang pandoc
-
-      - name: Install torch (CPU) and the build backend
-        run: |
-          pip install scikit-build-core
-          pip install torch --index-url https://download.pytorch.org/whl/cpu
-
-      - name: Build and install bartorch with the docs extra
-        env:
-          CC: clang
-          CXX: clang++
-        run: pip install -e ".[docs]" --no-build-isolation
-
-      - name: Strip pre-committed notebook outputs
-        # Clears any stale cell outputs committed to the repo so that
-        # nbsphinx_execute=always starts from a clean slate and never
-        # generates "image file not readable" warnings from outputs that
-        # belong to a previous run.
-        run: nbstripout examples/*.ipynb
+      - name: Install the documentation requirements
+        run: pip install -r docs/requirements.txt
 
       - name: Build Sphinx HTML
-        run: sphinx-build -W --keep-going -b html docs docs/_build/html
+        run: ./build_docs.sh
 
       - name: Upload docs artifact
         uses: actions/upload-artifact@v4
