@@ -241,7 +241,12 @@ BARTORCH_API void bartorch_linop_free(bartorch_linop* h);
  * an operator built by the host and solved through here is the tool's own
  * computation rather than a second one that resembles it.
  *
- * `regularizers` are the strings `pics -R` takes, read by BART's own parser.
+ * A regularization term is named rather than spelled: `reg_kinds[i]` is the
+ * letter `pics -R` uses for it and the arrays beside it are what that term's
+ * specification carries -- the axes it works over, the axes it joins, its
+ * weight, and the count an NIHT term takes.  They fill the table BART's own
+ * parser would have filled, so what `opt_reg_configure` builds from them is
+ * what it builds for the tool.
  * `algorithm` is one of "cg", "ist", "fista", "admm", "pridu", "niht",
  * "eulermaruyama", or NULL to let BART choose as it does for the tool.
  * A negative `step`, `lambda` or fista parameter leaves BART its own default.
@@ -251,7 +256,8 @@ BARTORCH_API void bartorch_linop_free(bartorch_linop* h);
  */
 BARTORCH_API int bartorch_solve(const bartorch_linop* A,
 		const char* algorithm,
-		const char* const* regularizers, int n_reg,
+		const char* const* reg_kinds, const long* reg_xflags, const long* reg_jflags,
+		const float* reg_lambda, const int* reg_k, int n_reg,
 		float lambda, float cclambda, int maxiter, float step, int eigen, int hogwild,
 		float admm_rho, int admm_maxitercg,
 		float fista_p, float fista_q, float fista_r,

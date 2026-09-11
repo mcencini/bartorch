@@ -15,7 +15,7 @@ import torch
 
 import bartorch
 import bartorch.tools as bt
-from bartorch import alg, linop
+from bartorch import alg, linop, prox
 
 
 def _rand(*shape):
@@ -111,31 +111,87 @@ def test_every_iteration_bart_has_is_reachable(solver):
     how BART writes a choice and why they were unreachable before."""
     A = _unitary()
     y = _rand(8, 8)
-    regularizers = None if solver == "cg" else "W:3:0:0.01"
+    regularizers = None if solver == "cg" else prox.Wavelet(axes=(-1, -2), weight=0.01)
     got = alg.solve(A, y, solver=solver, regularizers=regularizers, maxiter=5)
     assert got.shape == A.ishape
     assert torch.isfinite(got.abs()).all()
 
 
-def test_a_regularizer_means_what_it_means_on_the_command_line():
-    """The strings are read by BART's own parser, so a heavier weight shrinks
-    the answer, as it does for the tool."""
+def test_a_heavier_weight_shrinks_the_answer():
     A = _unitary()
     y = _rand(8, 8)
     # With the step spelled out.  This operator's normal is the identity, so
     # one is the right step; BART's default without `-s` or `-e` diverges here
     # and warns that it will, which is the tool's behaviour too.
-    light = alg.solve(A, y, regularizers="W:3:0:0.001", solver="fista", maxiter=30, step=1.0)
-    heavy = alg.solve(A, y, regularizers="W:3:0:0.5", solver="fista", maxiter=30, step=1.0)
+    light = alg.solve(
+        A, y, regularizers=prox.Wavelet(axes=(-1, -2), weight=0.001),
+        solver="fista", maxiter=30, step=1.0,
+    )
+    heavy = alg.solve(
+        A, y, regularizers=prox.Wavelet(axes=(-1, -2), weight=0.5),
+        solver="fista", maxiter=30, step=1.0,
+    )
     assert heavy.abs().sum() < light.abs().sum()
 
 
-def test_several_regularizers_are_taken_together():
+def test_several_terms_are_taken_together():
     A = _unitary()
     got = alg.solve(
-        A, _rand(8, 8), regularizers=["W:3:0:0.01", "T:3:0:0.01"], solver="admm", maxiter=5
+        A,
+        _rand(8, 8),
+        regularizers=[
+            prox.Wavelet(axes=(-1, -2), weight=0.01),
+            prox.TotalVariation(axes=(-1, -2), weight=0.01),
+        ],
+        solver="admm",
+        maxiter=5,
     )
     assert torch.isfinite(got.abs()).all()
+
+
+@pytest.mark.parametrize(
+    "term",
+    [
+        prox.Wavelet(axes=(-1, -2), weight=0.01),
+        prox.TotalVariation(axes=(-1, -2), weight=0.01),
+        prox.LocallyLowRank(axes=(-1, -2), weight=0.01),
+        prox.Laplace(axes=(-1, -2), weight=0.01),
+        prox.L1(weight=0.01),
+        prox.L2(weight=0.1),
+        prox.NonNegative(),
+        prox.ImaginaryL1(weight=0.01),
+    ],
+    ids=lambda t: type(t).__name__,
+)
+def test_every_term_bart_has_can_be_asked_for(term):
+    got = alg.solve(_unitary(), _rand(8, 8), regularizers=term, solver="admm", maxiter=5)
+    assert torch.isfinite(got.abs()).all()
+
+
+def test_a_term_carries_what_the_string_carried():
+    """`-R W:3:0:0.01` is a transform letter, two bitmasks and a weight, and so
+    is the object -- with the axes written as axes.  What BART builds from the
+    two is the same because it is the same table either way."""
+    term = prox.Wavelet(axes=(-1, -2), weight=0.01)
+    assert term.kind == "W"
+    assert term.flags(ndim=2) == (3, 0)
+    assert term.weight == 0.01
+    joint = prox.Wavelet(axes=(-1, -2), weight=0.01, joint_axes=0)
+    assert joint.flags(ndim=3) == (3, 4)
+
+
+def test_an_axis_is_an_axis_and_not_a_bitmask():
+    """`-R W:3:0:...` is the first two axes of a two-dimensional image; here
+    that is written as the axes themselves, and converted at the boundary."""
+    term = prox.Wavelet(axes=(-1, -2), weight=0.01)
+    assert term.flags(ndim=2) == (3, 0)
+    assert term.flags(ndim=3) == (3, 0)
+    assert prox.Wavelet(axes=0, weight=0.01).flags(ndim=3) == (4, 0)
+
+
+def test_a_string_says_what_to_use_instead():
+    with pytest.raises(TypeError, match="prox.Wavelet"):
+        alg.solve(_unitary(), _rand(8, 8), regularizers="W:3:0:0.01")
 
 
 # --- what it refuses --------------------------------------------------------
@@ -146,26 +202,28 @@ def test_an_iteration_bart_does_not_have_is_refused_here():
         alg.solve(_unitary(), _rand(8, 8), solver="newton")
 
 
-def test_a_regularizer_bart_does_not_have_is_refused_before_bart_sees_it():
-    """BART answers an unrecognised one with ``error()``, and what that leaves
-    behind makes the next call into the library spin forever -- so a typo in a
-    regularizer would end the session, exactly as an unknown option used to."""
-    with pytest.raises(ValueError, match="not a regularizer BART has"):
-        alg.solve(_unitary(), _rand(8, 8), regularizers="NOTAREGULARIZER:1:2:3")
-    assert tuple(bt.phantom(8).shape) == (8, 8)
+def test_something_that_is_not_a_term_is_refused():
+    with pytest.raises(TypeError, match="bartorch.prox"):
+        alg.solve(_unitary(), _rand(8, 8), regularizers=object())
 
 
-def test_the_regularizers_are_the_ones_barts_parser_knows():
-    """Read off ``grecon/optreg.c``, so the list cannot drift from it."""
+def test_the_terms_are_the_ones_barts_parser_knows():
+    """Every letter this package offers is one ``grecon/optreg.c`` reads, so a
+    term cannot be asked for that BART would answer with ``error()`` -- and
+    what that leaves behind makes the next call into the library spin."""
     import re
     from pathlib import Path
 
     source = Path(__file__).resolve().parent.parent / "bart" / "src" / "grecon" / "optreg.c"
     if not source.exists():
         pytest.skip("the BART submodule is not checked out")
-    found = set(re.findall(r'strcmp\(rt, "([A-Za-z0-9]+)"\)', source.read_text()))
-    # `h` is BART's own request for help on the regularizers, not one of them.
-    assert found - {"h"} == set(alg.solve.__globals__["REGULARIZERS"])
+    bart_knows = set(re.findall(r'strcmp\(rt, "([A-Za-z0-9]+)"\)', source.read_text()))
+    offered = {
+        getattr(prox, name).kind
+        for name in prox.__all__
+        if isinstance(getattr(prox, name), type) and getattr(prox, name).kind
+    }
+    assert offered <= bart_knows
 
 
 # --- against the tool -------------------------------------------------------

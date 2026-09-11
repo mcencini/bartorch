@@ -42,6 +42,32 @@
 struct bartorch_linop_s;
 extern const struct linop_s* bartorch_linop_unwrap(const struct bartorch_linop_s* h);
 
+/* BART's own letters for its regularization terms, from the run of
+ * comparisons in `grecon/optreg.c`.  The host names a term rather than
+ * spelling one, and this is the only place the two vocabularies meet. */
+static int xform_by_name(const char* name, int* xform)
+{
+	struct { const char* name; int xform; } table[] = {
+		{ "W",  L1WAV },   { "H",  NIHTWAV }, { "N",  NIHTIM },
+		{ "L",  LLR },     { "T",  TV },      { "G",  TGV },
+		{ "C",  ICTV },    { "V",  ICTGV },   { "P",  LAPLACE },
+		{ "R1", IMAGL1 },  { "R2", IMAGL2 },  { "I",  L1IMG },
+		{ "Q",  L2IMG },   { "S",  POS },     { "F",  FTL1 },
+	};
+
+	for (unsigned int i = 0; i < ARRAY_SIZE(table); i++) {
+
+		if (0 == strcmp(name, table[i].name)) {
+
+			*xform = table[i].xform;
+			return 0;
+		}
+	}
+
+	return -1;
+}
+
+
 static enum algo_t algo_by_name(const char* name)
 {
 	if (NULL == name)
@@ -58,7 +84,8 @@ static enum algo_t algo_by_name(const char* name)
 
 int bartorch_solve(const bartorch_linop* handle,
 		const char* algorithm,
-		const char* const* regularizers, int n_reg,
+		const char* const* reg_kinds, const long* reg_xflags, const long* reg_jflags,
+		const float* reg_lambda, const int* reg_k, int n_reg,
 		float lambda, float cclambda, int maxiter, float step, int eigen, int hogwild,
 		float admm_rho, int admm_maxitercg,
 		float fista_p, float fista_q, float fista_r,
@@ -88,11 +115,29 @@ int bartorch_solve(const bartorch_linop* handle,
 	if (0. <= lambda)
 		ropts.lambda = lambda;
 
-	/* BART's convention for a conversion function is that true is failure;
-	 * `opts.c` prints the usage and errors on one. */
-	for (int i = 0; i < n_reg; i++)
-		if (opt_reg((void*)&ropts, 'R', regularizers[i]))
+	/* Each term filled straight into the table `opt_reg` would have parsed a
+	 * string into, so that what `opt_reg_configure` builds from here is what
+	 * it builds for the tool. */
+	if (n_reg > NUM_REGS)
+		return -5;
+
+	for (int i = 0; i < n_reg; i++) {
+
+		int xform;
+
+		if (0 != xform_by_name(reg_kinds[i], &xform))
 			return -4;
+
+		ropts.regs[i].xform = xform;
+		ropts.regs[i].xflags = (unsigned long)reg_xflags[i];
+		ropts.regs[i].jflags = (unsigned long)reg_jflags[i];
+		ropts.regs[i].lambda = reg_lambda[i];
+		ropts.regs[i].k = reg_k[i];
+		ropts.regs[i].graph_file = NULL;
+		ropts.regs[i].asl = false;
+	}
+
+	ropts.r = n_reg;
 
 	const struct operator_p_s* thresh_ops[NUM_REGS] = { NULL };
 	const struct linop_s* trafos[NUM_REGS] = { NULL };
@@ -166,7 +211,8 @@ const char* bartorch_solve_error(int code)
 	case  0: return "";
 	case -1: return "the operator is not one this can solve against";
 	case -2: return "no such algorithm";
-	case -4: return "BART would not parse one of the regularizers";
+	case -4: return "no such regularization term";
+	case -5: return "more regularization terms than BART holds";
 	default: return "unknown";
 	}
 }

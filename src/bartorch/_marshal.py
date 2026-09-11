@@ -26,6 +26,9 @@ __all__ = [
     "dim_vector",
     "dims",
     "float_buffer",
+    "floats",
+    "ints",
+    "longs",
     "null_apply",
     "null_release",
     "out_pointer",
@@ -74,6 +77,21 @@ def shape_from_dims(vector: ctypes.Array, min_ndim: int) -> list[int]:
 def argv(args: list[str]) -> ctypes.Array:
     """A C argument vector of encoded strings."""
     return (ctypes.c_char_p * len(args))(*[a.encode() for a in args])
+
+
+def longs(values) -> ctypes.Array:
+    """A C array of longs."""
+    return (ctypes.c_long * len(values))(*[int(v) for v in values])
+
+
+def ints(values) -> ctypes.Array:
+    """A C array of ints."""
+    return (ctypes.c_int * len(values))(*[int(v) for v in values])
+
+
+def floats(values) -> ctypes.Array:
+    """A C array of floats."""
+    return (ctypes.c_float * len(values))(*[float(v) for v in values])
 
 
 def text_buffer(size: int) -> ctypes.Array:

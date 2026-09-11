@@ -24,7 +24,7 @@ C library with a small C ABI; Python reaches it through ctypes.
 | `csrc/finufft.c`, `nufft_finufft.c` | FINUFFT's and cuFINUFFT's entry points, and BART's NUFFT operator built out of a pair of their plans. |
 | `csrc/compat/` | The `cblas.h`, `lapacke.h` and `fftw3.h` BART includes. |
 | `third_party/` | pocketfft and BlocksRuntime, vendored with their licenses. |
-| `src/bartorch/` | The package: `_abi.py` (the ctypes signatures, generated from the header), `_lib.py` (finding and loading the library), `_marshal.py` (what an ABI argument looks like), `_backend.py` (which library serves BLAS and LAPACK), `_buffer.py` (a tensor over one of BART's buffers, host or device), `core/graph.py` (tools on tensors), `_operator.py` (what every operator shares), `linop/` and `nlop/` (a class per operator), `alg/` (BART's own solve, driven from here), `interop/` (handing them to other libraries), `finufft.py` (the substitution), `_catalogue.py` and `_options.py` (what BART declares, and what each option is called here), `tools/` (one function per BART command: hand-written where it needed a judgement, built from the catalogue otherwise), `ops.py` (a deprecation shim). |
+| `src/bartorch/` | The package: `_abi.py` (the ctypes signatures, generated from the header), `_lib.py` (finding and loading the library), `_marshal.py` (what an ABI argument looks like), `_backend.py` (which library serves BLAS and LAPACK), `_buffer.py` (a tensor over one of BART's buffers, host or device), `core/graph.py` (tools on tensors), `_operator.py` (what every operator shares), `linop/` and `nlop/` (a class per operator), `prox/` (BART's regularization terms, as objects), `alg/` (BART's own solve, driven from here), `interop/` (handing them to other libraries), `finufft.py` (the substitution), `_catalogue.py` and `_options.py` (what BART declares, and what each option is called here), `tools/` (one function per BART command: hand-written where it needed a judgement, built from the catalogue otherwise), `ops.py` (a deprecation shim). |
 | `build_tools/gen_abi.py` | Generates `_abi.py` from `csrc/include/bartorch.h`. |
 | `build_tools/gen_catalogue.py` | Generates `_catalogue.py` from the BART sources: every command, its arguments, and every option with both spellings. |
 | `attic/prototype/` | An earlier pybind11 extension, kept for reference and not built. |
@@ -613,7 +613,15 @@ operators beside them. Anything else written here would be a second
 implementation that drifts, and a result that is nearly BART's is worth less
 than no result.
 
-So `alg.solve` iterates nothing. `pics` turns its arguments into three things
+So `alg.solve` iterates nothing, and `prox/` computes nothing. A term is the
+description BART's `opt_reg_configure` reads -- which kind, over which axes,
+with what weight -- filled from an object rather than parsed from a `-R`
+string, and BART builds the proximal operator and the transform beside it.
+The letters are its own, and a test holds every one this package offers
+against `grecon/optreg.c`, because a term BART does not know is answered with
+`error()` and that leaves the library spinning.
+
+ `pics` turns its arguments into three things
 and hands them to `lsqr2`: the proximal operators its `-R` strings name, the
 algorithm its solver flag chooses, and the encoding. `csrc/iter.c` does the
 same with the same functions, in the same order, over an operator assembled

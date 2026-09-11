@@ -6,10 +6,11 @@ a set of proximal operators, and which iteration to run -- so that a problem
 put together out of :mod:`bartorch.linop` is solved by the same code as the
 precompiled tool::
 
-    from bartorch import alg, linop
+    from bartorch import alg, linop, prox
 
     A = linop.Sense(kernels, (8, 128, 128), traj=traj, kernels=True)
-    x = alg.solve(A, kspace, regularizers="W:7:0:0.005", solver="fista")
+    x = alg.solve(A, kspace, regularizers=prox.Wavelet(axes=(-1, -2), weight=0.005),
+                  solver="fista")
 
 ``tests/test_solve.py`` holds that against ``bart pics`` on the same problem
 and requires the two to agree exactly, because anything less would mean this

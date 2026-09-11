@@ -16,18 +16,9 @@ from bartorch import _marshal
 from bartorch._lib import library
 from bartorch._operator import as_operand
 from bartorch.core.graph import BartError, _ensure_ready, _lock, _on_device
+from bartorch.prox.base import Regularizer
 
-__all__ = ["ALGORITHMS", "REGULARIZERS", "solve"]
-
-#: The transform letters BART's own ``-R`` parser knows, from the run of
-#: comparisons in ``grecon/optreg.c``.  It is checked here rather than there
-#: because BART answers an unrecognised one with ``error()``, and what that
-#: leaves behind makes the next call into the library spin at full CPU -- so a
-#: typo in a regularizer would end the session, exactly as an unknown option
-#: used to.  ``tests/test_solve.py`` holds this against BART's sources.
-REGULARIZERS = frozenset(
-    "C F G H I L M N P Q R1 R2 S T TF V W".split()
-)
+__all__ = ["ALGORITHMS", "solve"]
 
 #: The iterations BART has, by the name its own flag gives each.  ``None``
 #: leaves the choice to BART, which is what the tool does when no solver flag
@@ -40,7 +31,7 @@ def solve(
     A,
     y: torch.Tensor,
     *,
-    regularizers: str | list[str] | None = None,
+    regularizers: Regularizer | list[Regularizer] | None = None,
     solver: str | None = None,
     lambda_: float | None = None,
     cclambda: float = 0.0,
@@ -64,11 +55,11 @@ def solve(
         solve; one written in Python is called back into once per application.
     y : torch.Tensor
         The data, of ``A.oshape``.
-    regularizers : str or list of str, optional
-        The ``-R`` specifications ``pics`` takes, read by BART's own parser --
-        ``"W:7:0:0.005"`` is wavelet regularization on the first three axes.
-        :func:`bartorch.tools.describe` does not cover these; ``bart pics -Rh``
-        is their documentation, and they mean the same thing here.
+    regularizers : Regularizer or list of Regularizer, optional
+        The terms from :mod:`bartorch.prox`, one or several.  Each fills the
+        table BART's own ``-R`` parser would have filled, so what
+        ``opt_reg_configure`` builds from them is what it builds for the tool
+        -- with an axis written as an axis rather than as a bitmask.
     solver : {'cg', 'ist', 'fista', 'admm', 'pridu', 'niht', 'eulermaruyama'}, optional
         Which of BART's iterations to run.  ``None`` lets BART choose, as it
         does for the tool.
@@ -107,7 +98,11 @@ def solve(
     --------
     >>> from bartorch import alg, linop
     >>> A = linop.Sense(maps, (8, 128, 128), traj=traj)
-    >>> x = alg.solve(A, kspace, regularizers="W:7:0:0.005", solver="fista", maxiter=50)
+    >>> from bartorch import prox
+    >>> x = alg.solve(
+    ...     A, kspace, regularizers=prox.Wavelet(axes=(-1, -2), weight=0.005),
+    ...     solver="fista", maxiter=50,
+    ... )
 
     Notes
     -----
@@ -120,15 +115,25 @@ def solve(
     if solver is not None and solver not in ALGORITHMS:
         raise ValueError(f"solver must be one of {list(ALGORITHMS)} or None, not {solver!r}")
 
-    specs = [] if regularizers is None else (
-        [regularizers] if isinstance(regularizers, str) else list(regularizers)
-    )
-    for spec in specs:
-        transform = spec.split(":", 1)[0]
-        if transform not in REGULARIZERS:
-            raise ValueError(
-                f"{transform!r} is not a regularizer BART has; it takes one of "
-                f"{sorted(REGULARIZERS)}.  `bart pics -Rh` describes each."
+    if isinstance(regularizers, str):
+        raise TypeError(
+            f"a regularizer is one of the terms in bartorch.prox, not the string "
+            f"{regularizers!r}; `prox.Wavelet(axes=(-1, -2), weight=...)` is what "
+            "`-R W:3:0:...` says"
+        )
+    if regularizers is None:
+        terms: list[Regularizer] = []
+    elif isinstance(regularizers, Regularizer):
+        terms = [regularizers]
+    else:
+        try:
+            terms = list(regularizers)
+        except TypeError:
+            terms = [regularizers]
+    for term in terms:
+        if not isinstance(term, Regularizer):
+            raise TypeError(
+                f"a regularizer is one of the terms in bartorch.prox, not {term!r}"
             )
 
     bart_op = A.as_bart()
@@ -140,15 +145,25 @@ def solve(
 
     _ensure_ready()
     lib = library()
-    specs_argv = _marshal.argv(specs)
+    ndim = len(bart_op.ishape)
+    flags = [term.flags(ndim) for term in terms]
+    kinds = _marshal.argv([term.kind for term in terms])
+    xflags = _marshal.longs([x for x, _ in flags])
+    jflags = _marshal.longs([j for _, j in flags])
+    weights = _marshal.floats([term.weight for term in terms])
+    counts = _marshal.ints([term.count for term in terms])
     p, q, r = fista if fista is not None else (-1.0, -1.0, -1.0)
 
     with _lock, _on_device(bart_op.device or y.device):
         code = lib.bartorch_solve(
             bart_op._h.ptr,
             None if solver is None else solver.encode(),
-            specs_argv if specs else None,
-            len(specs),
+            kinds if terms else None,
+            xflags if terms else None,
+            jflags if terms else None,
+            weights if terms else None,
+            counts if terms else None,
+            len(terms),
             float(lambda_) if lambda_ is not None else -1.0,
             float(cclambda),
             int(maxiter),
