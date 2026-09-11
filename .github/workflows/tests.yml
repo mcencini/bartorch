@@ -71,6 +71,26 @@ jobs:
           CXX: ${{ matrix.cc == 'gcc-14' && 'g++-14' || 'clang++' }}
         run: pip install -e ".${{ matrix.extras }}" --no-build-isolation -v
 
+      # Before the suite, because the suite is where the information goes
+      # missing: bringing the library up is what installs the FINUFFT
+      # substitution, and that probes itself by running `bart nufft` both
+      # ways.  When that aborts -- as it does on macOS -- pytest has stdout
+      # and stderr captured for collection and the process dies with the
+      # reason unprinted.  Run it once with the log going straight to the
+      # console, so a failure says what it was.
+      - name: Report what the library came up with
+        run: |
+          python - <<'EOF'
+          import logging
+          logging.basicConfig(level=logging.DEBUG, format="%(name)s: %(message)s")
+          import bartorch
+          print("build:", bartorch.build_info())
+          print("backends:", bartorch.backend_sources())
+          import bartorch.finufft as finufft
+          print("finufft available:", finufft.available())
+          print("finufft enabled:", finufft.enabled())
+          EOF
+
       - name: Run the test suite
         run: pytest tests/ -v
 
