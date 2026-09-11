@@ -152,8 +152,16 @@ def in_tools():
     That is where the library starts, so what this restores afterwards is the
     substitution rather than BART's gridder: a test that turns it off must not
     leave the next one quietly on it.
+
+    A platform where it cannot be installed at all has nothing here to test.
+    It declines two ways -- an answer of False, or the exception that says
+    why -- and both are the same thing to a test of the substitution.
     """
-    if not _finufft.use_in_tools():
+    try:
+        installed = _finufft.use_in_tools()
+    except (ImportError, RuntimeError) as exc:
+        pytest.skip(f"the substitution declined to install itself: {exc}")
+    if not installed:
         pytest.skip("the substitution declined to install itself")
     yield
     _finufft.use_in_tools(True)
