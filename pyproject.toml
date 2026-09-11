@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "bartorch"
-version = "0.2.0.dev0"
+version = "0.0.1"
 description = "BART, the Berkeley Advanced Reconstruction Toolbox, embedded in PyTorch"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -35,6 +35,12 @@ classifiers = [
     "Programming Language :: C",
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
 ]
+
+[project.urls]
+Homepage = "https://github.com/mcencini/bartorch"
+Documentation = "https://mcencini.github.io/bartorch/"
+Repository = "https://github.com/mcencini/bartorch"
+Issues = "https://github.com/mcencini/bartorch/issues"
 
 [project.optional-dependencies]
 # MKL covers every BLAS and LAPACK routine BART calls and is about twice as
