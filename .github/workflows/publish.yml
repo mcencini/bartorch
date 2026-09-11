@@ -22,6 +22,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          # setuptools-scm reads the version from the tag history.
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -50,6 +52,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          # setuptools-scm reads the version from the tag history.
+          fetch-depth: 0
       - uses: pypa/cibuildwheel@v2.23
         env:
           # One build per platform: the wheel is tagged py3 and carries no
@@ -118,6 +122,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          # setuptools-scm reads the version from the tag history.
+          fetch-depth: 0
       - name: Install the CUDA toolkit
         run: |
           dnf install -y dnf-plugins-core

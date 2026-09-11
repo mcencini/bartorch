@@ -4,8 +4,8 @@ Importing ``bartorch`` needs torch but not the compiled library, so rendering
 needs no native build; executing the gallery does.
 """
 
+import importlib.metadata
 import os
-import re
 import sys
 from pathlib import Path
 
@@ -17,7 +17,13 @@ sys.path.insert(0, str(ROOT / "src"))
 project = "bartorch"
 author = "bartorch contributors"
 copyright = "2024–2026, bartorch contributors"
-release = re.search(r'^version = "([^"]+)"', (ROOT / "pyproject.toml").read_text(), re.M)[1]
+# From the installed package, because the version is the git tag now and
+# `pyproject.toml` no longer carries it.  Rendering from a checkout with
+# nothing installed is the ordinary case here, so it is not an error.
+try:
+    release = importlib.metadata.version("bartorch")
+except importlib.metadata.PackageNotFoundError:
+    release = "0.0.0.dev0"
 version = release
 
 extensions = [
