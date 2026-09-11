@@ -114,20 +114,24 @@ bartorch without it cannot do non-Cartesian work at all, which is a
 dependency and not a choice. cuFINUFFT serves a transform on a card, and most
 machines have no card, so it stays an extra.
 
-What keeps FINUFFT from being a plain unconditional dependency is that it
-ships no wheel for every platform this package does: today Linux on aarch64,
-and an Intel Mac. Requiring it there would make `pip install bartorch` build
-it from its sdist -- CMake, ninja, a C++ compiler and a fetched FFTW -- which
-is the one thing this package does not ask of anyone. So the requirement
-carries markers naming the platforms FINUFFT does ship a wheel for,
-`_finufft.WHEEL_PLATFORMS` is the same set in Python, and
-`tests/test_dependencies.py` evaluates the markers against that set so the two
-cannot drift. The `finufft` extra is what is left over: on a platform with no
-wheel it is how to ask for the source build, and everywhere else it is a
-no-op, so an old install command still means something.
+The requirement carries no marker, and that is a decision about which wheels
+exist rather than an oversight. FINUFFT ships none for Linux on aarch64 -- it
+never has -- and dropped the Intel Mac after 2.4.0; its sdist wants CMake,
+ninja, a C++ compiler and a fetched FFTW. A bartorch wheel for a platform
+FINUFFT has no wheel for could only either install something that cannot do
+non-Cartesian work, or start a source build for someone who asked for a wheel.
+So no such wheel is built: `publish.yml` builds Linux x86_64 and macOS arm64,
+which are platforms FINUFFT ships wheels for too, and aarch64 is served by the
+sdist -- where compiling BART is already the price of entry, and compiling
+FINUFFT beside it costs nothing new.
 
-`_finufft.required_but_missing()` is the message for an absent one, and it
-says which of those two cases this machine is.
+There is no `finufft` extra. An old `pip install 'bartorch[finufft]'` still
+installs FINUFFT, and pip warns that the extra is not provided, which is the
+right thing to hear. `tests/test_dependencies.py` holds all of this: that the
+requirement is there, that it is unconditional, that no extra shadows it, and
+that the metadata pip was actually given promises what pyproject does.
+`_finufft.required_but_missing()` is the message for an absent one, and says
+it is a broken install rather than a choice.
 
 **Underneath BART's own tools the seam is `nufft_create`, not the gridder.**
 `nufft.c` is compiled with `nufft_create`, `nufft_create2`, `nufft_get_psf*`

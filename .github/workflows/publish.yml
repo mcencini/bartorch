@@ -38,7 +38,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+        # No Linux aarch64 wheel.  FINUFFT computes every non-Cartesian
+        # transform here and ships no wheel for that platform, so a wheel
+        # built for it would install a bartorch that cannot do non-Cartesian
+        # work -- and requiring the source build instead would ask for CMake,
+        # ninja and a C++ compiler from someone installing a wheel.  aarch64
+        # is served by the sdist, where that toolchain is already the price of
+        # entry.
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -51,17 +58,13 @@ jobs:
           # test matrix below.
           CIBW_BUILD: "cp312-*"
           CIBW_SKIP: "*-musllinux_*"
-          # BART's nested functions compile to Blocks under clang, which is
-          # the only route on aarch64; manylinux images ship clang via dnf.
+          # BART's nested functions need a heap trampoline, which is GCC 14
+          # or clang's Blocks; manylinux images ship clang via dnf.
           CIBW_BEFORE_ALL_LINUX: dnf install -y clang || yum install -y clang
           CIBW_ENVIRONMENT_LINUX: CC=clang CXX=clang++
+          # FINUFFT is a dependency, so installing the wheel brings it and the
+          # non-Cartesian tests run.
           CIBW_TEST_REQUIRES: pytest numpy scipy
-          # FINUFFT is a dependency, so installing the wheel brings it --
-          # except on aarch64, where it ships none and the requirement's marker
-          # does not apply.  Asking for the extra is a no-op everywhere else
-          # and a source build there, which is what makes the aarch64 wheel's
-          # non-Cartesian tests run rather than fail.
-          CIBW_TEST_EXTRAS: finufft
           CIBW_TEST_COMMAND: pip install torch --index-url https://download.pytorch.org/whl/cpu && pytest {project}/tests -q
       - uses: actions/upload-artifact@v4
         with:

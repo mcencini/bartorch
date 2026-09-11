@@ -83,14 +83,12 @@ place of the forward-adjoint pair.
 
 ## FINUFFT
 
-FINUFFT is a dependency, not an extra: `pip install bartorch` brings it on
-every platform it ships a wheel for, and nothing has to be asked for.
+FINUFFT is a dependency, not an extra: `pip install bartorch` brings it, and
+there is nothing to ask for.  cuFINUFFT serves a transform on a card, and most
+machines have no card, so that one stays optional.
 
 ```bash
 pip install "bartorch[cufinufft]"    # a transform on a card
-pip install "bartorch[finufft]"      # only where FINUFFT ships no wheel:
-                                     # Linux on aarch64, an Intel Mac.  pip
-                                     # then builds it from source.
 ```
 
 ```python

@@ -14,12 +14,12 @@ import bartorch.tools as bt
 from bartorch import _finufft, linop
 from bartorch._lib import library
 
-# FINUFFT is a dependency, so on a platform it ships a wheel for its absence is
-# a broken install rather than a choice -- which test_dependencies.py fails on,
-# loudly, once.  Skipping here is for the platforms it ships no wheel for.
+# FINUFFT is a dependency, so its absence is a broken install rather than a
+# choice -- which test_dependencies.py fails on, loudly and once.  Skipping the
+# rest keeps that one failure readable instead of burying it in seventeen.
 requires_finufft = pytest.mark.skipif(
     not _finufft.available(),
-    reason="finufft is not installed; it ships no wheel for this platform",
+    reason="finufft is not installed, and it is a dependency: see test_dependencies.py",
 )
 requires_cuda = pytest.mark.skipif(
     not bartorch.cuda.available(), reason="no CUDA device, or the library was built without CUDA"

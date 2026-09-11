@@ -16,8 +16,6 @@ from __future__ import annotations
 
 import contextlib
 import importlib
-import platform
-import sys
 from pathlib import Path
 
 import torch
@@ -36,45 +34,18 @@ def available() -> bool:
     return True
 
 
-#: The platforms FINUFFT ships a wheel for, which are the ones it is a
-#: dependency on.  Kept beside the markers in pyproject.toml, and checked
-#: against them by a test rather than trusted to stay in step.
-WHEEL_PLATFORMS = (
-    ("linux", "x86_64"),
-    ("win32", "AMD64"),
-    ("darwin", "arm64"),
-)
-
-
-def ships_a_wheel() -> bool:
-    """Whether FINUFFT installs itself with this package on this machine."""
-    return (sys.platform, platform.machine()) in WHEEL_PLATFORMS
-
-
 def required_but_missing() -> str:
-    """Why there is no FINUFFT here, in the terms of how it should have arrived.
+    """Why there is no FINUFFT here, given that there should always be one.
 
-    It is a dependency rather than an extra, so on most machines its absence is
-    a broken install and not a choice.  Where it ships no wheel it is genuinely
-    absent by default, and the way to have it is different, so the two cases
-    are not given the same sentence.
+    It is a dependency rather than an extra, so its absence is a broken
+    install and never a choice -- which is worth saying, because the obvious
+    reading of "FINUFFT is not in use" is that some option was left off.
     """
-    what = (
-        "FINUFFT computes every non-Cartesian transform here: BART's own "
-        "gridder is not reachable from this package's surface."
-    )
-    if ships_a_wheel():
-        return (
-            f"{what}  It is a dependency of bartorch on this platform, so it "
-            "should already be installed; something has removed it.  "
-            "pip install finufft"
-        )
     return (
-        f"{what}  FINUFFT ships no wheel for "
-        f"{sys.platform}/{platform.machine()}, so it is not installed with "
-        "this package there.  pip install 'bartorch[finufft]' asks for it "
-        "anyway, and builds it from source: that needs CMake, ninja and a C++ "
-        "compiler."
+        "FINUFFT computes every non-Cartesian transform here: BART's own "
+        "gridder is not reachable from this package's surface.  It is a "
+        "dependency of bartorch rather than an extra, so it should already be "
+        "installed and something has removed it.  pip install finufft"
     )
 
 

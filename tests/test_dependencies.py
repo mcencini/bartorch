@@ -2,15 +2,17 @@
 
 FINUFFT is a dependency rather than an extra: BART's own gridder is not
 reachable from this package's surface, so a bartorch without FINUFFT cannot do
-non-Cartesian work at all.  The one thing that stops it being a plain
-unconditional dependency is that FINUFFT ships no wheel for every platform
-this package does -- Linux on aarch64, an Intel Mac -- and requiring it there
-would make `pip install bartorch` build it from source, which needs a
-toolchain nobody installing a wheel agreed to have.
+non-Cartesian work at all.  It carries no marker, because a wheel is built only
+for the platforms FINUFFT ships a wheel for too -- installing one never starts
+a build, and anywhere else the install is from the sdist, where compiling BART
+is already the price of entry.
 
-So the requirement carries markers, `_finufft.WHEEL_PLATFORMS` is the same set
-written in Python, and what is checked here is that the two say the same thing
--- and that where the metadata promises FINUFFT, it is actually here.
+cuFINUFFT is the one that stays optional: it serves a transform on a card, and
+most machines have no card.
+
+The promise is checked twice over -- against pyproject, and against the
+metadata pip was actually given -- because a dependency that quietly became an
+extra again would show up as seventeen failing tests and no explanation.
 """
 
 import platform
@@ -23,27 +25,18 @@ from bartorch import _finufft
 
 ROOT = Path(__file__).resolve().parent.parent
 
-#: Every platform this package builds a wheel for, per .github/workflows/publish.yml,
-#: plus the ones a source install can land on.
-CANDIDATES = [
-    {"sys_platform": "linux", "platform_machine": "x86_64"},
-    {"sys_platform": "linux", "platform_machine": "aarch64"},
-    {"sys_platform": "darwin", "platform_machine": "arm64"},
-    {"sys_platform": "darwin", "platform_machine": "x86_64"},
-    {"sys_platform": "win32", "platform_machine": "AMD64"},
-]
-
 
 def _pyproject() -> dict:
-    tomllib = pytest.importorskip("tomllib", reason="pyproject is read with tomllib, a 3.11 module")
+    tomllib = pytest.importorskip(
+        "tomllib", reason="pyproject is read with tomllib, a 3.11 module"
+    )
     return tomllib.loads((ROOT / "pyproject.toml").read_text())
 
 
 def _requirements(specs: list[str], name: str) -> list:
     """Every requirement on *name* in *specs*, parsed."""
     packaging = pytest.importorskip("packaging.requirements")
-    parsed = [packaging.Requirement(s) for s in specs]
-    return [r for r in parsed if r.name == name]
+    return [r for r in (packaging.Requirement(s) for s in specs) if r.name == name]
 
 
 def test_finufft_is_a_dependency_and_not_an_extra():
@@ -52,6 +45,20 @@ def test_finufft_is_a_dependency_and_not_an_extra():
         "FINUFFT computes every non-Cartesian transform; it belongs in "
         "dependencies, not in optional-dependencies"
     )
+    assert "finufft" not in project["optional-dependencies"], (
+        "an extra named finufft says it is optional, and it is not"
+    )
+
+
+def test_the_finufft_requirement_holds_on_every_platform():
+    """No marker: a wheel is built only where FINUFFT ships one too, and every
+    other install is already a source build."""
+    project = _pyproject()["project"]
+    for requirement in _requirements(project["dependencies"], "finufft"):
+        assert requirement.marker is None, (
+            f"{requirement} is conditional, and a platform where it does not "
+            "apply is one where the package cannot do non-Cartesian work"
+        )
 
 
 def test_cufinufft_stays_optional():
@@ -61,38 +68,12 @@ def test_cufinufft_stays_optional():
     assert _requirements(project["optional-dependencies"]["cufinufft"], "cufinufft")
 
 
-@pytest.mark.parametrize(
-    "env", CANDIDATES, ids=lambda e: f"{e['sys_platform']}-{e['platform_machine']}"
-)
-def test_the_markers_are_the_platforms_finufft_ships_a_wheel_for(env):
-    """pyproject and ``_finufft.WHEEL_PLATFORMS`` are the same set, checked by
-    evaluating rather than by reading, so a reworded marker cannot drift."""
-    project = _pyproject()["project"]
-    required = any(
-        r.marker is None or r.marker.evaluate(env)
-        for r in _requirements(project["dependencies"], "finufft")
-    )
-    expected = (env["sys_platform"], env["platform_machine"]) in _finufft.WHEEL_PLATFORMS
-    assert required == expected, (
-        f"pyproject {'requires' if required else 'does not require'} FINUFFT on "
-        f"{env['sys_platform']}/{env['platform_machine']}, and WHEEL_PLATFORMS says "
-        f"{'it ships a wheel' if expected else 'it does not'}"
-    )
-
-
-def test_the_extra_is_still_there_for_where_no_wheel_is():
-    """An old ``pip install 'bartorch[finufft]'`` still means something, and on
-    aarch64 it is the only way to ask."""
-    project = _pyproject()["project"]
-    assert _requirements(project["optional-dependencies"]["finufft"], "finufft")
-
-
 def test_finufft_is_installed_wherever_this_package_says_it_will_be():
-    """The promise the markers make, checked against this environment.
+    """The promise the metadata makes, checked against this environment.
 
     Read off the installed distribution rather than off pyproject, so what is
     checked is what pip was actually told.  ``extra`` is empty in the
-    environment, so a requirement that belongs to an extra evaluates false and
+    environment, so a requirement belonging to an extra evaluates false and
     only the unconditional ones are counted.
     """
     from importlib import metadata
@@ -113,17 +94,14 @@ def test_finufft_is_installed_wherever_this_package_says_it_will_be():
         for r in (packaging.Requirement(s) for s in specs)
         if r.name == "finufft" and (r.marker is None or r.marker.evaluate(env))
     ]
-    if not required:
-        pytest.skip(f"FINUFFT is not a dependency on {sys.platform}/{platform.machine()}")
-
+    assert required, (
+        "the installed bartorch does not require FINUFFT; it was built from a "
+        "pyproject where FINUFFT was still optional"
+    )
     assert _finufft.available(), _finufft.required_but_missing()
 
 
-def test_the_message_for_a_missing_finufft_says_which_case_this_is():
+def test_a_missing_finufft_is_reported_as_the_broken_install_it_is():
     said = _finufft.required_but_missing()
-    if _finufft.ships_a_wheel():
-        assert "should already be installed" in said
-        assert "bartorch[finufft]" not in said
-    else:
-        assert "bartorch[finufft]" in said
-        assert "compiler" in said
+    assert "dependency" in said
+    assert "bartorch[finufft]" not in said, "there is no such extra to point anyone at"
