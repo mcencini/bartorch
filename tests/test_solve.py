@@ -1,13 +1,17 @@
 """The solve, which is BART's and not this package's.
 
 ``bartorch_solve`` hands BART the three things its own ``lsqr2`` takes -- the
-encoding, the proximal operators its ``-R`` strings name, and which of its
-iterations to run -- through ``opt_reg_configure`` and ``italgo_config``, the
-same functions ``pics`` calls and in the same order.  Nothing here iterates.
+encoding, the proximal operators, and which of its iterations to run.  The
+first two are objects the caller already built, and the third comes from
+``italgo_config``, which is what ``pics`` calls.  Nothing here iterates.
 
-What is checked is that the mechanism is BART's: that the loop does not cross
-back into Python, that every one of BART's iterations is reachable, and that a
-specification means here what it means on the command line.
+Two things are checked.  That the mechanism is BART's: the loop does not cross
+back into Python, every one of BART's iterations is reachable, a term means
+here what its ``-R`` string means on the command line, and nothing is rebuilt
+per solve.  And then the point of all of that --
+``test_an_assembled_pics_is_the_tool_to_the_last_bit`` -- that a
+reconstruction assembled out of this package's operators, terms and solve is
+``bart pics`` to the bit, across nine configurations of it.
 """
 
 import pytest
@@ -273,19 +277,201 @@ def test_the_terms_are_the_ones_barts_parser_knows():
 # --- against the tool -------------------------------------------------------
 
 
-def test_an_assembled_sense_solve_reaches_the_same_image_as_pics():
-    """Not the same number: ``pics`` conditions its k-space and estimates a
-    scaling around the solve, and this is given the operator and the data as
-    they are.  What is held here is that the assembled problem is the same
-    problem -- the images agree to the scale of the reconstruction.
+@pytest.fixture
+def _whole_coil_operator():
+    """BART's own SENSE operator, which is what the tool builds.
+
+    The coil-slab operator this package can put in its place is a different
+    computation -- the same answer, not the same arithmetic -- so the
+    comparison against the tool is made against BART's.  Process-wide, hence
+    put back afterwards.
     """
-    kspace = bt.phantom(24, coils=4, kspace=True)
+    before = bartorch.coil_batch()
+    bartorch.set_coil_batch(0)
+    yield
+    bartorch.set_coil_batch(before)
+
+
+def _pics_problem(size=24, coils=4, accel=2):
+    """A ``pics`` problem and the same problem assembled out of this package.
+
+    Everything ``pics`` does to its data before it iterates is done here,
+    because that is the whole of the difference between the tool and an
+    assembly: the sampling pattern applied to the k-space (pics.c:425), the
+    modulation that moves the FFT's centre (pics.c:437), and the scaling
+    estimated from what is left (pics.c:501).  The encoding is the tool's own
+    too -- a SENSE operator with the sampling chained on to it, which is what
+    ``grecon/model.c`` builds.
+    """
+    kspace = bt.phantom(size, coils=coils, kspace=True)
     maps = bt.ecalib(kspace, maps=1)
-    bartorch.set_coil_batch(1)
-    A = linop.Sense(maps.squeeze(1), (4, 24, 24))
 
-    theirs = bt.pics(kspace, maps, maxiter=20, w=1.0).squeeze()
-    ours = alg.solve(A, kspace.squeeze(1), maxiter=20).squeeze()
+    # Undersample, so that the pattern is doing something.
+    mask = torch.zeros(size, dtype=torch.complex64)
+    mask[::accel] = 1
+    mask[size // 2 - 2 : size // 2 + 2] = 1
+    kspace = kspace * mask.reshape(size, 1)
 
-    scale = float(theirs.abs().max())
-    assert float((ours - theirs).abs().max()) / scale < 1e-2
+    pattern = bt.pattern(kspace)
+    y = bt.fftmod(kspace * pattern, axes=(-1, -2, -3), inverse=True)
+    scale = alg.data_scaling(y)
+
+    S = linop.Sense(maps.squeeze(1), (coils, size, size))
+    A = linop.Sampling(pattern.squeeze(), S.oshape) @ S
+    return kspace, maps, A, (y * (1.0 / scale)).squeeze(1), scale
+
+
+#: One configuration of ``pics``, as the tool's flags and as this package's
+#: objects.  Both sides say the same thing; the test is that BART agrees.
+_CONFIGURATIONS = [
+    ("plain", {}, {}),
+    ("tikhonov", {"r": 0.1}, {"regularizers": prox.L2(0.1)}),
+    (
+        "wavelet admm",
+        {"regularizers": "W:3:0:0.01", "solver": "admm"},
+        {"regularizers": prox.Wavelet(axes=(-1, -2), weight=0.01), "solver": "admm"},
+    ),
+    (
+        "wavelet fista",
+        {"regularizers": "W:3:0:0.01", "solver": "fista"},
+        {"regularizers": prox.Wavelet(axes=(-1, -2), weight=0.01), "solver": "fista"},
+    ),
+    (
+        "wavelet ist",
+        {"regularizers": "W:3:0:0.01", "solver": "ist"},
+        {"regularizers": prox.Wavelet(axes=(-1, -2), weight=0.01), "solver": "ist"},
+    ),
+    (
+        "no cycle spinning",
+        {"regularizers": "W:3:0:0.01", "solver": "fista", "n": True},
+        {
+            "regularizers": prox.Wavelet(axes=(-1, -2), weight=0.01),
+            "solver": "fista",
+            "randshift": False,
+        },
+    ),
+    (
+        "tv pridu",
+        {"regularizers": "T:3:0:0.01", "solver": "pridu"},
+        {"regularizers": prox.TotalVariation(axes=(-1, -2), weight=0.01), "solver": "pridu"},
+    ),
+    (
+        "locally low rank",
+        {"regularizers": "L:3:0:0.01", "solver": "admm", "b": 4},
+        {
+            "regularizers": prox.LocallyLowRank(axes=(-1, -2), weight=0.01),
+            "solver": "admm",
+            "llr_block": 4,
+        },
+    ),
+    (
+        "two terms",
+        {"regularizers": ["W:3:0:0.01", "T:3:0:0.005"], "solver": "admm"},
+        {
+            "regularizers": [
+                prox.Wavelet(axes=(-1, -2), weight=0.01),
+                prox.TotalVariation(axes=(-1, -2), weight=0.005),
+            ],
+            "solver": "admm",
+        },
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "theirs,ours", [(a, b) for _, a, b in _CONFIGURATIONS], ids=[n for n, _, _ in _CONFIGURATIONS]
+)
+def test_an_assembled_pics_is_the_tool_to_the_last_bit(theirs, ours, _whole_coil_operator):
+    """The requirement the package is for.
+
+    Not "close": the same bits.  Anything assembled out of this package's
+    operators, terms and solve is pushed into BART's own loop, so there is no
+    arithmetic here for an answer to differ by -- and a difference in the last
+    place would mean some step had been done twice, once by BART and once by
+    something of this package's own.
+    """
+    kspace, maps, A, y, scale = _pics_problem()
+    tool = bt.pics(kspace, maps, maxiter=20, **theirs).squeeze()
+    # ``pics`` hands PRIDU the scaling it estimated, and no other iteration
+    # reads it, so it is passed here for every configuration as it is there.
+    assembled = alg.solve(A, y, maxiter=20, scaling=scale, **ours).squeeze()
+    assert torch.equal(assembled, tool), (
+        f"maximum difference {float((assembled - tool).abs().max()):.3e}"
+    )
+
+
+def test_the_estimated_scaling_is_the_one_the_tool_estimates():
+    """``pics`` divides its data by a number it works out from the k-space
+    centre, and a reconstruction assembled here has to work out the same one
+    or every weight below means something else."""
+    kspace = bt.phantom(24, coils=4, kspace=True)
+    pattern = bt.pattern(kspace)
+    y = bt.fftmod(kspace * pattern, axes=(-1, -2, -3), inverse=True)
+    # What the tool prints at debug level 1 for this data is 5490.628906, and
+    # what makes the solve above exact is that this is the same number.
+    assert alg.data_scaling(y) == pytest.approx(5490.628906, rel=1e-6)
+
+
+def test_the_scaling_for_a_trajectory_is_the_other_branch():
+    """``pics`` reads a non-Cartesian scaling off ``A^H y`` instead, and BART
+    has no tool for that one, so it is reached through the library."""
+    n = 16
+    traj = bt.traj(readout=n, spokes=24, radial=True)
+    maps = _rand(2, n, n)
+    maps = maps / maps.abs().square().sum(0, keepdim=True).sqrt()
+    A = linop.Sense(maps, (2, n, n), traj=traj)
+    y = A(_rand(1, n, n))
+    scale = alg.data_scaling(y, A=A)
+    assert scale > 0
+    # It is a spread of the adjoint image, so scaling the data scales it too.
+    assert alg.data_scaling(y * 4.0, A=A) == pytest.approx(4 * scale, rel=1e-5)
+
+
+def test_a_wavelet_term_reused_answers_as_a_freshly_built_one():
+    """BART's wavelet threshold spins its transform by a random shift drawn
+    from a generator of its own.  The tool builds the operator once per run and
+    the generator starts where it starts; a term here is kept, so the solve
+    puts it back -- otherwise a second solve with the same term would quietly
+    be a different computation from the first."""
+    A = _unitary()
+    y = _rand(8, 8)
+    term = prox.Wavelet(axes=(-1, -2), weight=0.01)
+    once = alg.solve(A, y, regularizers=term, solver="fista", maxiter=20, step=1.0)
+    twice = alg.solve(A, y, regularizers=term, solver="fista", maxiter=20, step=1.0)
+    assert torch.equal(once, twice)
+
+
+def test_cycle_spinning_is_on_as_it_is_for_the_tool():
+    """``pics -n`` is what turns it off there, and it changes the answer."""
+    A = _unitary()
+    y = _rand(8, 8)
+    term = prox.Wavelet(axes=(-1, -2), weight=0.05)
+    spun = alg.solve(A, y, regularizers=term, solver="fista", maxiter=20, step=1.0)
+    still = alg.solve(
+        A, y, regularizers=term, solver="fista", maxiter=20, step=1.0, randshift=False
+    )
+    assert not torch.equal(spun, still)
+
+
+def test_pridu_is_given_the_scaling_the_data_was_divided_by(_whole_coil_operator):
+    """It balances its two step sizes with it, so a reconstruction that scales
+    its own data and does not say so iterates differently from the tool."""
+    kspace, maps, A, y, scale = _pics_problem()
+    term = prox.TotalVariation(axes=(-1, -2), weight=0.01)
+    assert not torch.equal(
+        alg.solve(A, y, maxiter=20, solver="pridu", regularizers=term, scaling=scale),
+        alg.solve(A, y, maxiter=20, solver="pridu", regularizers=term),
+    )
+
+
+def test_the_step_the_tool_settles_on_is_the_step_taken_here():
+    """``pics`` picks 0.95 for its proximal-gradient iterations when no step is
+    given; ``italgo_config`` takes whatever it is handed, so the default has to
+    be made here as well or the two iterate differently."""
+    A = _unitary()
+    y = _rand(8, 8)
+    term = prox.Wavelet(axes=(-1, -2), weight=0.01)
+    assert torch.equal(
+        alg.solve(A, y, regularizers=term, solver="fista", maxiter=10),
+        alg.solve(A, y, regularizers=term, solver="fista", maxiter=10, step=0.95),
+    )
