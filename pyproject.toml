@@ -90,6 +90,8 @@ select = ["E", "F", "W", "I"]
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["F401"]
 "src/bartorch/tools/_generated.py" = ["E501", "E741"]
+# A help string BART wrote can be longer than any line length on its own.
+"src/bartorch/tools/_catalogue.py" = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
