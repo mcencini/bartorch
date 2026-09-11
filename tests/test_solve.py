@@ -81,6 +81,28 @@ def test_the_solve_is_one_call_into_the_library():
     assert entered == [1]
 
 
+def test_the_solve_builds_no_operator_of_its_own():
+    """The encoding and the terms are handed over as the objects they are.
+    BART counts every transform it builds, so a solve that built its own copy
+    would show up here -- and a non-Cartesian encoding is the case where
+    rebuilding would be most expensive and least visible."""
+    from bartorch import finufft, prox
+
+    n = 16
+    traj = bt.traj(readout=n, spokes=24, radial=True)
+    maps = _rand(2, n, n)
+    maps = maps / maps.abs().square().sum(0, keepdim=True).sqrt()
+    A = linop.Sense(maps, (2, n, n), traj=traj)
+    y = A(_rand(1, n, n))
+    term = prox.Wavelet(axes=(-1, -2), weight=0.01)
+    term.build(A.ishape)
+
+    # Everything built; from here a solve should build nothing.
+    finufft.reset_counters()
+    alg.solve(A, y, regularizers=term, solver="fista", maxiter=25, eigen=True)
+    assert finufft.operators_built() == (0, 0)
+
+
 # --- it is BART's iteration -------------------------------------------------
 
 
