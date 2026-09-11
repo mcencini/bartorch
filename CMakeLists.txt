@@ -218,6 +218,7 @@ set(BARTORCH_SOURCES
     csrc/sense.c
     csrc/memcfl.c
     csrc/ops.c
+    csrc/iter.c
     csrc/ref_blas.c
     csrc/fft.cpp)
 

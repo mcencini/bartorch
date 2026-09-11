@@ -1,38 +1,27 @@
-"""Iterative algorithms, in torch.
+"""BART's iterations, driven from here.
 
-Each is a step rather than a loop, so the loop belongs to the caller::
+Nothing in this package is an algorithm.  Every iteration is BART's own, and
+what is here assembles the three things BART's ``lsqr2`` takes -- an encoding,
+a set of proximal operators, and which iteration to run -- so that a problem
+put together out of :mod:`bartorch.linop` is solved by the same code as the
+precompiled tool::
 
-    from bartorch import alg, linop, prox
+    from bartorch import alg, linop
 
-    A = linop.Sense(maps, (8, 128, 128), traj=traj)
-    x = alg.ConjugateGradient(A, kspace, lambda_=0.01, max_iter=30).run()
+    A = linop.Sense(kernels, (8, 128, 128), traj=traj, kernels=True)
+    x = alg.solve(A, kspace, regularizers="W:7:0:0.005", solver="fista")
 
-Why these exist beside BART's own
----------------------------------
-BART's solvers are already here twice over -- :func:`bartorch.tools.pics` and
-:func:`bartorch.tools.nlinv` for the assembled problem,
-:meth:`bartorch.linop.LinearOperator.lstsq` and
-:meth:`bartorch.nlop.NonlinearOperator.irgnm` for an operator -- and they are
-faster than anything in this module, because their loop never returns to
-Python between steps.  Reach for one of those to reconstruct something.
+``tests/test_solve.py`` holds that against ``bart pics`` on the same problem
+and requires the two to agree exactly, because anything less would mean this
+package has an answer of its own.
 
-What they cannot be is part of a torch graph.  These can: an iteration written
-as a step is one an unrolled network drives itself, with a learned proximal
-operator in place of :mod:`bartorch.prox`'s, and the gradient of the whole
-unrolled loop comes back through the encoding because a
-:class:`~bartorch.linop.LinearOperator` differentiates.
+Two shorter ways at the same computation stay where they are:
+:meth:`bartorch.linop.LinearOperator.lstsq` for a plain least-squares solve,
+and :func:`bartorch.tools.pics` where the problem is one the tool can name.
 """
 
 from __future__ import annotations
 
-from bartorch.alg.base import Algorithm
-from bartorch.alg.linear import ConjugateGradient
-from bartorch.alg.proximal import GradientDescent, ProximalGradient, max_eigenvalue_step
+from bartorch.alg.solve import ALGORITHMS, solve
 
-__all__ = [
-    "Algorithm",
-    "ConjugateGradient",
-    "GradientDescent",
-    "ProximalGradient",
-    "max_eigenvalue_step",
-]
+__all__ = ["ALGORITHMS", "solve"]

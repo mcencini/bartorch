@@ -16,6 +16,7 @@ C library with a small C ABI; Python reaches it through ctypes.
 | `csrc/fft.cpp` | The FFTW guru interface BART plans with, executed by MKL where the process has it. |
 | `csrc/backend.[ch]`, `ref_blas.c`, `cblas_shim.c`, `lapacke_shim.c` | CBLAS and LAPACKE as BART calls them, forwarded to a table of Fortran-ABI routines with reference BLAS as the fallback. |
 | `csrc/ops.c` | Operators: host callbacks as BART linops and nlops, BART's own operators as handles, least squares and Gauss-Newton. |
+| `csrc/iter.c` | The solve `pics` runs -- `opt_reg_configure`, `italgo_config`, `lsqr2` -- over an operator the host assembled. |
 | `csrc/cuda.c` | Device selection, stream ordering against the caller's stream, and BART's memory cache. Present in both builds; the CPU build reports that it has no CUDA. |
 | `csrc/host_reads.c` | The entry points BART reads element by element, answered over a host copy when a tool is on a card. |
 | `csrc/psf.c` | The three `compute_psf*` entry points, so that the adjoint transform a point spread function is comes from the substitution. |
@@ -23,7 +24,7 @@ C library with a small C ABI; Python reaches it through ctypes.
 | `csrc/finufft.c`, `nufft_finufft.c` | FINUFFT's and cuFINUFFT's entry points, and BART's NUFFT operator built out of a pair of their plans. |
 | `csrc/compat/` | The `cblas.h`, `lapacke.h` and `fftw3.h` BART includes. |
 | `third_party/` | pocketfft and BlocksRuntime, vendored with their licenses. |
-| `src/bartorch/` | The package: `_abi.py` (the ctypes signatures, generated from the header), `_lib.py` (finding and loading the library), `_marshal.py` (what an ABI argument looks like), `_backend.py` (which library serves BLAS and LAPACK), `_buffer.py` (a tensor over one of BART's buffers, host or device), `core/graph.py` (tools on tensors), `_operator.py` (what every operator shares), `linop/` and `nlop/` (a class per operator), `prox/` and `alg/` (proximal steps and iterations, in torch), `interop/` (handing them to other libraries), `finufft.py` (the substitution), `_catalogue.py` and `_options.py` (what BART declares, and what each option is called here), `tools/` (one function per BART command: hand-written where it needed a judgement, built from the catalogue otherwise), `ops.py` (a deprecation shim). |
+| `src/bartorch/` | The package: `_abi.py` (the ctypes signatures, generated from the header), `_lib.py` (finding and loading the library), `_marshal.py` (what an ABI argument looks like), `_backend.py` (which library serves BLAS and LAPACK), `_buffer.py` (a tensor over one of BART's buffers, host or device), `core/graph.py` (tools on tensors), `_operator.py` (what every operator shares), `linop/` and `nlop/` (a class per operator), `alg/` (BART's own solve, driven from here), `interop/` (handing them to other libraries), `finufft.py` (the substitution), `_catalogue.py` and `_options.py` (what BART declares, and what each option is called here), `tools/` (one function per BART command: hand-written where it needed a judgement, built from the catalogue otherwise), `ops.py` (a deprecation shim). |
 | `build_tools/gen_abi.py` | Generates `_abi.py` from `csrc/include/bartorch.h`. |
 | `build_tools/gen_catalogue.py` | Generates `_catalogue.py` from the BART sources: every command, its arguments, and every option with both spellings. |
 | `attic/prototype/` | An earlier pybind11 extension, kept for reference and not built. |
@@ -603,26 +604,31 @@ here to releases there. The wrapper's own work is `deepinv`'s batch axis,
 which a BART operator does not have, and `A_dagger` as BART's conjugate
 gradients.
 
-## prox and alg
+## Nothing here is an algorithm
 
-BART's solvers are already reachable twice over -- `tools.pics` and
-`tools.nlinv` for the assembled problem, `LinearOperator.lstsq` and
-`NonlinearOperator.irgnm` for an operator -- and they are faster than anything
-in `alg/`, because their loop never returns to Python between steps. Anything
-that is a reconstruction should use one of those.
+The rule the whole package is under: everything is a wrapper around BART,
+except the substitutions that exist to be faster than it -- FINUFFT and
+cuFINUFFT under `nufft_create`, the coil-slab SENSE operator, the normal
+operators beside them. Anything else written here would be a second
+implementation that drifts, and a result that is nearly BART's is worth less
+than no result.
 
-What they cannot be is part of a torch graph, and that is what `prox/` and
-`alg/` are for. Each algorithm is a step rather than a loop, so an unrolled
-network drives `update()` itself; with a learned proximal operator in place of
-one of `prox/`'s, the gradient of the whole unrolled loop comes back through
-the encoding, because a `LinearOperator` differentiates.
+So `alg.solve` iterates nothing. `pics` turns its arguments into three things
+and hands them to `lsqr2`: the proximal operators its `-R` strings name, the
+algorithm its solver flag chooses, and the encoding. `csrc/iter.c` does the
+same with the same functions, in the same order, over an operator assembled
+here. The loop runs where `pics`'s does, and an operator BART built is handed
+over as it stands rather than wrapped, so there is no crossing per step --
+`tests/test_solve.py` asserts both: one call into the library however many
+iterations it runs, and `as_bart()` returning the operator itself.
 
-So the fork is not between two implementations of one thing. It is: the C loop
-reconstructs, the torch loop trains. `tests/test_alg.py` checks the torch loop
-against BART's own answer to the same problem, which is the only way to know
-it is the same problem.
+What is not yet exact is the comparison with the tool end to end. `pics` does
+work around its solve that the assembled path does not: `ifftmod` on the
+k-space, and a scaling it estimates from the data unless `-w` says otherwise.
+Until those are either reproduced or deliberately declined, the tests hold the
+assembled solve against `pics` to the scale of the reconstruction and not to
+the last bit. That gap is the remaining work, not a property of the design.
 
-## Commands
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j

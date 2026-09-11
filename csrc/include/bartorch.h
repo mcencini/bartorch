@@ -232,6 +232,34 @@ BARTORCH_API int bartorch_linop_adjoint(const bartorch_linop* h, void* dst, cons
 BARTORCH_API int bartorch_linop_normal(const bartorch_linop* h, void* dst, const void* src);
 BARTORCH_API void bartorch_linop_free(bartorch_linop* h);
 
+/*
+ * The solve `pics` runs, assembled from here.
+ *
+ * `pics` turns its arguments into proximal operators, an algorithm and an
+ * encoding, and hands the three to `lsqr2`.  This does the same with the same
+ * BART functions -- `opt_reg_configure`, `italgo_config`, `lsqr2` -- so that
+ * an operator built by the host and solved through here is the tool's own
+ * computation rather than a second one that resembles it.
+ *
+ * `regularizers` are the strings `pics -R` takes, read by BART's own parser.
+ * `algorithm` is one of "cg", "ist", "fista", "admm", "pridu", "niht",
+ * "eulermaruyama", or NULL to let BART choose as it does for the tool.
+ * A negative `step`, `lambda` or fista parameter leaves BART its own default.
+ * `lambda` is the regularizers' weight, which is `pics -r`; `cclambda` is the
+ * weight in the normal equations, which is `pics -q`.
+ * Returns 0, or a code `bartorch_solve_error` turns into a sentence.
+ */
+BARTORCH_API int bartorch_solve(const bartorch_linop* A,
+		const char* algorithm,
+		const char* const* regularizers, int n_reg,
+		float lambda, float cclambda, int maxiter, float step, int eigen, int hogwild,
+		float admm_rho, int admm_maxitercg,
+		float fista_p, float fista_q, float fista_r,
+		int llr_blk, int shift_mode, const char* wavelet,
+		int warmstart,
+		void* x, const void* y);
+BARTORCH_API const char* bartorch_solve_error(int code);
+
 /* x = argmin ||A x - y||^2 + lambda ||x||^2 by conjugate gradients on the normal equations. */
 BARTORCH_API int bartorch_lsqr(const bartorch_linop* A, int maxiter, float lambda, float tol, int warmstart,
 		void* x, const void* y);

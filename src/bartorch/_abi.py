@@ -127,6 +127,8 @@ SYMBOLS = (
     "bartorch_linop_adjoint",
     "bartorch_linop_normal",
     "bartorch_linop_free",
+    "bartorch_solve",
+    "bartorch_solve_error",
     "bartorch_lsqr",
     "bartorch_nlop_callback",
     "bartorch_nlop_from_linop",
@@ -405,6 +407,32 @@ def bind(lib: ctypes.CDLL) -> ctypes.CDLL:
     lib.bartorch_linop_normal.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
     lib.bartorch_linop_free.restype = None
     lib.bartorch_linop_free.argtypes = [ctypes.c_void_p]
+    lib.bartorch_solve.restype = ctypes.c_int
+    lib.bartorch_solve.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_char_p,
+        ctypes.POINTER(ctypes.c_char_p),
+        ctypes.c_int,
+        ctypes.c_float,
+        ctypes.c_float,
+        ctypes.c_int,
+        ctypes.c_float,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_float,
+        ctypes.c_int,
+        ctypes.c_float,
+        ctypes.c_float,
+        ctypes.c_float,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    lib.bartorch_solve_error.restype = ctypes.c_char_p
+    lib.bartorch_solve_error.argtypes = [ctypes.c_int]
     lib.bartorch_lsqr.restype = ctypes.c_int
     lib.bartorch_lsqr.argtypes = [
         ctypes.c_void_p,

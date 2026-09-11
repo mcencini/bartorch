@@ -44,6 +44,13 @@
 #include "backend.h"
 
 struct bartorch_linop_s { const struct linop_s* op; };
+
+/* What is behind a handle, for the translation units that drive BART's own
+ * solvers with it.  The struct stays private to this file. */
+const struct linop_s* bartorch_linop_unwrap(const struct bartorch_linop_s* h)
+{
+	return (NULL == h) ? NULL : h->op;
+}
 struct bartorch_nlop_s { const struct nlop_s* op; };
 
 
