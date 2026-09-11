@@ -129,6 +129,7 @@ SYMBOLS = (
     "bartorch_linop_free",
     "bartorch_solve",
     "bartorch_solve_error",
+    "bartorch_scaling_norm",
     "bartorch_prox_create",
     "bartorch_prox_free",
     "bartorch_lsqr",
@@ -421,7 +422,6 @@ def bind(lib: ctypes.CDLL) -> ctypes.CDLL:
         ctypes.POINTER(ctypes.c_void_p),
         ctypes.c_int,
         ctypes.c_float,
-        ctypes.c_float,
         ctypes.c_int,
         ctypes.c_float,
         ctypes.c_int,
@@ -431,12 +431,22 @@ def bind(lib: ctypes.CDLL) -> ctypes.CDLL:
         ctypes.c_float,
         ctypes.c_float,
         ctypes.c_float,
+        ctypes.c_float,
+        ctypes.c_int,
         ctypes.c_int,
         ctypes.c_void_p,
         ctypes.c_void_p,
     ]
     lib.bartorch_solve_error.restype = ctypes.c_char_p
     lib.bartorch_solve_error.argtypes = [ctypes.c_int]
+    lib.bartorch_scaling_norm.restype = ctypes.c_float
+    lib.bartorch_scaling_norm.argtypes = [
+        ctypes.c_long,
+        ctypes.c_void_p,
+        ctypes.c_float,
+        ctypes.c_int,
+        ctypes.c_float,
+    ]
     lib.bartorch_prox_create.restype = ctypes.c_int
     lib.bartorch_prox_create.argtypes = [
         ctypes.c_char_p,
@@ -446,6 +456,7 @@ def bind(lib: ctypes.CDLL) -> ctypes.CDLL:
         ctypes.c_int,
         ctypes.c_int,
         ctypes.c_char_p,
+        ctypes.c_int,
         ctypes.POINTER(ctypes.c_long),
         ctypes.POINTER(ctypes.c_void_p),
     ]

@@ -33,7 +33,6 @@ def solve(
     *,
     regularizers: Regularizer | list[Regularizer] | None = None,
     solver: str | None = None,
-    lambda_: float | None = None,
     cclambda: float = 0.0,
     maxiter: int = 30,
     step: float | None = None,
@@ -42,11 +41,15 @@ def solve(
     admm_rho: float | None = None,
     cg_maxiter: int | None = None,
     fista: tuple[float, float, float] | None = None,
+    scaling: float = 1.0,
+    adaptive_step: bool = False,
     llr_block: int = 8,
     wavelet: str = "dau2",
+    randshift: bool = True,
+    overlapping_blocks: bool = False,
     x0: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """Solve ``min ||A x - y||^2 + lambda ||x||^2 + sum g_i(x)`` the way BART does.
+    """Solve ``min ||A x - y||^2 + sum g_i(x)`` the way BART does.
 
     Parameters
     ----------
@@ -63,15 +66,15 @@ def solve(
     solver : {'cg', 'ist', 'fista', 'admm', 'pridu', 'niht', 'eulermaruyama'}, optional
         Which of BART's iterations to run.  ``None`` lets BART choose, as it
         does for the tool.
-    lambda_ : float, optional
-        The regularizers' weight (``pics -r``).  ``None`` leaves it unset,
-        which is what the regularizer specifications read as "take mine".
     cclambda : float
-        The weight in the normal equations (``pics -q``).
+        The weight in the normal equations (``pics -q``).  A Tikhonov term on
+        the image is ``prox.L2(weight)``, which is what a bare ``pics -r``
+        turns into.
     maxiter : int
         Iterations (``pics -i``).
     step : float, optional
-        Step size (``pics -s``); ``None`` leaves BART its default.
+        Step size (``pics -s``); ``None`` leaves the tool's own default, which
+        is ``0.95`` for the proximal-gradient iterations.
     eigen : bool
         Scale the step by the largest eigenvalue (``pics -e``).
     hogwild : bool
@@ -82,10 +85,23 @@ def solve(
         Inner conjugate-gradient steps for ADMM (``pics -C``).
     fista : tuple of float, optional
         FISTA's three acceleration parameters (``pics --fista_pqr``).
+    scaling : float
+        What the data was divided by before it got here, which is what PRIDU
+        balances its two step sizes with.  ``pics`` sets it from the scaling it
+        estimates for itself, so a reconstruction that scales its own data --
+        see :func:`bartorch.alg.data_scaling` -- says so here.  No other
+        iteration reads it.
+    adaptive_step : bool
+        PRIDU's adaptive step size (``pics --adaptive-stepsize``).
     llr_block : int
         Block size for locally low-rank regularization (``pics -b``).
     wavelet : str
         Wavelet family for wavelet regularization (``pics --wavelet``).
+    randshift : bool
+        Cycle-spin a wavelet or locally low-rank term by a random shift.  On,
+        as it is for the tool; ``pics -n`` is what turns it off there.
+    overlapping_blocks : bool
+        Fully overlapping blocks for a locally low-rank term (``pics -N``).
     x0 : torch.Tensor, optional
         Warm start; without one BART starts where it starts.
 
@@ -149,7 +165,16 @@ def solve(
     flags = [term.flags(ndim) for term in terms]
     # The terms hand over the operators they have been holding; nothing is
     # configured here.
-    handles = [term.build(bart_op.ishape, block=llr_block, wavelet=wavelet) for term in terms]
+    handles = [
+        term.build(
+            bart_op.ishape,
+            block=llr_block,
+            wavelet=wavelet,
+            randshift=randshift,
+            overlapping_blocks=overlapping_blocks,
+        )
+        for term in terms
+    ]
     kinds = _marshal.argv([term.kind for term in terms])
     xflags = _marshal.longs([x for x, _ in flags])
     jflags = _marshal.longs([j for _, j in flags])
@@ -169,7 +194,6 @@ def solve(
             counts if terms else None,
             operators,
             len(terms),
-            float(lambda_) if lambda_ is not None else -1.0,
             float(cclambda),
             int(maxiter),
             float(step) if step is not None else -1.0,
@@ -180,6 +204,8 @@ def solve(
             float(p),
             float(q),
             float(r),
+            float(scaling),
+            int(adaptive_step),
             int(x0 is not None),
             x.data_ptr(),
             y.data_ptr(),

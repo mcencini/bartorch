@@ -250,9 +250,14 @@ BARTORCH_API void bartorch_linop_free(bartorch_linop* h);
  * what it builds for the tool.
  * `algorithm` is one of "cg", "ist", "fista", "admm", "pridu", "niht",
  * "eulermaruyama", or NULL to let BART choose as it does for the tool.
- * A negative `step`, `lambda` or fista parameter leaves BART its own default.
- * `lambda` is the regularizers' weight, which is `pics -r`; `cclambda` is the
- * weight in the normal equations, which is `pics -q`.
+ * A negative `step` or fista parameter leaves BART its own default, which for
+ * the proximal-gradient iterations is the 0.95 `pics` settles on.  `cclambda`
+ * is the weight in the normal equations, which is `pics -q`; the regularizers'
+ * own weights are theirs, and `pics -r` is a term (`-R Q`) rather than a knob.
+ * `sigma_tau_ratio` balances the primal and dual steps of PRIDU, and is the
+ * scaling the caller divided the data by: `pics` sets it from the scaling it
+ * estimated for itself, so an assembled reconstruction that scales its own
+ * data has to say by how much.
  * Returns 0, or a code `bartorch_solve_error` turns into a sentence.
  */
 BARTORCH_API int bartorch_solve(const bartorch_linop* A,
@@ -260,12 +265,26 @@ BARTORCH_API int bartorch_solve(const bartorch_linop* A,
 		const char* const* reg_kinds, const long* reg_xflags, const long* reg_jflags,
 		const float* reg_lambda, const int* reg_k,
 		const bartorch_prox* const* reg_ops, int n_reg,
-		float lambda, float cclambda, int maxiter, float step, int eigen, int hogwild,
+		float cclambda, int maxiter, float step, int eigen, int hogwild,
 		float admm_rho, int admm_maxitercg,
 		float fista_p, float fista_q, float fista_r,
+		float sigma_tau_ratio, int adaptive_step,
 		int warmstart,
 		void* x, const void* y);
 BARTORCH_API const char* bartorch_solve_error(int code);
+
+/*
+ * The scaling `pics` estimates for a non-Cartesian encoding: the spread of
+ * |A^H y| read off its own order statistics.  BART has no tool for this one --
+ * `estscaling` is the Cartesian branch -- and `pics` does it around the solve
+ * rather than inside it, so the host does it around the solve too.
+ *
+ * `image` is `size` complex floats; it is copied, because BART's own estimate
+ * sorts what it is given.  `p` is a percentile in (0, 1], or negative for the
+ * rule `pics` uses.
+ */
+BARTORCH_API float bartorch_scaling_norm(long size, const void* image, float rescale,
+		int compat, float p);
 
 /*
  * One regularization term, built once and held.  What BART makes of a term is
@@ -278,9 +297,15 @@ BARTORCH_API const char* bartorch_solve_error(int code);
  * vector of BARTORCH_DIMS entries.  A term that extends the optimisation
  * variable -- TGV and the infimal convolutions -- is declined, because what it
  * adds is counted across the whole set.
+ *
+ * `shift_mode` is what `pics` passes `opt_reg_configure`: 0 for no shifting,
+ * 1 for the random cycle spinning the tool does unless `-n`, 2 for its fully
+ * overlapping blocks (`-N`).  A wavelet threshold's shifts come from a
+ * generator of its own, which `bartorch_solve` rewinds before each solve, so a
+ * term that is reused is a term freshly built as far as the answer goes.
  */
 BARTORCH_API int bartorch_prox_create(const char* kind, long xflags, long jflags,
-		float lambda, int k, int llr_blk, const char* wavelet,
+		float lambda, int k, int llr_blk, const char* wavelet, int shift_mode,
 		const long* img_dims, bartorch_prox** out);
 BARTORCH_API void bartorch_prox_free(bartorch_prox* h);
 

@@ -33,6 +33,10 @@
 #include "iter/prox.h"
 #include "iter/thresh.h"
 
+#include "wavelet/wavthresh.h"
+
+#include "sense/optcom.h"
+
 #include "grecon/optreg.h"
 #include "grecon/italgo.h"
 
@@ -89,10 +93,12 @@ struct bartorch_prox_s {
 
 	const struct operator_p_s* op;
 	const struct linop_s* trafo;
+	int xform;
 };
 
 int bartorch_prox_create(const char* kind, long xflags, long jflags, float lambda, int k,
-		int llr_blk, const char* wavelet, const long* img_dims, bartorch_prox** out)
+		int llr_blk, const char* wavelet, int shift_mode,
+		const long* img_dims, bartorch_prox** out)
 {
 	int xform;
 
@@ -119,7 +125,7 @@ int bartorch_prox_create(const char* kind, long xflags, long jflags, float lambd
 	md_copy_dims(DIMS, dims, img_dims);
 
 	opt_reg_configure(DIMS, dims, &ropts, prox_ops, trafos, sdims,
-			llr_blk, 0, (NULL != wavelet) ? wavelet : "dau2", false, ITER_DIM);
+			llr_blk, shift_mode, (NULL != wavelet) ? wavelet : "dau2", false, ITER_DIM);
 
 	/* A term that extends the optimisation variable cannot be built on its
 	 * own: what it adds is counted across the whole set, and the solve
@@ -133,6 +139,7 @@ int bartorch_prox_create(const char* kind, long xflags, long jflags, float lambd
 	PTR_ALLOC(struct bartorch_prox_s, p);
 	p->op = prox_ops[0];
 	p->trafo = trafos[0];
+	p->xform = xform;
 	*out = PTR_PASS(p);
 
 	return 0;
@@ -157,9 +164,10 @@ int bartorch_solve(const bartorch_linop* handle,
 		const char* const* reg_kinds, const long* reg_xflags, const long* reg_jflags,
 		const float* reg_lambda, const int* reg_k,
 		const bartorch_prox* const* reg_ops, int n_reg,
-		float lambda, float cclambda, int maxiter, float step, int eigen, int hogwild,
+		float cclambda, int maxiter, float step, int eigen, int hogwild,
 		float admm_rho, int admm_maxitercg,
 		float fista_p, float fista_q, float fista_r,
+		float sigma_tau_ratio, int adaptive_step,
 		int warmstart,
 		void* x, const void* y)
 {
@@ -178,12 +186,11 @@ int bartorch_solve(const bartorch_linop* handle,
 	struct opt_reg_s ropts;
 
 	/* `opt_reg_init` returns a default for an unrelated flag, not success;
-	 * `pics` ignores it.  It leaves `lambda` at -1, which is what the
-	 * regularizers read as "not given", so only overwrite it when it was. */
+	 * `pics` ignores it.  Its `lambda` is left where it puts it: that field
+	 * only ever reaches `opt_reg_configure`, which turns a bare `pics -r`
+	 * into an implicit `-R Q` term, and here the terms are the caller's
+	 * objects and nothing is configured. */
 	(void)opt_reg_init(&ropts);
-
-	if (0. <= lambda)
-		ropts.lambda = lambda;
 
 	/* Each term filled straight into the table `opt_reg` would have parsed a
 	 * string into, so that what `opt_reg_configure` builds from here is what
@@ -228,6 +235,14 @@ int bartorch_solve(const bartorch_linop* handle,
 
 		thresh_ops[i] = reg_ops[i]->op;
 		trafos[i] = reg_ops[i]->trafo;
+
+		/* A wavelet threshold spins its transform by a random shift drawn
+		 * from a generator of its own, seeded at one when BART makes the
+		 * operator.  The tool builds a fresh one per run; a term here is
+		 * kept, so the generator is put back where a fresh one would have
+		 * it and a reused term answers as the tool does. */
+		if (L1WAV == reg_ops[i]->xform)
+			wavthresh_rand_state_set(reg_ops[i]->op, 1);
 	}
 
 	int nr_penalties = ropts.r;
@@ -235,12 +250,20 @@ int bartorch_solve(const bartorch_linop* handle,
 	if (ALGO_DEFAULT == algo)
 		algo = italgo_choose(nr_penalties, ropts.regs);
 
+	/* The step the tool settles on when none was asked for.  `italgo_config`
+	 * takes whatever it is given, so a proximal-gradient iteration reached
+	 * from here and one reached through `pics` would otherwise step
+	 * differently -- which is a different answer, not a different default. */
+	if (   ((ALGO_IST == algo) || (ALGO_FISTA == algo) || (ALGO_PRIDU == algo))
+	    && (-1. == step))
+		step = 0.95;
+
 	struct admm_conf admm = { false, false, false,
 		(0. < admm_rho) ? admm_rho : iter_admm_defaults.rho,
 		(0 < admm_maxitercg) ? admm_maxitercg : iter_admm_defaults.maxitercg,
 		false };
 	struct fista_conf fista = { { fista_p, fista_q, fista_r }, false };
-	struct pridu_conf pridu = { 1., false };
+	struct pridu_conf pridu = { (0. < sigma_tau_ratio) ? sigma_tau_ratio : 1., (bool)adaptive_step };
 
 	struct iter it = italgo_config(algo, nr_penalties, ropts.regs, maxiter,
 			step, eigen ? 30 : 0, hogwild, admm, fista, pridu, (bool)warmstart);
@@ -278,6 +301,20 @@ int bartorch_solve(const bartorch_linop* handle,
 	italgo_config_free(it);
 
 	return 0;
+}
+
+float bartorch_scaling_norm(long size, const void* image, float rescale, int compat, float p)
+{
+	/* On the host, and on a copy: the estimate is read off order statistics
+	 * and BART sorts the array it is handed to get them. */
+	complex float* tmp = md_alloc(1, MD_DIMS(size), sizeof(complex float));
+	md_copy(1, MD_DIMS(size), tmp, image, sizeof(complex float));
+
+	float scale = estimate_scaling_norm(rescale, (int)size, tmp, (bool)compat, p);
+
+	md_free(tmp);
+
+	return scale;
 }
 
 const char* bartorch_solve_error(int code)

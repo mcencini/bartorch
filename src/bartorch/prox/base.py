@@ -45,7 +45,15 @@ class Regularizer(abc.ABC):
     joint_axes: tuple[int, ...] = ()
     count: int = 0
 
-    def build(self, shape: tuple[int, ...], *, block: int = 8, wavelet: str = "dau2") -> int:
+    def build(
+        self,
+        shape: tuple[int, ...],
+        *,
+        block: int = 8,
+        wavelet: str = "dau2",
+        randshift: bool = True,
+        overlapping_blocks: bool = False,
+    ) -> int:
         """The BART operator for this term over an image of *shape*, built once.
 
         Parameters
@@ -56,6 +64,13 @@ class Regularizer(abc.ABC):
             Block size for a locally low-rank term, which is ``pics -b``.
         wavelet : str
             Wavelet family for a wavelet term, which is ``pics --wavelet``.
+        randshift : bool
+            Cycle-spin the transform by a random shift, which is what the tool
+            does unless it is given ``pics -n``.
+        overlapping_blocks : bool
+            Fully overlapping blocks for a locally low-rank term, which is
+            ``pics -N``.  It replaces the random shift rather than joining it,
+            as it does for the tool.
 
         Returns
         -------
@@ -63,7 +78,8 @@ class Regularizer(abc.ABC):
             The handle the solver is given.  It belongs to this object and
             lives as long as it does.
         """
-        key = (tuple(shape), block, wavelet)
+        shift_mode = 2 if overlapping_blocks else (1 if randshift else 0)
+        key = (tuple(shape), block, wavelet, shift_mode)
         if not hasattr(self, "_handles"):
             self._handles = {}
         if key in self._handles:
@@ -81,6 +97,7 @@ class Regularizer(abc.ABC):
                 int(self.count),
                 int(block),
                 wavelet.encode(),
+                shift_mode,
                 _marshal.padded_dims(tuple(shape)),
                 _marshal.by_reference(out),
             )
