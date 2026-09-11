@@ -53,7 +53,7 @@ jobs:
 
       - name: Install torch (CPU) and the build backend
         run: |
-          pip install scikit-build-core numpy scipy pytest
+          pip install scikit-build-core setuptools-scm numpy scipy pytest
           pip install torch --index-url https://download.pytorch.org/whl/cpu
 
       # deepinv pulls in torchvision, whose compiled operators are built
@@ -123,7 +123,7 @@ jobs:
 
       - name: Install torch (CPU) and the build backend
         run: |
-          pip install scikit-build-core numpy scipy pytest
+          pip install scikit-build-core setuptools-scm numpy scipy pytest
           pip install torch --index-url https://download.pytorch.org/whl/cpu
 
       - name: Build with BART's CUDA kernels

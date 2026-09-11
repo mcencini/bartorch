@@ -24,7 +24,7 @@ jobs:
 
       - name: Install torch (CPU) and the build backend
         run: |
-          pip install scikit-build-core numpy pytest scipy ruff
+          pip install scikit-build-core setuptools-scm numpy pytest scipy ruff
           pip install torch --index-url https://download.pytorch.org/whl/cpu
 
       - name: Build and install bartorch
