@@ -2,7 +2,7 @@
 
 bartorch is developed by its repository contributors, building on the work of
 the BART developers and of the PyTorch and numerical-library communities.  See
-the [contribution history](https://github.com/mcencini/bartpy/graphs/contributors)
+the [contribution history](https://github.com/mcencini/bartorch/graphs/contributors)
 for current credits, or run `git shortlog -sne HEAD` offline; BART's submodule
 has its own history.  See {doc}`../guides/developer/contributing` to take part.
 

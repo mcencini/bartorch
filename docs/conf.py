@@ -49,7 +49,7 @@ napoleon_google_docstring = False
 html_theme = "sphinx_book_theme"
 html_title = "bartorch"
 html_theme_options = {
-    "repository_url": "https://github.com/mcencini/bartpy",
+    "repository_url": "https://github.com/mcencini/bartorch",
     "repository_branch": "main",
     "path_to_docs": "docs",
     "use_repository_button": True,

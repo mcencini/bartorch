@@ -2,9 +2,9 @@ name: Tests
 
 on:
   push:
-    branches: [main, develop, bart-pytorch-extension]
+    branches: [main]
   pull_request:
-    branches: [main, develop, bart-pytorch-extension]
+    branches: [main]
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
