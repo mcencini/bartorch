@@ -45,7 +45,8 @@ would otherwise have been linked against.
 | `src/bartorch/` | The package: `_abi.py` (the ctypes signatures, generated from the header), `_lib.py` (finding and loading the library), `_marshal.py` (what an ABI argument looks like), `_backend.py` (which library serves BLAS and LAPACK), `_buffer.py` (a tensor over one of BART's buffers, host or device), `core/graph.py` (tools on tensors), `_operator.py` (what every operator shares), `linop/` and `nlop/` (a class per operator), `prox/` (BART's regularization terms, as objects), `alg/` (BART's own solve, driven from here), `interop/` (handing them to other libraries), `finufft.py` (the substitution), `_catalogue.py` and `_options.py` (what BART declares, and what each option is called here), `tools/` (one function per BART command: hand-written where it needed a judgement, built from the catalogue otherwise). |
 | `scripts/gen_abi.py` | Generates `_abi.py` from `src/csrc/include/bartorch.h`. Run after changing the header; `tests/test_abi.py` fails when the checked-in file is not what it writes. |
 | `scripts/gen_catalogue.py` | Generates `_catalogue.py` from the BART sources: every command, its arguments, and every option with both spellings. Run after a submodule bump. |
-| `scripts/run_tests.sh` | Builds into `build/local` and runs the suite against `src/`, without installing. |
+| `scripts/run_tests.sh` | Builds whatever changed on the C side, then runs the suite against `src/`, without installing. |
+| `scripts/sources.py` | What the library is built from, in one place, so the script and `tests/test_build.py` cannot disagree about it. |
 | `scripts/lint.sh` | Ruff over `src/` and `tests/`, which is what the lint workflow runs; `--fix` writes. |
 | `scripts/build_docs.sh` | Builds the reference the way the workflow does. |
 | `scripts/check_device.py` | Everything a card can answer that a host cannot, in dependency order. |

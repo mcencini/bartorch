@@ -180,22 +180,28 @@ message(STATUS "BART ${BART_VERSION}: ${_ntools} tools, nested functions via ${B
 # src/csrc/abi/memcfl.c replaces.
 # ---------------------------------------------------------------------------
 set(BART_SOURCES "")
-file(GLOB _module_dirs LIST_DIRECTORIES true "${BART_SRC}/*")
+# CONFIGURE_DEPENDS, because BART's sources are a glob and a submodule bump
+# adds and removes files.  Without it the build system keeps the list it was
+# configured with and `cmake --build` happily rebuilds a library that is
+# missing a translation unit BART has since grown -- which is a link error at
+# best and the old behaviour at worst.  The cost is a directory scan per
+# build, over some hundreds of files.
+file(GLOB _module_dirs LIST_DIRECTORIES true CONFIGURE_DEPENDS "${BART_SRC}/*")
 foreach(_dir ${_module_dirs})
     if(IS_DIRECTORY "${_dir}")
         get_filename_component(_mod "${_dir}" NAME)
         if(NOT _mod MATCHES "^(ismrm|lapacke|win)$")
-            file(GLOB _srcs "${_dir}/*.c")
+            file(GLOB _srcs CONFIGURE_DEPENDS "${_dir}/*.c")
             list(APPEND BART_SOURCES ${_srcs})
         endif()
     endif()
 endforeach()
-file(GLOB _tool_srcs "${BART_SRC}/*.c")
+file(GLOB _tool_srcs CONFIGURE_DEPENDS "${BART_SRC}/*.c")
 list(APPEND BART_SOURCES ${_tool_srcs})
 
 if(BARTORCH_CUDA)
     foreach(_dir calib motion noncart num wavelet)
-        file(GLOB _cu "${BART_SRC}/${_dir}/*.cu")
+        file(GLOB _cu CONFIGURE_DEPENDS "${BART_SRC}/${_dir}/*.cu")
         list(APPEND BART_SOURCES ${_cu})
     endforeach()
 endif()

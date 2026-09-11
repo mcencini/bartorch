@@ -16,38 +16,17 @@ edit at all to a ``.c`` file.  For those there is nothing to compare but the
 clock.
 """
 
+import sys
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "scripts"))
 
-#: What the library is compiled from, as far as this repository is concerned.
-#: The BART submodule is in here because its sources are compiled in too, so a
-#: bump is a rebuild.
-SOURCES = (
-    ROOT / "src" / "csrc",
-    ROOT / "cmake",
-    ROOT / "external" / "bart" / "src",
-    ROOT / "CMakeLists.txt",
-)
-
-
-def newest(paths):
-    """The most recently modified file among *paths*, and when."""
-    latest, when = None, 0.0
-    for path in paths:
-        if path.is_file():
-            candidates = [path]
-        elif path.is_dir():
-            candidates = [p for p in path.rglob("*") if p.is_file()]
-        else:
-            continue
-        for candidate in candidates:
-            stamp = candidate.stat().st_mtime
-            if stamp > when:
-                latest, when = candidate, stamp
-    return latest, when
+# The same definition `scripts/run_tests.sh` builds against, so that what it
+# thinks is up to date and what this thinks is up to date cannot disagree.
+import sources  # noqa: E402
 
 
 def test_the_library_is_newer_than_the_sources_it_was_built_from():
@@ -59,7 +38,7 @@ def test_the_library_is_newer_than_the_sources_it_was_built_from():
     """
     from bartorch._lib import library_path
 
-    source, changed = newest(SOURCES)
+    source, changed = sources.newest()
     if source is None:
         pytest.skip("the C sources are not beside this checkout")
 
