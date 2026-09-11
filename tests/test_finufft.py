@@ -14,12 +14,42 @@ import bartorch.tools as bt
 from bartorch import _finufft, linop
 from bartorch._lib import library
 
+
 # FINUFFT is a dependency, so its absence is a broken install rather than a
 # choice -- which test_dependencies.py fails on, loudly and once.  Skipping the
 # rest keeps that one failure readable instead of burying it in seventeen.
+def _no_substitution_to_test() -> str:
+    """Why there is nothing here to test, or the empty string.
+
+    Two different absences, and they are not the same news.  Not installed is
+    a broken environment, and `test_dependencies.py` is where that is said
+    once and loudly.  Installed but unable to take BART's place is a platform:
+    macOS loads torch's OpenMP runtime and the FINUFFT wheel's own, and LLVM's
+    runtime ends the process rather than run beside itself -- so the
+    substitution declines, BART's gridder answers, and a test of the
+    substitution has no subject.
+    """
+    if not _finufft.available():
+        return "finufft is not installed, and it is a dependency: see test_dependencies.py"
+    try:
+        # The substitution installs itself the first time the library is
+        # brought up, and asking before that would say no for the wrong reason.
+        from bartorch.core.graph import _ensure_ready
+
+        _ensure_ready()
+        if not _finufft.used_in_tools():
+            return (
+                "finufft is installed but could not be put in BART's place here, so there "
+                f"is no substitution to test: {_finufft.decline_reason()}"
+            )
+    except Exception as exc:  # the library did not come up; other tests say so
+        return f"the library could not be asked whether FINUFFT is in use: {exc}"
+    return ""
+
+
 requires_finufft = pytest.mark.skipif(
-    not _finufft.available(),
-    reason="finufft is not installed, and it is a dependency: see test_dependencies.py",
+    bool(_no_substitution_to_test()),
+    reason=_no_substitution_to_test() or "finufft is in use",
 )
 requires_cuda = pytest.mark.skipif(
     not bartorch.cuda.available(), reason="no CUDA device, or the library was built without CUDA"
