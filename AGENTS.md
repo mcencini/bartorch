@@ -42,7 +42,7 @@ would otherwise have been linked against.
 | `src/csrc/substitute/backend.[ch]`, `ref_blas.c`, `cblas_shim.c`, `lapacke_shim.c` | CBLAS and LAPACKE as BART calls them, forwarded to a table of Fortran-ABI routines with reference BLAS as the fallback. |
 | `src/csrc/substitute/finufft.c`, `nufft_finufft.c` | FINUFFT's and cuFINUFFT's entry points, and BART's NUFFT operator built out of a pair of their plans -- and the normal, which stores one of those in BART's operator through `noncart/nufft_priv.h` rather than letting it grid one. |
 | `src/csrc/substitute/psf.c` | The three `compute_psf*` entry points, so that the adjoint transform a point spread function is comes from the substitution. |
-| `src/bartorch/` | The package: `_abi.py` (the ctypes signatures, generated from the header), `_lib.py` (finding and loading the library), `_marshal.py` (what an ABI argument looks like), `_backend.py` (which library serves BLAS and LAPACK), `_buffer.py` (a tensor over one of BART's buffers, host or device), `core/graph.py` (tools on tensors), `_operator.py` (what every operator shares), `linop/` and `nlop/` (a class per operator), `prox/` (BART's regularization terms, as objects), `alg/` (BART's own solve, driven from here), `interop/` (handing them to other libraries), `finufft.py` (the substitution), `_catalogue.py` and `_options.py` (what BART declares, and what each option is called here), `tools/` (one function per BART command: hand-written where it needed a judgement, built from the catalogue otherwise). |
+| `src/bartorch/` | The package.  Public: the functions in `fourier.py`, `wavelet.py`, `thresh.py`, `util.py`, `interp.py`, `registration.py`, `metrics.py` and `_settings.py`, re-exported flat as `bartorch.*`; `linop/` and `nlop/` (a class per operator); `optim/` (a class per BART iteration); `prox/` (BART's regularization terms, and its denoisers); `tools/` (BART's applications, in four sections); `io.py` (CFL files).  Private: `_abi.py` (the ctypes signatures, generated from the header), `_lib.py` (finding and loading the library), `_marshal.py` (what an ABI argument looks like), `_backend.py` (which library serves BLAS and LAPACK), `_buffer.py` (a tensor over one of BART's buffers, host or device), `_dispatch.py` (running a command on tensors), `_operator.py` (what every operator shares), `_finufft.py` and `_cuda.py` (the substitution's and the card's controls), `_deepinv.py` (the adapter), `_catalogue.py` and `_options.py` (what BART declares, and what each option is called here), `_call.py` (the mark on a hand-written wrapper, and wrappers built from the catalogue), `_coverage.py` (where each command is exposed, or why not). |
 | `scripts/gen_abi.py` | Generates `_abi.py` from `src/csrc/include/bartorch.h`. Run after changing the header; `tests/test_abi.py` fails when the checked-in file is not what it writes. |
 | `scripts/gen_catalogue.py` | Generates `_catalogue.py` from the BART sources: every command, its arguments, and every option with both spellings. Run after a submodule bump. |
 | `scripts/run_tests.sh` | Builds whatever changed on the C side, then runs the suite against `src/`, without installing. |
@@ -52,6 +52,11 @@ would otherwise have been linked against.
 | `scripts/check_device.py` | Everything a card can answer that a host cannot, in dependency order. |
 | `cmake/embed.cmake` | Writes a file's bytes into a C array, for the LTO-IR the CUDA build links. |
 | `attic/prototype/` | An earlier pybind11 extension, kept for reference and not built. |
+
+Every BART command is wrapped by hand, derived from the catalogue into a `tools` section, or
+private with a reason in `_coverage.py`; `tests/test_tools.py` holds the partition, so a command
+a BART update adds has to be placed.  `tests/test_docs.py` holds every public name to a place in
+`docs/api/`.
 
 ## Design rules
 
@@ -121,7 +126,7 @@ streams until torch's queued work has run and `bartorch_cuda_signal_stream`
 does the reverse.
 
 A tensor on a card selects that card for the length of the call, which is what
-`bartorch.cuda.ordered` does, and that is also what turns BART's own device
+`bartorch._cuda.ordered` does, and that is also what turns BART's own device
 path on: `bart_use_gpu` is what `-g` sets on the command line, so passing `-g`
 to a tool as well changes nothing.
 
@@ -201,17 +206,17 @@ as it starts, before anyone has mentioned FINUFFT.
 BART's own gridder is not reachable from the package's surface at all. What is
 left of it is `_finufft.barts_own_gridder()`, a context manager the agreement
 check uses and the tests hold the substitution against; there is nothing a
-caller can pass to end up there. `configure` raises when `finufft` is missing
+caller can pass to end up there. `_finufft.use_in_tools` raises when `finufft` is missing
 -- which on a platform it ships a wheel for means the install has lost it --
 or when `cufinufft` is missing on a machine whose card BART would otherwise
 use. A test that enters that block would carry it into the next test, so
 `tests/conftest.py` puts the substitution back after every one.
 
-The operator layer says what the tools say: `LinearOperator.nufft` takes the
+The operator layer says what the tools say: `linop.NUFFT` takes the
 weights and the subspace basis, because the normal is a point spread function
 over both and a chain could not be. Anything it cannot express is another way
 back to BART, so there is no separate FINUFFT operator beside it -- one
-`nufft` that is FINUFFT's underneath, the way the tools are.
+NUFFT that is FINUFFT's underneath, the way the tools are.
 
 **A trajectory that varies across frames is one plan, not one per frame.**
 Every axis the trajectory indexes is a sample of one transform and the rest
@@ -436,7 +441,7 @@ is what says the function is the right one rather than nearly so. A roll-off
 that did not match would be a smooth error of order one across the field of
 view, and would not shrink when the transform is tightened.
 
-The entry points that read the operator's internalsThe entry points that read the operator's internals -- `nufft_get_psf*`,
+The entry points that read the operator's internals -- `nufft_get_psf*`,
 `nufft_update_*`, `nufft_precond_create` -- refuse on one of these rather than
 read the wrong struct. `pics` only reaches them for `--psf_export` and
 `--psf_import`.
@@ -454,7 +459,7 @@ operator asks `bart_nufft_create2` for BART's own operator over the same
 trajectory and borrows its normal, while FINUFFT keeps the pair. Nothing is
 reimplemented and nothing is added to the dependency list. `conf.toeplitz`
 decides, so `pics --no-toeplitz` and `nufft -t` mean what they mean, and
-`bartorch.finufft.normals_built()` says which of the two answered.
+`bartorch._finufft.normals_built()` says which of the two answered.
 
 On a 256x256 eight-coil radial dataset of 401 spokes, against an explicit
 discrete Fourier sum on one spoke:
@@ -498,10 +503,10 @@ suffix FINUFFT uses.
 **`-o` is `upsampfac`, and `-w` is the tolerance read backwards.** How far
 past the image the transform is computed on is the one gridding parameter both
 sides spell the same way, so BART's `-o` is carried across wherever it is not
-BART's own default of two, and `enable(upsampling=...)` is what two itself
-means. The default there is zero, which leaves the choice to FINUFFT: a
-smaller grid buys a wider spreading kernel, and which of the two costs more
-depends on how many samples fall on each mode. On a 160 cube with eight coils,
+BART's own default of two; where it is, the library's own setting applies
+(`_finufft.use_in_tools(upsampling=...)`, a quarter over by default).  Zero
+leaves the choice to FINUFFT: a smaller grid buys a wider spreading kernel, and
+which of the two costs more depends on how many samples fall on each mode. On a 160 cube with eight coils,
 four coefficients and 3.5 million samples, an adjoint takes 6.7 s either way
 but holds 1.29 GB rather than 1.45; at a quarter over it takes 13.2 s, because
 at that density spreading is what the transform spends its time in.
@@ -518,14 +523,16 @@ it is clamped there. BART's own operator cannot serve a second width in one
 process at all: its Kaiser-Bessel window is built once and refuses a different
 beta.
 
-**Precision is the caller's to spend.** The default tolerance sits an order
-below BART's own gridder, which is the right thing not to have to think about
-and the wrong thing for a three-dimensional subspace problem on a laptop. That
-same 160 cube takes 2.1 s at `enable(tolerance=1e-3)` rather than 6.7 s, and
-that is what makes it fit at all. cuFINUFFT takes only two, a quarter over, or
-the heuristic; `-o 1.5` plans on the host and fails on a card.
+**Precision is the caller's to spend.** The default tolerance is a thousandth
+(see *On a card*): that same 160 cube takes 2.1 s at a thousandth rather than
+6.7 s at a tolerance an order below BART's own gridder, which is what makes it
+fit on a laptop.
+The setting is private (`_finufft.use_in_tools(tolerance=...)`); operators take
+`oversampling` and `width`, and the tools `-o` and `-w`.  cuFINUFFT takes only
+two, a quarter over, or the heuristic; `-o 1.5` plans on the host and fails on a
+card.
 
-`LinearOperator.nufft` is that transform reached without BART's tools, for
+`linop.NUFFT` is that transform reached without BART's tools, for
 chaining and solving in Python, and it is FINUFFT's underneath like everything
 else. A BART trajectory always carries three components, so whether a
 transform is two- or three-dimensional is decided by whether kz is used, not by
@@ -546,7 +553,7 @@ is on a device, and take it silently, so that is a segmentation fault rather
 than a slower answer.
 
 Which tools are which is a property of their own code, so `_ON_DEVICE` in
-`core/graph.py` holds only what has been run on a card and checked against the
+`_dispatch.py` holds only what has been run on a card and checked against the
 host, and a test in `tests/test_cuda.py` runs every name in it. The rest are
 given host memory and their result comes back on the card. On a 256x256
 eight-coil radial dataset that is `pics` in 0.12 s rather than 0.25 s and
@@ -554,7 +561,8 @@ eight-coil radial dataset that is `pics` in 0.12 s rather than 0.25 s and
 
 Whichever way a tool runs, what BART allocates for itself comes from torch on
 the memory that tool was given: an output on the other side of the bus from
-its input is the same silent host path. BART also maps input files
+its input is the same silent host path.  It comes zeroed, as a new CFL file
+does: `rof` and `tgv` start their solver from what the output already holds. BART also maps input files
 copy-on-write and some tools write into them, so a tensor is cloned unless the
 caller turns that off.
 
@@ -600,29 +608,31 @@ alone.
 
 ## The operator layer
 
-`LinearOperator` is an interface, not a namespace: two shapes, a forward, an
-adjoint, a normal. Everything written against an operator -- a solver, a torch
-model, `deepinv` -- is written against that, and an operator of one's own is a
-subclass with two methods, which then chains with BART's own and is solved by
-BART's own.
-
-`BartLinearOperator` is one that a BART handle stands behind, and every
-concrete operator is one: `FFT`, `Diagonal`, `Sampling`, `MultiplySum`,
-`NUFFT`, `Sense`, `Callback`. Each says only which of BART's constructors
-makes it, in `_create`; the lock BART is called under, the device it is built
-on, the handle's lifetime and the tensors the handle holds by pointer and must
-outlive are all in `_operator.py`. A new operator is the call and nothing
-around it.
+`LinearOperator` is the one operator class: two shapes, a forward, an adjoint,
+a normal.  A subclass is defined either by `_create`, which builds one of
+BART's operators -- `FFT`, `Diagonal`, `Sampling`, `MultiplySum`, `NUFFT`,
+`Sense`, `Callback`, `Compose`, `Add` -- or in Python by `forward` and
+`adjoint`.  A BART-backed subclass says only which constructor makes it; the
+lock BART is called under, the device it is built on, the handle's lifetime and
+the tensors the handle holds by pointer are all in `_operator.py`, shared with
+`NonlinearOperator`, which is built the same way.
 
 Composition builds BART's composite rather than a Python chain, so a chain of
 five applies as one call and a solver iterating on it never returns to Python.
-An operator written in Python joins the same way -- `as_bart()` wraps it as a
-pair of callbacks -- which is what lets BART's conjugate gradients drive it.
+A Python-defined operator joins through `_bart()`, which wraps its methods as a
+`Callback` -- a new one each time, so the operator holds no handle that refers
+back to itself.
 
 `.H` is the exception that proves the rule: BART has no adjoint-of-an-operator
 constructor, so `Adjoint` is the operator read the other way round rather than
 a second handle, and applying it costs what `adjoint` costs. Only composing it
 needs a handle, and only then is one made.
+
+`Sense` takes `coil_batch` and `fold_maps`.  The library reads both from
+process-wide state when it builds a SENSE operator, and the operator keeps its
+own copy of each, so `Sense` sets them for its build and restores them; the
+process-wide values (`_dispatch.set_coil_batch`, `_dispatch.set_fold_maps`)
+remain the defaults for the SENSE operators BART's tools build.
 
 **A backward pass is the adjoint, not the transpose.** Torch stores conjugate
 Wirtinger gradients: what it wants back for `y = A x` is `A^H g`. The near
@@ -632,12 +642,12 @@ multiplication torch can do, and asserts that the transpose would have
 disagreed.
 
 **`deepinv` is an adapter, not a base class.** An operator carries `A`,
-`A_adjoint` and `A_dagger` under `deepinv`'s names, and `to_deepinv()` returns
-a real `LinearPhysics` built the first time it is asked for. Inheriting
+`A_adjoint` and `A_dagger` under `deepinv`'s names, and `bartorch.to_deepinv(A)`
+returns a real `LinearPhysics`, whose class is built the first time it is asked
+for. Inheriting
 instead would put that import in the path of every operator and tie releases
 here to releases there. The wrapper's own work is `deepinv`'s batch axis,
-which a BART operator does not have, and `A_dagger` as BART's conjugate
-gradients.
+which a BART operator does not have, and `A_dagger` as `optim.CG`.
 
 ## Nothing here is an algorithm
 
@@ -648,7 +658,10 @@ operators beside them. Anything else written here would be a second
 implementation that drifts, and a result that is nearly BART's is worth less
 than no result.
 
-So `alg.solve` iterates nothing, and `prox/` computes nothing. A term fills
+So `optim` iterates nothing, and `prox/` computes nothing.  Each class in
+`optim` hands its algorithm's name and settings to `bartorch_solve` -- or
+`bartorch_irgnm`, for `IRGNM` -- which configures BART's iteration exactly as
+`pics` does. A term fills
 the table `opt_reg_configure` reads -- which kind, over which axes, with what
 weight -- from an object rather than from a `-R` string, and holds the
 proximal operator and the transform BART makes of it. The solver is handed
@@ -676,12 +689,12 @@ same with the same functions, in the same order, over an operator assembled
 here. The loop runs where `pics`'s does, and an operator BART built is handed
 over as it stands rather than wrapped, so there is no crossing per step --
 `tests/test_solve.py` asserts both: one call into the library however many
-iterations it runs, and `as_bart()` returning the operator itself.
+iterations it runs, and `_bart()` returning the operator itself.
 
 **And it is exact end to end.** `pics` does work around its solve, and an
 assembled reconstruction does the same work in Python: the sampling pattern
 applied to the k-space, `ifftmod` on it, and the scaling `pics` estimates
-unless `-w` says otherwise, which is `alg.data_scaling`. What is left is what
+unless `-w` says otherwise, which is `optim.data_scaling`. What is left is what
 `italgo_config` is handed, and three of those the tool fills in rather than
 BART: the 0.95 step of its proximal-gradient iterations, the random cycle
 spinning it does unless `-n`, and PRIDU's `sigma_tau_ratio`.
@@ -767,7 +780,7 @@ after the clocks have dropped differ by more than the two normals do.
 More than one BART stream makes no difference that measurement can resolve:
 one, two and four streams reconstruct in the same sixth of a second, and the
 spread between them is smaller than the spread between repetitions of any one
-of them. What BART holds on the card is what `bartorch.cuda.use_memcache`
+of them. What BART holds on the card is what `bartorch.use_cuda_memcache`
 decides for an operator -- 34 MB against nothing on that dataset -- and
 nothing at all for a tool, because BART's `main` clears the cache when a
 command ends.
@@ -783,7 +796,7 @@ megabytes at the resolution they fit sensitivities at.
 
 Every BART entry point that builds a NUFFT is served: `nufft` forward,
 adjoint, inverse and Toeplitz, `pics` with and without a pattern, `sqpics`,
-`nlinv`, `rtnlinv`, `moba`, `ncalib` and `LinearOperator.nufft`, on the host
+`nlinv`, `rtnlinv`, `moba`, `ncalib` and `linop.NUFFT`, on the host
 and on the card, with BART's own gridder built zero times. `nlinv` and the
 network models build theirs against dimensions alone and hand the trajectory
 over afterwards, which is why `nufft_update_traj` installs one rather than
@@ -796,18 +809,20 @@ BART takes a bitmask, Python takes axis indices. A flag's value can be an
 array rather than a number -- `pics(kspace, maps, t=traj)`, `-p` for a
 sampling pattern, `-B` for a basis -- and is registered and copied like any
 other input. BART's `fft` tool is
-unnormalised unless asked for the unitary form; the `LinearOperator.fft`
+unnormalised unless asked for the unitary form; the `linop.FFT`
 operator is unitary. `nufft` output is scaled by one over the grid side per
 transformed axis pair, with a negative exponent.
 
 Write for someone reading the code as it is now. No text about what the code
-used to be. A docstring carries what a caller needs: one line, Parameters,
-Returns, Raises.
+used to be. Docstrings follow *Documentation and docstrings* below.
 
 ## What is not done
 
-Tools with optional extra outputs, and the wider solver surface (ADMM, FISTA,
-proximal operators) through the operator layer.
+Tools with optional extra outputs.  BART's other operator constructors --
+resize, transpose, sum, finite differences, wavelets, exponentials and the rest
+in `linops/` and `nlops/` -- which would let an application assembled here stay
+one BART operator.  `ictv`, which fails inside BART for every input
+(`ictv.c:97` reshapes the wrong side of an operator).
 
 Windows is not on this list because it is not a target: BART does not build
 there, and WSL2 is a Linux install like any other.
@@ -827,9 +842,97 @@ operator written here. The seam is one function: `toeplitz_for` in
 `src/csrc/substitute/nufft_finufft.c` decides what the operator's normal is, and an
 mrtoeplitz kernel behind a host callback would go there. What BART does have
 is `compress_psf`, `decomposed_psf` and `lowmem`, and its own overlap:
-`bartorch.cuda.set_streams` sets `cuda_num_streams`, which is what puts BART's
+`bartorch.set_cuda_streams` sets `cuda_num_streams`, which is what puts BART's
 transfers and its arithmetic on different streams.
 
 Routing BART's device allocations through torch's allocator is a further step:
 `mem_device_malloc` takes the allocator as a parameter, so replacing
 `num/mem.c` would do it without a BART edit.
+
+## Documentation and docstrings
+
+Documentation in this project is written primarily for human developers. Optimize for clarity, precision, and high information density. Do not make documentation verbose in order to help an LLM understand the code.
+
+### General principles
+
+* Document information that is not obvious from names, signatures, type annotations, or the implementation itself.
+* Prefer direct technical prose over narrative, tutorial-style, conversational, literary, or essay-like explanations.
+* Do not use docstrings to record your reasoning process or to narrate how the code works line by line.
+* Do not restate the signature in prose.
+* Do not document parameters or attributes with descriptions that merely repeat their names or types.
+* Do not add documentation solely for completeness or because a symbol exists.
+* Preserve the project's established docstring format and terminology.
+
+Conciseness is a means, not the goal. Preserve enough detail to state non-obvious contracts precisely.
+
+### Information worth documenting
+
+Document these when relevant and non-obvious:
+
+* purpose and externally visible behavior;
+* physical units;
+* coordinate or reference frames;
+* transformation/composition order;
+* invariants and state transitions;
+* side effects;
+* important preconditions or assumptions;
+* non-obvious return conventions;
+* behavior at boundaries or special values;
+* state whose meaning is not apparent from its name/type;
+* compatibility constraints;
+* surprising behavior that is intentional and must be preserved.
+
+These details are more important than minimizing line count.
+
+### Packages and modules
+
+Package and module docstrings should normally be brief: usually a one-line summary or a few sentences describing the responsibility of the package/module.
+
+Do not put a design essay, implementation walkthrough, usage tutorial, or historical rationale in a module docstring. Put substantial architectural rationale in dedicated documentation, or a focused code comment if it is local to an implementation decision.
+
+### Classes
+
+A class docstring should explain what abstraction the class represents and any important semantic conventions.
+
+Document constructor parameters and public attributes when their meaning is useful and not obvious. Do not mechanically enumerate every attribute.
+
+For stateful classes, document state variables whose interpretation or lifecycle would otherwise be unclear.
+
+### Functions and methods
+
+State what the operation means rather than narrating its implementation.
+
+Document parameters, return values, exceptions, units, frames, side effects, or special cases only where they convey useful semantics beyond the signature.
+
+A short precise statement is preferred to a long explanatory paragraph.
+
+### Private and helper functions
+
+Private helpers do not require docstrings merely because they are functions.
+
+Add or retain a helper docstring when it communicates a non-obvious contract, invariant, state transition, algorithmic assumption, side effect, special return convention, or other information useful to a maintainer.
+
+If a private helper's behavior is obvious from its name, signature, and short implementation, omit the docstring rather than adding filler.
+
+### Comments versus docstrings
+
+Use docstrings for the contract and semantics of an abstraction.
+
+Use local comments for implementation details, algorithmic tricks, performance-sensitive choices, and explanations of why a particular piece of code is written in a non-obvious way.
+
+Do not move local implementation commentary into a docstring simply to preserve it.
+
+### Style to avoid
+
+Avoid generated prose such as:
+
+* extended scenarios used where a direct rule would suffice;
+* phrases describing code metaphorically or narratively;
+* repeated explanations of implementation mechanics;
+* obvious descriptions such as "the first value", "the system options", or "helper for X";
+* commentary about what is "common", "usually", or "nearly all" unless this is a meaningful documented constraint;
+* large `Parameters` or `Attributes` sections containing mostly information already present in type annotations;
+* statements whose primary purpose is to make the code easier for an LLM to reconstruct.
+
+When modifying existing code, clean up nearby documentation that clearly violates these rules, but do not broaden an otherwise focused code change into a repository-wide documentation rewrite unless requested.
+

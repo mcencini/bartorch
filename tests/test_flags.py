@@ -1,10 +1,10 @@
-"""Tests for bartorch.utils.flags (_axes_to_flags)."""
+"""C-order axes to BART bitmasks (``bartorch._flags``)."""
 
 from __future__ import annotations
 
 import pytest
 
-from bartorch.utils.flags import _axes_to_flags as axes_to_flags
+from bartorch._flags import _axes_to_flags as axes_to_flags
 
 __all__: list[str] = []
 

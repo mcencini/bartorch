@@ -1,11 +1,12 @@
-"""Calibration: sensitivities, and what is estimated alongside them."""
+"""Coil calibration: sensitivities, compression, whitening and noise estimates."""
 
 from __future__ import annotations
 
 import torch
 
-from bartorch.core.graph import dispatch
-from bartorch.tools._call import curated
+from bartorch import _call
+from bartorch._call import curated
+from bartorch._dispatch import dispatch
 
 __all__ = ["caldir", "ecalib"]
 
@@ -101,3 +102,25 @@ def caldir(kspace: torch.Tensor, calib_size: int, **extra) -> torch.Tensor:
         The sensitivities.
     """
     return dispatch("caldir", [kspace], None, _pos=[int(calib_size)], **extra)
+
+
+#: Commands in this section without a hand-written wrapper, built from the catalogue.
+_DERIVED = (
+    "calmat",
+    "cc",
+    "ccapply",
+    "ecaltwo",
+    "estscaling",
+    "estvar",
+    "ncalib",
+    "phasepole",
+    "rovir",
+    "walsh",
+    "whiten",
+)
+
+for _name in _DERIVED:
+    globals()[_name] = _call.build(_name, __name__)
+del _name
+
+__all__ = [*__all__, *_DERIVED]

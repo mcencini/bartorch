@@ -165,7 +165,7 @@ int bartorch_solve(const bartorch_linop* handle,
 		const float* reg_lambda, const int* reg_k,
 		const bartorch_prox* const* reg_ops, int n_reg,
 		float cclambda, int maxiter, float step, int eigen, int hogwild,
-		float admm_rho, int admm_maxitercg,
+		float admm_rho, int admm_maxitercg, float cg_tol,
 		float fista_p, float fista_q, float fista_r,
 		float sigma_tau_ratio, int adaptive_step,
 		int warmstart,
@@ -268,8 +268,13 @@ int bartorch_solve(const bartorch_linop* handle,
 	struct iter it = italgo_config(algo, nr_penalties, ropts.regs, maxiter,
 			step, eigen ? 30 : 0, hogwild, admm, fista, pridu, (bool)warmstart);
 
-	if (ALGO_CG == algo)
+	/* `italgo_config` takes no tolerance and leaves conjugate gradients at
+	 * BART's default of zero. */
+	if (ALGO_CG == algo) {
+
+		CAST_DOWN(iter_conjgrad_conf, CAST_DOWN(iter_call_s, it.iconf)->_conf)->tol = cg_tol;
 		nr_penalties = 0;
+	}
 
 	/* Only three of the iterations take the regularizers' transforms; the
 	 * rest assert that they were not given any.  `pics` decides the same

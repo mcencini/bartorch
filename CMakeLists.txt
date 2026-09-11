@@ -87,12 +87,12 @@ endif()
 # the way BART's own fallback does.  Tested rather than guessed, because
 # defining it where it does exist collides with the system header.
 include(CheckCSourceCompiles)
-# Through a system header, because that is where it comes from: glibc
-# typedefs it in <bits/floatn-common.h>, and clang does not offer it as a
-# keyword, so a bare probe answers about the compiler rather than the
-# translation unit.
+# Through <complex.h>, because that is where BART's translation units get it:
+# glibc typedefs it in <bits/floatn-common.h>, which <complex.h> and <math.h>
+# pull in and <stdio.h> does not on every glibc, and clang does not offer it as
+# a keyword.
 check_c_source_compiles(
-    "#include <stdio.h>\n_Float32 x; int main(void) { return (int)x; }"
+    "#include <complex.h>\n_Float32 x; int main(void) { return (int)x; }"
     BARTORCH_HAS_FLOAT32)
 if(NOT BARTORCH_HAS_FLOAT32)
     list(APPEND BART_C_DEFS _Float32=float)

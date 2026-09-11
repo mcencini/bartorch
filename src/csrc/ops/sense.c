@@ -133,6 +133,7 @@ struct sense_s {
 	linop_data_t super;
 
 	long batch;		/* coils in a slab */
+	bool fold;		/* apply the maps inside the transform of the normal */
 	long coils;		/* coils in all */
 
 	/* One slab: the dimensions the sensitivities contract over, the coil
@@ -690,7 +691,7 @@ static void sense_normal(const linop_data_t* _d, complex float* dst, const compl
 	 * transform that reads and writes a coefficient at a time, and one map
 	 * per coil rather than a set of them to contract. */
 	bool folds = (0 != cosets) && (0 != bartorch_nufft_coset_folds(d->slab))
-			&& (1 == d->slab_dims[MAPS_DIM]) && fold_maps;
+			&& (1 == d->slab_dims[MAPS_DIM]) && d->fold;
 
 	if (folds)
 #pragma omp atomic
@@ -799,6 +800,7 @@ static struct sense_s* sense_slabs(const long max_dims[DIMS], const long map_dim
 
 	d->coils = max_dims[COIL_DIM];
 	d->batch = MIN((long)coil_batch, d->coils);
+	d->fold = (0 != fold_maps);
 	d->maps = NULL;
 	d->owned = NULL;
 	d->kernels = NULL;

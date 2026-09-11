@@ -1,15 +1,8 @@
-"""What the ABI's arguments look like, in one place.
+"""ctypes marshalling of the ABI's arguments.
 
-Dimension vectors, argument vectors, the buffers a tool's output lands in, and
-the NULL a callback the caller did not give is passed as.  Together with
-:mod:`bartorch._abi` and :mod:`bartorch._lib` this is where the package names
-ctypes; everything above it works in shapes, integers and tensors, which is
-what would let the binding be something other than ctypes without any caller
-changing.
-
-(:mod:`bartorch._backend` is the exception, and a different job: it resolves
-the addresses of routines in libraries that are already in the process, none
-of which are bartorch's.)
+With :mod:`bartorch._abi` and :mod:`bartorch._lib`, the only modules that use
+ctypes for bartorch's own library; :mod:`bartorch._backend` and
+:mod:`bartorch._finufft` also resolve addresses in other libraries.
 """
 
 from __future__ import annotations
@@ -40,11 +33,7 @@ __all__ = [
 
 
 def padded_dims(shape: tuple[int, ...]) -> ctypes.Array:
-    """The BART dimension vector of a C-order shape, padded to :data:`DIMS`.
-
-    BART counts its axes the other way round, so the shape is reversed, and an
-    operator is always described over all sixteen.
-    """
+    """BART dimension vector of a C-order shape: reversed, and padded with ones to :data:`DIMS`."""
     rev = list(shape)[::-1]
     if len(rev) > DIMS:
         raise ValueError(f"BART supports at most {DIMS} dimensions, got {len(rev)}")
@@ -52,11 +41,7 @@ def padded_dims(shape: tuple[int, ...]) -> ctypes.Array:
 
 
 def dims(shape: tuple[int, ...]) -> tuple[int, ctypes.Array]:
-    """The BART rank and dimension vector of a C-order shape, unpadded.
-
-    A command is given as many axes as the array has, rather than all sixteen,
-    so it reports the rank alongside.  A scalar still has one axis.
-    """
+    """BART rank and dimension vector of a C-order shape, unpadded; a scalar has rank one."""
     rev = list(shape)[::-1] or [1]
     if len(rev) > DIMS:
         raise ValueError(f"BART supports at most {DIMS} dimensions, got {len(rev)}")
@@ -64,11 +49,7 @@ def dims(shape: tuple[int, ...]) -> tuple[int, ctypes.Array]:
 
 
 def shape_from_dims(vector: ctypes.Array, min_ndim: int) -> list[int]:
-    """The C-order shape of a BART dimension vector, with the leading ones dropped.
-
-    Everything BART does not use is a one, and in C order those sit in front;
-    ``min_ndim`` is how many axes the caller wants kept regardless.
-    """
+    """C-order shape of a BART dimension vector, dropping leading ones down to ``min_ndim`` axes."""
     rev = [int(vector[i]) for i in range(DIMS)][::-1]
     while len(rev) > max(1, min_ndim) and rev[0] == 1:
         rev.pop(0)
@@ -81,32 +62,27 @@ def argv(args: list[str]) -> ctypes.Array:
 
 
 def longs(values) -> ctypes.Array:
-    """A C array of longs."""
     return (ctypes.c_long * len(values))(*[int(v) for v in values])
 
 
 def ints(values) -> ctypes.Array:
-    """A C array of ints."""
     return (ctypes.c_int * len(values))(*[int(v) for v in values])
 
 
 def floats(values) -> ctypes.Array:
-    """A C array of floats."""
     return (ctypes.c_float * len(values))(*[float(v) for v in values])
 
 
 def pointers(values) -> ctypes.Array:
-    """A C array of addresses, for an argument that takes several handles."""
     return (ctypes.c_void_p * len(values))(*[int(v) for v in values])
 
 
 def text_buffer(size: int) -> ctypes.Array:
-    """A writable buffer for text the library fills in."""
     return ctypes.create_string_buffer(size)
 
 
 def float_buffer(ptr: int, count: int) -> ctypes.Array:
-    """A view of *count* floats at *ptr*, without a copy."""
+    """A view of ``count`` floats at ``ptr``, without a copy."""
     return (ctypes.c_float * count).from_address(ptr)
 
 
@@ -125,7 +101,7 @@ def null_release() -> ctypes.Array:
 
 
 def dim_vector() -> ctypes.Array:
-    """An empty BART dimension vector, for the library to fill in."""
+    """A dimension vector of :data:`DIMS` entries for the library to fill in."""
     return (ctypes.c_long * DIMS)()
 
 

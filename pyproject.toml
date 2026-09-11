@@ -61,14 +61,14 @@ dev = [
     "ruff",
     "deepinv>=0.2",
 ]
-# Kept the same as docs/requirements.txt, which builds the reference on its
-# own: `docs/conf.py` extracts the API from the checkout rather than from an
-# installed package, so rendering needs neither torch nor a compiled library.
+# Kept the same as docs/requirements.txt.  Rendering imports the package from
+# the checkout, which needs torch but not the compiled library.
 docs = [
-    "sphinx>=8.1,<9",
+    "sphinx>=7.3,<9",
     "sphinx-book-theme>=1.1,<2",
     "sphinx-gallery>=0.17,<0.20",
     "sphinx-copybutton>=0.5,<1",
+    "myst-parser>=3,<5",
     "matplotlib>=3.7,<4",
 ]
 

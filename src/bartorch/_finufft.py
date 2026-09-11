@@ -1,15 +1,7 @@
-"""FINUFFT, as an operator and underneath BART's own tools.
+"""FINUFFT under BART's ``nufft_create``: loading it, and the substitution's switches and counters.
 
-The ``finufft`` and ``cufinufft`` wheels carry a compiled library and a thin
-Python wrapper over it, so a plan made here is the same object BART would
-have made for itself, and the transform runs with the GIL released.  A plan is
-made once per operator and reused, which is what makes this worth doing inside
-an iterative solve.
-
-The scaling and sign follow BART's own NUFFT, so an operator from here is
-interchangeable with :class:`bartorch.linop.NUFFT`: a type-2
-transform with a negative exponent, divided by the square root of the number
-of voxels.
+The substitution installs itself on first use (:func:`install_once`).  Tests and
+``scripts/check_device.py`` read the counters.
 """
 
 from __future__ import annotations
@@ -37,12 +29,7 @@ def available() -> bool:
 
 
 def required_but_missing() -> str:
-    """Why there is no FINUFFT here, given that there should always be one.
-
-    It is a dependency rather than an extra, so its absence is a broken
-    install and never a choice -- which is worth saying, because the obvious
-    reading of "FINUFFT is not in use" is that some option was left off.
-    """
+    """Error text for a missing ``finufft``, which is a dependency rather than an option."""
     return (
         "FINUFFT computes every non-Cartesian transform here: BART's own "
         "gridder is not reachable from this package's surface.  It is a "
@@ -68,7 +55,7 @@ def used_on_device() -> bool:
 
 
 def _library_path(package: str, stem: str) -> str | None:
-    """The compiled library inside a FINUFFT wheel."""
+    """Path of the compiled library inside an installed wheel, or None."""
     try:
         module = importlib.import_module(package)
     except ImportError:
@@ -86,19 +73,11 @@ _OPENMP_LIBRARIES = ("libomp.", "libiomp5.", "libgomp.")
 
 
 def openmp_runtimes() -> list[str]:
-    """The OpenMP runtimes loaded into this process, by path.
+    """Paths of the OpenMP runtimes loaded in this process, in load order.
 
-    Only macOS answers: LLVM's runtime refuses to initialise where another
-    copy already has, and refuses by calling ``abort()`` -- so two of them in
-    one process is not a warning to weigh but the end of the interpreter,
-    with the reason on a stderr that whoever is capturing output never shows.
-    Linux is not asked because glibc's loader resolves the duplicate instead
-    of dying on it.
-
-    Returns
-    -------
-    list of str
-        One path per loaded runtime, in load order.  Empty off macOS.
+    Answered on macOS only, where LLVM's runtime aborts the process when a second
+    copy initializes.  On Linux the loader resolves the duplicate and this returns
+    an empty list.
     """
     import ctypes as c
 
@@ -127,14 +106,10 @@ def openmp_runtimes() -> list[str]:
 
 
 def _load_symbols() -> bool:
-    """Hand the library FINUFFT's entry points and its options layout.
+    """Register FINUFFT's entry points and options layout; False if unusable.
 
-    The host's library is required; the device's is loaded when the
-    ``cufinufft`` wheel is installed, and its absence only means that a
-    transform BART would run on a card stays with BART's own operator.
-
-    A layout is read from the package that will interpret the struct, so a
-    release that moves a field cannot be misread here.
+    cuFINUFFT's are registered too when its wheel is installed.  Each layout is read
+    from the package that interprets the struct.
     """
     return _load_one(0, "finufft", "finufft", "finufftf_") and (
         _load_one(1, "cufinufft", "cufinufft", "cufinufftf_") or True
@@ -142,7 +117,7 @@ def _load_symbols() -> bool:
 
 
 def _load_one(device: int, package: str, stem: str, prefix: str) -> bool:
-    """Register one library's entry points and the offset of the field to set."""
+    """Register one wheel's entry points and options offsets for ``device`` (0 host, 1 card)."""
     import ctypes as c
 
     from bartorch._lib import library
@@ -182,12 +157,10 @@ def _default_opts_symbol(handle, prefix: str) -> str:
 
 
 def _options_layout(package: str):
-    """The options struct a package interprets, and the fields to fill in.
+    """The options struct ``package`` interprets, and the fields set in it.
 
-    FINUFFT is told how many threads to take -- zero, meaning all of them --
-    and cuFINUFFT which device to run on; both are told how far past the image
-    to spread, which they spell alike, and whether to spread and stop there,
-    which they do not.
+    Threads (FINUFFT) or device id (cuFINUFFT), upsampling, and spread-only; the two
+    packages spell the last differently.
     """
     if package == "finufft":
         from finufft._finufft import FinufftOpts as opts
@@ -203,34 +176,31 @@ def use_in_tools(
     tolerance: float = 1e-3,
     upsampling: float = 1.25,
 ) -> bool:
-    """Have BART's own tools compute their NUFFT with FINUFFT.
+    """Install FINUFFT as the NUFFT behind BART's tools and operators.
 
     Parameters
     ----------
     enable : bool
-        Turn the substitution on, or off to leave BART its own gridder.
+        False restores BART's own gridder.
     tolerance : float
-        The tolerance FINUFFT plans are made with.  A thousandth by default:
-        a reconstruction is not made better by a transform an order more
-        accurate than the data going into it, and the kernel narrows as the
-        tolerance loosens.
+        Tolerance FINUFFT plans are made with.
     upsampling : float
-        How far past the image to spread before transforming.  Two is the
-        textbook grid; a quarter over, the default here, trades a smaller one
-        for a wider kernel and holds a quarter of the memory at this
-        tolerance.  Zero leaves the choice to FINUFFT, per problem.  BART's
-        ``-o`` takes precedence wherever it is not BART's own default of two.
+        Oversampling of FINUFFT's fine grid; 0 lets FINUFFT choose per problem.
+        BART's ``-o`` overrides it wherever it is not BART's default of 2.
 
     Returns
     -------
     bool
-        Whether the substitution is in place and agrees with BART.
+        Whether the substitution is in place.
 
     Raises
     ------
     ImportError
-        When ``finufft`` is missing, or ``cufinufft`` is missing on a machine
-        where BART would otherwise run on a card.
+        ``finufft`` is missing or its library lacks the entry points, or
+        ``cufinufft`` is missing on a machine where BART would run on a card.
+    RuntimeError
+        Two OpenMP runtimes are loaded (macOS), or FINUFFT disagrees with BART's
+        gridder on a test transform.
     """
     from bartorch import _cuda
     from bartorch._lib import library
@@ -299,19 +269,9 @@ def used_in_tools() -> bool:
 
 
 def stream_psf(enable: bool = True) -> None:
-    """Keep the function a Toeplitz normal convolves with off the card.
+    """Stream the Toeplitz point spread function to the card one set of frequencies at a time.
 
-    BART reads it as one array and takes the set of frequencies it wants out
-    of it, so it brings the whole of it over the first time a normal is
-    applied -- and for a subspace problem that function is coefficients by
-    sets by image, which is what a three-dimensional reconstruction cannot
-    fit.  Asked for this, the loop over sets is driven here instead: BART is
-    left believing it has one, and the one it has is brought over in turn.
-
-    It costs BART's low-memory normal, which walks the sets rather than
-    convolving them at once.  On a 96^3 problem with eight coils that is
-    364 MB and 2.0 s against 210 MB and 2.4 s -- two fifths of the memory for
-    a fifth more time.
+    Uses BART's low-memory normal: less device memory, more time.
     """
     from bartorch._lib import library
 
@@ -326,22 +286,12 @@ def streaming_psf() -> bool:
 
 
 def compress_psf(enable: bool = True) -> None:
-    """Keep only the places the samples reach of the function.
+    """Store a Toeplitz function only where the samples reach, beside an index of those points.
 
-    A compressed function is the part of the function the samples reached,
-    which is also all that crosses the bus for every set of frequencies it is
-    brought over in.  It costs an index over the grid -- one ``long`` a point
-    -- so it is kept only where it gives back more than that, which is decided
-    when the function is built: a subspace function, a triangle of volumes a
-    set, over a trajectory that leaves enough of the grid unreached.  A scalar
-    function never is.  :func:`functions_compressed` says when it happened.
-
-    The function is not zero where the samples do not reach, only small, so
-    compression is not exact.  A three-dimensional radial readout that reaches
-    the edge leaves the corners of the cube, and there one normal at 64^3 over
-    four coefficients is 4.8e-03 from the pair of transforms it stands for,
-    against 4.3e-03 for the whole function.  A readout covering half of a
-    two-dimensional grid leaves most of it: 1.9e-02 against 3.5e-03.
+    Decided for each function when it is built: kept for a subspace function whose
+    trajectory leaves enough of the grid unreached, never for a scalar function.
+    The function is small but not zero elsewhere, so compression is approximate.
+    :func:`functions_compressed` counts compressed functions.
     """
     from bartorch._lib import library
 
@@ -356,17 +306,10 @@ def compressing_psf() -> bool:
 
 
 def overlap_psf(enable: bool = True) -> None:
-    """Bring a set of frequencies over while the one before it is convolved.
+    """Transfer the next set of frequencies to the card while the current one is convolved.
 
-    The crossing goes on a stream of its own, ordered against BART's by events
-    rather than by a second host thread, which would make BART's own threading
-    nested.  The function is page-locked on the host, because an asynchronous
-    copy out of pageable memory is not one.
-
-    It costs a second slot on the card, and a slot is one set of the function:
-    at 256^3 over four coefficients, 354 MiB on a normal that otherwise peaks
-    at 2.4 GiB.  What it buys is the crossing, which is a twentieth of a
-    normal there: 6.3 s against 6.6 s.  Off unless asked for.
+    Needs a second device slot of one set's size and a page-locked host copy.  Off
+    by default.
     """
     from bartorch._lib import library
 
@@ -381,26 +324,18 @@ def overlapping_psf() -> bool:
 
 
 def _contraction_kernel(enable: bool = True) -> None:
-    """Whether a real upper-triangular contraction runs in bartorch's kernel or BART's.
-
-    BART's is kept to be held against: the two compute the same thing.
-    """
+    """Choose bartorch's or BART's kernel for the real upper-triangular contraction."""
     from bartorch._lib import library
 
     library().bartorch_nufft_set_contraction_kernel(int(bool(enable)))
 
 
 def release_transforms(enable: bool = True) -> None:
-    """Let the device's transform pair go at the first normal.
+    """Free the device's FINUFFT plans at the first normal application.
 
-    With a Toeplitz function built, a normal is a convolution and reads neither
-    the FINUFFT plans nor the sample positions they were set on.  A solve forms
-    its right-hand side with one adjoint and then applies only normals, so the
-    plans would otherwise stay on the card for every iteration with nothing
-    reading them -- and a plan grows with the number of samples, which is what
-    a many-frame acquisition has most of.  The first normal lets them go; a
-    transform asked for afterwards plans again from the trajectory the host
-    keeps.  On unless turned off.
+    With a Toeplitz function built, a normal reads neither the plans nor the sample
+    positions; a later forward or adjoint plans again from the host trajectory.  On
+    by default.
     """
     from bartorch._lib import library
 
@@ -415,16 +350,10 @@ def releasing_transforms() -> bool:
 
 
 def fft_callbacks(enable: bool = True) -> None:
-    """Run the passes around each volume's transform inside the transform.
+    """Run the per-volume phase, sensitivity, gather and scatter passes as cuFFT LTO callbacks.
 
-    A streamed, compressed set is convolved a volume at a time, and each
-    volume's forward and inverse transform come with passes of their own: the
-    set's phase and the coil's sensitivity on the way in and the gather after
-    it, the scatter before the inverse and the conjugates and the sum after
-    it.  cuFFT links callbacks into its kernels, so each pass becomes part of a
-    read or a write the transform makes anyway.  Linking them in takes cuFFT's
-    LTO callbacks and nvJitLink beside it; where either is missing the passes
-    run on their own.  On unless turned off.
+    Applies to streamed, compressed sets.  Where cuFFT's LTO callbacks or nvJitLink
+    are unavailable the passes run separately.  On by default.
     """
     from bartorch._lib import library
 
@@ -432,17 +361,13 @@ def fft_callbacks(enable: bool = True) -> None:
 
 
 def pair_sets(enable: bool = True) -> None:
-    """Convolve the sets of a Toeplitz function in pairs, where the pair kernels allow it.
+    """Convolve Toeplitz sets that differ only along x in pairs, sharing their z and y transforms.
 
-    The eight sets of a decomposed function differ by half a cell along each
-    axis, and the phase along one axis passes through the transforms along the
-    other two, so the two sets that differ only along x share their transforms
-    along z and y, forward and back.  The pair kernels (cuFFTDx, compiled for
-    the grid sizes the library was built with) convolve a coil against both
-    at once.  They take a compressed real function kept as its upper triangle,
-    four coefficients and a cubic grid of a compiled size; anything else is
-    convolved a set at a time.  Read when a function is streamed, so it applies
-    to operators built afterwards.  On unless turned off.
+    Uses the cuFFTDx pair kernels, compiled for fixed grid sizes.  Applies to a
+    compressed real function kept as its upper triangle, with four coefficients,
+    on a cubic grid of a compiled size; other functions are convolved a set at a
+    time.  Read when a function is streamed, so it affects operators built
+    afterwards.  On by default.
     """
     from bartorch._lib import library
 
@@ -457,13 +382,11 @@ def pairing_sets() -> bool:
 
 
 def bfloat16_function(enable: bool = True) -> None:
-    """Keep a Toeplitz function whose sets are paired in bfloat16.
+    """Store paired Toeplitz functions in bfloat16.
 
-    Half the host copy, half of what crosses to the card and of the slot it
-    lands in, and half of what the pass along x reads, at a rounding of 2^-9 of
-    each value where float32 keeps 2^-24.  bfloat16 keeps float32's exponent,
-    so no value is clipped.  Read when a function is streamed, so it applies to
-    operators built afterwards.  On unless turned off.
+    Halves the host copy, the transfer and the device slot.  Values are rounded to
+    a relative 2^-9 (float32: 2^-24) with float32's exponent range.  Read when a
+    function is streamed.  On by default.
     """
     from bartorch._lib import library
 
@@ -499,13 +422,7 @@ def using_fft_callbacks() -> bool:
 
 
 def live_plans() -> int:
-    """FINUFFT plans made and not yet destroyed.
-
-    A plan belongs to whatever asked for one -- a transform operator, a point
-    spread function, the spreading a compressed one is masked with -- and
-    outlives none of them, so this is back at zero once the last of them has
-    been freed.
-    """
+    """FINUFFT plans made and not yet destroyed; zero once every owner of one has been freed."""
     from bartorch._lib import library
 
     return int(library().bartorch_finufft_live_plans())
@@ -527,12 +444,9 @@ def operators_built() -> tuple[int, int]:
 
 
 def normals_built() -> tuple[int, int]:
-    """Normal operators since the last reset: by a point spread function, by the pair.
+    """Normal operators built since the last reset, by point spread function and by transform pair.
 
-    A^H A is a convolution, so BART answers it with one multiply against a
-    point spread function rather than a forward and an adjoint transform, and
-    the substituted operator borrows that for its normal.  ``pics
-    --no-toeplitz`` and ``nufft -t`` are what decide whether there is one.
+    ``pics --no-toeplitz`` and ``nufft -t`` decide which.
     """
     from bartorch._lib import library
 
@@ -541,24 +455,14 @@ def normals_built() -> tuple[int, int]:
 
 
 def functions_compressed() -> int:
-    """Toeplitz functions built compressed since the counters were reset.
-
-    Whether a function is compressed is decided when it is built, from how much
-    of the grid the samples reach, so the arguments alone do not say -- this is
-    how a caller or a test finds out.
-    """
+    """Toeplitz functions built compressed since the last reset; decided at build time."""
     from bartorch._lib import library
 
     return int(library().bartorch_toeplitz_counter(2))
 
 
 def functions_real() -> int:
-    """Toeplitz functions stored as floats since the counters were reset.
-
-    Whether a function is stored real is decided from the basis when it is
-    built, so the arguments alone do not say -- this is how a caller or a test
-    finds out.
-    """
+    """Toeplitz functions stored as floats since the last reset; decided from the basis."""
     from bartorch._lib import library
 
     return int(library().bartorch_toeplitz_counter(4))
@@ -579,7 +483,7 @@ def sets_through_callbacks() -> int:
 
 
 def reset_counters() -> None:
-    """Start counting operators and normal operators again."""
+    """Reset the NUFFT and Toeplitz counters."""
     from bartorch._lib import library
 
     lib = library()
@@ -595,11 +499,9 @@ def tolerance() -> float:
 
 
 def upsampling() -> float:
-    """How far past the image FINUFFT spreads before it transforms.
+    """Oversampling of FINUFFT's fine grid; 0 lets FINUFFT choose.
 
-    A quarter over by default.  BART's ``-o`` is the same number and takes
-    precedence wherever it is not BART's own default of two; zero leaves the
-    choice to FINUFFT.
+    BART's ``-o`` overrides it wherever it is not BART's default of 2.
     """
     from bartorch._lib import library
 
@@ -607,15 +509,10 @@ def upsampling() -> float:
 
 
 def set_threads(n: int) -> None:
-    """How many threads a transform on the host takes.
+    """Set the threads a host transform takes; 0 lets FINUFFT take one per physical core.
 
-    Zero, the state this starts in, leaves the count to FINUFFT, which takes
-    a thread per physical core.  :func:`bartorch.set_num_threads` sets this
-    along with BART's own count, so one number covers the process; passing
-    zero here is how that is undone without giving BART a count of its own.
-
-    A card has no say in it: cuFINUFFT carries a device number where FINUFFT
-    carries a thread count.
+    :func:`bartorch.set_num_threads` sets this together with BART's own count.
+    Ignored on a card.
     """
     from bartorch._lib import library
 
@@ -637,11 +534,11 @@ def fallback_allowed() -> bool:
 
 
 def _tools_agree_with_bart(tolerance: float = 1e-2) -> bool:
-    """Whether BART's NUFFT tool computes the same thing either way.
+    """Whether ``bart nufft`` answers the same with FINUFFT and with BART's gridder.
 
-    The two are held to each other rather than to a reference, so what the
-    tolerance has to allow for is BART's own gridding error, not FINUFFT's.
+    Relative to BART's peak; ``tolerance`` allows for BART's gridding error.
     """
+    import bartorch
     import bartorch.tools as bt
     from bartorch._lib import library
 
@@ -651,10 +548,10 @@ def _tools_agree_with_bart(tolerance: float = 1e-2) -> bool:
     image = bt.phantom([n, n]).reshape(1, n, n)
 
     lib.bartorch_finufft_use_in_tools(1)
-    fast = bt.nufft(traj, image)
+    fast = bartorch.nufft(image, traj)
 
     with barts_own_gridder():
-        reference = bt.nufft(traj, image)
+        reference = bartorch.nufft(image, traj)
 
     lib.bartorch_finufft_use_in_tools(1)
 
@@ -665,11 +562,7 @@ def _tools_agree_with_bart(tolerance: float = 1e-2) -> bool:
 
 
 def spatial_ndim(traj: torch.Tensor) -> int:
-    """Whether a trajectory is two- or three-dimensional.
-
-    A BART trajectory always carries three components; a two-dimensional one
-    leaves the third at zero.
-    """
+    """2 or 3: whether the trajectory's third component is used (BART always carries three)."""
     if traj.shape[-1] < 3:
         return 2
     return 3 if bool(torch.any(traj[..., 2].real != 0)) else 2
@@ -677,13 +570,9 @@ def spatial_ndim(traj: torch.Tensor) -> int:
 
 @contextlib.contextmanager
 def barts_own_gridder():
-    """BART's Kaiser-Bessel gridder, for as long as the block lasts.
+    """Context in which BART's Kaiser-Bessel gridder serves the NUFFT instead of FINUFFT.
 
-    Not part of the package's surface.  What it is for is holding the
-    substitution against the thing it replaces -- the agreement check below,
-    and the tests that pin one to the other -- because a caller who reached it
-    by mistake would get an answer an order further from the transform and
-    several times slower, with nothing to say so.
+    For tests and the install-time agreement check only; nothing public reaches it.
     """
     from bartorch._lib import library
 
@@ -704,14 +593,10 @@ _installed = False
 
 
 def install_once() -> None:
-    """Put the substitution in place the first time anything needs it.
+    """Install the substitution on first use; a failure is logged once at warning level, not raised.
 
-    A caller who has the package should not have to ask for it, and one who
-    does not should hear about it when a transform wants it rather than get a
-    quieter answer from BART.  Failing to install it is not an error here,
-    because most of what BART does needs no NUFFT at all -- but it is said
-    once, at warning level, because a substitution that quietly did not happen
-    is the hardest kind of difference to find later.
+    Most commands need no NUFFT.  A NUFFT asked for after a failed install is
+    refused, with the reason.
     """
     global _installed
     if _installed:
@@ -722,7 +607,7 @@ def install_once() -> None:
     try:
         use_in_tools(True)
     except (ImportError, RuntimeError) as exc:
-        logging.getLogger("bartorch.finufft").warning(
+        logging.getLogger("bartorch._finufft").warning(
             "FINUFFT is installed but was not put in BART's place, so its transforms "
             "will be BART's own gridder: %s",
             exc,

@@ -6,9 +6,9 @@
 #   ./scripts/build_docs.sh --execute        run the gallery examples as well
 #   ./scripts/build_docs.sh --clean --serve  start over, then serve the result
 #
-# Rendering needs neither torch nor the compiled library: `docs/conf.py`
-# extracts the API from the checkout rather than from an installed package.
-# Executing the gallery needs both, because the examples run BART.
+# Rendering imports bartorch from src/, which needs torch but not the compiled
+# library.  Executing the gallery needs the library too, because the examples
+# run BART.
 
 set -euo pipefail
 
@@ -58,7 +58,7 @@ while [ $# -gt 0 ]; do
     shift
 done
 
-if ! "${PYTHON}" -c "import sphinx, sphinx_gallery, sphinx_book_theme" 2>/dev/null; then
+if ! "${PYTHON}" -c "import sphinx, sphinx_gallery, sphinx_book_theme, myst_parser, torch" 2>/dev/null; then
     echo "build_docs.sh: the documentation requirements are not installed." >&2
     echo "  ${PYTHON} -m pip install -r docs/requirements.txt" >&2
     echo "or pass --install." >&2

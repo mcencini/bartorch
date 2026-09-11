@@ -1,31 +1,11 @@
-"""Where BART's BLAS and LAPACK come from at runtime.
+"""BART's BLAS, LAPACK and FFT tables, filled from compiled libraries already in the process.
 
-The compiled library carries reference BLAS and no LAPACK; both are filled in
-at import from libraries already present in the process.  Every entry is a
-compiled Fortran-ABI routine, never a Python callback.  In order:
-
-* MKL, when the ``mkl`` extra is installed.  It covers every routine BART
-  calls and is the fastest of these on the work that leans on LAPACK: an
-  ESPIRiT calibration, whose per-voxel eigendecompositions dominate it, takes
-  about half as long as it does on the others.  There is no MKL wheel for
-  macOS, so this is a Linux path;
-* the BLAS and LAPACK torch itself links, which is MKL statically on Linux and
-  Accelerate on macOS.  Only the routines torch calls are exported, thirteen
-  of the thirty;
-* Accelerate directly, on macOS;
-* SciPy's ``cython_blas`` and ``cython_lapack``, which publish the whole of
-  BLAS and LAPACK as function pointers into their compiled OpenBLAS, and cover
-  whatever the others do not.
-
-``BARTORCH_BLAS_LIBRARY`` puts one source first: ``mkl``, ``scipy``, ``torch``,
-or the path to a shared library.  :func:`sources` reports what each routine
-resolved to.
-
-BART's FFT is filled from the same list.  It is planned through the FFTW guru
-interface and executed by MKL's DFTI where one of these sources has it, which
-on Linux is torch's own MKL and needs nothing installed; where none does,
-which is macOS, it is executed by the transform compiled into the library.
-``sources()["fft"]`` says which.
+Sources, most preferred first: MKL (the ``mkl`` extra, Linux only), the library
+torch links, Accelerate (macOS), and SciPy's ``cython_blas`` / ``cython_lapack``
+capsules.  ``BARTORCH_BLAS_LIBRARY`` puts one first: ``mkl``, ``torch``,
+``scipy``, or a library path.  BART's FFT is executed by MKL's DFTI when a
+source has all of it, and by the transform compiled into the library otherwise.
+:func:`sources` reports what serves each routine.
 """
 
 from __future__ import annotations
@@ -62,8 +42,6 @@ class _Provider:
 
 
 class _SharedLibrary(_Provider):
-    """A loaded shared library, queried with dlsym."""
-
     def __init__(self, name: str, handle: ctypes.CDLL):
         super().__init__(name)
         self._handle = handle
@@ -241,14 +219,9 @@ def _install_fft(providers: list[_Provider]) -> str:
 
 @contextlib.contextmanager
 def built_in_fft():
-    """The compiled-in transform, for as long as the block lasts.
+    """Context in which BART's FFT is executed by the compiled-in transform instead of DFTI.
 
-    Not part of the package's surface.  What it is for is holding one
-    implementation against the other, which is the only way to test that the
-    description handed to DFTI is the one BART asked for: both are asked the
-    same question and the answers have to agree.  A plan already built keeps
-    its descriptor, and reaches it only while the table is filled, so this
-    takes effect on plans made before it as well as after.
+    Plans made before it are affected too.  For tests that compare the two.
     """
     lib = library()
     was = bool(lib.bartorch_fft_usable())

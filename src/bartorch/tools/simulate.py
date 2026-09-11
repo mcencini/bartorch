@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import torch
 
-from bartorch.core.graph import dispatch
-from bartorch.tools._call import curated
+from bartorch import _call
+from bartorch._call import curated
+from bartorch._dispatch import dispatch
 
 __all__ = ["phantom"]
 
@@ -89,3 +90,13 @@ def phantom(
     if rotation_steps is not None:
         flags["rotation_steps"] = rotation_steps
     return dispatch("phantom", [], None, **flags)
+
+
+#: Commands in this section without a hand-written wrapper, built from the catalogue.
+_DERIVED = ("bloch", "coils", "epg", "fakeksp", "mobasig", "noise", "pulse", "seq", "signal", "sim")
+
+for _name in _DERIVED:
+    globals()[_name] = _call.build(_name, __name__)
+del _name
+
+__all__ = [*__all__, *_DERIVED]

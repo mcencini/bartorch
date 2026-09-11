@@ -1,4 +1,4 @@
-"""Nonlinear operators written here, for BART's solvers to drive."""
+"""Nonlinear operators defined by Python functions."""
 
 from __future__ import annotations
 
@@ -9,12 +9,12 @@ import torch
 from bartorch import _marshal
 from bartorch._lib import DIMS, library
 from bartorch._operator import Built, Shape, callback, dims
-from bartorch.nlop.base import BartNonlinearOperator
+from bartorch.nlop.base import NonlinearOperator
 
 __all__ = ["Callback", "FromTorch"]
 
 
-class Callback(BartNonlinearOperator):
+class Callback(NonlinearOperator):
     """A nonlinear operator implemented by Python functions on tensors.
 
     ``forward(x)`` evaluates the operator and fixes the point at which
@@ -69,10 +69,8 @@ class Callback(BartNonlinearOperator):
 class FromTorch(Callback):
     """A nonlinear operator from a differentiable torch function.
 
-    The derivative is the forward-mode Jacobian-vector product and its adjoint
-    the reverse-mode vector-Jacobian product at the last point the operator was
-    evaluated, so a torchsim signal model or any other autograd-differentiable
-    map can be fitted by BART's Gauss-Newton solver.
+    The derivative is torch's forward-mode Jacobian-vector product, and its adjoint
+    the reverse-mode vector-Jacobian product, both at the last evaluated point.
 
     Parameters
     ----------
@@ -84,7 +82,7 @@ class FromTorch(Callback):
     Examples
     --------
     >>> F = FromTorch(lambda p: p[0] * torch.exp(-t / p[1]), (2,), t.shape)
-    >>> F.irgnm(measured, x0=torch.tensor([1.0, 20.0]))
+    >>> optim.IRGNM()(measured, F, x0=torch.tensor([1.0, 20.0]))
     """
 
     def __init__(self, fn: Callable[[torch.Tensor], torch.Tensor], ishape: Shape, oshape: Shape):

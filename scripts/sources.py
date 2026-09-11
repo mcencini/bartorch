@@ -1,13 +1,7 @@
-"""What the compiled library is built from, in one place.
+"""The sources the compiled library is built from.
 
-Two things need to agree about this and would drift if each had its own list:
-``scripts/run_tests.sh``, which says whether there is anything to rebuild, and
-``tests/test_build.py``, which fails the suite when the library is older than
-the sources it is supposed to have come from.  The second is the one that
-matters, and it is only worth trusting if the first is asking the same
-question.
-
-Run it to see the answer::
+Shared by ``scripts/run_tests.sh``, which decides whether to rebuild, and
+``tests/test_build.py``, which fails when the library is older than its sources::
 
     python scripts/sources.py            # the newest source, and its time
     python scripts/sources.py --newer-than build/local/libbartorch.so

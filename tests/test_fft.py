@@ -46,7 +46,7 @@ CASES = [
 def test_the_fft_matches_numpy_however_many_axes_are_looped_over(shape, axes):
     torch.manual_seed(0)
     x = torch.randn(*shape, dtype=torch.complex64)
-    got = bt.fft(x, axes=axes).numpy()
+    got = bartorch.fft(x, axes=axes).numpy()
     ref = _centred_reference(x, axes)
     np.testing.assert_allclose(got, ref, rtol=1e-4, atol=1e-4 * float(np.abs(ref).max()))
 
@@ -58,9 +58,9 @@ def test_mkl_and_the_built_in_transform_agree(shape, axes):
     torch.manual_seed(0)
     x = torch.randn(*shape, dtype=torch.complex64)
 
-    with_mkl = bt.fft(x, axes=axes)
+    with_mkl = bartorch.fft(x, axes=axes)
     with _backend.built_in_fft():
-        built_in = bt.fft(x, axes=axes)
+        built_in = bartorch.fft(x, axes=axes)
 
     torch.testing.assert_close(with_mkl, built_in, rtol=1e-4, atol=1e-4)
 
@@ -89,7 +89,7 @@ def test_a_reconstruction_agrees_whichever_transform_serves_it():
     torch.manual_seed(0)
     traj = bt.traj(x=n, y=48, r=True)
     image = bt.phantom([n, n], coils=coils)
-    ksp = bt.nufft(traj, image)
+    ksp = bartorch.nufft(image, traj)
     maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
 
     with_mkl = bt.pics(ksp, maps, t=traj)
@@ -108,7 +108,7 @@ def test_every_plan_a_reconstruction_makes_goes_to_mkl():
     lib = library()
     n, coils = 32, 2
     traj = bt.traj(x=n, y=48, r=True)
-    ksp = bt.nufft(traj, bt.phantom([n, n], coils=coils))
+    ksp = bartorch.nufft(bt.phantom([n, n], coils=coils), traj)
     maps = torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5
 
     lib.bartorch_fft_reset_counters()

@@ -1,9 +1,4 @@
-"""BART's building-block linear operators, one class each.
-
-Each is the BART constructor it names and nothing around it: the shapes are C
-order, an axis argument is an index into that shape rather than a bitmask, and
-what the operator holds by pointer is kept alive with it.
-"""
+"""Elementary linear operators, each one BART constructor."""
 
 from __future__ import annotations
 
@@ -22,12 +17,12 @@ from bartorch._operator import (
     callback,
     dims,
 )
-from bartorch.linop.base import BartLinearOperator
+from bartorch.linop.base import LinearOperator
 
 __all__ = ["Callback", "Diagonal", "FFT", "MultiplySum", "Sampling"]
 
 
-class FFT(BartLinearOperator):
+class FFT(LinearOperator):
     """BART's unitary Fourier transform along ``axes``, centred by default.
 
     Parameters
@@ -74,7 +69,7 @@ class FFT(BartLinearOperator):
         return Built(ptr, self.shape, self.shape)
 
 
-class Diagonal(BartLinearOperator):
+class Diagonal(LinearOperator):
     """Pointwise multiplication by ``diag``, broadcast over the axes where it is one.
 
     BART's ``cdiag``.
@@ -106,7 +101,7 @@ class Diagonal(BartLinearOperator):
         return Built(ptr, self.shape, self.shape, keep=(self.diag,))
 
 
-class Sampling(BartLinearOperator):
+class Sampling(LinearOperator):
     """Multiplication by a sampling pattern, broadcast over the axes where it is one.
 
     Parameters
@@ -133,7 +128,7 @@ class Sampling(BartLinearOperator):
         return Built(ptr, self.shape, self.shape, keep=(self.pattern,))
 
 
-class MultiplySum(BartLinearOperator):
+class MultiplySum(LinearOperator):
     """Multiply by a tensor and sum over the axes absent from the codomain.
 
     BART's ``fmac``.  This is the coil model: with sensitivities of shape
@@ -152,7 +147,7 @@ class MultiplySum(BartLinearOperator):
 
     def __init__(self, tensor: torch.Tensor, ishape: Shape, oshape: Shape):
         self.tensor = as_operand(tensor, tuple(tensor.shape), "tensor")
-        # ``Operator.__init__`` sets these again from what _create returns; a
+        # ``Operator._build`` sets these again from what _create returns; a
         # concrete operator may name them itself so that _create can read them.
         self.ishape, self.oshape = tuple(ishape), tuple(oshape)
         super().__init__()
@@ -170,22 +165,21 @@ class MultiplySum(BartLinearOperator):
         return Built(ptr, self.ishape, self.oshape, keep=(self.tensor,))
 
 
-class Callback(BartLinearOperator):
-    """A linear operator implemented by Python functions on tensors.
+class Callback(LinearOperator):
+    """A linear operator from Python functions, applied through BART.
 
-    What it is for is the other direction: an operator written here that
-    BART's own solvers and BART's own composition can be given.  Each callback
-    receives a view of BART's buffer, without a copy, and returns a tensor.
+    Each function receives a view of BART's buffer, without a copy, and returns a
+    tensor; every application crosses into Python.
 
     Parameters
     ----------
     oshape, ishape : tuple of int
         Codomain and domain shapes, C order.
     forward, adjoint : callable
-        Map a tensor of ``ishape`` to ``oshape`` and back.
+        Maps from ``ishape`` to ``oshape`` and back.
     normal : callable, optional
-        ``adjoint(forward(x))`` directly, when a cheaper form exists, such as
-        an mrtoeplitz kernel.  Without one BART composes the two.
+        ``adjoint(forward(x))`` in one function, where a cheaper form exists;
+        without one BART composes the two.
     """
 
     def __init__(

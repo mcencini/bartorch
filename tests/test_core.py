@@ -12,7 +12,7 @@ import torch
 import bartorch
 import bartorch._lib
 import bartorch.tools as bt
-from bartorch.core.graph import build_argv, dispatch
+from bartorch._dispatch import build_argv, dispatch
 
 
 def test_library_reports_the_pinned_bart_version():
@@ -44,27 +44,27 @@ def test_list_flags_repeat():
 
 def test_fft_matches_numpy_on_the_last_axis():
     x = torch.randn(4, 32, dtype=torch.complex64)
-    y = bt.fft(x, axes=-1)
+    y = bartorch.fft(x, axes=-1)
     ref = np.fft.fftshift(np.fft.fft(np.fft.ifftshift(x.numpy(), axes=-1), axis=-1), axes=-1)
     np.testing.assert_allclose(y.numpy(), ref, rtol=1e-4, atol=1e-4)
 
 
 def test_fft_matches_numpy_on_two_axes():
     x = torch.randn(3, 16, 24, dtype=torch.complex64)
-    y = bt.fft(x, axes=(-1, -2))
+    y = bartorch.fft(x, axes=(-1, -2))
     ref = np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(x.numpy(), axes=(-1, -2))), axes=(-1, -2))
     np.testing.assert_allclose(y.numpy(), ref, rtol=1e-4, atol=1e-4)
 
 
 def test_inverse_fft_round_trips():
     x = torch.randn(8, 8, dtype=torch.complex64)
-    y = bt.ifft(bt.fft(x, axes=(-1, -2), unitary=True), axes=(-1, -2), unitary=True)
+    y = bartorch.ifft(bartorch.fft(x, axes=(-1, -2), unitary=True), axes=(-1, -2), unitary=True)
     torch.testing.assert_close(y, x, rtol=1e-4, atol=1e-4)
 
 
 def test_output_is_a_tensor_that_was_never_copied():
     x = torch.randn(8, 8, dtype=torch.complex64)
-    y = bt.fft(x, axes=-1)
+    y = bartorch.fft(x, axes=-1)
     assert isinstance(y, torch.Tensor)
     assert y.dtype == torch.complex64
     assert y.is_contiguous()
@@ -98,7 +98,7 @@ def test_registry_is_empty_after_a_failure():
 
 def test_rss_matches_numpy():
     x = torch.randn(8, 16, 16, dtype=torch.complex64)
-    y = bt.rss(x, axes=0)
+    y = bartorch.rss(x, axes=0)
     ref = np.sqrt((np.abs(x.numpy()) ** 2).sum(0))
     np.testing.assert_allclose(y.numpy(), ref, rtol=1e-4, atol=1e-4)
 
@@ -106,7 +106,7 @@ def test_rss_matches_numpy():
 def test_svd_through_the_lapack_backend():
     a = torch.randn(6, 4, dtype=torch.complex64)
     a0 = a.clone()
-    u, s, vh = bt.svd(a)
+    u, s, vh = dispatch("svd", [a], None, _n_out=3)
     # BART sees the C-order (6, 4) tensor as the Fortran matrix A^T (4 x 6),
     # so in C order the factors read A = vh[:, :4] @ diag(s) @ u.
     np.testing.assert_allclose(
@@ -119,7 +119,7 @@ def test_svd_through_the_lapack_backend():
 def test_inputs_are_left_untouched_by_a_tool_that_writes_into_them():
     a = torch.randn(6, 4, dtype=torch.complex64)
     a0 = a.clone()
-    bt.svd(a)
+    dispatch("svd", [a], None, _n_out=3)
     torch.testing.assert_close(a, a0)
 
 
@@ -130,7 +130,7 @@ def test_an_array_passed_as_a_flag_reaches_the_tool_and_is_left_untouched():
     traj = bt.traj(x=n, y=16, r=True)
     before = traj.clone()
     image = bt.phantom([n, n]).reshape(1, n, n)
-    kspace = bt.nufft(traj, image)
+    kspace = bartorch.nufft(image, traj)
     maps = torch.ones(1, n, n, dtype=torch.complex64)
 
     recon = bt.pics(kspace, maps, t=traj)
@@ -144,7 +144,7 @@ def test_scratch_inputs_skip_the_copy():
     a0 = a.clone()
     bartorch.set_copy_inputs(False)
     try:
-        bt.svd(a)
+        dispatch("svd", [a], None, _n_out=3)
     finally:
         bartorch.set_copy_inputs(True)
     assert not torch.allclose(a, a0)

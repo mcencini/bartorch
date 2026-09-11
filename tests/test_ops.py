@@ -6,8 +6,9 @@ import numpy as np
 import pytest
 import torch
 
+import bartorch
 import bartorch.tools as bt
-from bartorch import linop, nlop
+from bartorch import linop, nlop, optim
 
 
 def _rand(*shape):
@@ -67,7 +68,7 @@ def test_least_squares_recovers_the_image_from_coil_data():
     F = linop.FFT((ncoils, n, n), axes=(-1, -2))
     A = F @ S
     y = A(img)
-    x = A.lstsq(y, maxiter=50, tol=1e-8)
+    x = optim.CG(maxiter=50, tol=1e-8)(y, A)
     assert ((x - img).norm() / img.norm()).item() < 1e-3
 
 
@@ -86,7 +87,7 @@ def test_nufft_operator_agrees_with_the_nufft_tool():
     img = bt.phantom([n, n]).reshape(1, n, n)
     A = linop.NUFFT(traj, (1, n, n))
     y = A(img)
-    ref = bt.nufft(traj, img)
+    ref = bartorch.nufft(img, traj)
     torch.testing.assert_close(y.reshape(ref.shape), ref, rtol=1e-3, atol=1e-3)
     z = _rand(*A.oshape)
     assert _inner(A(img), z) == pytest.approx(_inner(img, A.adjoint(z)), rel=1e-3)
@@ -132,7 +133,8 @@ def test_gauss_newton_fits_a_mono_exponential_decay():
     F = nlop.FromTorch(model, (2, nvox), (nvox, nechoes))
     y = model(truth)
     x0 = torch.ones(2, nvox, dtype=torch.complex64)
-    x = F.irgnm(y, x0, iterations=10, alpha=1.0, alpha_min=1e-6, redu=3.0, cgiter=50)
+    gauss_newton = optim.IRGNM(iterations=10, alpha=1.0, alpha_min=1e-6, redu=3.0, cg_maxiter=50)
+    x = gauss_newton(y, F, x0)
     torch.testing.assert_close(x, truth, rtol=1e-2, atol=1e-2)
 
 
@@ -153,7 +155,8 @@ def test_model_based_reconstruction_chains_a_torch_model_with_a_bart_encoding():
     assert A.ishape == (2, n, n) and A.oshape == (nechoes, n, n)
     y = A(truth)
     x0 = torch.stack([torch.ones(n, n), 0.5 * torch.ones(n, n)]).to(torch.complex64)
-    x = A.irgnm(y, x0, iterations=12, alpha=1.0, alpha_min=1e-6, redu=3.0, cgiter=60)
+    gauss_newton = optim.IRGNM(iterations=12, alpha=1.0, alpha_min=1e-6, redu=3.0, cg_maxiter=60)
+    x = gauss_newton(y, A, x0)
     mask = img > 0.1
     err = (x[0][mask] - truth[0][mask]).abs().max().item()
     assert err < 5e-2

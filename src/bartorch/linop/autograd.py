@@ -1,19 +1,9 @@
-"""An operator as a torch function, whose backward pass is its adjoint.
+"""Linear operators as torch autograd functions; the backward pass is the adjoint.
 
-For a linear map that is not an approximation but the definition.  Torch
-stores conjugate Wirtinger gradients: for ``y = A x`` what a backward pass has
-to hand back is ``A^H g``, which is the adjoint and not the transpose.  The
-near miss -- returning the transpose -- is silent, and wrong by a conjugation
-that a real-valued test would never notice.
-
-A real input is complexified on the way in and its gradient is taken real on
-the way out, which is the derivative of the embedding of the reals in the
-complex numbers and is what makes a real image parametrization work.
-
-What is *not* differentiated is the operator itself.  The sensitivities and
-the trajectory are baked into a BART handle, so a gradient with respect to
-them -- autofocus, motion, B0 -- is not available here; an operator that grows
-one adds it to its own function rather than to this one.
+For complex tensors that is the conjugate Wirtinger gradient torch expects.  A
+real input is treated as embedded in the complex numbers, and its gradient is
+the real part.  Gradients with respect to the operator's own data (sensitivities,
+trajectory) are not computed.
 """
 
 from __future__ import annotations
@@ -24,7 +14,6 @@ __all__ = ["apply_adjoint", "apply_forward"]
 
 
 def _restore(grad: torch.Tensor, real: bool, dtype: torch.dtype) -> torch.Tensor:
-    """A gradient in the domain the input came from."""
     return grad.real.to(dtype) if real else grad.to(dtype)
 
 

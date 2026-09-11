@@ -1,14 +1,9 @@
-"""What a card can tell us that a machine without one cannot.
+"""Checks of the CUDA paths, in dependency order, each independent of the others.
 
-Every device path in bartorch is written and none of it has run.  This walks
-them in dependency order and prints what each one found, so a failure names
-the first thing that is wrong rather than the last thing that crashed.  Each
-check is independent: one failing does not stop the rest.
+Needs a CUDA build (``pip install -e . --config-settings=cmake.define.BARTORCH_CUDA=ON``)
+and, for the transform checks, the ``cufinufft`` wheel::
 
     python scripts/check_device.py
-
-Needs a CUDA build (`pip install -e . --config-settings=cmake.define.BARTORCH_CUDA=ON`)
-and, for the transform checks, the `cufinufft` wheel.
 """
 
 from __future__ import annotations
@@ -75,19 +70,19 @@ def _time(fn, reps: int = 3) -> float:
 
 @check("the library was built with CUDA and finds a device")
 def _built():
-    if not bartorch.cuda.built():
+    if not bartorch._cuda.built():
         return False, f"built without CUDA: {bartorch.build_info()}"
-    count = bartorch.cuda.device_count()
+    count = bartorch._cuda.device_count()
     if 0 == count:
         return False, "built with CUDA but no device is visible"
-    free = bartorch.cuda.free_memory()
+    free = bartorch._cuda.free_memory()
     return True, f"{count} device(s), {torch.cuda.get_device_name(0)}, {free / 1e9:.1f} GB free"
 
 
 @check("a tool on device tensors answers on the device, with the right numbers")
 def _tool_on_device():
     x = torch.randn(4, 64, dtype=torch.complex64, device="cuda")
-    y = bt.fft(x, axes=-1)
+    y = bartorch.fft(x, axes=-1)
     if y.device.type != "cuda":
         return False, f"the output came back on {y.device}"
     host = x.cpu().numpy()
@@ -100,50 +95,50 @@ def _tool_on_device():
 def _nufft_on_device():
     n = 64
     traj, image = _radial(n, 32, "cuda")
-    bartorch.finufft.reset_counters()
-    y = bt.nufft(traj, image)
+    bartorch._finufft.reset_counters()
+    y = bartorch.nufft(image, traj)
     if y.device.type != "cuda":
         return False, f"the output came back on {y.device}"
     ref = _explicit_dft(traj, image, n)
     got = y.cpu().numpy().reshape(32, n)[:1]
     rel = _relative(got, ref)
-    built = bartorch.finufft.operators_built()
+    built = bartorch._finufft.operators_built()
     return rel < 5e-3, f"rel {rel:.2e}, operators {built} (finufft, bart)"
 
 
 @check("cuFINUFFT is what serves a trajectory on the card")
 def _cufinufft():
-    if not bartorch.finufft.cuda_available():
+    if not bartorch._finufft.cuda_available():
         return False, "the cufinufft wheel is not installed: pip install 'bartorch[cufinufft]'"
-    if not bartorch.finufft.enabled():
+    if not bartorch._finufft.used_in_tools():
         return False, "the substitution did not install itself"
-    if not bartorch.finufft.used_on_device():
-        return False, f"the device table is empty: {bartorch.finufft.decline_reason()}"
+    if not bartorch._finufft.used_on_device():
+        return False, f"the device table is empty: {bartorch._finufft.decline_reason()}"
 
     n = 128
     traj, image = _radial(n, 64, "cuda")
-    bartorch.finufft.reset_counters()
-    fast = bt.nufft(traj, image)
-    if bartorch.finufft.operators_built() != (1, 0):
-        return False, f"BART's own operator ran instead: {bartorch.finufft.decline_reason()}"
+    bartorch._finufft.reset_counters()
+    fast = bartorch.nufft(image, traj)
+    if bartorch._finufft.operators_built() != (1, 0):
+        return False, f"BART's own operator ran instead: {bartorch._finufft.decline_reason()}"
 
     ref = _explicit_dft(traj, image, n)
     got = fast.cpu().numpy().reshape(64, n)[:1]
     rel = _relative(got, ref)
-    eps = bartorch.finufft.tolerance()
+    eps = bartorch._finufft.tolerance()
     return rel < 5 * eps, f"rel {rel:.2e} against the explicit sum, at a tolerance of {eps:g}"
 
 
 @check("the device transform and the host transform agree")
 def _device_matches_host():
-    if not bartorch.finufft.used_on_device():
+    if not bartorch._finufft.used_on_device():
         return False, "cuFINUFFT is not in use"
     n = 128
     traj, image = _radial(n, 64, "cuda")
-    on_card = bt.nufft(traj, image).cpu()
-    on_host = bt.nufft(traj.cpu(), image.cpu())
+    on_card = bartorch.nufft(image, traj).cpu()
+    on_host = bartorch.nufft(image.cpu(), traj.cpu())
     rel = float((on_card - on_host).abs().max().item() / on_host.abs().max().item())
-    eps = bartorch.finufft.tolerance()
+    eps = bartorch._finufft.tolerance()
     return rel < 5 * eps, f"rel {rel:.2e}, each held to a tolerance of {eps:g}"
 
 
@@ -153,11 +148,11 @@ def _pics_on_device():
     traj = bt.traj(x=n, y=spokes, r=True).cuda()
     image = bt.phantom([n, n], ncoils=coils).cuda()
     maps = (torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5).cuda()
-    kspace = bt.nufft(traj, image)
+    kspace = bartorch.nufft(image, traj)
 
-    bartorch.finufft.reset_counters()
+    bartorch._finufft.reset_counters()
     toeplitz = bt.pics(kspace, maps, t=traj)
-    normals = bartorch.finufft.normals_built()
+    normals = bartorch._finufft.normals_built()
     fast = _time(lambda: bt.pics(kspace, maps, t=traj), reps=2)
     pair = _time(lambda: bt.pics(kspace, maps, t=traj, no_toeplitz=True), reps=2)
 
@@ -172,16 +167,16 @@ def _streams():
     traj = bt.traj(x=n, y=spokes, r=True).cuda()
     image = bt.phantom([n, n], ncoils=coils).cuda()
     maps = (torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5).cuda()
-    kspace = bt.nufft(traj, image)
+    kspace = bartorch.nufft(image, traj)
 
     timings = {}
     for streams in (1, 2, 4):
         try:
-            bartorch.cuda.set_streams(streams)
+            bartorch._cuda.set_streams(streams)
         except ValueError:
             continue
         timings[streams] = _time(lambda: bt.pics(kspace, maps, t=traj), reps=2)
-    bartorch.cuda.set_streams(1)
+    bartorch._cuda.set_streams(1)
     if not timings:
         return False, "set_streams was refused for every count"
     return True, ", ".join(f"{k} stream(s) {v:.2f} s" for k, v in timings.items())
@@ -199,27 +194,27 @@ def _memcache():
     traj = bt.traj(x=n, y=spokes, r=True).cuda()
     image = bt.phantom([n, n], ncoils=coils).cuda()
     maps = (torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5).cuda()
-    kspace = bt.nufft(traj, image)
+    kspace = bartorch.nufft(image, traj)
 
     torch.cuda.empty_cache()
-    idle = bartorch.cuda.free_memory()
+    idle = bartorch._cuda.free_memory()
     ballast = torch.empty(1 << 27, dtype=torch.complex64, device="cuda")
-    with_torch = bartorch.cuda.free_memory()
+    with_torch = bartorch._cuda.free_memory()
     out = bt.pics(kspace, maps, t=traj)
     del ballast, out
     torch.cuda.empty_cache()
-    after_tool = bartorch.cuda.free_memory()
+    after_tool = bartorch._cuda.free_memory()
 
     held = {}
     for cache in (True, False):
-        bartorch.cuda.use_memcache(cache)
+        bartorch._cuda.use_memcache(cache)
         torch.cuda.empty_cache()
-        before = bartorch.cuda.free_memory()
+        before = bartorch._cuda.free_memory()
         op = NUFFT(traj, (1, n, n))
         del op
         torch.cuda.empty_cache()
-        held[cache] = before - bartorch.cuda.free_memory()
-    bartorch.cuda.use_memcache(True)
+        held[cache] = before - bartorch._cuda.free_memory()
+    bartorch._cuda.use_memcache(True)
 
     detail = (
         f"pics ran with {(idle - with_torch) / 1e6:.0f} MB in torch's hands and left "
@@ -233,8 +228,8 @@ def _memcache():
 def _needs_g():
     n = 128
     traj, image = _radial(n, 64, "cuda")
-    plain = bt.nufft(traj, image)
-    flagged = bt.nufft(traj, image, gpu=True)
+    plain = bartorch.nufft(image, traj)
+    flagged = bartorch.nufft(image, traj, gpu=True)
     rel = float((plain - flagged).abs().max().item() / flagged.abs().max().item())
     return rel < 1e-5, f"with and without -g differ by {rel:.2e}"
 

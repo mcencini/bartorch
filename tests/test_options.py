@@ -10,7 +10,7 @@ import pytest
 
 from bartorch import _catalogue as catalogue
 from bartorch import _options
-from bartorch.core.graph import _flag_string, run_command
+from bartorch._dispatch import _flag_string, run_command
 
 
 def test_every_option_of_every_command_reaches_its_own_flag():

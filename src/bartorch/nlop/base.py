@@ -1,32 +1,26 @@
-"""The nonlinear operator every concrete one is.
-
-BART's nonlinear operator carries a derivative and the adjoint of that
-derivative at whatever point it was last evaluated, which is exactly torch's
-forward- and reverse-mode products.  That correspondence is what lets a signal
-model written in either place be fitted by a solver written in the other, and
-it is the part sigpy has no counterpart for.
-"""
+"""The nonlinear operator base class and composition."""
 
 from __future__ import annotations
-
-import abc
 
 import torch
 
 from bartorch._lib import library
-from bartorch._operator import Built, Operator, Shape, as_operand
-from bartorch.core.graph import BartError, _lock, _on_device
+from bartorch._operator import Built, Operator
 
-__all__ = ["BartNonlinearOperator", "Chain", "FromLinear", "NonlinearOperator"]
+__all__ = ["Chain", "FromLinear", "NonlinearOperator"]
 
 
-class NonlinearOperator(abc.ABC):
+class NonlinearOperator(Operator):
     """A map between two C-order shapes, with a derivative and its adjoint.
 
-    The derivative is taken at the point the operator was last evaluated at,
-    which is how BART's solvers use one: a forward call fixes the
-    linearisation, and the two derivative calls are taken there until the next
-    forward call.
+    :meth:`derivative` and :meth:`adjoint` are taken at the point of the last
+    :meth:`forward` call, which is how BART's solvers use them.  The backward
+    pass of ``F(x)`` is ``adjoint`` at that point, so evaluating the operator
+    elsewhere between a forward and a backward pass gives a wrong gradient.
+
+    A subclass is defined either by :meth:`_create`, which builds one of
+    BART's operators, or in Python by :meth:`forward`, :meth:`derivative` and
+    :meth:`adjoint`.
 
     Attributes
     ----------
@@ -34,32 +28,43 @@ class NonlinearOperator(abc.ABC):
         Domain and codomain, C order.
     """
 
-    ishape: Shape
-    oshape: Shape
-    device: torch.device | None = None
+    _free_name = "bartorch_nlop_free"
+    _domain_name = "bartorch_nlop_domain"
+    _codomain_name = "bartorch_nlop_codomain"
 
-    @abc.abstractmethod
+    def __init__(self):
+        if self._native:
+            self._build()
+        elif any(
+            getattr(type(self), name) is getattr(NonlinearOperator, name)
+            for name in ("forward", "derivative", "adjoint")
+        ):
+            raise TypeError(
+                f"{type(self).__name__} must define _create, or forward, derivative and adjoint"
+            )
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """``F(x)``, which also fixes where the derivative is taken."""
+        return self._apply(library().bartorch_nlop_apply, x, self.ishape, self.oshape)
 
-    @abc.abstractmethod
     def derivative(self, dx: torch.Tensor) -> torch.Tensor:
-        """``DF|x dx`` at the last evaluated point."""
+        """``DF(x) dx`` at the last evaluated point."""
+        return self._apply(library().bartorch_nlop_derivative, dx, self.ishape, self.oshape)
 
-    @abc.abstractmethod
     def adjoint(self, dy: torch.Tensor) -> torch.Tensor:
-        """``DF|x^H dy`` at the last evaluated point."""
+        """``DF(x)^H dy`` at the last evaluated point."""
+        return self._apply(library().bartorch_nlop_adjoint, dy, self.oshape, self.ishape)
 
-    def as_bart(self) -> BartNonlinearOperator:
-        """An equivalent operator that a BART handle stands behind."""
+    def _as_callbacks(self) -> NonlinearOperator:
         from bartorch.nlop.callback import Callback
 
         return Callback(self.oshape, self.ishape, self.forward, self.derivative, self.adjoint)
 
     def linearize(self, x: torch.Tensor):
-        """The derivative at *x*, as a :class:`~bartorch.linop.LinearOperator`.
+        """The derivative at ``x``, as a :class:`~bartorch.linop.LinearOperator`.
 
-        Evaluates the operator at *x* first, which is what fixes the point.
+        Evaluates the operator at ``x``, which moves the point the derivative
+        is taken at.
         """
         from bartorch.linop.basic import Callback as LinearCallback
 
@@ -67,7 +72,7 @@ class NonlinearOperator(abc.ABC):
         return LinearCallback(self.oshape, self.ishape, self.derivative, self.adjoint)
 
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
-        """``F(x)``, recorded for autograd when the input asks for it."""
+        """``F(x)``, recorded for autograd when ``x`` requires a gradient."""
         if isinstance(x, torch.Tensor) and x.requires_grad and torch.is_grad_enabled():
             from bartorch.nlop.autograd import apply
 
@@ -75,7 +80,7 @@ class NonlinearOperator(abc.ABC):
         return self.forward(x)
 
     def __matmul__(self, other):
-        """``self @ other`` applies ``other`` first."""
+        """``self @ other`` applies ``other`` first, as one BART operator."""
         from bartorch.linop.base import LinearOperator
 
         if isinstance(other, LinearOperator):
@@ -91,102 +96,12 @@ class NonlinearOperator(abc.ABC):
             return NotImplemented
         return Chain(other.to_nonlinear(), self)
 
-    def irgnm(
-        self,
-        y: torch.Tensor,
-        x0: torch.Tensor,
-        iterations: int = 8,
-        alpha: float = 1.0,
-        alpha_min: float = 0.0,
-        redu: float = 2.0,
-        cgiter: int = 30,
-        cgtol: float = 0.0,
-        xref: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        """Fit ``self(x) = y`` from ``x0`` by BART's iteratively regularised Gauss-Newton.
 
-        Parameters
-        ----------
-        y : tensor
-            Data of shape :attr:`oshape`.
-        x0 : tensor
-            Starting point of shape :attr:`ishape`; also the regularisation
-            centre unless ``xref`` is given.
-        iterations : int
-            Gauss-Newton steps.
-        alpha, alpha_min, redu : float
-            Initial regularisation weight, its floor, and the factor it is
-            divided by after each step.
-        cgiter, cgtol : int, float
-            Conjugate-gradient budget and tolerance for each linearised step.
-        xref : tensor, optional
-            The regularisation centre, when it is not ``x0``.
-        """
-        return self.as_bart().irgnm(y, x0, iterations, alpha, alpha_min, redu, cgiter, cgtol, xref)
-
-    def __repr__(self) -> str:
-        return f"{type(self).__name__}({self.ishape} -> {self.oshape})"
-
-
-class BartNonlinearOperator(NonlinearOperator, Operator):
-    """A nonlinear operator that one of BART's own handles stands behind."""
-
-    _free_name = "bartorch_nlop_free"
-    _domain_name = "bartorch_nlop_domain"
-    _codomain_name = "bartorch_nlop_codomain"
-
-    def as_bart(self) -> BartNonlinearOperator:
-        return self
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self._apply(library().bartorch_nlop_apply, x, self.ishape, self.oshape)
-
-    def derivative(self, dx: torch.Tensor) -> torch.Tensor:
-        return self._apply(library().bartorch_nlop_derivative, dx, self.ishape, self.oshape)
-
-    def adjoint(self, dy: torch.Tensor) -> torch.Tensor:
-        return self._apply(library().bartorch_nlop_adjoint, dy, self.oshape, self.ishape)
-
-    def irgnm(
-        self,
-        y: torch.Tensor,
-        x0: torch.Tensor,
-        iterations: int = 8,
-        alpha: float = 1.0,
-        alpha_min: float = 0.0,
-        redu: float = 2.0,
-        cgiter: int = 30,
-        cgtol: float = 0.0,
-        xref: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        y = as_operand(y, self.oshape, "y")
-        x = as_operand(x0, self.ishape, "x0").clone()
-        ref = as_operand(xref, self.ishape, "xref") if xref is not None else None
-        with _lock, _on_device(self.device or y.device):
-            code = library().bartorch_irgnm(
-                self._h.ptr,
-                int(iterations),
-                float(alpha),
-                float(alpha_min),
-                float(redu),
-                int(cgiter),
-                float(cgtol),
-                x.data_ptr(),
-                y.data_ptr(),
-                ref.data_ptr() if ref is not None else None,
-            )
-        if code != 0:
-            raise BartError("Gauss-Newton solve failed; see the log for BART's message")
-        return x
-
-    irgnm.__doc__ = NonlinearOperator.irgnm.__doc__
-
-
-class FromLinear(BartNonlinearOperator):
-    """A linear operator seen as a nonlinear one, whose derivative is itself."""
+class FromLinear(NonlinearOperator):
+    """A linear operator as a nonlinear one, whose derivative is itself."""
 
     def __init__(self, op):
-        self.op = op.as_bart()
+        self.op = op._bart()
         super().__init__()
 
     def _create(self) -> Built:
@@ -199,11 +114,11 @@ class FromLinear(BartNonlinearOperator):
         return f"{self.op!r}.to_nonlinear()"
 
 
-class Chain(BartNonlinearOperator):
-    """``a @ b``: *b* applied first, as one BART operator."""
+class Chain(NonlinearOperator):
+    """``a @ b`` as one BART operator; ``b`` is applied first."""
 
     def __init__(self, a: NonlinearOperator, b: NonlinearOperator):
-        self.a, self.b = a.as_bart(), b.as_bart()
+        self.a, self.b = a._bart(), b._bart()
         super().__init__()
 
     def _create(self) -> Built:

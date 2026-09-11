@@ -1,13 +1,9 @@
-"""BART's regularization terms, one class each.
+"""BART's regularization terms, one class per ``pics -R`` letter.
 
-Each is the term ``pics -R`` names with the same letter, and carries what that
-term's specification carries and nothing more.  What the term *is* -- the
-proximal operator and the transform beside it -- BART builds.
-
-Three of BART's terms are not here: total generalized variation and the two
-infimal convolutions extend the optimisation variable, and what they add is
-counted across the whole set, so they cannot be built one at a time.
-``bartorch.tools.pics(..., regularizers="G:3:0:...")`` reaches them.
+Total generalized variation and the two infimal convolutions are absent: they
+extend the optimization variable, which BART counts across the whole set of
+terms, so they cannot be built one at a time.  :func:`bartorch.tools.pics`
+reaches them.
 """
 
 from __future__ import annotations
@@ -29,30 +25,43 @@ __all__ = [
     "WaveletNIHT",
 ]
 
+#: The wavelet families ``opt_reg_configure`` accepts.
+_FAMILIES = ("haar", "dau2", "cdf44")
+
+
+def _axes(axes) -> tuple[int, ...]:
+    return (axes,) if isinstance(axes, int) else tuple(axes)
+
+
+def _family(family: str) -> str:
+    if family not in _FAMILIES:
+        raise ValueError(f"wavelet family must be one of {_FAMILIES}, not {family!r}")
+    return family
+
 
 class _Weighted(Regularizer):
-    """A term over some axes, joined along others, with a weight."""
+    """A term over ``axes``, acting jointly along ``joint_axes``, with a weight."""
 
     def __init__(self, axes, weight: float, joint_axes=()):
-        self.axes = tuple(axes) if not isinstance(axes, int) else (axes,)
-        self.joint_axes = tuple(joint_axes) if not isinstance(joint_axes, int) else (joint_axes,)
+        self.axes = _axes(axes)
+        self.joint_axes = _axes(joint_axes)
         self.weight = float(weight)
 
 
 class Wavelet(_Weighted):
-    """l1 of the wavelet transform over ``axes`` (``pics -R W``).
-
-    The usual compressed-sensing penalty: sparse in a wavelet basis.
+    """l1 norm of the wavelet transform over ``axes`` (``pics -R W``).
 
     Parameters
     ----------
     axes : int or tuple of int
-        The axes to transform, as indices into the image's shape.
+        Axes to transform, as indices into the image's shape.
     weight : float
-        The penalty's weight.
     joint_axes : int or tuple of int, optional
-        Axes the threshold is joined along, so that an entry is kept or
-        dropped for all of them together.
+        Axes along which a coefficient is kept or zeroed together.
+    family : {'haar', 'dau2', 'cdf44'}
+        Wavelet family (``pics --wavelet``).
+    randshift : bool
+        Cycle-spin the transform by a random shift; ``pics -n`` turns it off.
 
     Examples
     --------
@@ -61,66 +70,102 @@ class Wavelet(_Weighted):
 
     kind = "W"
 
+    def __init__(
+        self, axes, weight: float, joint_axes=(), *, family: str = "dau2", randshift: bool = True
+    ):
+        super().__init__(axes, weight, joint_axes)
+        self.family = _family(family)
+        self.randshift = bool(randshift)
+
+    def _options(self) -> tuple[int, str, int]:
+        return 8, self.family, int(self.randshift)
+
 
 class TotalVariation(_Weighted):
-    """l1 of the finite difference over ``axes`` (``pics -R T``)."""
+    """l1 norm of the finite differences over ``axes`` (``pics -R T``)."""
 
     kind = "T"
 
 
 class LocallyLowRank(_Weighted):
-    """Nuclear norm over blocks of ``axes`` (``pics -R L``).
+    """Nuclear norm of blocks over ``axes`` (``pics -R L``).
 
-    The block size is the solve's ``llr_block``, which is ``pics -b``.
+    Parameters
+    ----------
+    axes : int or tuple of int
+        Axes the blocks span, as indices into the image's shape.
+    weight : float
+    joint_axes : int or tuple of int, optional
+        Axes forming the columns of each block's matrix.
+    block : int
+        Block edge length (``pics -b``).
+    randshift : bool
+        Shift the block grid by a random offset; ``pics -n`` turns it off.
+    overlapping : bool
+        Fully overlapping blocks instead of a shifted grid (``pics -N``).
     """
 
     kind = "L"
 
+    def __init__(
+        self,
+        axes,
+        weight: float,
+        joint_axes=(),
+        *,
+        block: int = 8,
+        randshift: bool = True,
+        overlapping: bool = False,
+    ):
+        super().__init__(axes, weight, joint_axes)
+        self.block = int(block)
+        self.randshift = bool(randshift)
+        self.overlapping = bool(overlapping)
+
+    def _options(self) -> tuple[int, str, int]:
+        return self.block, "dau2", 2 if self.overlapping else int(self.randshift)
+
 
 class Laplace(_Weighted):
-    """A Laplacian penalty over ``axes`` (``pics -R P``)."""
+    """Laplacian penalty over ``axes`` (``pics -R P``)."""
 
     kind = "P"
 
 
 class FourierL1(_Weighted):
-    """l1 of the Fourier transform over ``axes`` (``pics -R F``)."""
+    """l1 norm of the Fourier transform over ``axes`` (``pics -R F``)."""
 
     kind = "F"
 
 
 class _Joint(Regularizer):
-    """A term with no axes of its own, only a weight and what it joins."""
+    """A term with no axes of its own."""
 
     def __init__(self, weight: float, joint_axes=()):
-        self.joint_axes = tuple(joint_axes) if not isinstance(joint_axes, int) else (joint_axes,)
+        self.joint_axes = _axes(joint_axes)
         self.weight = float(weight)
 
 
 class L1(_Joint):
-    """l1 of the image itself (``pics -R I``)."""
+    """l1 norm of the image (``pics -R I``)."""
 
     kind = "I"
 
 
 class ImaginaryL1(_Joint):
-    """l1 of the image's imaginary part (``pics -R R1``)."""
+    """l1 norm of the image's imaginary part (``pics -R R1``)."""
 
     kind = "R1"
 
 
 class ImaginaryL2(_Joint):
-    """l2 of the image's imaginary part (``pics -R R2``)."""
+    """Squared l2 norm of the image's imaginary part (``pics -R R2``)."""
 
     kind = "R2"
 
 
 class L2(Regularizer):
-    """Squared l2 of the image (``pics -R Q``).
-
-    Tikhonov as a regularization term.  ``lambda_`` on the solve is the other
-    way to ask for one, and is BART's ``-r``.
-    """
+    """Squared l2 norm of the image (``pics -R Q``), which is what ``pics -r`` adds."""
 
     kind = "Q"
 
@@ -129,27 +174,47 @@ class L2(Regularizer):
 
 
 class NonNegative(Regularizer):
-    """The constraint that the image is positive (``pics -R S``).
-
-    A projection, so it carries no weight.
-    """
+    """Projection onto non-negative images (``pics -R S``); it has no weight."""
 
     kind = "S"
 
 
 class _Counted(Regularizer):
-    """A term that keeps a fixed number of entries rather than thresholding."""
+    """A term that keeps the ``count`` largest entries instead of thresholding."""
 
     def __init__(self, axes, count: int, joint_axes=()):
-        self.axes = tuple(axes) if not isinstance(axes, int) else (axes,)
-        self.joint_axes = tuple(joint_axes) if not isinstance(joint_axes, int) else (joint_axes,)
+        self.axes = _axes(axes)
+        self.joint_axes = _axes(joint_axes)
         self.count = int(count)
 
 
 class WaveletNIHT(_Counted):
-    """Keep the ``count`` largest wavelet coefficients (``pics -R H``)."""
+    """Keep the ``count`` largest wavelet coefficients over ``axes`` (``pics -R H``).
+
+    Parameters
+    ----------
+    axes : int or tuple of int
+        Axes to transform, as indices into the image's shape.
+    count : int
+    joint_axes : int or tuple of int, optional
+        Axes along which a coefficient is kept or zeroed together.
+    family : {'haar', 'dau2', 'cdf44'}
+        Wavelet family (``pics --wavelet``).
+    randshift : bool
+        Cycle-spin the transform by a random shift; ``pics -n`` turns it off.
+    """
 
     kind = "H"
+
+    def __init__(
+        self, axes, count: int, joint_axes=(), *, family: str = "dau2", randshift: bool = True
+    ):
+        super().__init__(axes, count, joint_axes)
+        self.family = _family(family)
+        self.randshift = bool(randshift)
+
+    def _options(self) -> tuple[int, str, int]:
+        return 8, self.family, int(self.randshift)
 
 
 class ImageNIHT(_Counted):

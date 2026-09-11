@@ -1,0 +1,83 @@
+# Encoding operators
+
+An encoding maps unknowns to acquired samples.  For Cartesian parallel imaging
+it is $A = P F S$: sensitivities $S$, Fourier encoding $F$, sampling $P$.  A
+reconstruction solves an inverse problem involving this model and a
+regularizer.  An adjoint reverses the operations and conjugates complex
+factors; it is not in general an inverse.
+
+## Building blocks
+
+| Component | Python | Role and convention |
+| --- | --- | --- |
+| Coil encoding, contraction | `linop.MultiplySum` | Multiply by a tensor and sum the axes missing from the output; conjugate in the adjoint.  Serves sensitivities and subspace contractions. |
+| SENSE encoding | `linop.Sense` | Sensitivities followed by an FFT or a NUFFT, applied `coil_batch` coils at a time. |
+| Cartesian FFT | `linop.FFT`; `bartorch.fft`, `bartorch.ifft` | The operator is centred and unitary; the function needs `unitary=True` for that scaling. |
+| Sampling | `linop.Sampling` | A mask on the full grid, broadcast over singleton axes. |
+| Phase, weights | `linop.Diagonal` | Complex pointwise multiplication; the adjoint uses the conjugate. |
+| Non-Cartesian transform | `linop.NUFFT`; `bartorch.nufft`, `tools.traj` | Trajectories in grid units, computed by FINUFFT or cuFINUFFT.  Density weights and a temporal basis belong to the operator; its Toeplitz normal should be checked against the explicit forward-adjoint pair. |
+| Custom encoding | `linop.Callback`, or a `LinearOperator` subclass | Supply a forward and an adjoint, and optionally a cheaper normal.  Callbacks see views of BART's buffers and must not modify their inputs. |
+| Operator algebra | `A @ B`, `A + B`, `A.to_nonlinear()` | The rightmost operator runs first; domains, codomains and devices must match. |
+| Signal models | `nlop.FromTorch`, `nlop.Callback` | Nonlinear models with derivative and adjoint; evaluate the model at the current parameters before using its derivative. |
+| Solvers | `optim.CG`; `optim.FISTA`, `optim.ADMM` and the others with `prox` terms; `optim.IRGNM` | BART's iterations: conjugate gradients, regularized least squares, and Gauss-Newton for parameter fitting. |
+| Reconstructions | `tools.pics`, `tools.nlinv`, `tools.moba`, `tools.wave`, `tools.wshfl` | Whole BART applications, with command-specific layouts and options. |
+
+See {doc}`/api/linop` and the
+{doc}`Cartesian example </auto_examples/02_encoding/plot_01_cartesian>`.  For
+weighted least squares, apply a factor $W$ to both model and data,
+$\|W(Ax-y)\|^2$; for statistical weights $w$, $W=\sqrt{w}$.  Multiplying the
+data alone changes the problem, and density compensation used for an
+illustrative backprojection is not a noise model.
+
+## Coil preparation
+
+{func}`bartorch.tools.whiten` estimates a noise transform from noise-only data;
+{func}`bartorch.tools.cc` and {func}`bartorch.tools.ccapply` estimate and apply
+a coil compression.  Transform calibration and imaging data consistently, and
+calibrate maps in the resulting coil space.  {func}`bartorch.tools.ecalib`
+computes ESPIRiT maps; `caldir` and `walsh` are other calibrations.
+{func}`bartorch.rss` combines magnitudes for display and discards image phase.
+
+The [ESPIRiT paper (Uecker et al., 2014)](https://doi.org/10.1002/mrm.24751)
+explains why calibration can yield several sets of maps.  Keeping one is a
+modelling choice; phase gauges and coil-space normalization matter when
+comparing maps.  See the
+{doc}`coil preparation example </auto_examples/01_tools/plot_02_coil_preparation>`.
+
+## Beyond Cartesian and radial encoding
+
+These are mathematical decompositions for planning applications, not further
+Python classes.  The literature and implementation evidence are in
+{doc}`research`.  Start with the runnable
+{doc}`known-phase shot model </auto_examples/02_encoding/plot_03_epi_shots>` and
+{doc}`synthetic wave and subspace model </auto_examples/02_encoding/plot_04_wave_subspace>`.
+
+**EPI.**  A simplified multi-shot model is $y_s=P_s F S D_s x$, with shot phase
+$D_s$.  Known phases are diagonal operators with per-shot sampling.  Real EPI
+also needs readout polarity handling, Nyquist-ghost correction and possibly
+off-resonance encoding $\exp(-i2\pi\Delta f(r)t_j)$ at each sample, which a
+static image phase map cannot replace.  A paper using BART for ESPIRiT alone is
+no evidence that its EPI correction or solver is available here.
+
+**Wave encoding.**  A hybrid-space model is $A=P F_{yz} W F_x R S$, with
+readout padding $R$ and the wave modulation $W(k_x,y,z)$, whose phase comes
+from the gradient waveforms, spatial coordinates and timing.  BART's
+`src/wave.c` applies coil encoding, readout resizing, readout FFT, diagonal
+wave modulation, transverse FFT and sampling in that order.  `tools.wave`
+wraps it; `tools.wavepsf` generates a 2-D hybrid-space response.  Its options
+mix cm, microseconds, seconds, G/cm and G/cm/s, so check the reference before
+converting scanner units.  A full 3-D response and measured-gradient
+calibration need further preparation.
+
+**Shuffling and Wave-Shuffling.**  Model an echo series as
+$x_t=\sum_k\Phi_{tk}\alpha_k$; the encoding acts on these echo-dependent images
+and samples the acquired echo and phase-encode ordering.  Wave-Shuffling adds
+the wave modulation and extended readout field of view: a time-resolved inverse
+problem, not a wave FFT applied to a static reconstruction.
+{func}`bartorch.tools.wshfl` takes maps, wave response, temporal basis,
+reordering and acquired-data table.  There is no dedicated wave or EPI operator
+class.
+
+For each new model, check units, axis order, the complex adjoint identity,
+independent forward predictions and reconstruction residuals before moving to
+measured data.

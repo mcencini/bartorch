@@ -254,6 +254,8 @@ BARTORCH_API void bartorch_linop_free(bartorch_linop* h);
  * scaling the caller divided the data by: `pics` sets it from the scaling it
  * estimated for itself, so an assembled reconstruction that scales its own
  * data has to say by how much.
+ * `cg_tol` is the tolerance of conjugate gradients, which `italgo_config`
+ * leaves at BART's default of zero; the other iterations ignore it.
  * Returns 0, or a code `bartorch_solve_error` turns into a sentence.
  */
 BARTORCH_API int bartorch_solve(const bartorch_linop* A,
@@ -262,7 +264,7 @@ BARTORCH_API int bartorch_solve(const bartorch_linop* A,
 		const float* reg_lambda, const int* reg_k,
 		const bartorch_prox* const* reg_ops, int n_reg,
 		float cclambda, int maxiter, float step, int eigen, int hogwild,
-		float admm_rho, int admm_maxitercg,
+		float admm_rho, int admm_maxitercg, float cg_tol,
 		float fista_p, float fista_q, float fista_r,
 		float sigma_tau_ratio, int adaptive_step,
 		int warmstart,
@@ -304,10 +306,6 @@ BARTORCH_API int bartorch_prox_create(const char* kind, long xflags, long jflags
 		float lambda, int k, int llr_blk, const char* wavelet, int shift_mode,
 		const long* img_dims, bartorch_prox** out);
 BARTORCH_API void bartorch_prox_free(bartorch_prox* h);
-
-/* x = argmin ||A x - y||^2 + lambda ||x||^2 by conjugate gradients on the normal equations. */
-BARTORCH_API int bartorch_lsqr(const bartorch_linop* A, int maxiter, float lambda, float tol, int warmstart,
-		void* x, const void* y);
 
 BARTORCH_API bartorch_nlop* bartorch_nlop_callback(int ON, const long* odims, int IN, const long* idims,
 		bartorch_apply_fn forward, bartorch_apply_fn derivative, bartorch_apply_fn adjoint,
