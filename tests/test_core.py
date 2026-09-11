@@ -210,9 +210,13 @@ def test_a_failed_assertion_inside_bart_reaches_the_caller():
     """BART checks its arguments with assert, and assert must not end the process.
 
     Coil images and k-space that disagree on their dimensions trip an
-    assertion deep inside BART's own NUFFT.  glibc's assert would abort, so
-    the library answers __assert_fail itself and puts it back on BART's error
-    path, where the error catcher turns it into a return code.
+    assertion deep inside BART's own NUFFT.  The platform's assert would
+    abort, so the library answers the function assert expands to and puts it
+    back on BART's error path, where the error catcher turns it into a return
+    code.  Which function that is differs: __assert_fail on glibc and musl,
+    __assert_rtn on Apple's libc.  Answering only the first is why this test
+    could not be reached on macOS -- the abort came earlier, while the suite
+    was still being collected.
     """
     import bartorch.tools as bt
     from bartorch import linop

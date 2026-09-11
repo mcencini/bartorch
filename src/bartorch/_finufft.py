@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import contextlib
 import importlib
+import logging
 from pathlib import Path
 
 import torch
@@ -641,8 +642,10 @@ def install_once() -> None:
 
     A caller who has the package should not have to ask for it, and one who
     does not should hear about it when a transform wants it rather than get a
-    quieter answer from BART.  What went wrong is left to the transform to
-    report, because most of what BART does needs no NUFFT at all.
+    quieter answer from BART.  Failing to install it is not an error here,
+    because most of what BART does needs no NUFFT at all -- but it is said
+    once, at warning level, because a substitution that quietly did not happen
+    is the hardest kind of difference to find later.
     """
     global _installed
     if _installed:
@@ -652,5 +655,9 @@ def install_once() -> None:
         return
     try:
         use_in_tools(True)
-    except (ImportError, RuntimeError):
-        pass
+    except (ImportError, RuntimeError) as exc:
+        logging.getLogger("bartorch.finufft").warning(
+            "FINUFFT is installed but was not put in BART's place, so its transforms "
+            "will be BART's own gridder: %s",
+            exc,
+        )
