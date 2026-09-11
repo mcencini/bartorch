@@ -39,10 +39,10 @@ classifiers = [
 [project.optional-dependencies]
 # MKL covers every BLAS and LAPACK routine BART calls and is about twice as
 # fast as the alternatives on the work that leans on LAPACK.  There is no MKL
-# wheel for macOS, where SciPy's OpenBLAS and Accelerate serve instead.
+# wheel for macOS, where SciPy's OpenBLAS and Accelerate serve instead, and
+# Windows is not a target: BART does not build there.
 mkl = [
     "mkl>=2024; sys_platform == 'linux' and platform_machine == 'x86_64'",
-    "mkl>=2024; sys_platform == 'win32' and platform_machine == 'AMD64'",
 ]
 # There is no `finufft` extra: it is a dependency, above.  An old
 # `pip install 'bartorch[finufft]'` still installs FINUFFT, and pip warns that
