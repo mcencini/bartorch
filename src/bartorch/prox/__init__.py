@@ -11,9 +11,16 @@ Nothing here computes a proximal step.  BART builds the proximal operator and
 the transform beside it -- the wavelet transform under a wavelet threshold,
 the gradient under total variation -- in ``opt_reg_configure``, and an object
 is what that function reads: which term, over which axes, with what weight.
-Filling BART's table from an object rather than from a ``-R`` string is the
-only difference between this and the tool, which is why an axis can be an
-axis here and a bitmask there.
+A term is built once, against the shape it works on, and holds what BART made;
+solving twice with it builds nothing the second time.  Filling BART's table
+from an object rather than from a ``-R`` string is the only difference between
+this and the tool, which is why an axis can be an axis here and a bitmask
+there.
+
+Three of BART's terms are absent: total generalized variation and the two
+infimal convolutions extend the optimisation variable, which BART counts
+across the whole set, so they cannot be built one at a time.
+:func:`bartorch.tools.pics` reaches them.
 """
 
 from __future__ import annotations
@@ -29,7 +36,6 @@ from bartorch.prox.terms import (
     Laplace,
     LocallyLowRank,
     NonNegative,
-    TotalGeneralizedVariation,
     TotalVariation,
     Wavelet,
     WaveletNIHT,
@@ -46,7 +52,6 @@ __all__ = [
     "LocallyLowRank",
     "NonNegative",
     "Regularizer",
-    "TotalGeneralizedVariation",
     "TotalVariation",
     "Wavelet",
     "WaveletNIHT",

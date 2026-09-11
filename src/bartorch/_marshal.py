@@ -32,6 +32,7 @@ __all__ = [
     "null_apply",
     "null_release",
     "out_pointer",
+    "pointers",
     "padded_dims",
     "shape_from_dims",
     "text_buffer",
@@ -92,6 +93,11 @@ def ints(values) -> ctypes.Array:
 def floats(values) -> ctypes.Array:
     """A C array of floats."""
     return (ctypes.c_float * len(values))(*[float(v) for v in values])
+
+
+def pointers(values) -> ctypes.Array:
+    """A C array of addresses, for an argument that takes several handles."""
+    return (ctypes.c_void_p * len(values))(*[int(v) for v in values])
 
 
 def text_buffer(size: int) -> ctypes.Array:

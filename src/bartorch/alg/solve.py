@@ -147,11 +147,15 @@ def solve(
     lib = library()
     ndim = len(bart_op.ishape)
     flags = [term.flags(ndim) for term in terms]
+    # The terms hand over the operators they have been holding; nothing is
+    # configured here.
+    handles = [term.build(bart_op.ishape, block=llr_block, wavelet=wavelet) for term in terms]
     kinds = _marshal.argv([term.kind for term in terms])
     xflags = _marshal.longs([x for x, _ in flags])
     jflags = _marshal.longs([j for _, j in flags])
     weights = _marshal.floats([term.weight for term in terms])
     counts = _marshal.ints([term.count for term in terms])
+    operators = _marshal.pointers(handles) if handles else None
     p, q, r = fista if fista is not None else (-1.0, -1.0, -1.0)
 
     with _lock, _on_device(bart_op.device or y.device):
@@ -163,6 +167,7 @@ def solve(
             jflags if terms else None,
             weights if terms else None,
             counts if terms else None,
+            operators,
             len(terms),
             float(lambda_) if lambda_ is not None else -1.0,
             float(cclambda),
@@ -175,9 +180,6 @@ def solve(
             float(p),
             float(q),
             float(r),
-            int(llr_block),
-            0,
-            wavelet.encode(),
             int(x0 is not None),
             x.data_ptr(),
             y.data_ptr(),

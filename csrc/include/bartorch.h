@@ -202,6 +202,7 @@ BARTORCH_API void bartorch_fft_reset_counters(void);
  * success.
  */
 typedef struct bartorch_linop_s bartorch_linop;
+typedef struct bartorch_prox_s bartorch_prox;
 typedef struct bartorch_nlop_s bartorch_nlop;
 typedef int (*bartorch_apply_fn)(void* ctx, void* dst, const void* src);
 typedef void (*bartorch_release_fn)(void* ctx);
@@ -257,14 +258,31 @@ BARTORCH_API void bartorch_linop_free(bartorch_linop* h);
 BARTORCH_API int bartorch_solve(const bartorch_linop* A,
 		const char* algorithm,
 		const char* const* reg_kinds, const long* reg_xflags, const long* reg_jflags,
-		const float* reg_lambda, const int* reg_k, int n_reg,
+		const float* reg_lambda, const int* reg_k,
+		const bartorch_prox* const* reg_ops, int n_reg,
 		float lambda, float cclambda, int maxiter, float step, int eigen, int hogwild,
 		float admm_rho, int admm_maxitercg,
 		float fista_p, float fista_q, float fista_r,
-		int llr_blk, int shift_mode, const char* wavelet,
 		int warmstart,
 		void* x, const void* y);
 BARTORCH_API const char* bartorch_solve_error(int code);
+
+/*
+ * One regularization term, built once and held.  What BART makes of a term is
+ * a proximal operator and, for most of them, a transform to apply it through,
+ * and the two belong together: `bartorch_solve` is handed these rather than a
+ * description to build from, so a term built once is a term reused.
+ *
+ * `kind` is the letter `pics -R` uses, `xflags` and `jflags` the two bitmasks
+ * that term's specification carries.  `img_dims` is a BART-order dimension
+ * vector of BARTORCH_DIMS entries.  A term that extends the optimisation
+ * variable -- TGV and the infimal convolutions -- is declined, because what it
+ * adds is counted across the whole set.
+ */
+BARTORCH_API int bartorch_prox_create(const char* kind, long xflags, long jflags,
+		float lambda, int k, int llr_blk, const char* wavelet,
+		const long* img_dims, bartorch_prox** out);
+BARTORCH_API void bartorch_prox_free(bartorch_prox* h);
 
 /* x = argmin ||A x - y||^2 + lambda ||x||^2 by conjugate gradients on the normal equations. */
 BARTORCH_API int bartorch_lsqr(const bartorch_linop* A, int maxiter, float lambda, float tol, int warmstart,

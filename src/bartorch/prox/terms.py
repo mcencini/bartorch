@@ -3,6 +3,11 @@
 Each is the term ``pics -R`` names with the same letter, and carries what that
 term's specification carries and nothing more.  What the term *is* -- the
 proximal operator and the transform beside it -- BART builds.
+
+Three of BART's terms are not here: total generalized variation and the two
+infimal convolutions extend the optimisation variable, and what they add is
+counted across the whole set, so they cannot be built one at a time.
+``bartorch.tools.pics(..., regularizers="G:3:0:...")`` reaches them.
 """
 
 from __future__ import annotations
@@ -19,7 +24,6 @@ __all__ = [
     "Laplace",
     "LocallyLowRank",
     "NonNegative",
-    "TotalGeneralizedVariation",
     "TotalVariation",
     "Wavelet",
     "WaveletNIHT",
@@ -62,12 +66,6 @@ class TotalVariation(_Weighted):
     """l1 of the finite difference over ``axes`` (``pics -R T``)."""
 
     kind = "T"
-
-
-class TotalGeneralizedVariation(_Weighted):
-    """Total generalized variation over ``axes`` (``pics -R G``)."""
-
-    kind = "G"
 
 
 class LocallyLowRank(_Weighted):

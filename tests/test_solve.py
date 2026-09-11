@@ -168,6 +168,28 @@ def test_every_term_bart_has_can_be_asked_for(term):
     assert torch.isfinite(got.abs()).all()
 
 
+def test_a_term_is_built_once_and_handed_over_as_it_stands():
+    """The object owns what BART made of it, so a second solve builds nothing
+    and the solver is given the operator rather than a description of one."""
+    term = prox.Wavelet(axes=(-1, -2), weight=0.01)
+    first = term.build((8, 8))
+    assert term.build((8, 8)) == first
+
+    A = _unitary()
+    y = _rand(8, 8)
+    once = alg.solve(A, y, regularizers=term, solver="fista", maxiter=20, step=1.0)
+    twice = alg.solve(A, y, regularizers=term, solver="fista", maxiter=20, step=1.0)
+    assert torch.equal(once, twice)
+    assert term.build((8, 8)) == first
+
+
+def test_a_term_bart_configures_with_the_whole_set_is_declined():
+    """Total generalized variation and the infimal convolutions extend the
+    optimisation variable, and what they add is counted across every term, so
+    one cannot be built alone.  `tools.pics` reaches them."""
+    assert not hasattr(prox, "TotalGeneralizedVariation")
+
+
 def test_a_term_carries_what_the_string_carried():
     """`-R W:3:0:0.01` is a transform letter, two bitmasks and a weight, and so
     is the object -- with the axes written as axes.  What BART builds from the

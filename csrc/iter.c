@@ -82,14 +82,84 @@ static enum algo_t algo_by_name(const char* name)
 	return (enum algo_t)-1;
 }
 
+/* One regularization term, built once and kept.  What BART makes of a term is
+ * a proximal operator and, for most of them, a transform to apply it through;
+ * the two belong together and are handed to the solver as a pair. */
+struct bartorch_prox_s {
+
+	const struct operator_p_s* op;
+	const struct linop_s* trafo;
+};
+
+int bartorch_prox_create(const char* kind, long xflags, long jflags, float lambda, int k,
+		int llr_blk, const char* wavelet, const long* img_dims, bartorch_prox** out)
+{
+	int xform;
+
+	if (0 != xform_by_name(kind, &xform))
+		return -4;
+
+	struct opt_reg_s ropts;
+	(void)opt_reg_init(&ropts);
+
+	ropts.regs[0].xform = xform;
+	ropts.regs[0].xflags = (unsigned long)xflags;
+	ropts.regs[0].jflags = (unsigned long)jflags;
+	ropts.regs[0].lambda = lambda;
+	ropts.regs[0].k = k;
+	ropts.regs[0].graph_file = NULL;
+	ropts.regs[0].asl = false;
+	ropts.r = 1;
+
+	const struct operator_p_s* prox_ops[NUM_REGS] = { NULL };
+	const struct linop_s* trafos[NUM_REGS] = { NULL };
+	const long (*sdims[NUM_REGS])[DIMS + 1] = { NULL };
+
+	long dims[DIMS];
+	md_copy_dims(DIMS, dims, img_dims);
+
+	opt_reg_configure(DIMS, dims, &ropts, prox_ops, trafos, sdims,
+			llr_blk, 0, (NULL != wavelet) ? wavelet : "dau2", false, ITER_DIM);
+
+	/* A term that extends the optimisation variable cannot be built on its
+	 * own: what it adds is counted across the whole set, and the solve
+	 * asserts that the total is what was reserved. */
+	if (0 < ropts.svars) {
+
+		opt_reg_free(&ropts, prox_ops, trafos);
+		return -6;
+	}
+
+	PTR_ALLOC(struct bartorch_prox_s, p);
+	p->op = prox_ops[0];
+	p->trafo = trafos[0];
+	*out = PTR_PASS(p);
+
+	return 0;
+}
+
+void bartorch_prox_free(bartorch_prox* h)
+{
+	if (NULL == h)
+		return;
+
+	if (NULL != h->op)
+		operator_p_free(h->op);
+
+	if (NULL != h->trafo)
+		linop_free(h->trafo);
+
+	xfree(h);
+}
+
 int bartorch_solve(const bartorch_linop* handle,
 		const char* algorithm,
 		const char* const* reg_kinds, const long* reg_xflags, const long* reg_jflags,
-		const float* reg_lambda, const int* reg_k, int n_reg,
+		const float* reg_lambda, const int* reg_k,
+		const bartorch_prox* const* reg_ops, int n_reg,
 		float lambda, float cclambda, int maxiter, float step, int eigen, int hogwild,
 		float admm_rho, int admm_maxitercg,
 		float fista_p, float fista_q, float fista_r,
-		int llr_blk, int shift_mode, const char* wavelet,
 		int warmstart,
 		void* x, const void* y)
 {
@@ -141,7 +211,6 @@ int bartorch_solve(const bartorch_linop* handle,
 
 	const struct operator_p_s* thresh_ops[NUM_REGS] = { NULL };
 	const struct linop_s* trafos[NUM_REGS] = { NULL };
-	const long (*sdims[NUM_REGS])[DIMS + 1] = { NULL };
 
 	long img_dims[DIMS];
 	md_copy_dims(DIMS, img_dims, linop_domain(model_op)->dims);
@@ -149,11 +218,19 @@ int bartorch_solve(const bartorch_linop* handle,
 	long ksp_dims[DIMS];
 	md_copy_dims(DIMS, ksp_dims, linop_codomain(model_op)->dims);
 
-	opt_reg_configure(DIMS, img_dims, &ropts, thresh_ops, trafos, sdims,
-			llr_blk, shift_mode, (NULL != wavelet) ? wavelet : "dau2",
-			false, ITER_DIM);
+	/* The terms were built when the caller made them, so nothing is
+	 * configured here: what the solver is given is the operators the
+	 * objects have been holding. */
+	for (int i = 0; i < n_reg; i++) {
 
-	int nr_penalties = ropts.r + ropts.sr;
+		if (NULL == reg_ops[i])
+			return -7;
+
+		thresh_ops[i] = reg_ops[i]->op;
+		trafos[i] = reg_ops[i]->trafo;
+	}
+
+	int nr_penalties = ropts.r;
 
 	if (ALGO_DEFAULT == algo)
 		algo = italgo_choose(nr_penalties, ropts.regs);
@@ -199,7 +276,6 @@ int bartorch_solve(const bartorch_linop* handle,
 
 	linop_free(owned);
 	italgo_config_free(it);
-	opt_reg_free(&ropts, thresh_ops, trafos);
 
 	return 0;
 }
@@ -213,6 +289,8 @@ const char* bartorch_solve_error(int code)
 	case -2: return "no such algorithm";
 	case -4: return "no such regularization term";
 	case -5: return "more regularization terms than BART holds";
+	case -6: return "this term extends the optimisation variable, and BART configures those with the whole set";
+	case -7: return "a regularization term was not built";
 	default: return "unknown";
 	}
 }

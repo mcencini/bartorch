@@ -613,13 +613,26 @@ operators beside them. Anything else written here would be a second
 implementation that drifts, and a result that is nearly BART's is worth less
 than no result.
 
-So `alg.solve` iterates nothing, and `prox/` computes nothing. A term is the
-description BART's `opt_reg_configure` reads -- which kind, over which axes,
-with what weight -- filled from an object rather than parsed from a `-R`
-string, and BART builds the proximal operator and the transform beside it.
-The letters are its own, and a test holds every one this package offers
-against `grecon/optreg.c`, because a term BART does not know is answered with
-`error()` and that leaves the library spinning.
+So `alg.solve` iterates nothing, and `prox/` computes nothing. A term fills
+the table `opt_reg_configure` reads -- which kind, over which axes, with what
+weight -- from an object rather than from a `-R` string, and holds the
+proximal operator and the transform BART makes of it. The solver is handed
+those, not a description to rebuild from, so solving twice with a term builds
+nothing the second time. The letters are BART's own, and a test holds every
+one this package offers against `grecon/optreg.c`, because a term BART does
+not know is answered with `error()` and that leaves the library spinning.
+
+Three of BART's terms are absent: TGV and the two infimal convolutions extend
+the optimisation variable, and what they add is counted across the whole set
+(`ropts->svars`, and the assertion at the end of `opt_reg_configure`), so one
+cannot be built alone. `tools.pics` reaches them.
+
+**The order costs nothing.** A C-order tensor of shape `(a, b, c)` and a BART
+array of dims `[c, b, a]` are the same bytes, so the boundary reverses the
+dimension vector and hands over `data_ptr()`; an operator never copies. The
+one copy is defensive and only for tools: BART maps its inputs
+copy-on-write and some tools write into them, so `dispatch` clones unless
+`set_copy_inputs(False)` says not to.
 
  `pics` turns its arguments into three things
 and hands them to `lsqr2`: the proximal operators its `-R` strings name, the
