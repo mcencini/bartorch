@@ -42,10 +42,10 @@ def test_a_cartesian_reconstruction_is_the_same_whatever_the_slab(batch, restore
     kspace = bt.fft(image, axes=(-2, -1))
 
     bartorch.set_coil_batch(0)
-    reference = bt.pics(kspace, maps, iter_=30)
+    reference = bt.pics(kspace, maps, maxiter=30)
 
     bartorch.set_coil_batch(batch)
-    torch.testing.assert_close(bt.pics(kspace, maps, iter_=30), reference, rtol=1e-5, atol=1e-6)
+    torch.testing.assert_close(bt.pics(kspace, maps, maxiter=30), reference, rtol=1e-5, atol=1e-6)
 
 
 @pytest.mark.parametrize("batch", BATCHES)
@@ -55,10 +55,10 @@ def test_a_non_cartesian_reconstruction_is_the_same_whatever_the_slab(batch, res
     kspace = bt.nufft(traj, image)
 
     bartorch.set_coil_batch(0)
-    reference = bt.pics(kspace, maps, t=traj, iter_=30)
+    reference = bt.pics(kspace, maps, t=traj, maxiter=30)
 
     bartorch.set_coil_batch(batch)
-    got = bt.pics(kspace, maps, t=traj, iter_=30)
+    got = bt.pics(kspace, maps, t=traj, maxiter=30)
 
     scale = float(reference.abs().max())
     assert float((got - reference).abs().max()) / scale < 1e-4
@@ -73,13 +73,13 @@ def test_the_slab_is_actually_taken(restore_batch):
 
     bartorch.set_coil_batch(0)
     lib.bartorch_sense_reset_counters()
-    bt.pics(kspace, maps, t=traj, iter_=3)
+    bt.pics(kspace, maps, t=traj, maxiter=3)
     assert (lib.bartorch_sense_counter(0), lib.bartorch_sense_counter(1)) == (0, 1)
 
     bartorch.set_coil_batch(2)
     lib.bartorch_sense_reset_counters()
-    bt.pics(kspace, maps, t=traj, iter_=3)
-    bt.pics(bt.fft(image, axes=(-2, -1)), maps, iter_=3)
+    bt.pics(kspace, maps, t=traj, maxiter=3)
+    bt.pics(bt.fft(image, axes=(-2, -1)), maps, maxiter=3)
     assert lib.bartorch_sense_counter(0) == 2, "both SENSE operators walk their coils"
     assert lib.bartorch_sense_counter(1) == 0
 
@@ -94,7 +94,7 @@ def test_a_single_coil_goes_back_to_barts_own_operator(restore_batch):
 
     bartorch.set_coil_batch(1)
     lib.bartorch_sense_reset_counters()
-    bt.pics(bt.fft(image, axes=(-2, -1)), maps, iter_=3)
+    bt.pics(bt.fft(image, axes=(-2, -1)), maps, maxiter=3)
     assert lib.bartorch_sense_counter(0) == 0
     assert lib.bartorch_sense_counter(1) == 1
 

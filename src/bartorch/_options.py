@@ -75,6 +75,44 @@ def flag_for(command: str, keyword: str) -> str | None:
     return option.flag if option is not None else None
 
 
+def check(command: str, keywords) -> None:
+    """Refuse a flag the command does not have, before BART is asked.
+
+    Not a courtesy.  BART answers an option it does not recognise by printing
+    its usage and calling ``error``, which its own catcher turns into a return
+    code -- and leaves the library in a state where the *next* tool call spins
+    forever at full CPU.  One typo would end the session, so a flag the
+    catalogue has no entry for never reaches BART.
+
+    A command the catalogue does not know is not checked: there is nothing to
+    check against.
+    """
+    known = options_by_name(command)
+    if not known:
+        return
+    for keyword in keywords:
+        if keyword in known:
+            continue
+        # `R_1` and `R_2` are both `-R`; `flag_3` is `-3`.
+        stem, _, suffix = keyword.rpartition("_")
+        if stem and suffix.isdigit() and (stem in known or stem == "flag"):
+            continue
+        near = _closest(keyword, known)
+        suggestion = f"; did you mean {near}=?" if near else ""
+        raise ValueError(
+            f"bart {command} has no option called {keyword!r}{suggestion}  "
+            f"bartorch.tools.describe({command!r}) lists the ones it has."
+        )
+
+
+def _closest(keyword: str, known: dict[str, Option]) -> str | None:
+    """The option a keyword was most likely meant to be."""
+    import difflib
+
+    matches = difflib.get_close_matches(keyword, [k for k in known if len(k) > 1], n=1)
+    return matches[0] if matches else None
+
+
 def describe(name: str) -> str:
     """What ``bart <name> -h`` would print, from the catalogue rather than from BART.
 

@@ -25,10 +25,16 @@ def test_build_info_names_the_nested_function_mode():
 
 
 def test_argv_flags_positionals_inputs_output_in_that_order():
+    # Real options of a real command: a flag that is refused before BART sees
+    # it cannot be used to check the order of what reaches it.
     argv = build_argv(
-        "fft", ["a.mem"], "o.mem", [3], {"u": True, "i": False, "x": (1, 2), "long_name": 4}
+        "nufft",
+        ["t.mem", "a.mem"],
+        "o.mem",
+        [],
+        {"a": True, "i": False, "d": (1, 2, 3), "lowmem": True},
     )
-    assert argv == ["fft", "-u", "-x", "1:2", "--long-name", "4", "3", "a.mem", "o.mem"]
+    assert argv == ["nufft", "-a", "-d", "1:2:3", "--lowmem", "t.mem", "a.mem", "o.mem"]
 
 
 def test_list_flags_repeat():

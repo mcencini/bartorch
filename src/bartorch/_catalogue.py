@@ -26,15 +26,19 @@ class Argument:
 
     #: What BART calls it in its own help.
     name: str
-    #: BART's ``ARG_`` kind: INFILE, OUTFILE, INOUTFILE, CFL, INT, ...
+    #: BART's ``ARG_`` kind: INFILE, OUTFILE, INOUTFILE, INT, CFL, ...
     kind: str
     #: Whether the command refuses to run without it.
     required: bool
 
     @property
     def is_array(self) -> bool:
-        """Whether it is a CFL array rather than a number or a string."""
-        return self.kind in ("INFILE", "OUTFILE", "INOUTFILE", "CFL")
+        """Whether it is an array rather than a number or a string.
+
+        ``ARG_CFL`` is not one: it is a complex scalar read from the
+        command line, as in ``bart scale <factor> <input> <output>``.
+        """
+        return self.kind in ("INFILE", "OUTFILE", "INOUTFILE")
 
 
 @dataclass(frozen=True)
@@ -85,7 +89,7 @@ class Command:
     @property
     def inputs(self) -> tuple[Argument, ...]:
         """The arrays it reads."""
-        reads = ("INFILE", "INOUTFILE", "CFL")
+        reads = ("INFILE", "INOUTFILE")
         return tuple(a for a in self.arguments if a.kind in reads)
 
     @property

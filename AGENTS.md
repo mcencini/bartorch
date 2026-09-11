@@ -23,9 +23,9 @@ C library with a small C ABI; Python reaches it through ctypes.
 | `csrc/finufft.c`, `nufft_finufft.c` | FINUFFT's and cuFINUFFT's entry points, and BART's NUFFT operator built out of a pair of their plans. |
 | `csrc/compat/` | The `cblas.h`, `lapacke.h` and `fftw3.h` BART includes. |
 | `third_party/` | pocketfft and BlocksRuntime, vendored with their licenses. |
-| `src/bartorch/` | The package: `_abi.py` (the ctypes signatures, generated from the header), `_lib.py` (finding and loading the library), `_marshal.py` (what an ABI argument looks like), `_backend.py` (which library serves BLAS and LAPACK), `_buffer.py` (a tensor over one of BART's buffers, host or device), `core/graph.py` (tools on tensors), `_operator.py` (what every operator shares), `linop/` and `nlop/` (a class per operator), `interop/` (handing them to other libraries), `finufft.py` (the substitution), `tools/` (one function per BART command), `ops.py` (a deprecation shim). |
-| `build_tools/gen_tools.py` | Generates `tools/_generated.py` from the BART sources. |
+| `src/bartorch/` | The package: `_abi.py` (the ctypes signatures, generated from the header), `_lib.py` (finding and loading the library), `_marshal.py` (what an ABI argument looks like), `_backend.py` (which library serves BLAS and LAPACK), `_buffer.py` (a tensor over one of BART's buffers, host or device), `core/graph.py` (tools on tensors), `_operator.py` (what every operator shares), `linop/` and `nlop/` (a class per operator), `interop/` (handing them to other libraries), `finufft.py` (the substitution), `_catalogue.py` and `_options.py` (what BART declares, and what each option is called here), `tools/` (one function per BART command: hand-written where it needed a judgement, built from the catalogue otherwise), `ops.py` (a deprecation shim). |
 | `build_tools/gen_abi.py` | Generates `_abi.py` from `csrc/include/bartorch.h`. |
+| `build_tools/gen_catalogue.py` | Generates `_catalogue.py` from the BART sources: every command, its arguments, and every option with both spellings. |
 | `attic/prototype/` | An earlier pybind11 extension, kept for reference and not built. |
 
 ## Design rules
@@ -611,7 +611,7 @@ BARTORCH_LIBRARY=$PWD/build/libbartorch.so PYTHONPATH=src pytest tests/
 pip install -e .                    # the same through scikit-build-core
 pip install -e . --config-settings=cmake.define.BARTORCH_CUDA=ON   # with device code
 python scripts/check_device.py      # everything a card can answer that a host cannot
-python build_tools/gen_tools.py     # after a submodule bump
+python build_tools/gen_catalogue.py # after a submodule bump
 python build_tools/gen_abi.py       # after changing the C header
 ruff format src tests build_tools && ruff check src tests build_tools
 ```

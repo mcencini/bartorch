@@ -118,7 +118,7 @@ def test_every_tool_kept_on_the_card_answers_there_and_agrees_with_the_host():
     # says nothing about whether the tool ran on the card.
     n, coils, spokes = 32, 2, 64
     torch.manual_seed(0)
-    img = bt.phantom([n, n], ncoils=coils)
+    img = bt.phantom([n, n], coils=coils)
     ksp_cart = bt.fft(img, axes=(-2, -1))
     traj = bt.traj(x=n, y=spokes, r=True)
     ksp_rad = bt.nufft(traj, img)
@@ -154,7 +154,7 @@ def test_a_tool_that_is_not_kept_on_the_card_still_answers_on_it():
 
     assert "pocsense" not in _ON_DEVICE
     n, coils = 32, 2
-    img = bt.phantom([n, n], ncoils=coils)
+    img = bt.phantom([n, n], coils=coils)
     ksp = bt.fft(img, axes=(-2, -1)).cuda()
     maps = (torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5).cuda()
 

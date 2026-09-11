@@ -1,42 +1,57 @@
-"""bartorch.tools — BART CLI tool wrappers.
+"""Every BART command, as a function on tensors.
 
-Every function in this sub-package routes through
-:func:`bartorch.core.graph.dispatch`, which calls the embedded BART C++
-extension.  All wrappers accept plain ``torch.Tensor`` / NumPy array inputs
-(normalised to ``complex64`` automatically) and return plain ``torch.Tensor``
-results.
+A command is reached by its own name::
 
-Axis indices (C-order)
-----------------------
-Where BART expects a bitmask to select axes, the Python wrappers accept a
-scalar axis index or a tuple of indices instead — including negative indices.
-The conversion to BART's Fortran-order bitmask is handled transparently inside
-each wrapper (see :func:`bartorch.utils.flags._axes_to_flags`).
+    import bartorch.tools as bt
 
-Example: ``bt.fft(x, axes=(-1, -2))`` — 2-D FFT over the last two axes.
+    kspace = bt.phantom(128, coils=8, kspace=True)
+    maps = bt.ecalib(kspace, maps=1)
+    image = bt.pics(kspace, maps, l2=0.01, solver="fista")
 
-Tool layers
------------
-* :mod:`bartorch.tools._generated` — auto-generated thin wrappers for every
-  BART command (100+), produced by ``build_tools/gen_tools.py``.
-* :mod:`bartorch.tools._commands`  — imports the full generated suite and
-  overrides a small set of commands with richer Pythonic APIs (e.g.
-  :func:`ecalib`, :func:`caldir`, :func:`pics`).
-* This ``__init__`` re-exports the final public API from ``_commands``.
+Shapes are C order, so the last axis is the one BART calls the first, and an
+axis argument is an index into that shape rather than a bitmask.
+
+Two kinds of wrapper
+--------------------
+Most of what is here is written by hand, against the catalogue of what BART's
+own sources declare: an axis instead of a bitmask, one ``solver`` instead of
+five flags, a tensor wherever BART names a file.  The rest is built from that
+same catalogue and is shaped like the command line -- complete, and honest
+about being a transliteration.  :func:`describe` prints what either takes, and
+``.is_derived`` says which kind a wrapper is.
+
+A handful of commands are not here at all, because they read or write
+something that is not an array: see ``bartorch.tools._coverage.NOT_EXPOSED``,
+which names each and why.  ``tests/test_tools.py`` asserts that the three
+groups together are every command BART builds.
 """
 
 from __future__ import annotations
 
-from bartorch._options import describe
+from bartorch._catalogue import COMMANDS
+from bartorch._options import describe as describe
+from bartorch.tools import _call, _coverage
+from bartorch.tools.arith import *  # noqa: F401,F403
+from bartorch.tools.array import *  # noqa: F401,F403
+from bartorch.tools.calib import *  # noqa: F401,F403
+from bartorch.tools.fourier import *  # noqa: F401,F403
+from bartorch.tools.recon import *  # noqa: F401,F403
+from bartorch.tools.sampling import *  # noqa: F401,F403
+from bartorch.tools.simulate import *  # noqa: F401,F403
 
-__all__: list[str] = ["describe"]
+_curated = _coverage.curated_wrappers()
 
-# Full suite: auto-generated wrappers + special-case overrides.
-# Missing when the package has not been built; silently ignored.
-try:
-    from bartorch.tools._commands import *  # noqa: F401,F403
-    from bartorch.tools._commands import __all__ as _commands_all
+# Every command that has no wrapper of its own, built from its catalogue entry.
+# Eagerly, so that `dir()` and an editor's completion see all of them, and so
+# that a command whose entry cannot be turned into a signature fails at import
+# rather than the first time someone calls it.
+for _name in sorted(_coverage.derived_names()):
+    globals().setdefault(_name, _call.build(_name))
 
-    __all__ = ["describe", *_commands_all]
-except ImportError:
-    pass
+#: The name each wrapper goes by, which is the command's own except where a
+#: command's name is not an identifier.
+__all__ = sorted(
+    {"describe", *(n for n in globals() if n in COMMANDS or n in ("ifft",))}
+)
+
+del _name

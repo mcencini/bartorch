@@ -365,6 +365,7 @@ def build_argv(
     expanded flag list to its name.
     """
     argv = [op_name]
+    _options.check(op_name, kwargs)
     for index, (key, val) in enumerate(_expand_list_flags(kwargs)):
         if val is None or val is False:
             continue

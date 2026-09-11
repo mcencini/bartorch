@@ -60,7 +60,7 @@ def test_bart_uses_the_normal_callback_when_given_one():
 
 def test_least_squares_recovers_the_image_from_coil_data():
     n, ncoils = 16, 4
-    ksp = bt.phantom([n, n], kspace=True, ncoils=ncoils)
+    ksp = bt.phantom([n, n], kspace=True, coils=ncoils)
     maps = bt.ecalib(ksp, calib_size=12, maps=1).reshape(ncoils, n, n)
     img = bt.phantom([n, n]).reshape(1, n, n)
     S = linop.MultiplySum(maps, (1, n, n), (ncoils, n, n))

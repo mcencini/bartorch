@@ -15,13 +15,13 @@ import bartorch.tools as bt
 
 bartorch.set_num_threads(1)
 n = 32
-full = bt.phantom([n, n], kspace=True, ncoils=4)
+full = bt.phantom([n, n], kspace=True, coils=4)
 mask = torch.zeros_like(full)
 mask[..., ::2, :] = 1
 mask[..., n // 2 - 8 : n // 2 + 8, :] = 1
 sampled = full * mask
 maps = bt.ecalib(sampled, calib_size=16, maps=1)
-reconstruction = bt.pics(sampled, maps, l=2, lambda_=0.001, iter_=60)
+reconstruction = bt.pics(sampled, maps, l=2, l2=0.001, maxiter=60)
 print(f"Actual acceleration including calibration: {mask.numel() / mask.real.sum().item():.2f}")
 
 # %%

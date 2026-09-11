@@ -153,9 +153,32 @@ def test_a_positional_value_is_told_apart_from_an_array():
     assert len(phantom.outputs) == 1
     for command in catalogue.COMMANDS.values():
         for argument in command.arguments:
-            assert argument.is_array == (
-                argument.kind in ("INFILE", "OUTFILE", "INOUTFILE", "CFL")
-            )
+            assert argument.is_array == (argument.kind in ("INFILE", "OUTFILE", "INOUTFILE"))
+
+
+def test_a_complex_scalar_on_the_command_line_is_not_an_array():
+    """``bart scale <factor> <input> <output>`` reads the factor from argv.
+    Taking it for an array would hand BART a tensor where it wants a number."""
+    for name in ("scale", "saxpy", "spow"):
+        scalar = catalogue.COMMANDS[name].arguments[0]
+        assert scalar.kind == "CFL"
+        assert not scalar.is_array
+        assert scalar not in catalogue.COMMANDS[name].inputs
+        assert scalar in catalogue.COMMANDS[name].values
+
+
+def test_no_command_takes_a_value_after_an_array():
+    """The argument vector is built as flags, then values, then arrays, so a
+    command that wanted one in between could not be called at all."""
+    for command in catalogue.COMMANDS.values():
+        seen_array = False
+        for argument in command.arguments:
+            if argument.kind == "OUTFILE":
+                continue
+            if argument.is_array:
+                seen_array = True
+            else:
+                assert not seen_array, f"{command.name} takes {argument.name} after an array"
 
 
 def test_a_flag_that_takes_no_value_says_so():

@@ -41,7 +41,7 @@ torch.testing.assert_close(
 # receiver noise and coil signals are already expressed in a common coil basis.
 # Estimate calibration maps after whitening/compression so that the encoding
 # model matches the transformed k-space.
-original = bt.phantom([n, n], kspace=True, ncoils=ncoils)
+original = bt.phantom([n, n], kspace=True, coils=ncoils)
 kspace = (mixing @ original.reshape(ncoils, -1)).reshape(ncoils, 1, n, n)
 white_kspace = bt.whiten(kspace, noise_data)
 compression = bt.cc(white_kspace, M=True)
