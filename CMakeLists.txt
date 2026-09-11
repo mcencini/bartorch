@@ -80,6 +80,24 @@ else()
     message(FATAL_ERROR "BART needs clang or GCC 14+; ${CMAKE_C_COMPILER_ID} cannot compile it")
 endif()
 
+# BART's STL writer declares its triangle with `_Float32`, the interchange type
+# C23 names and glibc has provided for years.  Apple's clang has neither, and
+# BART already says what it means there: the same declaration under
+# `__EMSCRIPTEN__` uses plain `float`.  So where the type is missing, spell it
+# the way BART's own fallback does.  Tested rather than guessed, because
+# defining it where it does exist collides with the system header.
+include(CheckCSourceCompiles)
+# Through a system header, because that is where it comes from: glibc
+# typedefs it in <bits/floatn-common.h>, and clang does not offer it as a
+# keyword, so a bare probe answers about the compiler rather than the
+# translation unit.
+check_c_source_compiles(
+    "#include <stdio.h>\n_Float32 x; int main(void) { return (int)x; }"
+    BARTORCH_HAS_FLOAT32)
+if(NOT BARTORCH_HAS_FLOAT32)
+    list(APPEND BART_C_DEFS _Float32=float)
+endif()
+
 # The library exports a C ABI and exchanges no C++ objects with the process it
 # is loaded into, so its GCC runtime can be its own.  Linked dynamically it
 # would carry the toolchain's floor into every target system -- a GCC 14 build
