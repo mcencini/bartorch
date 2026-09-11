@@ -69,6 +69,12 @@ jobs:
           # test matrix below.
           CIBW_BUILD: "cp312-*"
           CIBW_SKIP: "*-musllinux_*"
+          # cibuildwheel's Linux default is auto64 *and* auto32, so an x86_64
+          # runner also builds a 32-bit i686 wheel -- in the i686 image, which
+          # is still manylinux2014 and its GCC 10.  Nobody could install that
+          # wheel in any case: torch publishes no i686 build, and it is a hard
+          # dependency here.
+          CIBW_ARCHS_LINUX: x86_64
           # BART's nested functions need heap trampolines -- GCC 14 -- or
           # clang's Blocks.  cibuildwheel's default Linux image has neither:
           # manylinux2014 is CentOS 7, whose GCC is 10 and whose `clang` is
