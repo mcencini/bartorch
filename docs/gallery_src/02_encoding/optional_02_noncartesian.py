@@ -2,9 +2,10 @@
 Radial encoding and a direct Fourier reference
 ==============================================
 
-Generate a radial trajectory and evaluate a NUFFT. Requires ``bartorch[finufft]``
-and the base plotting dependencies. Explicitly select optional examples to run
-this page. No density compensation is used: an adjoint is not an inverse.
+Generate a radial trajectory and evaluate a NUFFT. Needs FINUFFT, which is a
+dependency of ``bartorch`` rather than an extra, and the base plotting
+dependencies. Explicitly select optional examples to run this page. No density
+compensation is used: an adjoint is not an inverse.
 """
 
 import matplotlib.pyplot as plt

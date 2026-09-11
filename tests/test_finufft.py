@@ -14,7 +14,13 @@ import bartorch.tools as bt
 from bartorch import _finufft, linop
 from bartorch._lib import library
 
-requires_finufft = pytest.mark.skipif(not _finufft.available(), reason="finufft is not installed")
+# FINUFFT is a dependency, so on a platform it ships a wheel for its absence is
+# a broken install rather than a choice -- which test_dependencies.py fails on,
+# loudly, once.  Skipping here is for the platforms it ships no wheel for.
+requires_finufft = pytest.mark.skipif(
+    not _finufft.available(),
+    reason="finufft is not installed; it ships no wheel for this platform",
+)
 requires_cuda = pytest.mark.skipif(
     not bartorch.cuda.available(), reason="no CUDA device, or the library was built without CUDA"
 )

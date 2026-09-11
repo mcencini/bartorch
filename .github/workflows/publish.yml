@@ -56,6 +56,12 @@ jobs:
           CIBW_BEFORE_ALL_LINUX: dnf install -y clang || yum install -y clang
           CIBW_ENVIRONMENT_LINUX: CC=clang CXX=clang++
           CIBW_TEST_REQUIRES: pytest numpy scipy
+          # FINUFFT is a dependency, so installing the wheel brings it --
+          # except on aarch64, where it ships none and the requirement's marker
+          # does not apply.  Asking for the extra is a no-op everywhere else
+          # and a source build there, which is what makes the aarch64 wheel's
+          # non-Cartesian tests run rather than fail.
+          CIBW_TEST_EXTRAS: finufft
           CIBW_TEST_COMMAND: pip install torch --index-url https://download.pytorch.org/whl/cpu && pytest {project}/tests -q
       - uses: actions/upload-artifact@v4
         with:

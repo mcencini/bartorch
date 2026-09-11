@@ -15,6 +15,18 @@ dependencies = [
     # what torch links, and SciPy's cython_blas / cython_lapack tables.
     "scipy>=1.10",
     "torch>=2.1",
+    # FINUFFT is the NUFFT.  Every non-Cartesian transform BART makes goes
+    # through the substitution under `nufft_create`, and nothing reaches BART's
+    # own gridder without having been sent there, so a bartorch without FINUFFT
+    # is a bartorch that cannot do non-Cartesian work at all -- which is not an
+    # extra.  The markers are the platforms FINUFFT ships a wheel for; anywhere
+    # else pip would build it from its sdist, which needs CMake, ninja and a
+    # C++ compiler, and asking that of someone installing a wheel is the one
+    # thing this package does not do.  The `finufft` extra is how to ask for it
+    # there anyway.
+    "finufft>=2.2; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "finufft>=2.2; sys_platform == 'win32' and platform_machine == 'AMD64'",
+    "finufft>=2.2; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
@@ -33,13 +45,17 @@ mkl = [
     "mkl>=2024; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "mkl>=2024; sys_platform == 'win32' and platform_machine == 'AMD64'",
 ]
-# FINUFFT is about twice as fast as BART's gridder on the host, and cuFINUFFT
-# is the device counterpart.  Both wheels carry a compiled library, so nothing
-# is built here.
+# FINUFFT is a dependency, not an extra -- see above.  This is what is left of
+# the extra: on a platform it ships no wheel for, which today is Linux on
+# aarch64 and an Intel Mac, the dependency's markers do not apply and this asks
+# for it anyway.  pip then builds it from source, which needs CMake, ninja and
+# a C++ compiler.  On every other platform it is already installed and this is
+# a no-op, so an old `pip install 'bartorch[finufft]'` still means something.
 finufft = ["finufft>=2.2"]
-# cuFINUFFT is taken through the C API its wheel exports: a sample count of
-# int64 in `cufinufftf_setpts` and defaults filled from the options struct
-# alone.  That is the API from 2.3 on.
+# cuFINUFFT stays optional: it serves a transform on a card, and there is no
+# card on most machines.  It is taken through the C API its wheel exports: a
+# sample count of int64 in `cufinufftf_setpts` and defaults filled from the
+# options struct alone.  That is the API from 2.3 on.
 cufinufft = ["cufinufft>=2.3"]
 # deepinv is an adapter, not a base class: LinearOperator.to_deepinv() hands an
 # operator over as a LinearPhysics, and nothing in the package imports deepinv

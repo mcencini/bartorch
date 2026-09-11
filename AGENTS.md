@@ -100,12 +100,34 @@ A tensor on a card selects that card for the length of the call, which is what
 path on: `bart_use_gpu` is what `-g` sets on the command line, so passing `-g`
 to a tool as well changes nothing.
 
-**FINUFFT arrives the same way MKL does.** The `finufft` and `cufinufft`
-wheels each carry a compiled shared library with a plain C plan API, so they
-are a pip extra and nothing is built or vendored. `csrc/finufft.c` holds the
+**FINUFFT is a dependency; cuFINUFFT is an extra.** The `finufft` and
+`cufinufft` wheels each carry a compiled shared library with a plain C plan
+API, so nothing is built or vendored either way. `csrc/finufft.c` holds the
 entry points and `_finufft.py` hands them over along with the byte offset of
 FINUFFT's options struct, read from the same package so a release that moves a
 field cannot silently corrupt it.
+
+The two are not optional in the same way. FINUFFT *is* the NUFFT here -- every
+non-Cartesian transform goes through the substitution under `nufft_create`,
+and BART's own gridder is not reachable from the package's surface -- so a
+bartorch without it cannot do non-Cartesian work at all, which is a
+dependency and not a choice. cuFINUFFT serves a transform on a card, and most
+machines have no card, so it stays an extra.
+
+What keeps FINUFFT from being a plain unconditional dependency is that it
+ships no wheel for every platform this package does: today Linux on aarch64,
+and an Intel Mac. Requiring it there would make `pip install bartorch` build
+it from its sdist -- CMake, ninja, a C++ compiler and a fetched FFTW -- which
+is the one thing this package does not ask of anyone. So the requirement
+carries markers naming the platforms FINUFFT does ship a wheel for,
+`_finufft.WHEEL_PLATFORMS` is the same set in Python, and
+`tests/test_dependencies.py` evaluates the markers against that set so the two
+cannot drift. The `finufft` extra is what is left over: on a platform with no
+wheel it is how to ask for the source build, and everywhere else it is a
+no-op, so an old install command still means something.
+
+`_finufft.required_but_missing()` is the message for an absent one, and it
+says which of those two cases this machine is.
 
 **Underneath BART's own tools the seam is `nufft_create`, not the gridder.**
 `nufft.c` is compiled with `nufft_create`, `nufft_create2`, `nufft_get_psf*`
@@ -138,7 +160,8 @@ as it starts, before anyone has mentioned FINUFFT.
 BART's own gridder is not reachable from the package's surface at all. What is
 left of it is `_finufft.barts_own_gridder()`, a context manager the agreement
 check uses and the tests hold the substitution against; there is nothing a
-caller can pass to end up there. `configure` raises when `finufft` is missing,
+caller can pass to end up there. `configure` raises when `finufft` is missing
+-- which on a platform it ships a wheel for means the install has lost it --
 or when `cufinufft` is missing on a machine whose card BART would otherwise
 use. A test that enters that block would carry it into the next test, so
 `tests/conftest.py` puts the substitution back after every one.
@@ -598,9 +621,11 @@ which fails with a message that does not say which:
 * **OpenMP for whichever of those it is.** `libomp-dev` beside clang. Without
   it the build still works and the overlapped walks in `csrc/sense.c` run in
   sequence.
-* **FINUFFT.** `pip install finufft`. Without it seventeen tests fail rather
-  than skip, because nothing reaches BART's own gridder without having been
-  sent there and the substitution declining is an error, not a fallback.
+* **FINUFFT**, which `pip install -e .` brings on every platform it ships a
+  wheel for. Working from a source checkout on `PYTHONPATH` instead, install
+  it by hand: without it seventeen tests fail rather than skip, because
+  nothing reaches BART's own gridder without having been sent there and the
+  substitution declining is an error, not a fallback.
 
 With those, and `pip install torch numpy scipy pytest`, the suite is green
 apart from the CUDA tests, which skip without a card. `pip install mkl

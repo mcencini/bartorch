@@ -48,16 +48,27 @@ built with CUDA. Check ``torch.cuda.is_available()`` and
 alone does not guarantee every step executes on the GPU. CPU and CUDA are the
 current device paths; Apple MPS is not supported by the wrappers.
 
-Non-Cartesian reconstruction uses FINUFFT and, on CUDA, cuFINUFFT. Install the
-relevant extras before running the non-Cartesian gallery::
+Non-Cartesian reconstruction uses FINUFFT and, on CUDA, cuFINUFFT. FINUFFT is
+a dependency rather than an extra -- it is what computes every non-Cartesian
+transform, and BART's own gridder is not reachable from this package -- so
+``pip install bartorch`` already brings it on every platform it ships a wheel
+for. cuFINUFFT serves a transform on a card and stays an extra::
+
+   python -m pip install 'bartorch[cufinufft]'
+
+FINUFFT ships no wheel for Linux on aarch64 or for an Intel Mac. There the
+requirement's marker does not apply and it is not installed; ``bartorch``
+still works for everything Cartesian, and this asks for the rest::
 
    python -m pip install 'bartorch[finufft]'
-   # For CUDA non-Cartesian reconstruction:
-   python -m pip install 'bartorch[finufft,cufinufft]'
 
-The current NUFFT substitution raises when a required backend is missing or a
-configuration cannot be served. See :doc:`../../api/generated/finufft` for
-configuration and diagnostics. The ``mkl`` extra is optional on supported
-platforms; it is not required for the Cartesian examples.
+pip then builds FINUFFT from source, which needs CMake, ninja and a C++
+compiler.
+
+The NUFFT substitution raises when a required backend is missing or a
+configuration cannot be served, and the message says which of those two cases
+a missing FINUFFT is. See :doc:`../../api/generated/finufft` for configuration
+and diagnostics. The ``mkl`` extra is optional on supported platforms; it is
+not required for the Cartesian examples.
 
 Next: :doc:`conventions` and :doc:`../../auto_examples/index`.
