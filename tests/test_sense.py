@@ -618,18 +618,110 @@ def test_the_slab_walks_the_coils_and_not_the_sets(batch):
     torch.testing.assert_close(sliced(x), whole(x), rtol=1e-6, atol=1e-6)
 
 
-def test_several_sets_held_as_kernels():
-    n, coils = 16, 4
-    torch.manual_seed(8)
-    kernels = torch.randn(SETS, coils, 1, 5, 5, dtype=torch.complex64)
-    dense = bartorch.kernels_to_maps(kernels, (1, n, n))
+# Sensitivities held as kernels and several sets of maps are independent
+# features, and they meet in `fetch_slab`: the slab it inflates carries MAPS at
+# full size while COIL is cut to the batch, and the per-axis resize and
+# transform touch only the three spatial axes, so the sets ride through
+# untouched.  The strided copy that pulls a coil slab out of a bank whose sets
+# sit after the coils is the non-contiguous case `md_copy2` exists for.
+#
+# That is the argument; this is the evidence, over every encoding that takes a
+# bank and every arrangement of the loop.
 
-    a = linop.Coils(dense, (coils, n, n))
-    b = linop.Coils(kernels, (coils, n, n), kernels=True)
+_KERNEL_CASES = {
+    "coils": lambda s, k, **o: linop.Coils(s, (COILS_K, N_K, N_K), kernels=k, **o),
+    "cartesian": lambda s, k, **o: linop.CartesianSense(s, (COILS_K, N_K, N_K), kernels=k, **o),
+    "noncartesian": lambda s, k, **o: linop.NoncartesianSense(
+        s, (COILS_K, N_K, N_K), traj=_KERNEL_TRAJ(), kernels=k, **o
+    ),
+    "wave": lambda s, k, **o: linop.WaveSense(
+        s, _KERNEL_PSF(), (COILS_K, N_K, N_K), readout=2 * N_K, kernels=k, **o
+    ),
+    "cartesian subspace": lambda s, k, **o: linop.CartesianSense(
+        s,
+        (COILS_K, N_K, N_K),
+        pattern=_KERNEL_MASK(),
+        basis=_KERNEL_BASIS(),
+        kernels=k,
+        **o,
+    ),
+    "wave subspace": lambda s, k, **o: linop.WaveSense(
+        s,
+        _KERNEL_PSF(),
+        (COILS_K, N_K, N_K),
+        readout=2 * N_K,
+        pattern=_KERNEL_MASK(),
+        basis=_KERNEL_BASIS(),
+        kernels=k,
+        **o,
+    ),
+}
+
+N_K, COILS_K, FRAMES_K, COEFFS_K = 24, 4, 6, 2
+
+
+def _KERNEL_TRAJ():  # noqa: N802  (a fixture by another name)
+    return bt.traj(x=N_K, y=32, r=True)
+
+
+def _KERNEL_PSF():  # noqa: N802
+    # Rank four, so it broadcasts against the plain wave shape and the wider
+    # one that sets of maps and a subspace give it alike.
+    torch.manual_seed(11)
+    return torch.randn(1, 1, N_K, 2 * N_K, dtype=torch.complex64)
+
+
+def _KERNEL_BASIS():  # noqa: N802
+    torch.manual_seed(12)
+    return torch.randn(COEFFS_K, FRAMES_K, dtype=torch.complex64).reshape(
+        COEFFS_K, FRAMES_K, 1, 1, 1, 1, 1
+    )
+
+
+def _KERNEL_MASK():  # noqa: N802
+    torch.manual_seed(13)
+    return (torch.rand(1, FRAMES_K, 1, 1, 1, N_K, 1) > 0.4).to(torch.complex64)
+
+
+def _kernel_bank(sets):
+    torch.manual_seed(8)
+    kernels = torch.randn(sets, COILS_K, 1, 5, 5, dtype=torch.complex64)
+    if 1 == sets:
+        kernels = kernels.reshape(COILS_K, 1, 5, 5)
+    return kernels, bartorch.kernels_to_maps(kernels, (1, N_K, N_K))
+
+
+@pytest.mark.parametrize("case", sorted(_KERNEL_CASES))
+@pytest.mark.parametrize("sets", [1, SETS])
+def test_a_kernel_bank_is_the_maps_it_stands_for_however_many_sets(case, sets):
+    kernels, dense = _kernel_bank(sets)
+    inflated = _KERNEL_CASES[case](dense, False)
+    compact = _KERNEL_CASES[case](kernels, True)
+
+    assert (compact.ishape, compact.oshape) == (inflated.ishape, inflated.oshape)
 
     torch.manual_seed(0)
-    x = torch.randn(*a.ishape, dtype=torch.complex64)
-    torch.testing.assert_close(b(x), a(x), rtol=1e-4, atol=1e-5)
+    x = torch.randn(*inflated.ishape, dtype=torch.complex64)
+    y = torch.randn(*inflated.oshape, dtype=torch.complex64)
+
+    torch.testing.assert_close(compact(x), inflated(x), rtol=1e-4, atol=1e-5)
+    torch.testing.assert_close(compact.adjoint(y), inflated.adjoint(y), rtol=1e-4, atol=1e-5)
+
+    lhs = complex((compact(x).conj() * y).sum())
+    rhs = complex((x.conj() * compact.adjoint(y)).sum())
+    assert abs(lhs - rhs) / abs(lhs) < 1e-5
+
+
+@pytest.mark.parametrize("batch", [1, 2, 4])
+def test_the_slab_does_not_change_a_kernel_bank_of_several_sets(batch):
+    """The two features meet in the loop, so the loop is what is varied."""
+    kernels, _ = _kernel_bank(SETS)
+    sliced = linop.Coils(kernels, (COILS_K, N_K, N_K), kernels=True, coil_batch=batch)
+    one = linop.Coils(kernels, (COILS_K, N_K, N_K), kernels=True, coil_batch=1)
+
+    torch.manual_seed(0)
+    x = torch.randn(*one.ishape, dtype=torch.complex64)
+    torch.testing.assert_close(sliced(x), one(x), rtol=1e-6, atol=1e-6)
 
 
 def test_several_sets_off_the_grid_are_the_sum_of_the_one_set_operators():
