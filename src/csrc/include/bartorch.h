@@ -222,6 +222,13 @@ BARTORCH_API bartorch_linop* bartorch_linop_sense(const long* max_dims, const lo
 		const long* bas_dims, const void* basis, int toeplitz);
 BARTORCH_API bartorch_linop* bartorch_linop_chain(const bartorch_linop* a, const bartorch_linop* b);
 BARTORCH_API bartorch_linop* bartorch_linop_plus(const bartorch_linop* a, const bartorch_linop* b);
+BARTORCH_API bartorch_linop* bartorch_linop_adjoint_op(const bartorch_linop* a);
+BARTORCH_API bartorch_linop* bartorch_linop_normal_op(const bartorch_linop* a);
+BARTORCH_API bartorch_linop* bartorch_linop_scale(int N, const long* dims, float re, float im);
+BARTORCH_API bartorch_linop* bartorch_linop_zconj(int N, const long* dims);
+BARTORCH_API bartorch_linop* bartorch_linop_identity(int N, const long* dims);
+BARTORCH_API bartorch_linop* bartorch_linop_null(int NO, const long* odims, int NI, const long* idims);
+BARTORCH_API double bartorch_linop_maxeigen(const bartorch_linop* a);
 BARTORCH_API int bartorch_linop_domain(const bartorch_linop* h, int N, long* dims);
 BARTORCH_API int bartorch_linop_codomain(const bartorch_linop* h, int N, long* dims);
 BARTORCH_API int bartorch_linop_forward(const bartorch_linop* h, void* dst, const void* src);

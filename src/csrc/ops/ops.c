@@ -39,6 +39,7 @@
 #include "iter/iter4.h"
 #include "iter/italgos.h"
 #include "iter/lsqr.h"
+#include "iter/misc.h"
 
 #include "include/bartorch.h"
 #include "substitute/backend.h"
@@ -382,6 +383,135 @@ bartorch_linop* bartorch_linop_plus(const bartorch_linop* a, const bartorch_lino
 {
 	struct linop_pair_args args = { a, b, NULL };
 	return (0 == guarded(linop_plus_worker, &args)) ? args.result : NULL;
+}
+
+struct linop_unary_args { const bartorch_linop* a; bartorch_linop* result; };
+
+static int linop_adjoint_op_worker(void* p)
+{
+	struct linop_unary_args* a = p;
+	a->result = wrap_linop(linop_get_adjoint(a->a->op));
+	return 0;
+}
+
+/* A^H as an operator, sharing A's operators rather than wrapping it. */
+bartorch_linop* bartorch_linop_adjoint_op(const bartorch_linop* a)
+{
+	struct linop_unary_args args = { a, NULL };
+	return (0 == guarded(linop_adjoint_op_worker, &args)) ? args.result : NULL;
+}
+
+static int linop_normal_op_worker(void* p)
+{
+	struct linop_unary_args* a = p;
+
+	/* linop_create composes forward and adjoint when a constructor gives no
+	 * normal of its own, so this holds for everything reachable from here;
+	 * say so rather than dereference a null if some constructor does not. */
+	if (NULL == a->a->op->normal)
+		error("this operator carries no normal operator\n");
+
+	a->result = wrap_linop(linop_get_normal(a->a->op));
+	return 0;
+}
+
+/* A^H A as an operator, which for an encoding built with toeplitz=true is the
+ * point-spread convolution rather than the two applications. */
+bartorch_linop* bartorch_linop_normal_op(const bartorch_linop* a)
+{
+	struct linop_unary_args args = { a, NULL };
+	return (0 == guarded(linop_normal_op_worker, &args)) ? args.result : NULL;
+}
+
+struct linop_scale_args { int N; const long* dims; float re; float im; bartorch_linop* result; };
+
+static int linop_scale_worker(void* p)
+{
+	struct linop_scale_args* a = p;
+	a->result = wrap_linop(linop_scale_create(a->N, a->dims, a->re + a->im * I));
+	return 0;
+}
+
+/* The scale is passed as two floats: a complex float is not in the ABI. */
+bartorch_linop* bartorch_linop_scale(int N, const long* dims, float re, float im)
+{
+	struct linop_scale_args args = { N, dims, re, im, NULL };
+	return (0 == guarded(linop_scale_worker, &args)) ? args.result : NULL;
+}
+
+struct linop_dims_args { int N; const long* dims; bartorch_linop* result; };
+
+static int linop_zconj_worker(void* p)
+{
+	struct linop_dims_args* a = p;
+	a->result = wrap_linop(linop_zconj_create(a->N, a->dims));
+	return 0;
+}
+
+bartorch_linop* bartorch_linop_zconj(int N, const long* dims)
+{
+	struct linop_dims_args args = { N, dims, NULL };
+	return (0 == guarded(linop_zconj_worker, &args)) ? args.result : NULL;
+}
+
+static int linop_identity_worker(void* p)
+{
+	struct linop_dims_args* a = p;
+	a->result = wrap_linop(linop_identity_create(a->N, a->dims));
+	return 0;
+}
+
+bartorch_linop* bartorch_linop_identity(int N, const long* dims)
+{
+	struct linop_dims_args args = { N, dims, NULL };
+	return (0 == guarded(linop_identity_worker, &args)) ? args.result : NULL;
+}
+
+struct linop_null_args { int NO; const long* odims; int NI; const long* idims; bartorch_linop* result; };
+
+static int linop_null_worker(void* p)
+{
+	struct linop_null_args* a = p;
+	a->result = wrap_linop(linop_null_create(a->NO, a->odims, a->NI, a->idims));
+	return 0;
+}
+
+bartorch_linop* bartorch_linop_null(int NO, const long* odims, int NI, const long* idims)
+{
+	struct linop_null_args args = { NO, odims, NI, idims, NULL };
+	return (0 == guarded(linop_null_worker, &args)) ? args.result : NULL;
+}
+
+struct linop_norm_args { const bartorch_linop* a; double result; };
+
+static int linop_norm_worker(void* p)
+{
+	struct linop_norm_args* a = p;
+
+	/* The power iteration runs on A^H A.  An operator that does not carry
+	 * its own normal gets one composed here, the way linop_stack does. */
+	const struct operator_s* normal = a->a->op->normal;
+	bool composed = (NULL == normal);
+
+	if (composed)
+		normal = operator_chain(a->a->op->forward, a->a->op->adjoint);
+
+	a->result = estimate_maxeigenval(normal);
+
+	if (composed)
+		operator_free(normal);
+
+	return 0;
+}
+
+/* The largest eigenvalue of A^H A, so that the spectral norm of A is its
+ * square root.  BART estimates it by a power iteration from a random start,
+ * drawn from its process-global generator: the answer moves slightly from one
+ * call to the next.  A negative return means the estimate failed. */
+double bartorch_linop_maxeigen(const bartorch_linop* a)
+{
+	struct linop_norm_args args = { a, -1. };
+	return (0 == guarded(linop_norm_worker, &args)) ? args.result : -1.;
 }
 
 int bartorch_linop_domain(const bartorch_linop* h, int N, long* dims)

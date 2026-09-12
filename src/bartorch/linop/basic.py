@@ -19,7 +19,7 @@ from bartorch._operator import (
 )
 from bartorch.linop.base import LinearOperator
 
-__all__ = ["Callback", "Diagonal", "FFT", "MultiplySum", "Sampling"]
+__all__ = ["Callback", "Conj", "Diagonal", "FFT", "Identity", "MultiplySum", "Sampling", "Zero"]
 
 
 class FFT(LinearOperator):
@@ -163,6 +163,74 @@ class MultiplySum(LinearOperator):
             device=self.tensor.device,
         )
         return Built(ptr, self.ishape, self.oshape, keep=(self.tensor,))
+
+
+class Identity(LinearOperator):
+    """The identity on ``shape``, BART's ``linop_identity``.
+
+    It is what an empty product is: ``A ** 0`` returns one, and it is the term
+    to add when an operator needs a multiple of the identity beside it, as in
+    ``A + 0.1 * Identity(A.ishape)``.
+
+    Parameters
+    ----------
+    shape : tuple of int
+        The shape it maps to itself, C order.
+    """
+
+    def __init__(self, shape: Shape):
+        self.shape = tuple(shape)
+        super().__init__()
+
+    def _create(self) -> Built:
+        ptr = self._under_lock(library().bartorch_linop_identity, DIMS, dims(self.shape))
+        return Built(ptr, self.shape, self.shape)
+
+
+class Zero(LinearOperator):
+    """The operator that sends everything to zero, BART's ``linop_null``.
+
+    Parameters
+    ----------
+    oshape : tuple of int
+        Codomain, C order.
+    ishape : tuple of int, optional
+        Domain, C order; the same as ``oshape`` when left out.
+    """
+
+    def __init__(self, oshape: Shape, ishape: Shape | None = None):
+        self.oshape = tuple(oshape)
+        self.ishape = tuple(oshape if ishape is None else ishape)
+        super().__init__()
+
+    def _create(self) -> Built:
+        ptr = self._under_lock(
+            library().bartorch_linop_null, DIMS, dims(self.oshape), DIMS, dims(self.ishape)
+        )
+        return Built(ptr, self.ishape, self.oshape)
+
+
+class Conj(LinearOperator):
+    """Complex conjugation, BART's ``linop_zconj``.
+
+    Conjugation is not linear over the complex numbers -- it is conjugate
+    linear -- so this is the operator BART offers under that name, and it is
+    what ``A.conj()`` and ``A.T`` are built from rather than a rule of their
+    own.
+
+    Parameters
+    ----------
+    shape : tuple of int
+        The shape it maps to itself, C order.
+    """
+
+    def __init__(self, shape: Shape):
+        self.shape = tuple(shape)
+        super().__init__()
+
+    def _create(self) -> Built:
+        ptr = self._under_lock(library().bartorch_linop_zconj, DIMS, dims(self.shape))
+        return Built(ptr, self.shape, self.shape)
 
 
 class Callback(LinearOperator):
