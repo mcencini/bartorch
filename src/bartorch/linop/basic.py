@@ -44,29 +44,34 @@ class FFT(LinearOperator):
     torch.Size([8, 16])
     """
 
+    # The shape a constructor was given is kept privately: an operator answers
+    # for its domain and codomain through ishape and oshape (and pyxu's
+    # dim_shape and codim_shape), and a public `.shape` that some operators
+    # had and others did not would be a third answer to the same question.
+
     def __init__(self, shape: Shape, axes, inverse: bool = False, centred: bool = True, **kwargs):
         # ``centered`` was the spelling before, and still is accepted.
         if "centered" in kwargs:
             centred = kwargs.pop("centered")
         if kwargs:
             raise TypeError(f"unexpected arguments {sorted(kwargs)}")
-        self.shape = tuple(shape)
+        self._shape = tuple(shape)
         self.axes = axes
         self.inverse = bool(inverse)
         self.centred = bool(centred)
         super().__init__()
 
     def _create(self) -> Built:
-        flags = axes_flags(self.axes, len(self.shape))
+        flags = axes_flags(self.axes, len(self._shape))
         ptr = self._under_lock(
             library().bartorch_linop_fft,
             DIMS,
-            dims(self.shape),
+            dims(self._shape),
             flags,
             int(self.inverse),
             int(self.centred),
         )
-        return Built(ptr, self.shape, self.shape)
+        return Built(ptr, self._shape, self._shape)
 
 
 class Diagonal(LinearOperator):
@@ -84,21 +89,21 @@ class Diagonal(LinearOperator):
     """
 
     def __init__(self, diag: torch.Tensor, shape: Shape):
-        self.shape = tuple(shape)
+        self._shape = tuple(shape)
         self.diag = as_operand(diag, tuple(diag.shape), "diag")
         super().__init__()
 
     def _create(self) -> Built:
-        flags = broadcast_flags(tuple(self.diag.shape), self.shape)
+        flags = broadcast_flags(tuple(self.diag.shape), self._shape)
         ptr = self._under_lock(
             library().bartorch_linop_cdiag,
             DIMS,
-            dims(self.shape),
+            dims(self._shape),
             flags,
             self.diag.data_ptr(),
             device=self.diag.device,
         )
-        return Built(ptr, self.shape, self.shape, keep=(self.diag,))
+        return Built(ptr, self._shape, self._shape, keep=(self.diag,))
 
 
 class Sampling(LinearOperator):
@@ -113,19 +118,19 @@ class Sampling(LinearOperator):
     """
 
     def __init__(self, pattern: torch.Tensor, shape: Shape):
-        self.shape = tuple(shape)
+        self._shape = tuple(shape)
         self.pattern = as_operand(pattern, tuple(pattern.shape), "pattern")
         super().__init__()
 
     def _create(self) -> Built:
         ptr = self._under_lock(
             library().bartorch_linop_sampling,
-            dims(self.shape),
+            dims(self._shape),
             dims(tuple(self.pattern.shape)),
             self.pattern.data_ptr(),
             device=self.pattern.device,
         )
-        return Built(ptr, self.shape, self.shape, keep=(self.pattern,))
+        return Built(ptr, self._shape, self._shape, keep=(self.pattern,))
 
 
 class MultiplySum(LinearOperator):
@@ -179,12 +184,12 @@ class Identity(LinearOperator):
     """
 
     def __init__(self, shape: Shape):
-        self.shape = tuple(shape)
+        self._shape = tuple(shape)
         super().__init__()
 
     def _create(self) -> Built:
-        ptr = self._under_lock(library().bartorch_linop_identity, DIMS, dims(self.shape))
-        return Built(ptr, self.shape, self.shape)
+        ptr = self._under_lock(library().bartorch_linop_identity, DIMS, dims(self._shape))
+        return Built(ptr, self._shape, self._shape)
 
 
 class Zero(LinearOperator):
@@ -225,12 +230,12 @@ class Conj(LinearOperator):
     """
 
     def __init__(self, shape: Shape):
-        self.shape = tuple(shape)
+        self._shape = tuple(shape)
         super().__init__()
 
     def _create(self) -> Built:
-        ptr = self._under_lock(library().bartorch_linop_zconj, DIMS, dims(self.shape))
-        return Built(ptr, self.shape, self.shape)
+        ptr = self._under_lock(library().bartorch_linop_zconj, DIMS, dims(self._shape))
+        return Built(ptr, self._shape, self._shape)
 
 
 class Callback(LinearOperator):

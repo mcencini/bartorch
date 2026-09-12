@@ -128,6 +128,8 @@ SYMBOLS = (
     "bartorch_linop_identity",
     "bartorch_linop_null",
     "bartorch_linop_maxeigen",
+    "bartorch_linop_has_pseudo_inv",
+    "bartorch_linop_pseudo_inv",
     "bartorch_linop_domain",
     "bartorch_linop_codomain",
     "bartorch_linop_forward",
@@ -420,6 +422,15 @@ def bind(lib: ctypes.CDLL) -> ctypes.CDLL:
     ]
     lib.bartorch_linop_maxeigen.restype = ctypes.c_double
     lib.bartorch_linop_maxeigen.argtypes = [ctypes.c_void_p]
+    lib.bartorch_linop_has_pseudo_inv.restype = ctypes.c_int
+    lib.bartorch_linop_has_pseudo_inv.argtypes = [ctypes.c_void_p]
+    lib.bartorch_linop_pseudo_inv.restype = ctypes.c_int
+    lib.bartorch_linop_pseudo_inv.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_float,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
     lib.bartorch_linop_domain.restype = ctypes.c_int
     lib.bartorch_linop_domain.argtypes = [
         ctypes.c_void_p,

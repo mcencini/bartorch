@@ -19,6 +19,7 @@
 #include "misc/mri.h"
 #include "misc/types.h"
 
+#include "num/flpmath.h"
 #include "num/iovec.h"
 #include "num/multind.h"
 
@@ -512,6 +513,44 @@ double bartorch_linop_maxeigen(const bartorch_linop* a)
 {
 	struct linop_norm_args args = { a, -1. };
 	return (0 == guarded(linop_norm_worker, &args)) ? args.result : -1.;
+}
+
+/* Whether BART can solve (A^H A + lambda I) x = b in closed form for this
+ * operator.  A constructor says so by giving linop_create a norm_inv, and in
+ * BART as it stands only the sum and average operators do -- everything else
+ * leaves it null, and linop_pseudo_inv would assert on it.  So this is asked
+ * before the call rather than discovered by aborting inside it. */
+int bartorch_linop_has_pseudo_inv(const bartorch_linop* h)
+{
+	return ((NULL != h) && (NULL != h->op->norm_inv)) ? 1 : 0;
+}
+
+struct linop_pinv_args { const bartorch_linop* h; float lambda; void* dst; const void* src; };
+
+static int linop_pinv_worker(void* p)
+{
+	struct linop_pinv_args* a = p;
+	const struct linop_s* op = a->h->op;
+
+	if (NULL == op->norm_inv)
+		error("this operator has no closed-form pseudo-inverse\n");
+
+	const struct iovec_s* dom = linop_domain(op);
+	complex float* adj = md_alloc_sameplace(dom->N, dom->dims, CFL_SIZE, a->dst);
+
+	linop_adjoint_unchecked(op, adj, a->src);
+	linop_norm_inv_unchecked(op, a->lambda, a->dst, adj);
+
+	md_free(adj);
+	return 0;
+}
+
+/* (A^H A + lambda I)^-1 A^H y, which is what linop_pseudo_inv does, without
+ * its assert: the caller has asked bartorch_linop_has_pseudo_inv first. */
+int bartorch_linop_pseudo_inv(const bartorch_linop* h, float lambda, void* dst, const void* src)
+{
+	struct linop_pinv_args args = { h, lambda, dst, src };
+	return guarded(linop_pinv_worker, &args);
 }
 
 int bartorch_linop_domain(const bartorch_linop* h, int N, long* dims)

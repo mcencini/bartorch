@@ -485,3 +485,72 @@ def test_a_conjugated_operand_builds_the_operator_it_says():
     torch.testing.assert_close(
         linop.Diagonal(w.conj(), shape)(x), w.conj().resolve_conj() * x, rtol=1e-5, atol=1e-5
     )
+
+
+# --- shapes and the pseudo-inverse ------------------------------------------
+
+
+def test_the_shapes_carry_pyxus_names_too():
+    """An operator should stand in for a pyxu LinOp, as it does for a deepinv one."""
+    sens = _rand(4, 8, 16)
+    S = linop.MultiplySum(sens, (1, 8, 16), (4, 8, 16))
+    assert S.dim_shape == S.ishape == (1, 8, 16)
+    assert S.codim_shape == S.oshape == (4, 8, 16)
+    assert S.dim_size == 8 * 16
+    assert S.codim_size == 4 * 8 * 16
+    assert S.dim_rank == S.codim_rank == 3
+
+
+def test_no_operator_answers_to_shape():
+    """It would mean (M, N) to one reader and a pair of shapes to another.
+
+    Some operators used to keep the shape their constructor was given under
+    that name and others had none at all, so the same attribute answered a
+    different question depending on which class you had.  The domain and the
+    codomain are what an operator is asked for, and they have names.
+    """
+    ops = [
+        linop.FFT((8, 16), axes=-1),
+        linop.Identity((8, 16)),
+        linop.Conj((8, 16)),
+        linop.Diagonal(_rand(1, 16), (8, 16)),
+        linop.MultiplySum(_rand(4, 8, 16), (1, 8, 16), (4, 8, 16)),
+    ]
+    for A in ops:
+        assert not hasattr(A, "shape"), f"{type(A).__name__} still answers to .shape"
+
+
+def test_the_pseudo_inverse_solves_the_damped_least_squares():
+    """Every operator here takes the solver; none of them carries a norm_inv."""
+    shape = (8, 16)
+    D = linop.Diagonal(_rand(1, 16) + 2.0, shape)
+    y = _rand(*shape)
+    x = D.pinv(y, damp=0.1, maxiter=200, tol=1e-9)
+    # (A^H A + damp I) x = A^H y
+    torch.testing.assert_close(D.adjoint(D(x)) + 0.1 * x, D.adjoint(y), rtol=1e-3, atol=1e-3)
+
+
+def test_the_pseudo_inverse_is_what_deepinv_asks_for():
+    shape = (8, 16)
+    D = linop.Diagonal(_rand(1, 16) + 2.0, shape)
+    y = _rand(*shape)
+    torch.testing.assert_close(D.A_dagger(y, damp=0.1, maxiter=60), D.pinv(y, damp=0.1, maxiter=60))
+
+
+def test_nothing_here_yet_has_barts_closed_form_pseudo_inverse():
+    """Which is why every pinv above goes through CG.
+
+    A constructor offers the closed form by giving BART a ``norm_inv``, and in
+    all of BART only ``linops/sum.c`` does -- the sum, average and repeat
+    operators, none of which is exposed yet.  Chaining, adding and adjoining
+    drop it even when an operand has one.  This test is here to change when
+    those operators arrive, rather than leave the fast path unexercised and
+    unremarked.
+    """
+    from bartorch._lib import library
+
+    F = linop.FFT((8, 16), axes=-1)
+    chain, added, adjoint = F @ F, F + F, F.H
+    for A in (F, linop.Identity((8, 16)), linop.Conj((8, 16)), chain, added, adjoint):
+        held = A._bart()  # held: the handle is freed with the object
+        assert not library().bartorch_linop_has_pseudo_inv(held._h.ptr)
