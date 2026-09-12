@@ -30,8 +30,9 @@ def _physics_class() -> type:
         from deepinv.physics import LinearPhysics
     except ImportError as exc:  # pragma: no cover - depends on the environment
         raise ImportError(
-            "deepinv is required for bartorch.to_deepinv(); "
-            "install it with `pip install 'bartorch[deepinv]'`"
+            "bartorch.to_deepinv() hands an operator over as a deepinv "
+            "LinearPhysics, and deepinv is a dependency of this package -- an "
+            "environment without it is a broken one rather than a lean one"
         ) from exc
 
     class BartPhysics(LinearPhysics):

@@ -1,7 +1,12 @@
 # Rendering imports bartorch from src/, which needs torch (a CPU build is
 # enough) but not the compiled library.  Running the gallery needs both.
 numpy>=1.24
-torch>=2.1
+torch>=2.2
+# `bartorch.optim.iterators` builds its classes on top of deepinv's the first
+# time one is asked for, so autosummary cannot import a single one of them
+# without it.  A dependency rather than an extra since the proximal solvers
+# started running those iterations.
+deepinv>=0.2
 sphinx>=7.3,<9
 sphinx-book-theme>=1.1,<2
 sphinx-gallery>=0.17,<0.20
