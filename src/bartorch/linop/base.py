@@ -25,6 +25,48 @@ def _tracking(x) -> bool:
     return isinstance(x, torch.Tensor) and x.requires_grad and torch.is_grad_enabled()
 
 
+def _slicing(key, shape: tuple[int, ...]):
+    """Where each axis's block starts, how wide it is, and which axes go away.
+
+    What ``A[key]`` has to know to build the restriction, worked out from the
+    same key a tensor would take.
+    """
+    keys = list(key) if isinstance(key, tuple) else [key]
+
+    if sum(1 for k in keys if k is Ellipsis) > 1:
+        raise IndexError("only one ... is allowed in an index")
+    if Ellipsis in keys:
+        at = keys.index(Ellipsis)
+        keys[at : at + 1] = [slice(None)] * (len(shape) - (len(keys) - 1))
+    if len(keys) > len(shape):
+        raise IndexError(f"{len(keys)} indices for an operator with {len(shape)} axes")
+    keys += [slice(None)] * (len(shape) - len(keys))
+
+    start, block, drop = [], [], set()
+    for axis, (k, size) in enumerate(zip(keys, shape)):
+        if isinstance(k, (int,)) and not isinstance(k, bool):
+            index = k + size if k < 0 else k
+            if not 0 <= index < size:
+                raise IndexError(f"index {k} is out of range for axis {axis} of size {size}")
+            start.append(index)
+            block.append(1)
+            drop.add(axis)
+        elif isinstance(k, slice):
+            if k.step not in (None, 1):
+                raise IndexError(
+                    "a step other than one has no BART constructor behind it; "
+                    "index the result instead"
+                )
+            begin, stop, _ = k.indices(size)
+            if stop < begin:
+                raise IndexError(f"axis {axis} would be empty, which is not an operator")
+            start.append(begin)
+            block.append(stop - begin)
+        else:
+            raise IndexError(f"an operator takes integers, slices and ..., not {type(k).__name__}")
+    return tuple(start), tuple(block), drop
+
+
 class LinearOperator(Operator):
     """A linear map between two C-order shapes, with an adjoint.
 
@@ -160,6 +202,35 @@ class LinearOperator(Operator):
         out: LinearOperator = Identity(self.ishape)
         for _ in range(power):
             out = out @ self
+        return out
+
+    def __getitem__(self, key) -> LinearOperator:
+        """``A[key]``: the operator whose output is ``A(x)[key]``.
+
+        The restriction is BART's, not a view taken afterwards -- an
+        :class:`~bartorch.linop.Extract` chained onto this operator, with a
+        :class:`~bartorch.linop.Reshape` after it where an integer index drops
+        an axis the way it does for a tensor.  So a slice of an operator is
+        still one BART operator, and its adjoint puts the block back and
+        leaves the rest zero.
+
+        Integers and slices, one per axis or fewer, with ``...`` standing for
+        the axes not named.  A step other than one has no BART constructor
+        behind it and is refused rather than emulated.
+
+        Examples
+        --------
+        >>> coil = Sense(...)          # (coils, y, x)
+        >>> first = coil[0]            # (y, x), the first coil
+        >>> middle = coil[:, 8:24]     # (coils, 16, x)
+        """
+        from bartorch.linop.shape import Extract, Reshape
+
+        start, block, drop = _slicing(key, self.oshape)
+        out: LinearOperator = Extract(start, block, self.oshape) @ self
+        if drop:
+            kept = tuple(n for axis, n in enumerate(block) if axis not in drop)
+            out = Reshape(kept or (1,), block) @ out
         return out
 
     @property

@@ -13,6 +13,7 @@ from bartorch.linop.basic import (
     Sampling,
     Zero,
 )
+from bartorch.linop.combine import block, block_diag, concatenate, hstack, stack
 from bartorch.linop.nufft import NUFFT
 from bartorch.linop.sense import Sense
 from bartorch.linop.shape import (
@@ -32,6 +33,11 @@ from bartorch.linop.shape import (
 )
 
 __all__ = [
+    "block",
+    "block_diag",
+    "concatenate",
+    "hstack",
+    "stack",
     "Callback",
     "Conj",
     "Diagonal",
