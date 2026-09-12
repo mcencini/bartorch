@@ -15,6 +15,7 @@ from bartorch.linop.basic import (
     Zero,
 )
 from bartorch.linop.combine import block, block_diag, concatenate, hstack, stack
+from bartorch.linop.mri import CartesianSense, Wave
 from bartorch.linop.nufft import NUFFT
 from bartorch.linop.sense import Sense
 from bartorch.linop.shape import (
@@ -41,6 +42,7 @@ __all__ = [
     "concatenate",
     "hstack",
     "stack",
+    "CartesianSense",
     "Callback",
     "ComponentDiagonal",
     "Conj",
@@ -69,5 +71,6 @@ __all__ = [
     "Sense",
     "Sum",
     "Transpose",
+    "Wave",
     "Zero",
 ]
