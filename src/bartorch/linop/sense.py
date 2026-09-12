@@ -76,6 +76,12 @@ class NoncartesianSense(LinearOperator):
     #: operator over BART's own FFT, and reaches it by clearing this.
     _needs_traj = True
 
+    #: How many subspace coefficients the image carries when no basis is handed
+    #: to BART.  A basis says this for itself; the grid encoding sets it,
+    #: because on a grid the contraction is chained on afterwards rather than
+    #: folded into the transform -- which is how ``grecon/model.c`` builds it.
+    _coeff_count = 1
+
     def __init__(
         self,
         sensitivities: torch.Tensor,
@@ -131,8 +137,8 @@ class NoncartesianSense(LinearOperator):
         # A basis puts the coefficients on BART's COEFF axis, three past the
         # coils, and the image carries that axis where the coils do not.
         b = self.basis
-        coeffs = 1 if b is None else int(b.shape[0])
-        if b is None:
+        coeffs = self._coeff_count if b is None else int(b.shape[0])
+        if b is None and 1 == coeffs:
             self._max_shape = (coils, *spatial)
             self.ishape = spatial
         else:
@@ -235,6 +241,11 @@ class Coils(LinearOperator):
         the sensitivities are.
     coil_batch : int
         Coils applied at once; 0 uses BART's own ``fmac`` over all of them.
+    coeffs : int
+        Subspace coefficients the image carries.  With more than one the
+        domain is ``(coeffs, 1, 1, 1, *spatial)`` and the codomain
+        ``(coeffs, 1, 1, coils, *spatial)``: the sensitivities are the same for
+        every coefficient, so nothing about the multiply changes.
 
     Examples
     --------
@@ -249,10 +260,13 @@ class Coils(LinearOperator):
         kernels: bool = False,
         device: torch.device | str | None = None,
         coil_batch: int = 1,
+        coeffs: int = 1,
     ):
         image_shape = tuple(image_shape)
         if len(image_shape) < 3:
             raise ValueError("image_shape is (coils, *spatial), for instance (coils, y, x)")
+        if coeffs < 1:
+            raise ValueError(f"coeffs is a number of coefficients, not {coeffs}")
 
         coils, spatial = image_shape[0], image_shape[1:]
         if len(spatial) == 2:
@@ -273,10 +287,16 @@ class Coils(LinearOperator):
         self.image_shape = image_shape
         self.kernels = bool(kernels)
         self.coil_batch = int(coil_batch)
-        self._max_shape = (coils, *spatial)
+        self.coeffs = int(coeffs)
+        if 1 == self.coeffs:
+            self._max_shape = (coils, *spatial)
+            self.ishape = spatial
+        else:
+            # The coefficients ride on BART's COEFF axis, three past the coils.
+            self._max_shape = (self.coeffs, 1, 1, coils, *spatial)
+            self.ishape = (self.coeffs, 1, 1, 1, *spatial)
+        self.oshape = self._max_shape
         self._sens_shape = (coils, *sens_spatial)
-        self.ishape = spatial
-        self.oshape = (coils, *spatial)
         self.device = torch.device(device) if device is not None else s.device
 
         super().__init__()

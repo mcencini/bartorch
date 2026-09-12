@@ -38,7 +38,17 @@ Each is a single BART operator once built.
 
 `Coils` is the sensitivity multiply on its own, with the same slab loop and
 the same kernels, for an encoding whose transform is not a Fourier transform
-and so cannot be a SENSE operator.
+and so cannot be a SENSE operator.  It is what carries the coils through
+`WaveSense`, which is why sensitivities held as the k-space kernels `nlinv`
+produces work there too.
+
+`CartesianSense` and `WaveSense` read a temporal subspace when given a
+`basis` -- T2 shuffling and Wave-Shuffling, the forward `pics -B` builds.
+With `toeplitz=True` the normal collapses the frames into one
+coefficient-by-coefficient kernel, so an iteration never makes them: on
+sixty-four echoes over four coefficients that is sixteen times less k-space in
+the middle of every step.  Nothing is convolved and no grid is doubled, since
+the pattern already lies on the grid the transform is circular over.
 
 `FieldCorrected` wraps any of them and is a sum of chains rather than one:
 off-resonance during the readout is a different transform per sample, and time

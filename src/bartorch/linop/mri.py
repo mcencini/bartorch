@@ -17,10 +17,10 @@ from __future__ import annotations
 import torch
 
 from bartorch._operator import Shape, as_operand
-from bartorch.linop.base import LinearOperator
+from bartorch.linop.base import LinearOperator, _WithNormal
 from bartorch.linop.basic import FFT, Diagonal, MultiplySum, Sampling
-from bartorch.linop.sense import NoncartesianSense
-from bartorch.linop.shape import Resize
+from bartorch.linop.sense import Coils, NoncartesianSense
+from bartorch.linop.shape import Reshape, Resize
 
 __all__ = ["CartesianSense", "FieldCorrected", "WaveSense"]
 
@@ -45,11 +45,130 @@ class _GridSense(NoncartesianSense):
 
     _needs_traj = False
 
+    def __init__(self, *args, coeffs: int = 1, **kwargs):
+        # Read by NoncartesianSense while it works the shapes out.  On a grid
+        # the subspace contraction is chained on afterwards rather than folded
+        # into the transform, as ``grecon/model.c`` builds it, so the image
+        # carries coefficients that BART is not told about.
+        self._coeff_count = int(coeffs)
+        super().__init__(*args, **kwargs)
+
+
+def _broadcastable(values: torch.Tensor, shape: tuple[int, ...], what: str) -> torch.Tensor:
+    """``values`` given the rank of ``shape``, with ones where it is to broadcast."""
+    got = tuple(values.shape)
+    if len(got) > len(shape):
+        raise ValueError(f"{what} has {len(got)} axes, more than the operator's {len(shape)}")
+    widened = (1,) * (len(shape) - len(got)) + got
+    for axis, (n, full) in enumerate(zip(widened, shape)):
+        if n not in (1, full):
+            raise ValueError(f"{what} is {n} along axis {axis}, where the operator is {full}")
+    return values.reshape(widened)
+
+
+def _basis_matrix(basis: torch.Tensor) -> tuple[torch.Tensor, int, int]:
+    """``(coeffs, frames)`` read off a basis whose remaining axes are one."""
+    b = as_operand(basis, tuple(basis.shape), "basis")
+    if b.ndim < 2:
+        raise ValueError(f"a basis is (coeffs, frames, 1, ...), not {tuple(b.shape)}")
+    if any(n != 1 for n in b.shape[2:]):
+        raise ValueError(f"a basis is (coeffs, frames, 1, ...), not {tuple(b.shape)}")
+    coeffs, frames = int(b.shape[0]), int(b.shape[1])
+    return b.reshape(coeffs, frames), coeffs, frames
+
+
+def _subspace_kernel(
+    b: torch.Tensor, pattern: torch.Tensor | None, sample_shape: tuple[int, ...]
+) -> torch.Tensor:
+    """The one kernel a sampled subspace normal collapses to.
+
+    With a pattern ``P`` and a basis ``B``, the normal contracts the frames
+    away::
+
+        (A^H A x)[k'] = sum_k ( sum_t P[t] conj(B[k',t]) B[k,t] ) x[k]
+
+    so the sum over ``t`` can be done once, at build time, and the frames need
+    never be made at all.  On sixty-four echoes over four coefficients that is
+    sixteen times less k-space in the middle of every iteration, which is the
+    whole reason a subspace reconstruction is affordable.
+
+    It is a Toeplitz normal in the sense the non-Cartesian encoding means it --
+    the product in closed form rather than the two applications -- but nothing
+    is convolved and no grid is doubled: the pattern already lies on the grid
+    the transform is circular over, so the kernel multiplies where the samples
+    are.  In the language of the decomposed point spread function, one coset.
+
+    Returned with the coefficients of the domain on BART's COEFF axis and
+    those of the codomain on its TE axis, which is the one arrangement a
+    single ``fmac`` can contract; the caller reads the answer back onto COEFF
+    with a reshape, which moves nothing.
+    """
+    frames = int(b.shape[1])
+    rank = len(sample_shape)
+
+    if pattern is None:
+        weights = torch.ones((1, frames, *(1,) * (rank - 2)), dtype=b.dtype, device=b.device)
+    else:
+        weights = _broadcastable(pattern, sample_shape, "pattern").to(b.dtype).to(b.device)
+
+    outer = b[:, None, :] * b.conj()[None, :, :]
+    return torch.tensordot(outer, weights.reshape(frames, *weights.shape[2:]), dims=([2], [0]))
+
+
+def _subspace(
+    encoding: LinearOperator,
+    basis: torch.Tensor,
+    pattern: torch.Tensor | None,
+    *,
+    toeplitz: bool,
+) -> LinearOperator:
+    """``encoding`` read through a temporal subspace, and sampled.
+
+    The forward is what ``grecon/model.c`` chains: the encoding over the
+    coefficient images, the basis contracting them into frames, the pattern
+    keeping the samples that were taken.  The normal is what ``t2sh`` applies:
+    the encoding, one kernel, the encoding back, with the frames never made.
+    """
+    b, coeffs, frames = _basis_matrix(basis)
+
+    coil_shape = tuple(encoding.oshape)
+    if coil_shape[0] != coeffs:
+        raise ValueError(
+            f"the encoding carries {coil_shape[0]} coefficients and the basis has {coeffs}"
+        )
+
+    sample_shape = (1, frames, *coil_shape[2:])
+    contraction = b.reshape(coeffs, frames, *(1,) * (len(coil_shape) - 2))
+
+    out = MultiplySum(contraction, coil_shape, sample_shape) @ encoding
+    if pattern is not None:
+        mask = _broadcastable(pattern, sample_shape, "pattern")
+        out = Sampling(mask, sample_shape) @ out
+
+    if not toeplitz:
+        return out
+
+    # The kernel's codomain coefficients sit on the TE axis, which is what an
+    # ``fmac`` can contract onto; the reshape puts them back on COEFF and is
+    # the identity on the buffer.
+    mixed_shape = (1, coeffs, *coil_shape[2:])
+    kernel = _subspace_kernel(b, pattern, sample_shape)
+    normal = (
+        encoding.H
+        @ Reshape(coil_shape, mixed_shape)
+        @ MultiplySum(kernel, coil_shape, mixed_shape)
+        @ encoding
+    )
+    return _WithNormal(out, normal)
+
 
 def CartesianSense(  # noqa: N802  (it is a constructor)
     sensitivities: torch.Tensor,
     image_shape: Shape,
     pattern: torch.Tensor | None = None,
+    *,
+    basis: torch.Tensor | None = None,
+    toeplitz: bool = True,
     **kwargs,
 ) -> LinearOperator:
     """Coils, a Fourier transform, and the samples that were taken.
@@ -60,45 +179,80 @@ def CartesianSense(  # noqa: N802  (it is a constructor)
     The transform is :class:`~bartorch.linop.NoncartesianSense` over BART's
     own FFT instead of a NUFFT -- the same operator, coil batching and all --
     with :class:`~bartorch.linop.Sampling` chained onto it.  Without a pattern
-    it *is* that operator, returned unchanged, because there is nothing to
-    add.
+    and without a basis it *is* that operator, returned unchanged, because
+    there is nothing to add.
+
+    With a basis it is what ``grecon/model.c`` chains: the encoding over the
+    coefficient images, the basis contracting them into frames, the pattern
+    keeping the samples.  The image is then
+    ``(coeffs, 1, 1, 1, *spatial)`` and the samples ``(1, frames, 1, coils,
+    *spatial)``.
 
     Parameters
     ----------
     sensitivities : tensor
-        Coil sensitivities, ``(coils, *spatial)``.
+        Coil sensitivities, ``(coils, *spatial)``, or their k-space kernels
+        with ``kernels=True``.
     image_shape : tuple of int
         Coil-image shape, ``(coils, *spatial)``.  A two-dimensional problem
         may leave BART's third spatial axis out.
     pattern : tensor, optional
         Ones where a sample was taken and zeros where it was not, broadcast
         over the axes it has one of -- so ``(1, 1, y, 1)`` undersamples a
-        phase encode across every coil and slice.
-    **kwargs
-        Passed to :class:`~bartorch.linop.NoncartesianSense`: ``coil_batch``,
-        ``kernels``, ``device`` and the rest.
+        phase encode across every coil and slice.  With a basis it is read
+        against the sample shape, so its second axis is the frames.
+    basis : tensor, optional
+        Temporal subspace basis ``(coeffs, frames, 1, ...)``, contracting the
+        image's coefficients into the frames that were acquired.  This is
+        T2 shuffling and what ``pics -B`` takes.
+    toeplitz : bool
+        With a basis, apply the normal as one coefficient-by-coefficient
+        kernel rather than as the two applications.  See the notes.
 
     Notes
     -----
-    The normal operator of the composition is the two applications rather than
-    a point-spread convolution: a mask does not commute with the transform, so
-    there is no Toeplitz shortcut to take.  On a grid there is nothing to gain
-    from one anyway.
+    Without a basis the normal is the two applications: a mask does not
+    commute with the transform, so there is no shortcut, and on a grid there
+    is nothing to gain from one anyway.
+
+    With a basis there is a great deal to gain, and it is the same shortcut
+    the non-Cartesian encoding calls Toeplitz -- the product in closed form
+    rather than the two applications::
+
+        (A^H A x)[k'] = sum_k ( sum_t P[t] conj(B[k',t]) B[k,t] ) x[k]
+
+    The sum over the frames is done once, when the operator is built, so an
+    iteration never makes the frames at all: sixty-four echoes over four
+    coefficients is sixteen times less k-space in the middle of every step.
+    Nothing is convolved and no grid is doubled -- the pattern already lies on
+    the grid the transform is circular over -- which is the one way this
+    differs from the non-Cartesian normal.  It costs a kernel of
+    ``coeffs x coeffs`` over the axes the pattern varies on, so a pattern that
+    is flat along the readout keeps it flat too.
 
     Examples
     --------
     >>> A = CartesianSense(maps, (coils, y, x), pattern=mask)
     >>> x = bartorch.optim.CG(maxiter=30)(kspace, A)
+
+    >>> A = CartesianSense(maps, (coils, y, x), pattern=mask, basis=phi)
+    >>> A.ishape, A.oshape
+    ((4, 1, 1, 1, 1, y, x), (1, 64, 1, coils, 1, y, x))
     """
     if kwargs.get("traj") is not None:
         raise ValueError("a trajectory makes this non-Cartesian; use NoncartesianSense for that")
 
-    encoding = _GridSense(sensitivities, image_shape, **kwargs)
-    if pattern is None:
-        return encoding
+    if basis is None:
+        encoding = _GridSense(sensitivities, image_shape, **kwargs)
+        if pattern is None:
+            return encoding
 
-    mask = as_operand(pattern, tuple(pattern.shape), "pattern")
-    return Sampling(mask, encoding.oshape) @ encoding
+        mask = as_operand(pattern, tuple(pattern.shape), "pattern")
+        return Sampling(mask, encoding.oshape) @ encoding
+
+    _, coeffs, _ = _basis_matrix(basis)
+    encoding = _GridSense(sensitivities, image_shape, coeffs=coeffs, **kwargs)
+    return _subspace(encoding, basis, pattern, toeplitz=toeplitz)
 
 
 def WaveSense(  # noqa: N802  (it is a constructor)
@@ -108,6 +262,12 @@ def WaveSense(  # noqa: N802  (it is a constructor)
     readout: int,
     pattern: torch.Tensor | None = None,
     centred: bool = False,
+    *,
+    basis: torch.Tensor | None = None,
+    toeplitz: bool = True,
+    kernels: bool = False,
+    coil_batch: int = 1,
+    device: torch.device | str | None = None,
 ) -> LinearOperator:
     """Wave-CAIPI encoding, as BART's ``wave`` builds it.
 
@@ -117,15 +277,25 @@ def WaveSense(  # noqa: N802  (it is a constructor)
     operators in a row, which is what ``src/wave.c`` chains:
 
     ``Sampling . FFT(phase) . Diagonal(psf) . FFT(readout) . Resize .
-    MultiplySum(maps)``
+    Coils(maps)``
 
     and every one of them is BART's, so the result is a single BART operator
     with an adjoint and a normal of its own.
 
+    The coils go on through :class:`~bartorch.linop.Coils` rather than a plain
+    ``fmac``, which is what lets the sensitivities be held as the k-space
+    kernels ``nlinv`` produces and inflated a slab at a time, exactly as
+    :class:`~bartorch.linop.NoncartesianSense` holds them.
+
+    With a basis this is Wave-Shuffling: the same encoding over coefficient
+    images, the basis contracting them into frames, the pattern keeping the
+    samples.
+
     Parameters
     ----------
     sensitivities : tensor
-        Coil sensitivities, ``(coils, *spatial)``.
+        Coil sensitivities, ``(coils, *spatial)``, or their k-space kernels
+        with ``kernels=True``.
     psf : tensor
         The wave point-spread function on the oversampled grid, broadcast over
         the axes it has one of.  :func:`bartorch.tools.wavepsf` makes one from
@@ -141,6 +311,20 @@ def WaveSense(  # noqa: N802  (it is a constructor)
     centred : bool
         Centre the two transforms.  BART's ``wave`` leaves them uncentred and
         this follows it; ``wshfl`` centres them for its calibration path.
+    basis : tensor, optional
+        Temporal subspace basis ``(coeffs, frames, 1, ...)``.
+    toeplitz : bool
+        With a basis, apply the normal as one coefficient-by-coefficient
+        kernel rather than as the two applications.  The kernel goes where the
+        sampling goes -- after the phase-encode transforms, on the oversampled
+        grid -- and is the same one :func:`CartesianSense` builds.
+    kernels : bool
+        Read ``sensitivities`` as k-space kernels.
+    coil_batch : int
+        Coils applied at once; 0 uses BART's own ``fmac`` over all of them,
+        which is what this operator did before it had a choice.
+    device : device, optional
+        Where the coil multiply is built.
 
     Examples
     --------
@@ -153,36 +337,31 @@ def WaveSense(  # noqa: N802  (it is a constructor)
             f"an oversampled readout of {readout} is shorter than the image's {spatial[-1]}"
         )
 
-    maps = as_operand(sensitivities, tuple(sensitivities.shape), "sensitivities")
-    if maps.shape[0] != coils:
-        raise ValueError(f"{maps.shape[0]} sensitivities for {coils} coils")
-    maps = maps.reshape(coils, *spatial)
+    coeffs = 1 if basis is None else _basis_matrix(basis)[1]
+    coil = Coils(
+        sensitivities,
+        (coils, *spatial),
+        kernels=kernels,
+        device=device,
+        coil_batch=coil_batch,
+        coeffs=coeffs,
+    )
 
-    coil_shape = (coils, *spatial)
-    over_shape = (coils, *spatial[:-1], readout)
+    coil_shape = coil.oshape
+    over_shape = (*coil_shape[:-1], readout)
 
     # The order is wave.c's: E, R, Fx, W, Fyz, M, applied left to right.
-    out: LinearOperator = MultiplySum(maps, spatial, coil_shape)
-    out = Resize(over_shape, coil_shape) @ out
+    out: LinearOperator = Resize(over_shape, coil_shape) @ coil
     out = FFT(over_shape, axes=-1, centred=centred) @ out
-    out = Diagonal(as_operand(psf, tuple(psf.shape), "psf"), over_shape) @ out
+    out = Diagonal(_broadcastable(psf, over_shape, "psf"), over_shape) @ out
     out = FFT(over_shape, axes=(-2, -3), centred=centred) @ out
 
+    if basis is not None:
+        return _subspace(out, basis, pattern, toeplitz=toeplitz)
+
     if pattern is not None:
-        out = Sampling(as_operand(pattern, tuple(pattern.shape), "pattern"), over_shape) @ out
+        out = Sampling(_broadcastable(pattern, over_shape, "pattern"), over_shape) @ out
     return out
-
-
-def _broadcastable(values: torch.Tensor, shape: tuple[int, ...], what: str) -> torch.Tensor:
-    """``values`` given the rank of ``shape``, with ones where it is to broadcast."""
-    got = tuple(values.shape)
-    if len(got) > len(shape):
-        raise ValueError(f"{what} has {len(got)} axes, more than the operator's {len(shape)}")
-    widened = (1,) * (len(shape) - len(got)) + got
-    for axis, (n, full) in enumerate(zip(widened, shape)):
-        if n not in (1, full):
-            raise ValueError(f"{what} is {n} along axis {axis}, where the operator is {full}")
-    return values.reshape(widened)
 
 
 def FieldCorrected(  # noqa: N802  (it is a constructor)
