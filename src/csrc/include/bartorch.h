@@ -214,12 +214,16 @@ BARTORCH_API bartorch_linop* bartorch_linop_nufft(int N, const long* ksp_dims, c
 		const void* traj, const long* wgh_dims, const void* weights,
 		const long* bas_dims, const void* basis, int toeplitz, float os, float width);
 /* SENSE, over sensitivities held as maps or as k-space kernels, walking the
- * coils a slab at a time.  A NULL trajectory makes the Cartesian operator. */
+ * coils a slab at a time.  A NULL trajectory makes the Cartesian operator,
+ * and `modulated` asks that one for BART's own sample convention -- a scale
+ * and a modulation folded into the sensitivities, the plain transform after
+ * them -- rather than the centred transform.  Off the grid there is only one
+ * convention and `modulated` is refused. */
 BARTORCH_API bartorch_linop* bartorch_linop_sense(const long* max_dims, const long* ksp_dims,
 		const long* sens_dims, const void* sens, int kernels,
 		const long* traj_dims, const void* traj,
 		const long* wgh_dims, const void* weights,
-		const long* bas_dims, const void* basis, int toeplitz);
+		const long* bas_dims, const void* basis, int toeplitz, int modulated);
 /* The coil multiply on its own, over sensitivities held as maps or as kernels,
  * walking the coils a slab at a time.  For an encoding whose transform is not
  * a Fourier transform and so cannot be a SENSE operator. */

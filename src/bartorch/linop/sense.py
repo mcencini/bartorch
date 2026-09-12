@@ -91,6 +91,21 @@ class NoncartesianSense(LinearOperator):
         kernels and :func:`bartorch.kernels_to_maps` gives the maps they stand for.
     toeplitz : bool
         Apply the normal as a convolution with a point spread function.
+    modulated : bool
+        On a grid, answer in BART's own sample convention rather than the
+        centred one -- a scale and a modulation folded into the sensitivities
+        and the plain transform after them, which is what ``pics`` works in
+        and what its k-space is written in.  The two differ by an ``fftmod``
+        on the sample axes; the default is the centred convention, which is
+        what :func:`bartorch.fft` produces and so what an operator chained
+        against one expects.
+
+        It does not depend on ``coil_batch``: every slab answers in the
+        convention that was asked for.  At ``coil_batch=0`` this is BART's own
+        operator, arithmetic and all, which is what reproduces ``pics`` to the
+        last bit.  Refused off a grid, where there is only one convention, and
+        with ``kernels``, because the modulation is the whole grid's and a
+        kernel cannot carry it.
     weights : tensor, optional
         Diagonal in k-space, as :class:`~bartorch.linop.NUFFT` takes it.
     basis : tensor, optional
@@ -110,11 +125,8 @@ class NoncartesianSense(LinearOperator):
         is cut down to one that does, because the loop steps by the slab and
         the transform is built for a slab.
 
-        On a grid, ``0`` is not only a different arrangement: BART's own
-        Cartesian SENSE leaves the samples in the modulated convention
-        ``pics`` works in, and every other batch gives the centred one
-        :func:`bartorch.fft` produces.  The two differ by an ``fftmod`` on the
-        sample axes.
+        What it changes is residency, not arithmetic.  The sample convention
+        is ``modulated``'s to say and not this one's.
     fold_maps : bool
         Apply the sensitivities inside the transform of the normal, which saves
         two coil images per batch.  Takes effect only where the transform works
@@ -140,6 +152,7 @@ class NoncartesianSense(LinearOperator):
         kspace_shape: Shape | None = None,
         kernels: bool = False,
         toeplitz: bool = True,
+        modulated: bool = False,
         weights: torch.Tensor | None = None,
         basis: torch.Tensor | None = None,
         device: torch.device | str | None = None,
@@ -153,6 +166,8 @@ class NoncartesianSense(LinearOperator):
             raise ValueError("this is the encoding off a grid; CartesianSense is the one on it")
         if traj is None and (weights is not None or basis is not None):
             raise ValueError("weights and a basis belong to a non-Cartesian transform")
+        if traj is not None and modulated:
+            raise ValueError("the modulated convention is the grid's; off it there is only one")
 
         # BART reads the coils off a dimension of their own, which sits after
         # the three spatial ones, so a two-dimensional problem carries the
@@ -168,6 +183,7 @@ class NoncartesianSense(LinearOperator):
         self.image_shape = image_shape
         self.kernels = bool(kernels)
         self.toeplitz = bool(toeplitz)
+        self.modulated = bool(modulated)
         self.traj = None if traj is None else as_operand(traj, tuple(traj.shape), "traj")
         self.weights = (
             None if weights is None else as_operand(weights, tuple(weights.shape), "weights")
@@ -258,6 +274,7 @@ class NoncartesianSense(LinearOperator):
             None if b is None else dims(tuple(b.shape)),
             None if b is None else b.data_ptr(),
             int(self.toeplitz),
+            int(self.modulated),
             device=self.device,
         )
 

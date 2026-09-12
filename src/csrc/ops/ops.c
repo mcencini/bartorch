@@ -320,7 +320,7 @@ extern const struct linop_s* bartorch_sense_operator(const long max_dims[DIMS], 
 		const long traj_dims[DIMS], const _Complex float* traj,
 		const long wgh_dims[DIMS], const _Complex float* weights,
 		const long bas_dims[DIMS], const _Complex float* basis,
-		const struct nufft_conf_s* conf);
+		const struct nufft_conf_s* conf, int modulated);
 
 struct linop_sense_args {
 
@@ -329,7 +329,7 @@ struct linop_sense_args {
 	const long* traj_dims; const void* traj;
 	const long* wgh_dims; const void* weights;
 	const long* bas_dims; const void* basis;
-	int toeplitz;
+	int toeplitz; int modulated;
 	bartorch_linop* result;
 };
 
@@ -344,7 +344,7 @@ static int linop_sense_worker(void* p)
 
 	a->result = wrap_linop(bartorch_sense_operator(a->max_dims, a->sens_dims, a->sens, a->kernels,
 				a->ksp_dims, a->traj_dims, a->traj,
-				a->wgh_dims, a->weights, a->bas_dims, a->basis, &conf));
+				a->wgh_dims, a->weights, a->bas_dims, a->basis, &conf, a->modulated));
 	return 0;
 }
 
@@ -352,10 +352,10 @@ bartorch_linop* bartorch_linop_sense(const long* max_dims, const long* ksp_dims,
 		const long* sens_dims, const void* sens, int kernels,
 		const long* traj_dims, const void* traj,
 		const long* wgh_dims, const void* weights,
-		const long* bas_dims, const void* basis, int toeplitz)
+		const long* bas_dims, const void* basis, int toeplitz, int modulated)
 {
 	struct linop_sense_args a = { max_dims, ksp_dims, sens_dims, sens, kernels,
-		traj_dims, traj, wgh_dims, weights, bas_dims, basis, toeplitz, NULL };
+		traj_dims, traj, wgh_dims, weights, bas_dims, basis, toeplitz, modulated, NULL };
 	return (0 == guarded(linop_sense_worker, &a)) ? a.result : NULL;
 }
 
