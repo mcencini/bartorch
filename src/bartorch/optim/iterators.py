@@ -394,7 +394,20 @@ def _ravine(told: float, t: float) -> tuple[float, float]:
 
 
 def _formula(p: float, q: float, r: float, t: float) -> float:
-    """``fista_formula``: ``(p + sqrtf(q + r t^2)) / 2``, in single precision."""
+    """``fista_formula``: ``(p + sqrtf(q + r t^2)) / 2``, in single precision.
+
+    Whether ``q + r * t * t`` is one rounding or two is the compiler's choice,
+    not the source's: clang contracts it into a fused multiply-add where the
+    hardware has one, which arm64 does and the x86-64 baseline does not, and a
+    fused multiply-add does not round the product.  Written out here as the
+    two roundings, which is what BART computes on x86-64.
+
+    It makes no difference to ``pics``.  With BART's own ``r = 4`` the two
+    forms agree at every step of the recurrence -- a test measures that -- so
+    the default is the same bits on either.  ``--fista_pqr`` with some other
+    ``r`` is where they part, and there a solve on arm64 can differ from this
+    one in the last places.
+    """
     t32 = np.float32(t)
     inner = np.float32(np.float32(q) + np.float32(r) * t32 * t32)
     return float((np.float32(p) + np.sqrt(inner)) / np.float32(2.0))
