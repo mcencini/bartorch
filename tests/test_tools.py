@@ -274,3 +274,16 @@ def test_a_derived_wrapper_is_shaped_like_the_command_line():
 
 def test_describe_covers_a_private_command_too():
     assert describe("svd").startswith("svd --")
+
+
+def test_a_tool_resolves_a_conjugated_view_before_reading_it():
+    """See tests/test_linop.py: a conjugation is a flag on shared storage.
+
+    A tool reads its operand through the same pointer an operator does, so it
+    had the same hole: ``flip`` of a conjugated tensor came back unconjugated.
+    """
+    x = torch.randn(4, 8, dtype=torch.complex64)
+    torch.testing.assert_close(
+        bartorch.flip(x.conj(), axes=-1), bartorch.flip(x.conj().resolve_conj(), axes=-1)
+    )
+    assert not torch.allclose(bartorch.flip(x.conj(), axes=-1), bartorch.flip(x, axes=-1))
