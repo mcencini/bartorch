@@ -16,10 +16,7 @@ import torch
 
 import bartorch
 from bartorch import linop, optim, prox
-
-pytest.importorskip("deepinv")
-
-from bartorch.optim import iterators  # noqa: E402
+from bartorch.optim import iterators
 
 
 def _rand(*shape):

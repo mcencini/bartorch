@@ -73,8 +73,8 @@ is a few axpys on an image per step, which is nothing beside a transform.
    TermPrior
 ```
 
-`NormalEquations` differentiates $\tfrac12\|Ax-y\|^2$ as $A^HAx - A^Hy$
-rather than $A^H(Ax-y)$, so a Toeplitz encoding answers with its point-spread
+`NormalEquations` differentiates $\tfrac12\|Ax-y\|^2$ as $A^H A x - A^H y$
+rather than $A^H (A x - y)$, so a Toeplitz encoding answers with its point-spread
 convolution instead of a transform and its adjoint.  $A^Hy$ is computed once
 per solve: BART's gridding reduces in whatever order its threads finish, so
 two adjoints of the same data differ in the last bits, and computing it once

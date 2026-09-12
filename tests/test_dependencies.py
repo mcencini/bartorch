@@ -7,6 +7,14 @@ for the platforms FINUFFT ships a wheel for too -- installing one never starts
 a build, and anywhere else the install is from the sdist, where compiling BART
 is already the price of entry.
 
+deepinv is a dependency for a different reason.  It was an extra while it was
+only an adapter -- `to_deepinv` handed an operator over and nothing imported
+deepinv until someone asked -- and it stopped being that when `optim.IST`,
+`optim.FISTA`, `optim.ADMM` and `optim.PRIDU` started running the iterations in
+`bartorch.optim.iterators`, which are written as deepinv optimizers.  A solver
+that runs a different loop depending on whether an extra happens to be
+installed is worse than the install it saves.
+
 cuFINUFFT is the one that stays optional: it serves a transform on a card, and
 most machines have no card.
 
@@ -46,6 +54,32 @@ def test_finufft_is_a_dependency_and_not_an_extra():
     assert "finufft" not in project["optional-dependencies"], (
         "an extra named finufft says it is optional, and it is not"
     )
+
+
+def test_deepinv_is_a_dependency_and_not_an_extra():
+    """The ordinary way to run a regularized reconstruction imports it."""
+    project = _pyproject()["project"]
+    assert _requirements(project["dependencies"], "deepinv"), (
+        "the proximal solvers run iterations written as deepinv optimizers; "
+        "deepinv belongs in dependencies, not in optional-dependencies"
+    )
+    assert "deepinv" not in project["optional-dependencies"], (
+        "an extra named deepinv says the solvers are optional, and they are not"
+    )
+
+
+def test_the_solvers_really_do_reach_deepinv():
+    """The claim the requirement rests on, rather than the requirement alone.
+
+    If the iterations ever stop being deepinv's, this is the test that says so
+    and the dependency can go back to being an extra.
+    """
+    import deepinv.optim.optim_iterators as di
+
+    from bartorch.optim import iterators
+
+    assert issubclass(iterators.ADMMIteration, di.OptimIterator)
+    assert issubclass(iterators.FISTAIteration, di.OptimIterator)
 
 
 def test_the_finufft_requirement_holds_on_every_platform():

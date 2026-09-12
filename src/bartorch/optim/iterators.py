@@ -48,8 +48,9 @@ def _classes():
         from deepinv.optim.optim_iterators import OptimIterator
     except ImportError as exc:  # pragma: no cover - depends on the environment
         raise ImportError(
-            "deepinv is required for bartorch.optim's iterations; "
-            "install it with `pip install 'bartorch[deepinv]'`"
+            "bartorch.optim's iterations are written as deepinv optimizers, and "
+            "deepinv is a dependency of this package -- an environment without it "
+            "is a broken one rather than a lean one"
         ) from exc
     return DataFidelity, Prior, OptimIterator
 
