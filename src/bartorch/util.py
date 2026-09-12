@@ -79,7 +79,7 @@ def _resize_centre(x: torch.Tensor, spatial) -> torch.Tensor:
 def maps_to_kernels(maps: torch.Tensor, size: int | tuple[int, ...]) -> torch.Tensor:
     """Coil sensitivities as k-space kernels: the centre of each map's unitary spectrum.
 
-    What :class:`bartorch.linop.Sense` takes with ``kernels=True``.  Content
+    What :class:`bartorch.linop.NoncartesianSense` takes with ``kernels=True``.  Content
     outside the kernel's band is lost; :func:`kernels_to_maps` gives the maps
     the kernels stand for, to measure that loss.
 

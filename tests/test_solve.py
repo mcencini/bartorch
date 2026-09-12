@@ -87,7 +87,7 @@ def test_the_solve_builds_no_operator_of_its_own():
     traj = bt.traj(readout=n, spokes=24, radial=True)
     maps = _rand(2, n, n)
     maps = maps / maps.abs().square().sum(0, keepdim=True).sqrt()
-    A = linop.Sense(maps, (2, n, n), traj=traj)
+    A = linop.NoncartesianSense(maps, (2, n, n), traj=traj)
     y = A(_rand(1, n, n))
     term = prox.Wavelet(axes=(-1, -2), weight=0.01)
     term.build(A.ishape)
@@ -314,7 +314,7 @@ def _pics_problem(size=24, coils=4, accel=2):
     y = bartorch.fftmod(kspace * pattern, axes=(-1, -2, -3), inverse=True)
     scale = optim.data_scaling(y)
 
-    S = linop.Sense(maps.squeeze(1), (coils, size, size), coil_batch=0)
+    S = linop.CartesianSense(maps.squeeze(1), (coils, size, size), coil_batch=0)
     A = linop.Sampling(pattern.squeeze(), S.oshape) @ S
     return kspace, maps, A, (y * (1.0 / scale)).squeeze(1), scale
 
@@ -403,7 +403,7 @@ def test_the_scaling_for_a_trajectory_is_the_other_branch():
     traj = bt.traj(readout=n, spokes=24, radial=True)
     maps = _rand(2, n, n)
     maps = maps / maps.abs().square().sum(0, keepdim=True).sqrt()
-    A = linop.Sense(maps, (2, n, n), traj=traj)
+    A = linop.NoncartesianSense(maps, (2, n, n), traj=traj)
     y = A(_rand(1, n, n))
     scale = optim.data_scaling(y, A=A)
     assert scale > 0

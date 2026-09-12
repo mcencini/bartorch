@@ -5,11 +5,11 @@ Each is a composition of operators BART already has, chained by
 a Python object walked per iteration.  That is how BART itself builds them:
 ``src/wave.c`` chains the coil multiply, the resize, two Fourier transforms,
 the point-spread diagonal and the sampling mask into one ``linop_s``, and
-:class:`Wave` below is the same six in the same order.
+:class:`WaveSense` below is the same six in the same order.
 
-:class:`~bartorch.linop.Sense` is not one of these.  It is BART's own
-operator, with the coil batching and the Toeplitz normal that make it what it
-is, and what is here composes with it rather than replacing it.
+:class:`~bartorch.linop.NoncartesianSense` is not one of these.  It is BART's
+own operator, with the coil batching and the Toeplitz normal that make it what
+it is, and what is here composes with it rather than replacing it.
 """
 
 from __future__ import annotations
@@ -19,10 +19,10 @@ import torch
 from bartorch._operator import Shape, as_operand
 from bartorch.linop.base import LinearOperator
 from bartorch.linop.basic import FFT, Diagonal, MultiplySum, Sampling
-from bartorch.linop.sense import Sense
+from bartorch.linop.sense import NoncartesianSense
 from bartorch.linop.shape import Resize
 
-__all__ = ["CartesianSense", "FieldCorrected", "Wave"]
+__all__ = ["CartesianSense", "FieldCorrected", "WaveSense"]
 
 
 def _spatial(image_shape: Shape) -> tuple[int, tuple[int, ...]]:
@@ -32,6 +32,18 @@ def _spatial(image_shape: Shape) -> tuple[int, tuple[int, ...]]:
         raise ValueError("image_shape is (coils, *spatial), for instance (coils, y, x)")
     coils, spatial = image_shape[0], image_shape[1:]
     return coils, ((1, *spatial) if 2 == len(spatial) else spatial)
+
+
+class _GridSense(NoncartesianSense):
+    """:class:`~bartorch.linop.NoncartesianSense` over BART's own FFT.
+
+    The same operator, the same coil loop, the same sensitivities held either
+    way -- with the transform each slab carries being the centred unitary FFT
+    rather than a NUFFT.  Private because what a caller wants is the name for
+    the encoding, which is :func:`CartesianSense`.
+    """
+
+    _needs_traj = False
 
 
 def CartesianSense(  # noqa: N802  (it is a constructor)
@@ -45,10 +57,11 @@ def CartesianSense(  # noqa: N802  (it is a constructor)
     What ``pics`` encodes on a grid: sensitivities, the centred unitary
     transform, and a pattern that keeps the samples the sequence acquired.
 
-    The transform is :class:`~bartorch.linop.Sense` without a trajectory --
-    BART's own operator, coil batching and all -- with
-    :class:`~bartorch.linop.Sampling` chained onto it.  Without a pattern it
-    *is* that operator, returned unchanged, because there is nothing to add.
+    The transform is :class:`~bartorch.linop.NoncartesianSense` over BART's
+    own FFT instead of a NUFFT -- the same operator, coil batching and all --
+    with :class:`~bartorch.linop.Sampling` chained onto it.  Without a pattern
+    it *is* that operator, returned unchanged, because there is nothing to
+    add.
 
     Parameters
     ----------
@@ -62,8 +75,8 @@ def CartesianSense(  # noqa: N802  (it is a constructor)
         over the axes it has one of -- so ``(1, 1, y, 1)`` undersamples a
         phase encode across every coil and slice.
     **kwargs
-        Passed to :class:`~bartorch.linop.Sense`: ``coil_batch``, ``kernels``,
-        ``device`` and the rest.
+        Passed to :class:`~bartorch.linop.NoncartesianSense`: ``coil_batch``,
+        ``kernels``, ``device`` and the rest.
 
     Notes
     -----
@@ -78,9 +91,9 @@ def CartesianSense(  # noqa: N802  (it is a constructor)
     >>> x = bartorch.optim.CG(maxiter=30)(kspace, A)
     """
     if kwargs.get("traj") is not None:
-        raise ValueError("a trajectory makes this non-Cartesian; use Sense for that")
+        raise ValueError("a trajectory makes this non-Cartesian; use NoncartesianSense for that")
 
-    encoding = Sense(sensitivities, image_shape, **kwargs)
+    encoding = _GridSense(sensitivities, image_shape, **kwargs)
     if pattern is None:
         return encoding
 
@@ -88,7 +101,7 @@ def CartesianSense(  # noqa: N802  (it is a constructor)
     return Sampling(mask, encoding.oshape) @ encoding
 
 
-def Wave(  # noqa: N802  (it is a constructor)
+def WaveSense(  # noqa: N802  (it is a constructor)
     sensitivities: torch.Tensor,
     psf: torch.Tensor,
     image_shape: Shape,
@@ -132,7 +145,7 @@ def Wave(  # noqa: N802  (it is a constructor)
     Examples
     --------
     >>> psf = bartorch.tools.wavepsf(...)
-    >>> A = Wave(maps, psf, (coils, y, x), readout=2 * x, pattern=mask)
+    >>> A = WaveSense(maps, psf, (coils, y, x), readout=2 * x, pattern=mask)
     """
     coils, spatial = _spatial(image_shape)
     if readout < spatial[-1]:
@@ -194,7 +207,7 @@ def FieldCorrected(  # noqa: N802  (it is a constructor)
 
     which is ``linop_plus`` over ``linop_chain``: one BART operator, whatever
     ``E`` is.  So this wraps any encoding -- :func:`CartesianSense`,
-    :func:`Wave`, or the non-Cartesian :class:`~bartorch.linop.Sense` -- and
+    :func:`WaveSense`, or :class:`~bartorch.linop.NoncartesianSense` -- and
     the last of those is what mirtorch calls ``Gmri``.
 
     The coefficients are ``mri-nufft``'s: the fit is a least-squares problem

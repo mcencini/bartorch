@@ -39,13 +39,13 @@ def maps():
 def test_without_a_pattern_it_is_barts_own_operator(maps):
     """There is nothing to add, so nothing is added."""
     A = linop.CartesianSense(maps, (COILS, Y, X))
-    assert isinstance(A, linop.Sense)
+    assert isinstance(A, linop.NoncartesianSense)
 
 
 def test_a_pattern_keeps_the_samples_that_were_taken(maps):
-    """Checked against Sense, which this composes rather than replaces."""
+    """Checked against the encoding alone, which this composes rather than replaces."""
     mask = (torch.rand(1, 1, Y, 1) > 0.5).to(torch.complex64)
-    S = linop.Sense(maps, (COILS, Y, X))
+    S = linop.CartesianSense(maps, (COILS, Y, X))
     A = linop.CartesianSense(maps, (COILS, Y, X), pattern=mask)
     x = _rand(*S.ishape)
     torch.testing.assert_close(A(x), mask * S(x), rtol=1e-4, atol=1e-4)
@@ -54,14 +54,20 @@ def test_a_pattern_keeps_the_samples_that_were_taken(maps):
 def test_it_keeps_the_shapes_sense_uses(maps):
     """So one can be swapped for the other without reshaping anything."""
     mask = (torch.rand(1, 1, Y, 1) > 0.5).to(torch.complex64)
-    S = linop.Sense(maps, (COILS, Y, X))
+    S = linop.CartesianSense(maps, (COILS, Y, X))
     A = linop.CartesianSense(maps, (COILS, Y, X), pattern=mask)
     assert (A.ishape, A.oshape) == (S.ishape, S.oshape)
 
 
 def test_a_trajectory_is_refused_here(maps):
-    with pytest.raises(ValueError, match="use Sense for that"):
+    with pytest.raises(ValueError, match="use NoncartesianSense for that"):
         linop.CartesianSense(maps, (COILS, Y, X), traj=_rand(3, 8, 16))
+
+
+def test_the_noncartesian_encoding_wants_a_trajectory(maps):
+    """The names say which is which, so neither stands in for the other."""
+    with pytest.raises(ValueError, match="CartesianSense is the one on it"):
+        linop.NoncartesianSense(maps, (COILS, Y, X))
 
 
 def test_a_fully_sampled_encoding_inverts_back_to_the_image(maps):
@@ -113,7 +119,7 @@ def _by_hand(maps, psf, mask, image, centred):
 @pytest.mark.parametrize("centred", [False, True])
 def test_wave_is_the_chain_bart_builds(wave_parts, centred):
     maps, psf, mask = wave_parts
-    A = linop.Wave(maps, psf, SHAPE, readout=WX, pattern=mask, centred=centred)
+    A = linop.WaveSense(maps, psf, SHAPE, readout=WX, pattern=mask, centred=centred)
     image = _rand(*A.ishape)
     torch.testing.assert_close(
         A(image), _by_hand(maps, psf, mask, image, centred), rtol=1e-4, atol=1e-4
@@ -122,14 +128,14 @@ def test_wave_is_the_chain_bart_builds(wave_parts, centred):
 
 def test_wave_oversamples_the_readout_and_leaves_the_rest(wave_parts):
     maps, psf, mask = wave_parts
-    A = linop.Wave(maps, psf, SHAPE, readout=WX, pattern=mask)
+    A = linop.WaveSense(maps, psf, SHAPE, readout=WX, pattern=mask)
     assert A.ishape == (Z, 5, SX)
     assert A.oshape == (COILS, Z, 5, WX)
 
 
 def test_wave_without_a_pattern_is_the_encoding_without_one(wave_parts):
     maps, psf, _ = wave_parts
-    A = linop.Wave(maps, psf, SHAPE, readout=WX)
+    A = linop.WaveSense(maps, psf, SHAPE, readout=WX)
     assert A.oshape == (COILS, Z, 5, WX)
     image = _rand(*A.ishape)
     ones = torch.ones(1, Z, 5, WX, dtype=torch.complex64)
@@ -141,13 +147,13 @@ def test_wave_without_a_pattern_is_the_encoding_without_one(wave_parts):
 def test_a_readout_shorter_than_the_image_is_refused(wave_parts):
     maps, psf, mask = wave_parts
     with pytest.raises(ValueError, match="shorter than the image"):
-        linop.Wave(maps, psf, SHAPE, readout=SX - 1, pattern=mask)
+        linop.WaveSense(maps, psf, SHAPE, readout=SX - 1, pattern=mask)
 
 
 def test_the_wrong_number_of_sensitivities_is_refused(wave_parts):
     _, psf, mask = wave_parts
     with pytest.raises(ValueError, match="sensitivities for"):
-        linop.Wave(_rand(2, Z, 5, SX), psf, SHAPE, readout=WX, pattern=mask)
+        linop.WaveSense(_rand(2, Z, 5, SX), psf, SHAPE, readout=WX, pattern=mask)
 
 
 # --- what both have to hold --------------------------------------------------
@@ -162,8 +168,8 @@ def _encodings():
     mask = (torch.rand(1, Z, 5, WX) > 0.4).to(torch.complex64)
     return [
         linop.CartesianSense(maps2d, (COILS, Y, X), pattern=mask2d),
-        linop.Wave(maps3d, psf, SHAPE, readout=WX, pattern=mask),
-        linop.Wave(maps3d, psf, SHAPE, readout=WX, centred=True),
+        linop.WaveSense(maps3d, psf, SHAPE, readout=WX, pattern=mask),
+        linop.WaveSense(maps3d, psf, SHAPE, readout=WX, centred=True),
     ]
 
 
@@ -254,7 +260,7 @@ def test_a_field_map_with_one_value_says_what_is_wrong(one_dimensional):
 
 
 def test_it_wraps_any_encoding(maps):
-    """Cartesian here; the same wrapper over Sense is what mirtorch calls Gmri."""
+    """Cartesian here; the same wrapper over NoncartesianSense is what mirtorch calls Gmri."""
     E = linop.CartesianSense(
         maps, (COILS, Y, X), pattern=torch.ones(1, 1, Y, 1).to(torch.complex64)
     )

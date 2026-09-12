@@ -16,9 +16,9 @@ from bartorch.linop.basic import (
     Zero,
 )
 from bartorch.linop.combine import block, block_diag, concatenate, hstack, stack
-from bartorch.linop.mri import CartesianSense, FieldCorrected, Wave
+from bartorch.linop.mri import CartesianSense, FieldCorrected, WaveSense
 from bartorch.linop.nufft import NUFFT
-from bartorch.linop.sense import Sense
+from bartorch.linop.sense import NoncartesianSense
 from bartorch.linop.shape import (
     Extract,
     Flip,
@@ -61,6 +61,7 @@ __all__ = [
     "Mean",
     "MultiplySum",
     "NUFFT",
+    "NoncartesianSense",
     "Pad",
     "Permute",
     "Real",
@@ -70,9 +71,8 @@ __all__ = [
     "Roll",
     "ScaledSum",
     "Sampling",
-    "Sense",
     "Sum",
     "Transpose",
-    "Wave",
+    "WaveSense",
     "Zero",
 ]

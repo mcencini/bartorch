@@ -1,4 +1,4 @@
-"""The SENSE encoding, applied a slab of coils at a time."""
+"""The non-Cartesian SENSE encoding, applied a slab of coils at a time."""
 
 from __future__ import annotations
 
@@ -9,15 +9,18 @@ from bartorch._lib import library
 from bartorch._operator import Built, Shape, as_operand, dims
 from bartorch.linop.base import LinearOperator
 
-__all__ = ["Sense"]
+__all__ = ["NoncartesianSense"]
 
 
-class Sense(LinearOperator):
-    """Sensitivities followed by a Fourier transform, applied ``coil_batch`` coils at a time.
+class NoncartesianSense(LinearOperator):
+    """Sensitivities followed by a NUFFT, applied ``coil_batch`` coils at a time.
 
-    Memory held -- and, behind a non-Cartesian transform, the grid the Toeplitz
-    normal convolves on -- scales with ``coil_batch`` rather than with the
-    number of coils.
+    Memory held -- and the doubled grid the Toeplitz normal convolves on --
+    scales with ``coil_batch`` rather than with the number of coils.
+
+    A trajectory is what this operator is for.  On a grid the operator is
+    :func:`~bartorch.linop.CartesianSense`, which is this one's own Cartesian
+    path under the name that says so.
 
     Parameters
     ----------
@@ -27,9 +30,8 @@ class Sense(LinearOperator):
         transform is on a card is transferred a slab at a time.
     image_shape : tuple of int
         Coil-image shape, C order, for instance ``(coils, y, x)``.
-    traj : tensor, optional
-        Trajectory in grid units.  Without one the transform is the centred
-        unitary FFT, ``bartorch.fft(..., unitary=True)``.
+    traj : tensor
+        Trajectory in grid units, as :func:`bartorch.tools.traj` produces.
     kspace_shape : tuple of int, optional
         Sample shape; by default the trajectory's, or the image's on a grid.
     kernels : bool
@@ -62,6 +64,10 @@ class Sense(LinearOperator):
         Toeplitz function.
     """
 
+    #: Whether a trajectory is required.  The Cartesian encoding is the same
+    #: operator over BART's own FFT, and reaches it by clearing this.
+    _needs_traj = True
+
     def __init__(
         self,
         sensitivities: torch.Tensor,
@@ -79,6 +85,8 @@ class Sense(LinearOperator):
         image_shape = tuple(image_shape)
         if len(image_shape) < 3:
             raise ValueError("image_shape is (coils, *spatial), for instance (coils, y, x)")
+        if traj is None and self._needs_traj:
+            raise ValueError("this is the encoding off a grid; CartesianSense is the one on it")
         if traj is None and (weights is not None or basis is not None):
             raise ValueError("weights and a basis belong to a non-Cartesian transform")
 

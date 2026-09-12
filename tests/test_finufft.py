@@ -1562,7 +1562,9 @@ def test_compressing_a_radial_function_costs_less_than_the_embedding_itself(in_t
 
     def build(compress, toeplitz):
         _finufft.compress_psf(compress)
-        return linop.Sense(maps, (coils, n, n, n), traj=traj, basis=basis, toeplitz=toeplitz)
+        return linop.NoncartesianSense(
+            maps, (coils, n, n, n), traj=traj, basis=basis, toeplitz=toeplitz
+        )
 
     try:
         before = _finufft.functions_compressed()
@@ -1721,7 +1723,7 @@ def test_the_passes_inside_the_transforms_answer_as_the_passes_on_their_own(in_t
     maps = maps / maps.abs().pow(2).sum(0, keepdim=True).sqrt()
 
     compressed = _finufft.functions_compressed()
-    A = linop.Sense(maps.cuda(), shape, traj=traj.cuda(), basis=basis.cuda())
+    A = linop.NoncartesianSense(maps.cuda(), shape, traj=traj.cuda(), basis=basis.cuda())
     assert _finufft.functions_compressed() > compressed, "the function was compressed"
 
     x = torch.randn(A.ishape, dtype=torch.complex64, device="cuda")
@@ -1774,7 +1776,9 @@ def test_sets_convolved_in_pairs_answer_as_sets_one_at_a_time(in_tools):
         _finufft.pair_sets(pair)
         _finufft.bfloat16_function(False)
         try:
-            A = linop.Sense(maps.cuda(), (coils, n, n, n), traj=traj.cuda(), basis=basis.cuda())
+            A = linop.NoncartesianSense(
+                maps.cuda(), (coils, n, n, n), traj=traj.cuda(), basis=basis.cuda()
+            )
             before = _finufft.pairs_convolved()
             out = A.normal(x)
             return out, _finufft.pairs_convolved() - before
@@ -1823,7 +1827,9 @@ def test_a_function_kept_in_bfloat16_answers_as_one_kept_in_floats(in_tools):
         _finufft.bfloat16_function(bf16)
         try:
             before = _finufft.functions_bfloat16()
-            A = linop.Sense(maps.cuda(), (coils, n, n, n), traj=traj.cuda(), basis=basis.cuda())
+            A = linop.NoncartesianSense(
+                maps.cuda(), (coils, n, n, n), traj=traj.cuda(), basis=basis.cuda()
+            )
             return A.normal(x), _finufft.functions_bfloat16() - before
         finally:
             _finufft.bfloat16_function(True)
@@ -1857,7 +1863,7 @@ def test_the_contraction_kernel_is_barts_contraction(in_tools):
     maps = maps / maps.abs().pow(2).sum(0, keepdim=True).sqrt()
 
     before = _finufft.functions_compressed()
-    A = linop.Sense(maps.cuda(), (coils, n, n), traj=traj.cuda(), basis=basis.cuda())
+    A = linop.NoncartesianSense(maps.cuda(), (coils, n, n), traj=traj.cuda(), basis=basis.cuda())
     assert _finufft.functions_compressed() > before, "the function was compressed"
 
     x = torch.randn(A.ishape, dtype=torch.complex64, device="cuda")

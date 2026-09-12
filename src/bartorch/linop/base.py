@@ -220,7 +220,7 @@ class LinearOperator(Operator):
 
         Examples
         --------
-        >>> coil = Sense(...)          # (coils, y, x)
+        >>> coil = CartesianSense(...)  # (coils, y, x)
         >>> first = coil[0]            # (y, x), the first coil
         >>> middle = coil[:, 8:24]     # (coils, 16, x)
         """

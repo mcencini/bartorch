@@ -44,7 +44,7 @@ image = bt.pics(kspace, maps, regularizers=prox.Wavelet((-1, -2), 0.005), solver
 
 # ... or the same problem assembled from an operator and a solver.
 # pics also scales the data first; see optim.data_scaling.
-A = linop.Sense(maps.squeeze(1), (8, 128, 128))
+A = linop.CartesianSense(maps.squeeze(1), (8, 128, 128))
 x = optim.FISTA(prox.Wavelet((-1, -2), 0.005), maxiter=50)(kspace, A)
 
 spectrum = bartorch.fft(bt.phantom(128), axes=(-2, -1), unitary=True)
