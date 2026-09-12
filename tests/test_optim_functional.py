@@ -13,8 +13,6 @@ import torch
 
 from bartorch import linop, optim, prox
 
-pytest.importorskip("deepinv")
-
 SHAPE = (1, 8, 8)
 
 
