@@ -15,6 +15,17 @@ dependencies = [
     # BLAS and LAPACK come from compiled libraries already in the process:
     # what torch links, and SciPy's cython_blas / cython_lapack tables.
     "scipy>=1.10",
+    # Off-resonance correction fits its coefficients by a least-squares
+    # problem over a histogram of the field map -- not something BART has a
+    # primitive for, and not something to write a second time.  mri-nufft has
+    # three factorizations of it (svd, mti, mfi) and bartorch.linop's
+    # FieldCorrected calls them.
+    #
+    # It is a dependency rather than an extra, which costs every install:
+    # mri-nufft asks for numpy>=2.2 and scipy>=1.13, above the floors here, and
+    # for matplotlib, which its very first module imports.  That was weighed
+    # and accepted -- off-resonance is the common case here, not a corner.
+    "mri-nufft>=1.0",
     "torch>=2.1",
     # FINUFFT is the NUFFT.  Every non-Cartesian transform BART makes goes
     # through the substitution under `nufft_create`, and nothing reaches BART's

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from bartorch.linop import mri  # noqa: F401  (tests reach the fit helper)
 from bartorch.linop.base import LinearOperator
 from bartorch.linop.basic import (
     FFT,
@@ -15,7 +16,7 @@ from bartorch.linop.basic import (
     Zero,
 )
 from bartorch.linop.combine import block, block_diag, concatenate, hstack, stack
-from bartorch.linop.mri import CartesianSense, Wave
+from bartorch.linop.mri import CartesianSense, FieldCorrected, Wave
 from bartorch.linop.nufft import NUFFT
 from bartorch.linop.sense import Sense
 from bartorch.linop.shape import (
@@ -50,6 +51,7 @@ __all__ = [
     "Diagonal",
     "Extract",
     "FFT",
+    "FieldCorrected",
     "Flip",
     "Gradient",
     "Hankel",
