@@ -30,6 +30,7 @@
 #include "iter/iter.h"
 #include "iter/iter2.h"
 #include "iter/lsqr.h"
+#include "iter/monitor.h"
 #include "iter/prox.h"
 #include "iter/thresh.h"
 
@@ -250,6 +251,26 @@ void bartorch_prox_free(bartorch_prox* h)
 	xfree(h);
 }
 
+/* A monitor that does nothing but count.
+ *
+ * Every one of BART's iterations calls `iter_monitor` once at the top of each
+ * step, so counting the calls counts the steps taken -- which for conjugate
+ * gradients is what an alternating-direction solver budgets by: `admm` breaks
+ * on `nr_invokes > maxiter`, and `nr_invokes` is the conjugate-gradient
+ * iterations run across the whole solve.  There is no other way to see that
+ * number from outside the library.
+ */
+struct counting_monitor {
+
+	struct iter_monitor_s super;
+	long count;
+};
+
+static void counting_monitor_fun(struct iter_monitor_s* monitor, const struct vec_iter_s* /*ops*/, const float* /*x*/)
+{
+	((struct counting_monitor*)monitor)->count++;
+}
+
 int bartorch_solve(const bartorch_linop* handle,
 		const char* algorithm,
 		const char* const* reg_kinds, const long* reg_xflags, const long* reg_jflags,
@@ -260,7 +281,7 @@ int bartorch_solve(const bartorch_linop* handle,
 		float fista_p, float fista_q, float fista_r,
 		float sigma_tau_ratio, int adaptive_step,
 		int warmstart,
-		void* x, const void* y)
+		void* x, const void* y, long* iterations)
 {
 	const struct linop_s* model_op = bartorch_linop_unwrap(handle);
 
@@ -388,10 +409,15 @@ int bartorch_solve(const bartorch_linop* handle,
 	 * reach it corrupts the heap the moment the host frees the operator. */
 	const struct linop_s* owned = linop_clone(model_op);
 
+	struct counting_monitor counter = { { NULL, counting_monitor_fun, NULL, 0., 0. }, 0 };
+
 	lsqr2(DIMS, &conf, it.italgo, it.iconf, owned,
 			nr_penalties, thresh_ops, trafos_cond ? trafos : NULL,
 			img_dims, (complex float*)x, ksp_dims, (const complex float*)y,
-			NULL, NULL);
+			NULL, (NULL != iterations) ? &counter.super : NULL);
+
+	if (NULL != iterations)
+		*iterations = counter.count;
 
 	linop_free(owned);
 	italgo_config_free(it);

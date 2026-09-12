@@ -57,7 +57,7 @@ def test_ist_is_barts_ist(problem, iters):
     A, y = problem
     term = prox.L1(0.05)
     ours = _drive(iterators.ISTIteration(), A, y, term, iters, stepsize=0.7)
-    assert torch.equal(ours, optim.IST(term, maxiter=iters, step=0.7)(y, A))
+    assert torch.equal(ours, optim.IST(term, maxiter=iters, step=0.7).in_library(y, A))
 
 
 @pytest.mark.parametrize("iters", [1, 2, 6, 13, 25, 60])
@@ -71,7 +71,7 @@ def test_fista_is_barts_fista(problem, iters):
     A, y = problem
     term = prox.L1(0.05)
     ours = _drive(iterators.FISTAIteration(), A, y, term, iters, stepsize=0.7)
-    assert torch.equal(ours, optim.FISTA(term, maxiter=iters, step=0.7)(y, A))
+    assert torch.equal(ours, optim.FISTA(term, maxiter=iters, step=0.7).in_library(y, A))
 
 
 @pytest.mark.parametrize("step", [0.25, 0.95, 1.5])
@@ -79,7 +79,7 @@ def test_the_step_is_the_one_bart_takes(problem, step):
     A, y = problem
     term = prox.Wavelet((-1, -2), 0.02)
     ours = _drive(iterators.FISTAIteration(), A, y, term, 20, stepsize=step)
-    assert torch.equal(ours, optim.FISTA(term, maxiter=20, step=step)(y, A))
+    assert torch.equal(ours, optim.FISTA(term, maxiter=20, step=step).in_library(y, A))
 
 
 def test_the_acceleration_parameters_are_barts(problem):
@@ -87,7 +87,7 @@ def test_the_acceleration_parameters_are_barts(problem):
     term = prox.L1(0.05)
     pqr = (1.0, 1.0, 2.0)
     ours = _drive(iterators.FISTAIteration(), A, y, term, 20, stepsize=0.7, pqr=pqr)
-    assert torch.equal(ours, optim.FISTA(term, maxiter=20, step=0.7, pqr=pqr)(y, A))
+    assert torch.equal(ours, optim.FISTA(term, maxiter=20, step=0.7, pqr=pqr).in_library(y, A))
 
 
 @pytest.mark.parametrize("iters", [9, 11, 31, 40])
@@ -100,7 +100,9 @@ def test_hogwild_halves_the_step_where_bart_halves_it(problem, iters):
     A, y = problem
     term = prox.L1(0.05)
     ours = _drive(iterators.FISTAIteration(), A, y, term, iters, stepsize=0.7, hogwild=True)
-    assert torch.equal(ours, optim.FISTA(term, maxiter=iters, step=0.7, hogwild=True)(y, A))
+    assert torch.equal(
+        ours, optim.FISTA(term, maxiter=iters, step=0.7, hogwild=True).in_library(y, A)
+    )
 
 
 def test_barts_iterative_soft_thresholding_refuses_hogwild():
@@ -113,7 +115,7 @@ def test_barts_iterative_soft_thresholding_refuses_hogwild():
 def test_any_term_that_thresholds_an_image_goes_through(problem, term):
     A, y = problem
     ours = _drive(iterators.FISTAIteration(), A, y, term, 15, stepsize=0.7)
-    assert torch.equal(ours, optim.FISTA(term, maxiter=15, step=0.7)(y, A))
+    assert torch.equal(ours, optim.FISTA(term, maxiter=15, step=0.7).in_library(y, A))
 
 
 # --- the encoding keeps its own normal ----------------------------------------
@@ -268,7 +270,7 @@ def test_admm_is_barts_admm(steps):
     term = prox.L1(0.05)
 
     ours = _admm_steps(A, y, [term], steps)
-    theirs = optim.ADMM(term, maxiter=steps, cg_maxiter=10, rho=0.5)(y, A)
+    theirs = optim.ADMM(term, maxiter=steps, cg_maxiter=10, rho=0.5).in_library(y, A)
     assert torch.equal(ours, theirs)
 
 
@@ -283,7 +285,7 @@ def test_one_admm_step_is_barts_step_on_a_harder_problem():
     term = prox.L1(0.05)
 
     ours = _admm_steps(A, y, [term], 1)
-    theirs = optim.ADMM(term, maxiter=1, cg_maxiter=10, rho=0.5)(y, A)
+    theirs = optim.ADMM(term, maxiter=1, cg_maxiter=10, rho=0.5).in_library(y, A)
     assert torch.equal(ours, theirs)
 
 
@@ -307,7 +309,7 @@ def test_barts_budget_is_inner_applications_and_not_outer_steps():
         base.adjoint,
         lambda v: (applications.append(1), base.normal(v))[1],
     )
-    optim.ADMM(prox.L1(0.05), maxiter=30, cg_maxiter=10, rho=0.5)(y, P)
+    optim.ADMM(prox.L1(0.05), maxiter=30, cg_maxiter=10, rho=0.5).in_library(y, P)
 
     # Thirty outer steps at ten inner iterations would be hundreds.
     assert 30 < len(applications) < 100
@@ -345,6 +347,80 @@ def test_several_terms_are_split_apart():
     out = _admm_steps(A, y, terms, 4)
     assert out.shape == A.ishape
     assert torch.isfinite(out.abs()).all()
+
+
+# --- the public solver runs this loop ------------------------------------------
+#
+# `optim.ADMM` no longer hands the whole solve to `lsqr2`: it drives
+# `ADMMIteration` step by step, which is what lets the same solver be unrolled.
+# What follows is the claim that buys: the two paths answer with the same bits.
+
+
+@pytest.mark.parametrize("budget", [1, 3, 7, 12, 30])
+def test_the_public_solver_is_the_library_it_replaced(budget):
+    """`ADMM.__call__` runs the iteration here; `ADMM.in_library` runs BART's."""
+    torch.manual_seed(0)
+    n = 8
+    diag = torch.linspace(0.2, 1.0, n * n).to(torch.complex64).reshape(1, n, n)
+    A = linop.Diagonal(diag, (1, n, n))
+    y = A(_rand(1, n, n))
+    solver = optim.ADMM(prox.L1(0.05), maxiter=budget, cg_maxiter=4, rho=0.5)
+
+    assert torch.equal(solver(y, A), solver.in_library(y, A))
+
+
+def test_the_terms_are_summed_before_the_encoding_is_added():
+    """`admm_normaleq` sums the terms first, scaling each by `rho` as it goes,
+    and adds the encoding's normal last.
+
+    With one term the two orders are the same two numbers added up, so they
+    agree; with two they do not, and the difference is in the last place of
+    the answer.  It is the sort of thing only a bit-for-bit comparison finds,
+    so here is one with two terms in it.
+    """
+    torch.manual_seed(0)
+    A = linop.FFT(SHAPE, axes=(-1, -2))
+    y = A(_rand(*SHAPE))
+    terms = [prox.L1(0.05), prox.L1(0.02)]
+    solver = optim.ADMM(terms, maxiter=8, cg_maxiter=4, rho=0.5)
+
+    assert torch.equal(solver(y, A), solver.in_library(y, A))
+
+
+def test_without_deepinv_the_solver_falls_back_to_the_library(monkeypatch):
+    """The iteration is a ``deepinv`` optimizer, and ``deepinv`` is optional.
+
+    Without it there is nothing to drive, so ``ADMM`` runs BART's own loop --
+    which is the same answer, as everything above this says.
+    """
+
+    def missing():
+        raise ImportError("deepinv is not installed")
+
+    monkeypatch.setattr(iterators, "_CACHE", {})
+    monkeypatch.setattr(iterators, "_classes", missing)
+
+    torch.manual_seed(0)
+    A = linop.FFT(SHAPE, axes=(-1, -2))
+    y = A(_rand(*SHAPE))
+    solver = optim.ADMM(prox.L1(0.05), maxiter=6, cg_maxiter=4)
+
+    assert torch.equal(solver(y, A), solver.in_library(y, A))
+
+
+def test_the_loop_crosses_into_python_where_the_library_would_not():
+    """The point of the switch, and the cost of it: the step is visible."""
+    torch.manual_seed(0)
+    A = linop.FFT(SHAPE, axes=(-1, -2))
+    y = A(_rand(*SHAPE))
+
+    seen = []
+    term = prox.L1(0.05)
+    prox_of = term.prox
+    term.prox = lambda *a, **kw: (seen.append(1), prox_of(*a, **kw))[1]
+
+    optim.ADMM(term, maxiter=5, cg_maxiter=4)(y, A)
+    assert seen, "the threshold was applied without passing through Python"
 
 
 def test_a_bias_pulls_the_split_variable_towards_it():
@@ -420,7 +496,7 @@ def test_pridu_is_barts_pridu(problem, steps):
     A, y = problem
     term = prox.L1(0.05)
     ours = _pridu_steps(A, y, steps, primal=term)
-    assert torch.equal(ours, optim.PRIDU(term, maxiter=steps, step=0.95)(y, A))
+    assert torch.equal(ours, optim.PRIDU(term, maxiter=steps, step=0.95).in_library(y, A))
 
 
 @pytest.mark.parametrize("steps", [1, 3, 8])
@@ -430,7 +506,7 @@ def test_a_term_with_a_transform_becomes_a_dual(problem, steps):
     A, y = problem
     term = prox.TotalVariation((-1, -2), 0.05)
     ours = _pridu_steps(A, y, steps, terms=[term])
-    assert torch.equal(ours, optim.PRIDU(term, maxiter=steps, step=0.95)(y, A))
+    assert torch.equal(ours, optim.PRIDU(term, maxiter=steps, step=0.95).in_library(y, A))
 
 
 @pytest.mark.parametrize("steps", [1, 3, 8, 20])
@@ -440,7 +516,9 @@ def test_hogwild_is_a_decay_here_rather_than_a_halving(problem, steps):
     A, y = problem
     term = prox.L1(0.05)
     ours = _pridu_steps(A, y, steps, primal=term, decay=0.95)
-    assert torch.equal(ours, optim.PRIDU(term, maxiter=steps, step=0.95, hogwild=True)(y, A))
+    assert torch.equal(
+        ours, optim.PRIDU(term, maxiter=steps, step=0.95, hogwild=True).in_library(y, A)
+    )
 
 
 @pytest.mark.parametrize("steps", [1, 3, 8])
@@ -448,7 +526,9 @@ def test_the_adaptive_step_is_barts(problem, steps):
     A, y = problem
     term = prox.L1(0.05)
     ours = _pridu_steps(A, y, steps, primal=term, adaptive_step=True)
-    assert torch.equal(ours, optim.PRIDU(term, maxiter=steps, step=0.95, adaptive_step=True)(y, A))
+    assert torch.equal(
+        ours, optim.PRIDU(term, maxiter=steps, step=0.95, adaptive_step=True).in_library(y, A)
+    )
 
 
 @pytest.mark.parametrize("ratio", [0.5, 2.0])
@@ -456,4 +536,6 @@ def test_the_step_ratio_splits_sigma_and_tau_the_way_pics_does(problem, ratio):
     A, y = problem
     term = prox.L1(0.05)
     ours = _pridu_steps(A, y, 10, primal=term, ratio=ratio)
-    assert torch.equal(ours, optim.PRIDU(term, maxiter=10, step=0.95, sigma_tau_ratio=ratio)(y, A))
+    assert torch.equal(
+        ours, optim.PRIDU(term, maxiter=10, step=0.95, sigma_tau_ratio=ratio).in_library(y, A)
+    )

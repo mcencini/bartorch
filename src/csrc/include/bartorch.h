@@ -297,6 +297,12 @@ BARTORCH_API void bartorch_linop_free(bartorch_linop* h);
  * data has to say by how much.
  * `cg_tol` is the tolerance of conjugate gradients, which `italgo_config`
  * leaves at BART's default of zero; the other iterations ignore it.
+ * `iterations`, when given, is filled with the steps the algorithm took --
+ * every one of BART's calls `iter_monitor` once a step, so counting those
+ * counts them.  For conjugate gradients that is the number an
+ * alternating-direction solver budgets by, and there is no other way to see
+ * it from outside.
+ *
  * Returns 0, or a code `bartorch_solve_error` turns into a sentence.
  */
 BARTORCH_API int bartorch_solve(const bartorch_linop* A,
@@ -309,7 +315,7 @@ BARTORCH_API int bartorch_solve(const bartorch_linop* A,
 		float fista_p, float fista_q, float fista_r,
 		float sigma_tau_ratio, int adaptive_step,
 		int warmstart,
-		void* x, const void* y);
+		void* x, const void* y, long* iterations);
 BARTORCH_API const char* bartorch_solve_error(int code);
 
 /*

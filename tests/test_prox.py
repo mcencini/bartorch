@@ -167,6 +167,23 @@ def test_a_transform_maps_the_image_somewhere_it_can_be_thresholded(name):
     assert T.oshape == term.prox_shape(SHAPE)
 
 
+def test_cycle_spinning_makes_the_wavelet_threshold_a_random_one():
+    """`randshift` shifts the transform by a draw of BART's own before every
+    application, so the same term applied twice to the same image answers
+    twice differently.
+
+    Worth stating, because it is what an iteration written out here has to
+    respect: two loops agree to the bit only if they apply this term the same
+    number of times, in the same order.  Turned off, it is a function again.
+    """
+    x = _rand(*SHAPE)
+    spun = prox.Wavelet(AXES, 0.1)
+    assert not torch.equal(spun.prox(x, 1.0), spun.prox(x, 1.0))
+
+    still = prox.Wavelet(AXES, 0.1, randshift=False)
+    assert torch.equal(still.prox(x, 1.0), still.prox(x, 1.0))
+
+
 def test_a_term_builds_its_operator_once_per_shape():
     term = prox.L1(0.1)
     assert term.build(SHAPE) == term.build(SHAPE)

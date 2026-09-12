@@ -7,7 +7,7 @@ Two things are checked.  That the mechanism is BART's: the loop does not cross
 back into Python, every iteration is reachable, a term means what its ``-R``
 string means, and nothing is rebuilt per solve.  And that a reconstruction
 assembled from operators, terms and a solver is ``bart pics`` to the bit,
-across nine configurations (``test_an_assembled_pics_is_the_tool_to_the_last_bit``).
+across ten configurations (``test_an_assembled_pics_is_the_tool_to_the_last_bit``).
 """
 
 import pytest
@@ -109,6 +109,43 @@ def test_the_tolerance_stops_conjugate_gradients_early():
     early = optim.CG(maxiter=64, tol=0.5)(A(truth), A)
     torch.testing.assert_close(full, truth, rtol=1e-3, atol=1e-3)
     assert not torch.equal(early, full)
+
+
+def test_the_iteration_count_comes_back_from_the_library():
+    """``steps`` is how many iterations ``conjgrad`` ran, counted in C.
+
+    It cannot be worked out from outside: ``conjgrad`` stops on its own
+    tolerance, and the alternating-direction solver budgets by the total
+    across a whole run.  So the solve counts them with a monitor of its own
+    and hands the number back.
+    """
+    diag = torch.linspace(0.1, 1.0, 64).to(torch.complex64).reshape(8, 8)
+    A = linop.Diagonal(diag, (8, 8))
+    y = A(_rand(8, 8))
+
+    spent: list[int] = []
+    optim.CG(maxiter=5)(y, A, steps=spent)
+    assert spent == [5]
+
+    # An encoding whose normal is the identity is solved long before the
+    # budget runs out, and the count says so rather than repeating it back.
+    easy: list[int] = []
+    optim.CG(maxiter=20)(_rand(8, 8), _unitary(), steps=easy)
+    assert 0 < easy[0] < 20
+
+    # And a tolerance stops it sooner still.
+    loose: list[int] = []
+    optim.CG(maxiter=20, tol=0.5)(y, A, steps=loose)
+    assert loose[0] < spent[0]
+
+
+def test_asking_for_the_count_does_not_change_the_answer():
+    diag = torch.linspace(0.1, 1.0, 64).to(torch.complex64).reshape(8, 8)
+    A = linop.Diagonal(diag, (8, 8))
+    y = A(_rand(8, 8))
+    counted: list[int] = []
+    assert torch.equal(optim.CG(maxiter=7)(y, A, steps=counted), optim.CG(maxiter=7)(y, A))
+    assert counted
 
 
 def test_an_orthonormal_encoding_gives_back_what_it_was_given():
@@ -366,6 +403,11 @@ _CONFIGURATIONS = [
         "tv pridu",
         {"regularizers": _tv(), "solver": "pridu"},
         lambda scale: optim.PRIDU(_tv(), maxiter=20, sigma_tau_ratio=scale),
+    ),
+    (
+        "tv admm",
+        {"regularizers": _tv(0.005), "solver": "admm"},
+        lambda scale: optim.ADMM(_tv(0.005), maxiter=20),
     ),
     (
         "locally low rank",

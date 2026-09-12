@@ -637,6 +637,7 @@ def bind(lib: ctypes.CDLL) -> ctypes.CDLL:
         ctypes.c_int,
         ctypes.c_void_p,
         ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_long),
     ]
     lib.bartorch_solve_error.restype = ctypes.c_char_p
     lib.bartorch_solve_error.argtypes = [ctypes.c_int]
