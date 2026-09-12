@@ -27,6 +27,14 @@ jobs:
           pip install scikit-build-core setuptools-scm numpy pytest scipy ruff
           pip install torch --index-url https://download.pytorch.org/whl/cpu
 
+      # As in the test matrix: torchvision comes with deepinv, and its
+      # compiled operators are built against one particular torch.  From PyPI
+      # it takes the default build while torch here is the CPU one, and the
+      # mismatch is `operator torchvision::nms does not exist` the moment
+      # deepinv is imported.  Same index, same pair.
+      - name: Install torchvision from the same index as torch
+        run: pip install torchvision --index-url https://download.pytorch.org/whl/cpu
+
       - name: Build and install bartorch
         env:
           CC: clang
