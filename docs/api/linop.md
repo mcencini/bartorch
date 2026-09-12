@@ -24,6 +24,7 @@ it.  They come first because they are what the rest of the page is for.
    CartesianSense
    NoncartesianSense
    WaveSense
+   Coils
    FieldCorrected
    Sampling
 ```
@@ -34,6 +35,10 @@ operator over BART's FFT rather than a NUFFT, with `Sampling` chained on;
 `WaveSense` is a composition of operators BART already has, chained by
 `linop_chain`, and is the same six in the same order that `src/wave.c` chains.
 Each is a single BART operator once built.
+
+`Coils` is the sensitivity multiply on its own, with the same slab loop and
+the same kernels, for an encoding whose transform is not a Fourier transform
+and so cannot be a SENSE operator.
 
 `FieldCorrected` wraps any of them and is a sum of chains rather than one:
 off-resonance during the readout is a different transform per sample, and time

@@ -18,7 +18,7 @@ from bartorch.linop.basic import (
 from bartorch.linop.combine import block, block_diag, concatenate, hstack, stack
 from bartorch.linop.mri import CartesianSense, FieldCorrected, WaveSense
 from bartorch.linop.nufft import NUFFT
-from bartorch.linop.sense import NoncartesianSense
+from bartorch.linop.sense import Coils, NoncartesianSense
 from bartorch.linop.shape import (
     Extract,
     Flip,
@@ -46,6 +46,7 @@ __all__ = [
     "CartesianSense",
     "Callback",
     "ComponentDiagonal",
+    "Coils",
     "Conj",
     "Convolve",
     "Diagonal",

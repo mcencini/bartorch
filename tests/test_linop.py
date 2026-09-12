@@ -554,3 +554,50 @@ def test_nothing_here_yet_has_barts_closed_form_pseudo_inverse():
     for A in (F, linop.Identity((8, 16)), linop.Conj((8, 16)), chain, added, adjoint):
         held = A._bart()  # held: the handle is freed with the object
         assert not library().bartorch_linop_has_pseudo_inv(held._h.ptr)
+
+
+# --- a normal of one's own ----------------------------------------------------
+#
+# BART derives A^H A by chaining the adjoint onto the forward.  Where the
+# product has a closed form, `linop_from_ops` is how that form is attached, and
+# what comes back is a BART operator like any other.
+
+
+def test_an_operator_can_carry_the_normal_it_is_given():
+    from bartorch.linop.base import _WithNormal
+
+    n = 16
+    torch.manual_seed(0)
+    F = linop.FFT((1, n, n), axes=(-2, -1))
+    A = _WithNormal(F, linop.Identity((1, n, n)))
+    x = torch.randn(1, n, n, dtype=torch.complex64)
+
+    # The forward and the adjoint are the operator's own.
+    torch.testing.assert_close(A(x), F(x))
+    torch.testing.assert_close(A.adjoint(F(x)), F.adjoint(F(x)))
+
+    # The normal is the one it was handed, not the two applications.
+    torch.testing.assert_close(A.normal(x), x, rtol=0, atol=0)
+    torch.testing.assert_close(A.gram()(x), x, rtol=0, atol=0)
+
+
+def test_a_normal_that_is_not_one_is_refused():
+    from bartorch.linop.base import _WithNormal
+
+    F = linop.FFT((1, 8, 8), axes=(-2, -1))
+    with pytest.raises(ValueError, match="maps the domain to itself"):
+        _WithNormal(F, linop.FFT((1, 8, 9), axes=(-2, -1)))
+
+
+def test_an_operator_carrying_a_normal_still_composes():
+    """It is a BART operator, so a chain of it is one operator too."""
+    from bartorch.linop.base import _WithNormal
+
+    n = 8
+    torch.manual_seed(0)
+    F = linop.FFT((1, n, n), axes=(-2, -1))
+    A = _WithNormal(F, linop.Identity((1, n, n)))
+    D = linop.Diagonal(torch.randn(1, n, n, dtype=torch.complex64), (1, n, n))
+
+    x = torch.randn(1, n, n, dtype=torch.complex64)
+    torch.testing.assert_close((D @ A)(x), D(F(x)))
