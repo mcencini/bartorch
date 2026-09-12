@@ -115,7 +115,15 @@ gives back an operator would be a function here.
 
    Sampling
    Sense
+   CartesianSense
+   Wave
 ```
+
+`Sense` is BART's own operator -- the coil batching and the Toeplitz normal
+are what make it what it is, and it serves the non-Cartesian case.
+`CartesianSense` and `Wave` are compositions of operators BART already has,
+chained by `linop_chain`, so each is a single BART operator once built:
+`Wave` is the same six in the same order that `src/wave.c` chains.
 
 ## Python-defined operators
 
