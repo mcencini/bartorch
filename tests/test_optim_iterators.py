@@ -16,10 +16,7 @@ import torch
 
 import bartorch
 from bartorch import linop, optim, prox
-
-pytest.importorskip("deepinv")
-
-from bartorch.optim import iterators  # noqa: E402
+from bartorch.optim import iterators
 
 
 def _rand(*shape):
@@ -83,11 +80,75 @@ def test_the_step_is_the_one_bart_takes(problem, step):
 
 
 def test_the_acceleration_parameters_are_barts(problem):
+    """`fista_formula` is `(p + sqrtf(q + r t^2)) / 2`, and whether that is
+    one rounding or two is the compiler's choice.
+
+    clang contracts `q + r * t * t` into a fused multiply-add where the
+    hardware has one -- arm64 does, the x86-64 baseline does not -- and a
+    fused multiply-add does not round the product.  `_formula` writes the
+    two roundings out, which is what BART computes on x86-64.
+
+    With BART's own `r = 4` the two forms agree at every step of the
+    recurrence, so the default is the same bits everywhere; `r = 2` parts
+    company at the eighth.  Hence the two assertions: exact for the
+    parameters `pics` uses, and close for parameters that reach the
+    difference between one rounding and two.
+    """
     A, y = problem
     term = prox.L1(0.05)
+
+    theirs = optim.FISTA(term, maxiter=20, step=0.7)(y, A)
+    ours = _drive(iterators.FISTAIteration(), A, y, term, 20, stepsize=0.7, pqr=(1.0, 1.0, 4.0))
+    assert torch.equal(ours, theirs), "BART's own acceleration parameters are not platform-bound"
+
     pqr = (1.0, 1.0, 2.0)
     ours = _drive(iterators.FISTAIteration(), A, y, term, 20, stepsize=0.7, pqr=pqr)
-    assert torch.equal(ours, optim.FISTA(term, maxiter=20, step=0.7, pqr=pqr)(y, A))
+    theirs = optim.FISTA(term, maxiter=20, step=0.7, pqr=pqr)(y, A)
+    assert not torch.equal(ours, optim.FISTA(term, maxiter=20, step=0.7)(y, A)), (
+        "the parameters changed nothing, so this proves nothing about them"
+    )
+    torch.testing.assert_close(ours, theirs, rtol=1e-5, atol=1e-6)
+
+
+def test_the_acceleration_recurrence_is_where_the_platform_shows():
+    """The measurement the test above rests on, without a solve around it.
+
+    Not a claim about this package: it is what a fused multiply-add does to
+    BART's recurrence, and it says which parameters can be held to the bit on
+    every platform and which cannot.
+    """
+    import numpy as np
+
+    def contracted(q, r, t):
+        # float32 inputs make the double exact, so this is the fused form.
+        t32 = np.float32(t)
+        return np.float32(np.float64(q) + np.float64(np.float32(r) * t32) * np.float64(t32))
+
+    def rounded(q, r, t):
+        t32 = np.float32(t)
+        return np.float32(np.float32(q) + np.float32(r) * t32 * t32)
+
+    def step(inner):
+        return float((np.float32(1.0) + np.sqrt(inner)) / np.float32(2.0))
+
+    # Twenty, because that is how many the test above runs.
+    counts = {}
+    for r in (4.0, 2.0):
+        t, differing = 1.0, 0
+        for _ in range(20):
+            one, two = step(rounded(1.0, r, t)), step(contracted(1.0, r, t))
+            differing += int(one != two)
+            t = one
+        counts[r] = differing
+
+    assert counts[4.0] == 0, (
+        "BART's own r is 4, and the exact assertion above rests on the two "
+        f"forms agreeing at every step of it -- they part at {counts[4.0]}"
+    )
+    assert counts[2.0] > 0, (
+        "r = 2 was chosen because it reaches the difference between one "
+        "rounding and two; it no longer does, so the tolerance above is idle"
+    )
 
 
 @pytest.mark.parametrize("iters", [9, 11, 31, 40])
@@ -233,3 +294,152 @@ def test_a_deepinv_denoiser_can_stand_in_for_the_term(problem):
     for _ in range(5):
         X = iteration.forward(X, fidelity, prior, params, y[None], physics)
     assert torch.isfinite(X["est"][0]).all()
+
+
+# --- alternating directions ---------------------------------------------------
+#
+# BART's ADMM solves `min 0.5||Ax-y||^2 + sum_j f_j(G_j x - b_j)`, which is the
+# one iteration here that takes several terms, each with its own transform and
+# its own bias.  Its x-update is conjugate gradients on
+# `A^H A + rho sum_j G_j^H G_j`, warm-started, which is why it stays BART's
+# even though the outer loop is not.
+
+
+def _admm_steps(A, y, terms, steps, *, biases=None, rho=0.5, cg=10, **params):
+    physics = bartorch.to_deepinv(A)
+    fidelity = iterators.NormalEquations()
+    iteration = iterators.ADMMIteration(terms, A.ishape, biases=biases)
+    iteration.restart()
+    settings = {"maxiter": 10**9, "cg_maxiter": cg, "rho": rho, **params}
+
+    X = {"est": (torch.zeros(*A.ishape, dtype=torch.complex64),) * 2}
+    for _ in range(steps):
+        X = iteration.forward(X, fidelity, None, settings, y, physics)
+    return X["est"][0]
+
+
+@pytest.mark.parametrize("steps", [1, 2, 3, 5, 8])
+def test_admm_is_barts_admm(steps):
+    """On a problem whose inner solve converges in one iteration, BART's
+    budget and the outer step count are the same number, so the two can be
+    held against each other directly."""
+    torch.manual_seed(0)
+    A = linop.FFT(SHAPE, axes=(-1, -2))
+    y = A(_rand(*SHAPE))
+    term = prox.L1(0.05)
+
+    ours = _admm_steps(A, y, [term], steps)
+    theirs = optim.ADMM(term, maxiter=steps, cg_maxiter=10, rho=0.5)(y, A)
+    assert torch.equal(ours, theirs)
+
+
+def test_one_admm_step_is_barts_step_on_a_harder_problem():
+    """Where the inner solve takes several iterations, BART's `maxiter` stops
+    counting outer steps -- but the step itself is still the same one."""
+    torch.manual_seed(0)
+    n = 8
+    diag = torch.linspace(0.2, 1.0, n * n).to(torch.complex64).reshape(1, n, n)
+    A = linop.Diagonal(diag, (1, n, n))
+    y = A(_rand(1, n, n))
+    term = prox.L1(0.05)
+
+    ours = _admm_steps(A, y, [term], 1)
+    theirs = optim.ADMM(term, maxiter=1, cg_maxiter=10, rho=0.5)(y, A)
+    assert torch.equal(ours, theirs)
+
+
+def test_barts_budget_is_inner_applications_and_not_outer_steps():
+    """Worth writing down, because `maxiter=30` does not mean thirty steps.
+
+    `admm` breaks when `nr_invokes > maxiter`, and `nr_invokes` counts
+    conjugate-gradient iterations across the whole run.
+    """
+    torch.manual_seed(0)
+    n = 8
+    diag = torch.linspace(0.2, 1.0, n * n).to(torch.complex64).reshape(1, n, n)
+    base = linop.Diagonal(diag, (1, n, n))
+    y = base(_rand(1, n, n))
+
+    applications = []
+    P = linop.Callback(
+        (1, n, n),
+        (1, n, n),
+        base.forward,
+        base.adjoint,
+        lambda v: (applications.append(1), base.normal(v))[1],
+    )
+    optim.ADMM(prox.L1(0.05), maxiter=30, cg_maxiter=10, rho=0.5)(y, P)
+
+    # Thirty outer steps at ten inner iterations would be hundreds.
+    assert 30 < len(applications) < 100
+
+
+def test_total_variation_goes_through_a_gradient_an_operator_cannot_hold():
+    """The term ADMM is for, and the one whose transform is rank seventeen.
+
+    `transform()` refuses it; `apply_transform` is what the iteration uses,
+    and the dot test says the pair it applies really are adjoint.
+    """
+    torch.manual_seed(0)
+    term = prox.TotalVariation((-1, -2), 0.05)
+    x = _rand(*SHAPE)
+    gx = term.apply_transform(x, SHAPE)
+    v = _rand(*gx.shape)
+
+    assert gx.ndim == 17
+    left = complex((gx.conj() * v).sum())
+    right = complex((x.conj() * term.apply_transform(v, SHAPE, mode="adjoint")).sum())
+    assert abs(left - right) / abs(left) < 1e-5
+
+    A = linop.FFT(SHAPE, axes=(-1, -2))
+    y = A(_rand(*SHAPE))
+    out = _admm_steps(A, y, [term], 4)
+    assert out.shape == A.ishape
+    assert torch.isfinite(out.abs()).all()
+
+
+def test_several_terms_are_split_apart():
+    torch.manual_seed(0)
+    A = linop.FFT(SHAPE, axes=(-1, -2))
+    y = A(_rand(*SHAPE))
+    terms = [prox.L1(0.05), prox.Wavelet((-1, -2), 0.02)]
+    out = _admm_steps(A, y, terms, 4)
+    assert out.shape == A.ishape
+    assert torch.isfinite(out.abs()).all()
+
+
+def test_a_bias_pulls_the_split_variable_towards_it():
+    torch.manual_seed(0)
+    A = linop.FFT(SHAPE, axes=(-1, -2))
+    y = A(_rand(*SHAPE))
+    term = prox.L1(0.05)
+
+    without = _admm_steps(A, y, [term], 4)
+    with_bias = _admm_steps(A, y, [term], 4, biases=[_rand(*SHAPE)])
+    assert (without - with_bias).abs().max() > 1e-3
+
+
+def test_the_x_update_asks_the_encoding_for_its_own_normal():
+    """A Toeplitz encoding stays one inside every ADMM step."""
+    import bartorch.tools as bt
+
+    n, coils = 16, 4
+    torch.manual_seed(0)
+    maps = _rand(coils, 1, n, n)
+    traj = bt.traj(x=n, y=24, r=True)
+    A = linop.NoncartesianSense(maps, (coils, n, n), traj=traj, toeplitz=True)
+    y = _rand(*A.oshape)
+
+    calls = []
+    plain = A.normal
+
+    def counting(v, out=None):
+        calls.append(1)
+        return plain(v, out)
+
+    A.normal = counting
+    try:
+        _admm_steps(A, y, [prox.L1(0.01)], 2, cg=3)
+    finally:
+        del A.normal
+    assert calls, "the encoding's own normal was never asked for"
