@@ -25,6 +25,7 @@ from bartorch.linop.base import LinearOperator
 __all__ = [
     "Extract",
     "Flip",
+    "Hankel",
     "Mean",
     "Pad",
     "Permute",
@@ -238,6 +239,86 @@ class Flip(LinearOperator):
         flags = axes_flags(self.axes, len(self._shape))
         ptr = self._under_lock(library().bartorch_linop_flip, DIMS, dims(self._shape), flags)
         return Built(ptr, self._shape, self._shape)
+
+
+class _Hankelization(LinearOperator):
+    """``linop_hankelization``: the window on the first BART dimension going spare."""
+
+    def __init__(self, ishape, oshape, axis: int, window: int):
+        self.ishape, self.oshape = tuple(ishape), tuple(oshape)
+        self.axis, self.window = axis, window
+        super().__init__()
+
+    def _create(self) -> Built:
+        ndim = len(self.ishape)
+        ptr = self._under_lock(
+            library().bartorch_linop_hankel,
+            DIMS,
+            dims(self.ishape),
+            _axis(self.axis, ndim),
+            ndim,
+            self.window,
+        )
+        return Built(ptr, self.ishape, self.oshape)
+
+
+def Hankel(shape: Shape, axis: int, window: int) -> LinearOperator:  # noqa: N802
+    """A sliding window along ``axis``, BART's ``linop_hankelization``.
+
+    ``torch.Tensor.unfold(axis, window, 1)`` as an operator, and the same
+    thing as the trajectory matrix that singular spectrum analysis is built
+    on: an axis of ``n`` becomes ``n - window + 1`` positions, each carrying
+    the ``window`` samples that start there.  The codomain is the domain with
+    that axis shortened and the window added as a last axis, which is where
+    ``unfold`` puts it.
+
+    BART makes the windows by striding rather than by copying, so the overlap
+    costs nothing to build; the adjoint adds each sample back into every
+    window it appeared in, which is what makes this an operator rather than a
+    view.
+
+    Parameters
+    ----------
+    shape : tuple of int
+        The domain, C order.
+    axis : int
+        Which axis to slide along.
+    window : int
+        How many samples each position carries.  At most the length of the
+        axis; equal to it gives one position.
+
+    Examples
+    --------
+    >>> H = Hankel((64, 8), axis=0, window=16)
+    >>> H.oshape
+    (49, 8, 16)
+    """
+    from bartorch.linop.shape import Permute  # noqa: PLC0415  (itself, after definition)
+
+    ishape = tuple(shape)
+    ndim = len(ishape)
+    axis %= ndim
+    window = int(window)
+
+    if window < 1:
+        raise ValueError(f"a window of {window} has nothing in it")
+    if window > ishape[axis]:
+        raise ValueError(
+            f"a window of {window} does not fit in axis {axis}, which is {ishape[axis]} long"
+        )
+    if ndim >= DIMS:
+        raise ValueError(f"the window axis would take this past BART's {DIMS} dimensions")
+
+    # BART puts the window on a dimension of its own, and the first one going
+    # spare reads back as a leading axis in C order.  torch.unfold puts it
+    # last, so one permute moves it there.
+    positions = list(ishape)
+    positions[axis] = ishape[axis] - window + 1
+    leading = (window, *positions)
+
+    out: LinearOperator = _Hankelization(ishape, leading, axis, window)
+    order = (*range(1, ndim + 1), 0)
+    return Permute(leading, order) @ out
 
 
 class Reshape(LinearOperator):

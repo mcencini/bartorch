@@ -707,6 +707,24 @@ bartorch_linop* bartorch_linop_repmat(int N, const long* odims, unsigned long fl
 	return (0 == guarded(linop_repmat_worker, &a)) ? a.result : NULL;
 }
 
+struct linop_hankel_args { int N; const long* dims; int dim; int window_dim; int window; bartorch_linop* result; };
+
+static int linop_hankel_worker(void* p)
+{
+	struct linop_hankel_args* a = p;
+	a->result = wrap_linop(linop_hankelization_create(a->N, a->dims, a->dim, a->window_dim, a->window));
+	return 0;
+}
+
+/* A sliding window along dim, laid out along window_dim -- which the input
+ * must have only one of.  BART builds it as a strided view, so nothing is
+ * copied to make the windows overlap. */
+bartorch_linop* bartorch_linop_hankel(int N, const long* dims, int dim, int window_dim, int window)
+{
+	struct linop_hankel_args a = { N, dims, dim, window_dim, window, NULL };
+	return (0 == guarded(linop_hankel_worker, &a)) ? a.result : NULL;
+}
+
 static int linop_flip_worker(void* p)
 {
 	struct linop_flagged_args* a = p;

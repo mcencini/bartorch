@@ -157,6 +157,54 @@ def test_real_takes_the_real_part():
     torch.testing.assert_close(linop.Real(SHAPE)(x), x.real.to(torch.complex64))
 
 
+# --- Hankel ------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("shape", "axis", "window"),
+    [((64,), 0, 16), ((64, 8), 0, 16), ((8, 64), 1, 4), ((6,), 0, 6), ((5, 7, 3), 1, 2)],
+)
+def test_a_sliding_window_is_torchs_unfold(shape, axis, window):
+    """Same windows, same order, window last -- which is where unfold puts it."""
+    x = _rand(*shape)
+    H = linop.Hankel(shape, axis=axis, window=window)
+    torch.testing.assert_close(H(x), x.unfold(axis, window, 1))
+
+
+def test_the_window_shortens_the_axis_it_slides_along():
+    H = linop.Hankel((64, 8), axis=0, window=16)
+    assert H.ishape == (64, 8)
+    assert H.oshape == (49, 8, 16)
+
+
+def test_a_window_the_length_of_the_axis_gives_one_position():
+    H = linop.Hankel((6,), axis=0, window=6)
+    assert H.oshape == (1, 6)
+
+
+def test_the_adjoint_adds_each_sample_back_into_every_window_it_was_in():
+    """Which is what makes this an operator rather than a view."""
+    H = linop.Hankel((8,), axis=0, window=3)
+    ones = torch.ones(*H.oshape, dtype=torch.complex64)
+    # sample i appears in as many windows as overlap it: 1, 2, 3, 3, 3, 3, 2, 1
+    torch.testing.assert_close(
+        H.adjoint(ones).real,
+        torch.tensor([1.0, 2.0, 3.0, 3.0, 3.0, 3.0, 2.0, 1.0]),
+        rtol=1e-5,
+        atol=1e-5,
+    )
+
+
+def test_a_window_that_does_not_fit_is_refused():
+    with pytest.raises(ValueError, match="does not fit"):
+        linop.Hankel((8,), axis=0, window=9)
+
+
+def test_an_empty_window_is_refused():
+    with pytest.raises(ValueError, match="nothing in it"):
+        linop.Hankel((8,), axis=0, window=0)
+
+
 # --- what the shapes and the adjoints have to hold ---------------------------
 
 
@@ -174,6 +222,7 @@ def _complex_linear_operators():
         linop.Extract((1, 0, 2), (2, 4, 3), SHAPE),
         linop.Pad(SHAPE, (0, 1, 1)),
         linop.Resize((3, 2, 7), SHAPE),
+        linop.Hankel(SHAPE, axis=1, window=2),
     ]
 
 

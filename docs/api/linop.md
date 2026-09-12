@@ -99,6 +99,7 @@ gives back an operator would be a function here.
    Pad
    Resize
    Extract
+   Hankel
    Sum
    ScaledSum
    Mean

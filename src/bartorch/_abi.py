@@ -140,6 +140,7 @@ SYMBOLS = (
     "bartorch_linop_avg",
     "bartorch_linop_repmat",
     "bartorch_linop_flip",
+    "bartorch_linop_hankel",
     "bartorch_linop_reshape",
     "bartorch_linop_resize",
     "bartorch_linop_extract",
@@ -507,6 +508,14 @@ def bind(lib: ctypes.CDLL) -> ctypes.CDLL:
     ]
     lib.bartorch_linop_flip.restype = ctypes.c_void_p
     lib.bartorch_linop_flip.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_long), ctypes.c_ulong]
+    lib.bartorch_linop_hankel.restype = ctypes.c_void_p
+    lib.bartorch_linop_hankel.argtypes = [
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+    ]
     lib.bartorch_linop_reshape.restype = ctypes.c_void_p
     lib.bartorch_linop_reshape.argtypes = [
         ctypes.c_int,
