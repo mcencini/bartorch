@@ -46,6 +46,48 @@ point-spread convolution, not the transform and its adjoint.
    EulerMaruyama
 ```
 
+## Iterations for unfolding and fixed points
+
+`bartorch.optim.iterators`.  BART's proximal iterations written as
+`deepinv.optim.optim_iterators.OptimIterator` classes: the same arithmetic in
+the same order, with every operator still the library's, held against the
+library's own answer to the bit at every iteration count.
+
+What that buys is the shape.  An iteration running inside the library cannot
+be unrolled into a network or driven to a fixed point, because there is
+nothing to differentiate through; one written out can be, and `optim_builder`
+takes these straight into `BaseOptim` with `unfold=True` or `DEQ`.  The cost
+is a few axpys on an image per step, which is nothing beside a transform.
+
+```{eval-rst}
+.. currentmodule:: bartorch.optim.iterators
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   ISTIteration
+   FISTAIteration
+   NormalEquations
+   TermPrior
+```
+
+`NormalEquations` differentiates $\tfrac12\|Ax-y\|^2$ as $A^HAx - A^Hy$
+rather than $A^H(Ax-y)$, so a Toeplitz encoding answers with its point-spread
+convolution instead of a transform and its adjoint.  $A^Hy$ is computed once
+per solve: BART's gridding reduces in whatever order its threads finish, so
+two adjoints of the same data differ in the last bits, and computing it once
+is what makes the iteration repeatable as well as quick.
+
+`TermPrior` puts a {mod}`bartorch.prox` term where `deepinv` expects a prior,
+and a `deepinv` denoiser goes in the same place -- wrapped in
+`to_complex_denoiser`, since an image here is complex and most denoisers are
+not.
+
+```{eval-rst}
+.. currentmodule:: bartorch.optim
+```
+
 ## Nonlinear least squares
 
 ```{eval-rst}

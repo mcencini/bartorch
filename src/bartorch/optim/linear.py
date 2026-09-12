@@ -385,6 +385,14 @@ class IST(_Solver):
         cclambda: float = 0.0,
     ):
         super().__init__(regularizers, maxiter, cclambda)
+        if hogwild and "ist" == self._algorithm:
+            # `iter2_ist` asserts it off -- "Let's see whether somebody uses
+            # it..." -- and an assertion in the library takes the process,
+            # rather than coming back as an error.
+            raise ValueError(
+                "BART's iterative soft thresholding refuses hogwild; FISTA is the one "
+                "that decays its step"
+            )
         self.step = float(step)
         self.eigen = bool(eigen)
         self.hogwild = bool(hogwild)
