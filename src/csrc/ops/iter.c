@@ -189,6 +189,33 @@ int bartorch_prox_apply(const bartorch_prox* h, float gamma, void* dst, const vo
 	return 0;
 }
 
+/* The transform a term carries, applied without making an operator of it.
+ *
+ * A gradient puts its components on an axis of their own past BART's sixteen,
+ * so total variation's transform cannot be handed over as a `bartorch_linop`
+ * at all -- and it is exactly the term an alternating-direction solver is
+ * for.  This applies it in place instead, over the shapes
+ * `bartorch_prox_domain` reports, which a caller can hold as a tensor of
+ * whatever rank it likes.
+ *
+ * `mode` is 0 for the forward, 1 for the adjoint, 2 for the normal.
+ */
+int bartorch_prox_transform_apply(const bartorch_prox* h, int mode, void* dst, const void* src)
+{
+	if ((NULL == h) || (NULL == h->trafo) || (NULL == dst) || (NULL == src))
+		return -1;
+
+	switch (mode) {
+
+	case 0: linop_forward_unchecked(h->trafo, dst, src); break;
+	case 1: linop_adjoint_unchecked(h->trafo, dst, src); break;
+	case 2: linop_normal_unchecked(h->trafo, dst, src); break;
+	default: return -1;
+	}
+
+	return 0;
+}
+
 /* The transform a term applies before its proximal operator.
  *
  * `opt_reg_configure` gives every term one, and for most of them it is the

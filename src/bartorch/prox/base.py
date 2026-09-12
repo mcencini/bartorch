@@ -165,6 +165,62 @@ class Regularizer(abc.ABC):
             raise BartError(f"{self!r} could not be applied: {said}")
         return out
 
+    def apply_transform(
+        self, x: torch.Tensor, image_shape: tuple[int, ...] | None = None, mode: str = "forward"
+    ) -> torch.Tensor:
+        """This term's transform applied to ``x``, without making an operator of it.
+
+        :meth:`transform` cannot answer for the gradient family -- their
+        components live on an axis past BART's sixteen -- and those are exactly
+        the terms an alternating-direction solver is for.  This applies the
+        transform over the shapes :meth:`prox_shape` reports instead, which a
+        tensor can hold at any rank.
+
+        Parameters
+        ----------
+        x : tensor
+            The image for ``"forward"``, the proximal operator's domain for
+            ``"adjoint"``, the image for ``"normal"``.
+        image_shape : tuple of int, optional
+            What the term was configured for; by default ``x``'s own shape,
+            which is right whenever the transform starts from the image.
+        mode : {"forward", "adjoint", "normal"}
+
+        Returns
+        -------
+        torch.Tensor
+        """
+        modes = {"forward": 0, "adjoint": 1, "normal": 2}
+        if mode not in modes:
+            raise ValueError(f"mode is forward, adjoint or normal, not {mode!r}")
+
+        if image_shape is None:
+            image_shape = tuple(x.shape)
+        image_shape = tuple(image_shape)
+
+        # forward: image -> the proximal operator's domain.  adjoint: back.
+        # normal: image to image, which is the pair of them.
+        transformed = self.prox_shape(image_shape)
+        want, oshape = {
+            "forward": (image_shape, transformed),
+            "adjoint": (transformed, image_shape),
+            "normal": (image_shape, image_shape),
+        }[mode]
+        if tuple(x.shape) != want:
+            raise ValueError(f"the {mode} takes {want}, not {tuple(x.shape)}")
+
+        handle = self.build(image_shape)
+        src = as_operand(x, want, "x")
+        out = torch.empty(oshape, dtype=torch.complex64, device=src.device)
+
+        with _lock, _on_device(src.device):
+            code = library().bartorch_prox_transform_apply(
+                handle, modes[mode], out.data_ptr(), src.data_ptr()
+            )
+        if code != 0:
+            raise BartError(f"{self!r} could not apply its transform ({mode})")
+        return out
+
     def transform(self, image_shape: tuple[int, ...]):
         """The operator BART puts in front of this term's proximal operator.
 

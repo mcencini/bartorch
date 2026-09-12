@@ -68,6 +68,7 @@ is a few axpys on an image per step, which is nothing beside a transform.
 
    ISTIteration
    FISTAIteration
+   ADMMIteration
    NormalEquations
    TermPrior
 ```
@@ -78,6 +79,22 @@ convolution instead of a transform and its adjoint.  $A^Hy$ is computed once
 per solve: BART's gridding reduces in whatever order its threads finish, so
 two adjoints of the same data differ in the last bits, and computing it once
 is what makes the iteration repeatable as well as quick.
+
+`ADMMIteration` is the one that takes several terms, each with its own
+transform and bias, because that is what BART's ADMM solves.  Its x-update is
+BART's conjugate gradients on $A^HA+\rho\sum_j G_j^HG_j$, warm-started, so the
+encoding keeps its own normal there too.  Total variation reaches it through
+`Regularizer.apply_transform`: its gradient puts the components on an axis
+past BART's sixteen, so there is no operator to hand over, and the transform is
+applied in place instead.
+
+Two things to know about `maxiter`.  On `optim.ADMM` it is BART's, and BART's
+is a budget on applications of the normal operator rather than a count of
+outer steps -- `admm` breaks when `nr_invokes > maxiter`, and `nr_invokes`
+counts conjugate-gradient iterations across the whole run, so thirty with ten
+inner iterations is about five outer steps.  `ADMMIteration` counts outer
+steps instead, which is what `BaseOptim` expects; the step itself is BART's
+either way, to the bit.
 
 `TermPrior` puts a {mod}`bartorch.prox` term where `deepinv` expects a prior,
 and a `deepinv` denoiser goes in the same place -- wrapped in

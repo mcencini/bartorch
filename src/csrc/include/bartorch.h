@@ -351,6 +351,9 @@ BARTORCH_API int bartorch_prox_create(const char* kind, long xflags, long jflags
 BARTORCH_API int bartorch_prox_domain(const bartorch_prox* h, int N, long* dims);
 /* prox_{gamma f}(src) into dst, over that shape. */
 BARTORCH_API int bartorch_prox_apply(const bartorch_prox* h, float gamma, void* dst, const void* src);
+/* The transform applied in place, for the one whose rank an operator here
+ * cannot hold.  `mode` is 0 forward, 1 adjoint, 2 normal. */
+BARTORCH_API int bartorch_prox_transform_apply(const bartorch_prox* h, int mode, void* dst, const void* src);
 /* The transform the term applies before its proximal operator; the identity
  * for a term that carries its own.  The handle is the caller's to free. */
 BARTORCH_API bartorch_linop* bartorch_prox_transform(const bartorch_prox* h);

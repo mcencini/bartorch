@@ -26,6 +26,7 @@ import torch
 # Built on first use, so that importing this module does not import deepinv;
 # `__getattr__` below is what resolves them.
 __all__ = [  # noqa: F822
+    "ADMMIteration",
     "FISTAIteration",
     "ISTIteration",
     "NormalEquations",
@@ -292,7 +293,269 @@ def _scale(params: dict, k: int) -> float:
     return float(np.exp(a * np.float32(k)))
 
 
+def _admm() -> type:
+    _, _, OptimIterator = _classes()
+
+    class ADMMIteration(OptimIterator):
+        r"""BART's alternating direction method of multipliers, one step of it.
+
+        ``admm.c``'s ``admm``, which solves
+
+        ``min_x 0.5 ||A x - y||^2 + sum_j f_j(G_j x - b_j)``
+
+        for arbitrary convex ``f_j``.  Each step solves for ``x`` by conjugate
+        gradients on ``A^H A + rho sum_j G_j^H G_j``, warm-started from the
+        iterate before it, then updates each term's split variable and dual::
+
+            rhs = A^H y + rho sum_j G_j^H (z_j - u_j + b_j)
+            x   = cg(rhs, from x)
+            w_j = alpha G_j x + (1 - alpha) (z_j + b_j) + u_j - b_j
+            z_j = prox_j(w_j, lambda / rho)
+            u_j = w_j - z_j
+
+        with ``alpha = 1.6``, BART's over-relaxation, and Boyd's primal and
+        dual residuals deciding when to stop and -- with ``dynamic_rho`` --
+        how ``rho`` moves.
+
+        The inner solve is BART's own conjugate gradients over an operator
+        whose normal is the one above, so the encoding is asked for *its*
+        normal: a Toeplitz encoding stays one inside every step.
+
+        Parameters
+        ----------
+        terms : sequence of Regularizer
+            The ``f_j``, each with the transform and bias it carries.
+        image_shape : tuple of int
+            What the terms are configured for.
+        biases : sequence of tensor, optional
+            The ``b_j``, each of its term's transformed shape.
+
+        Notes
+        -----
+        ``maxiter`` is a budget on applications of the normal operator rather
+        than a count of outer steps, which is BART's rule and a surprising
+        one: ``admm`` breaks when ``nr_invokes > maxiter``, and ``nr_invokes``
+        counts conjugate-gradient iterations across the whole run.  Thirty
+        with ten inner iterations is about five outer steps, not thirty.
+        """
+
+        def __init__(self, terms, image_shape, biases=None, **kwargs):
+            kwargs.setdefault("has_cost", False)
+            super().__init__(**kwargs)
+            self.terms = list(terms)
+            self.image_shape = tuple(image_shape)
+            self.biases = list(biases) if biases is not None else [None] * len(self.terms)
+            if len(self.biases) != len(self.terms):
+                raise ValueError("one bias per term, or none at all")
+            self._invokes = 0
+
+        # --- the pieces of a term ---------------------------------------------
+
+        def _forward(self, term, x):
+            return term.apply_transform(x, self.image_shape)
+
+        def _adjoint(self, term, v):
+            return term.apply_transform(v, self.image_shape, mode="adjoint")
+
+        def _normal(self, term, x):
+            return term.apply_transform(x, self.image_shape, mode="normal")
+
+        def _shape(self, term):
+            return term.prox_shape(self.image_shape)
+
+        # --- the x update ------------------------------------------------------
+
+        def _solve_x(self, x, rhs, rho, physics, params):
+            """Conjugate gradients on ``A^H A + rho sum_j G_j^H G_j``, from ``x``.
+
+            BART's ``cg_xupdate``: the same operator, the same warm start, and
+            the same stopping rule -- ``cg_eps`` times the norm of the right
+            hand side.  It counts the applications as it goes, because that
+            is the budget ``maxiter`` actually is.
+            """
+            from bartorch.linop import Callback, Identity
+            from bartorch.linop.base import _WithNormal
+            from bartorch.optim.linear import CG
+
+            if 0.0 == float(torch.linalg.vector_norm(rhs)):
+                return x
+
+            op = getattr(physics, "op", None)
+            counted = []
+
+            def apply(v):
+                counted.append(1)
+                out = (
+                    _batched(op.normal, v, op.ishape)
+                    if op is not None
+                    else physics.A_adjoint(physics.A(v))
+                )
+                for term in self.terms:
+                    out = out + rho * self._normal(term, v)
+                return out
+
+            shape = tuple(x.shape)
+            normal = Callback(shape, shape, apply, apply, apply)
+            solver = CG(maxiter=params.get("cg_maxiter", 10), tol=params.get("cg_eps", 1e-3))
+            out = solver(rhs, _WithNormal(Identity(shape), normal), x0=x)
+
+            # `conjgrad` applies the operator once before its loop and once an
+            # iteration, and `admm` counts only the iterations.
+            self._invokes += max(len(counted) - 1, 0)
+            return out
+
+        # --- one step ----------------------------------------------------------
+
+        def forward(self, X, cur_data_fidelity, cur_prior, cur_params, y, physics, *a, **kw):
+            x = X["est"][0]
+            rho = X.get("rho", cur_params.get("rho", 0.5))
+            tau = X.get("tau", cur_params.get("tau", 2.0))
+            alpha = cur_params.get("alpha", 1.6)
+            lam = cur_params.get("lambda", 1.0)
+            fast = cur_params.get("fast", False)
+
+            z = X.get("z")
+            u = X.get("u")
+            if z is None:
+                z = [
+                    torch.zeros(self._shape(t), dtype=x.dtype, device=x.device) for t in self.terms
+                ]
+                u = [torch.zeros_like(zj) for zj in z]
+
+            adjoint = cur_data_fidelity._adjoint_data(y, physics)
+
+            rhs = torch.zeros_like(x)
+            for j, term in enumerate(self.terms):
+                r = z[j] - u[j]
+                if self.biases[j] is not None:
+                    r = r + self.biases[j]
+                rhs = rhs + self._adjoint(term, r)
+            rhs = rho * rhs + adjoint
+
+            x = self._solve_x(x, rhs, rho, physics, cur_params)
+
+            n1 = n2 = r_sq = 0.0
+            s = torch.zeros_like(x)
+            gh_usum = torch.zeros_like(x)
+
+            for j, term in enumerate(self.terms):
+                bias = self.biases[j]
+                gx = self._forward(term, x)
+                z_old = z[j]
+
+                if not fast:
+                    residual = gx
+                    n1 += float(torch.linalg.vector_norm(residual)) ** 2
+                    gx = alpha * gx + (1.0 - alpha) * z[j]
+                    if bias is not None:
+                        gx = gx + (1.0 - alpha) * bias
+
+                w = gx + u[j]
+                if bias is not None:
+                    w = w - bias
+
+                z[j] = term.prox(w, lam / rho, image_shape=self.image_shape) if rho else w
+                u[j] = w - z[j]
+
+                if not fast:
+                    r = residual - z[j]
+                    if bias is not None:
+                        r = r - bias
+                    r_sq += float(torch.linalg.vector_norm(r)) ** 2
+                    s = s + self._adjoint(term, z[j] - z_old)
+                    gh_usum = gh_usum + self._adjoint(term, u[j])
+                    n2 += float(torch.linalg.vector_norm(z[j])) ** 2
+
+            done = False
+            if not fast:
+                r_norm = math.sqrt(r_sq)
+                s_norm = rho * float(torch.linalg.vector_norm(s))
+                n3 = sum(
+                    float(torch.linalg.vector_norm(b)) ** 2 for b in self.biases if b is not None
+                )
+                r_scaling = math.sqrt(max(n1, n2, n3))
+                s_scaling = rho * float(torch.linalg.vector_norm(gh_usum))
+
+                # BART counts real numbers, which is twice the complex ones.
+                m = 2 * sum(math.prod(self._shape(t)) for t in self.terms)
+                n = 2 * math.prod(tuple(x.shape))
+                eps_pri = (
+                    cur_params.get("abstol", 1e-4) * math.sqrt(m)
+                    + cur_params.get("reltol", 1e-3) * r_scaling
+                )
+                eps_dual = (
+                    cur_params.get("abstol", 1e-4) * math.sqrt(n)
+                    + cur_params.get("reltol", 1e-3) * s_scaling
+                )
+
+                done = (self._invokes > cur_params["maxiter"]) or (
+                    r_norm < eps_pri and s_norm < eps_dual
+                )
+                rho, tau = self._adapt(
+                    cur_params, rho, tau, r_norm, s_norm, r_scaling, s_scaling, u
+                )
+            else:
+                done = self._invokes > cur_params["maxiter"]
+                rho, tau = self._adapt(cur_params, rho, tau, 0.0, 0.0, 1.0, 1.0, u)
+
+            return {
+                "est": (x, x),
+                "cost": None,
+                "z": z,
+                "u": u,
+                "rho": rho,
+                "tau": tau,
+                "done": done,
+                "it": X.get("it", 0) + 1,
+            }
+
+        def _adapt(self, params, rho, tau, r_norm, s_norm, r_scaling, s_scaling, u):
+            """BART's ``tau`` and ``rho`` moves, and hogwild's doubling."""
+            sc = 1.0
+
+            if params.get("dynamic_tau", False) and s_norm:
+                tau_max = params.get("tau_max", 20.0)
+                t = math.sqrt(r_norm / s_norm)
+                if tau_max > t >= 1.0:
+                    tau = t
+                elif 1.0 > t > 1.0 / tau_max:
+                    tau = 1.0 / t
+                else:
+                    tau = tau_max
+
+            if params.get("dynamic_rho", False):
+                r, s = r_norm, s_norm
+                if params.get("relative_norm", False):
+                    r, s = r / r_scaling, s / s_scaling
+                mu = params.get("mu", 3.0)
+                if r > mu * s:
+                    sc = tau
+                elif s > mu * r:
+                    sc = 1.0 / tau
+
+            if params.get("hogwild", False):
+                self._hw_k = getattr(self, "_hw_k", 0) + 1
+                self._hw_K = getattr(self, "_hw_K", 1)
+                if self._hw_k == self._hw_K:
+                    self._hw_k, self._hw_K, sc = 0, self._hw_K * 2, 2.0
+
+            if 1.0 != sc:
+                rho = rho * sc
+                for j in range(len(u)):
+                    u[j] = u[j] / sc
+
+            return rho, tau
+
+        def restart(self):
+            """Forget the budget already spent, for a fresh run."""
+            self._invokes = 0
+            self._hw_k, self._hw_K = 0, 1
+
+    return ADMMIteration
+
+
 _BUILDERS = {
+    "ADMMIteration": _admm,
     "NormalEquations": _normal_equations,
     "TermPrior": _term_prior,
     "ISTIteration": _ist,

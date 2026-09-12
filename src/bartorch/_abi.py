@@ -164,6 +164,7 @@ SYMBOLS = (
     "bartorch_prox_create",
     "bartorch_prox_domain",
     "bartorch_prox_apply",
+    "bartorch_prox_transform_apply",
     "bartorch_prox_transform",
     "bartorch_prox_free",
     "bartorch_nlop_callback",
@@ -670,6 +671,13 @@ def bind(lib: ctypes.CDLL) -> ctypes.CDLL:
     lib.bartorch_prox_apply.argtypes = [
         ctypes.c_void_p,
         ctypes.c_float,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    lib.bartorch_prox_transform_apply.restype = ctypes.c_int
+    lib.bartorch_prox_transform_apply.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_int,
         ctypes.c_void_p,
         ctypes.c_void_p,
     ]
