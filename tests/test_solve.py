@@ -286,6 +286,9 @@ def _whole_coil_operator():
     The coil-slab operator gives the same answer by different arithmetic, so
     the bit-for-bit comparison is made against BART's.  Process-wide, hence
     put back afterwards.
+
+    This is about arithmetic and not about convention: the samples come back
+    modulated because ``modulated=True`` asks for that, whatever the slab.
     """
     before = _dispatch.coil_batch()
     _dispatch.set_coil_batch(0)
@@ -314,7 +317,10 @@ def _pics_problem(size=24, coils=4, accel=2):
     y = bartorch.fftmod(kspace * pattern, axes=(-1, -2, -3), inverse=True)
     scale = optim.data_scaling(y)
 
-    S = linop.CartesianSense(maps.squeeze(1), (coils, size, size), coil_batch=0)
+    # BART's own convention and BART's own operator: the k-space above is
+    # modulated as `pics` modulates it, and `coil_batch=0` is the arithmetic
+    # the tool does rather than arithmetic that agrees with it.
+    S = linop.CartesianSense(maps.squeeze(1), (coils, size, size), coil_batch=0, modulated=True)
     A = linop.Sampling(pattern.squeeze(), S.oshape) @ S
     return kspace, maps, A, (y * (1.0 / scale)).squeeze(1), scale
 

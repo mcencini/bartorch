@@ -1006,8 +1006,11 @@ const struct linop_s* bartorch_sense_operator(const long max_dims[DIMS], const l
 		const long traj_dims[DIMS], const complex float* traj,
 		const long wgh_dims[DIMS], const complex float* weights,
 		const long bas_dims[DIMS], const complex float* basis,
-		const struct nufft_conf_s* conf)
+		const struct nufft_conf_s* conf, int modulated)
 {
+	if ((NULL != traj) && (0 != modulated))
+		error("bartorch: the modulated convention is the grid's; off it there is only one\n");
+
 	if ((NULL == traj) && ((NULL != weights) || (NULL != basis)))
 		error("bartorch: weights and a basis belong to a non-Cartesian transform\n");
 
@@ -1038,12 +1041,30 @@ const struct linop_s* bartorch_sense_operator(const long max_dims[DIMS], const l
 
 		if (NULL == traj) {
 
-			/* The flags `pics` gives it, so that what comes back is
-			 * the operator the tool builds and not one like it. */
-			unsigned long map_flags = FFT_FLAGS | SENS_FLAGS
-				| md_nontriv_dims(DIMS, sens_dims);
+			if (0 != modulated) {
 
-			return bart_sense_init(0UL, max_dims, map_flags, sens);
+				/* The flags `pics` gives it, so that what comes
+				 * back is the operator the tool builds and not
+				 * one like it -- which is what a caller asking
+				 * for this convention is after. */
+				unsigned long map_flags = FFT_FLAGS | SENS_FLAGS
+					| md_nontriv_dims(DIMS, sens_dims);
+
+				return bart_sense_init(0UL, max_dims, map_flags, sens);
+			}
+
+			/* Centred, as every slab of this operator is.  BART's
+			 * own chain is the other convention, so it cannot
+			 * stand in here: the coils and the transform are put
+			 * together directly instead. */
+			long img_dims[DIMS];
+			md_select_dims(DIMS, ~COIL_FLAG, img_dims, max_dims);
+
+			long cim_dims[DIMS];
+			md_select_dims(DIMS, ~MAPS_FLAG, cim_dims, max_dims);
+
+			return linop_chain_FF(linop_fmac_dims_create(DIMS, cim_dims, img_dims, sens_dims, sens),
+					linop_fftc_create(DIMS, cim_dims, FFT_FLAGS));
 		}
 
 		return bart_sense_nc_init(max_dims, map_dims, sens, ksp_dims, traj_dims, traj, conf,
@@ -1058,11 +1079,39 @@ const struct linop_s* bartorch_sense_operator(const long max_dims[DIMS], const l
 	slab_ksp_dims[COIL_DIM] = d->batch;
 
 	/* Centred, which is what `bartorch.tools.fft` is and so what a caller
-	 * who chains this against one will expect; BART's own SENSE operator
-	 * folds the same centring into the sensitivities instead. */
-	if (NULL == traj)
-		d->slab = linop_fftc_create(DIMS, slab_ksp_dims, FFT_FLAGS);
-	else
+	 * who chains this against one will expect.  BART's own SENSE operator
+	 * puts the same centring somewhere else -- a scale and a modulation
+	 * folded into the sensitivities, and the plain transform after them --
+	 * which leaves the samples modulated, and is what `pics` works in.
+	 * That convention is reached by asking for it, not by the slab. */
+	if (NULL == traj) {
+
+		if (0 == modulated) {
+
+			d->slab = linop_fftc_create(DIMS, slab_ksp_dims, FFT_FLAGS);
+
+		} else {
+
+			if (0 != kernels)
+				error("bartorch: the modulated convention folds a scale and a "
+					"modulation into the sensitivities, which is done on the "
+					"whole grid and so cannot be done to a kernel; ask for the "
+					"centred convention, or inflate the kernels first\n");
+
+			if (!md_check_equal_dims(DIMS, map_dims, sens_dims, ~0UL))
+				error("bartorch: the modulation folded into the sensitivities is "
+					"the grid's, so this convention needs a bank on the grid "
+					"rather than one broadcast onto it\n");
+
+			d->owned = md_alloc_sameplace(DIMS, map_dims, CFL_SIZE, sens);
+			fftscale(DIMS, map_dims, FFT_FLAGS, d->owned, sens);
+			fftmod(DIMS, map_dims, FFT_FLAGS, d->owned, d->owned);
+			d->maps = d->owned;
+
+			d->slab = linop_fft_create(DIMS, slab_ksp_dims, FFT_FLAGS);
+		}
+
+	} else
 		d->slab = nufft_create2(DIMS, slab_ksp_dims, d->cim_dims, traj_dims, traj,
 				(weights ? wgh_dims : NULL), weights,
 				(basis ? bas_dims : NULL), basis, *conf);

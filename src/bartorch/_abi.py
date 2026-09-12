@@ -415,6 +415,7 @@ def bind(lib: ctypes.CDLL) -> ctypes.CDLL:
         ctypes.POINTER(ctypes.c_long),
         ctypes.c_void_p,
         ctypes.c_int,
+        ctypes.c_int,
     ]
     lib.bartorch_linop_coils.restype = ctypes.c_void_p
     lib.bartorch_linop_coils.argtypes = [

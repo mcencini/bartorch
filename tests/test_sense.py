@@ -13,6 +13,7 @@ import torch
 import bartorch
 import bartorch.tools as bt
 from bartorch import _dispatch, linop, optim
+from bartorch._dispatch import BartError
 from bartorch._lib import library
 
 
@@ -739,3 +740,75 @@ def test_several_sets_off_the_grid_are_the_sum_of_the_one_set_operators():
         for m in range(SETS)
     )
     torch.testing.assert_close(A(x).reshape(want.shape), want, rtol=1e-4, atol=1e-5)
+
+
+# --- which convention the samples come back in --------------------------------
+#
+# BART's own Cartesian SENSE folds a scale and a modulation into the
+# sensitivities and applies the plain transform after them, which leaves the
+# samples modulated; that is what `pics` works in, and what its k-space is
+# written in.  This operator's slabs apply the centred transform instead, which
+# is what `bartorch.fft` produces.
+#
+# Both are wanted.  What is not wanted is `coil_batch` deciding between them,
+# which is what it used to do: a setting documented as changing residency
+# silently changed the answer by a checkerboard.
+
+
+def _grid_bank(n=16, coils=4, seed=0):
+    torch.manual_seed(seed)
+    return torch.randn(coils, 1, n, n, dtype=torch.complex64)
+
+
+@pytest.mark.parametrize("modulated", [False, True])
+@pytest.mark.parametrize("batch", [0, 1, 2, 4])
+def test_the_slab_does_not_decide_the_convention(modulated, batch):
+    """The regression this pins: `coil_batch` is residency and nothing else."""
+    n, coils = 16, 4
+    maps = _grid_bank(n, coils)
+    x = torch.randn(1, n, n, dtype=torch.complex64)
+
+    sliced = linop.CartesianSense(maps, (coils, n, n), coil_batch=batch, modulated=modulated)
+    one = linop.CartesianSense(maps, (coils, n, n), coil_batch=1, modulated=modulated)
+
+    torch.testing.assert_close(sliced(x), one(x), rtol=1e-6, atol=1e-6)
+
+
+def test_the_two_conventions_are_one_modulation_apart():
+    n, coils = 16, 4
+    maps = _grid_bank(n, coils)
+    x = torch.randn(1, n, n, dtype=torch.complex64)
+
+    centred = linop.CartesianSense(maps, (coils, n, n))
+    modulated = linop.CartesianSense(maps, (coils, n, n), modulated=True)
+
+    torch.testing.assert_close(
+        bartorch.fftmod(modulated(x), axes=(-1, -2, -3)), centred(x), rtol=1e-6, atol=1e-6
+    )
+
+
+@pytest.mark.parametrize("modulated", [False, True])
+def test_either_convention_has_the_adjoint_it_claims(modulated):
+    n, coils = 16, 4
+    A = linop.CartesianSense(_grid_bank(n, coils), (coils, n, n), modulated=modulated, coil_batch=2)
+
+    torch.manual_seed(1)
+    x = torch.randn(*A.ishape, dtype=torch.complex64)
+    y = torch.randn(*A.oshape, dtype=torch.complex64)
+    lhs = complex((A(x).conj() * y).sum())
+    rhs = complex((x.conj() * A.adjoint(y)).sum())
+    assert abs(lhs - rhs) / abs(lhs) < 1e-5
+
+
+def test_the_modulated_convention_is_the_grids():
+    n, coils = 16, 4
+    traj = bt.traj(x=n, y=24, r=True)
+    with pytest.raises(ValueError, match="only one"):
+        linop.NoncartesianSense(_grid_bank(n, coils), (coils, n, n), traj=traj, modulated=True)
+
+
+def test_a_kernel_cannot_carry_the_modulation():
+    """It is the whole grid's, and a kernel is a few samples across."""
+    kernels, _ = _kernel_bank(1)
+    with pytest.raises(BartError, match="cannot be done to a kernel"):
+        linop.CartesianSense(kernels, (COILS_K, N_K, N_K), kernels=True, modulated=True)
