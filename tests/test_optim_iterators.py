@@ -80,11 +80,75 @@ def test_the_step_is_the_one_bart_takes(problem, step):
 
 
 def test_the_acceleration_parameters_are_barts(problem):
+    """`fista_formula` is `(p + sqrtf(q + r t^2)) / 2`, and whether that is
+    one rounding or two is the compiler's choice.
+
+    clang contracts `q + r * t * t` into a fused multiply-add where the
+    hardware has one -- arm64 does, the x86-64 baseline does not -- and a
+    fused multiply-add does not round the product.  `_formula` writes the
+    two roundings out, which is what BART computes on x86-64.
+
+    With BART's own `r = 4` the two forms agree at every step of the
+    recurrence, so the default is the same bits everywhere; `r = 2` parts
+    company at the eighth.  Hence the two assertions: exact for the
+    parameters `pics` uses, and close for parameters that reach the
+    difference between one rounding and two.
+    """
     A, y = problem
     term = prox.L1(0.05)
+
+    theirs = optim.FISTA(term, maxiter=20, step=0.7)(y, A)
+    ours = _drive(iterators.FISTAIteration(), A, y, term, 20, stepsize=0.7, pqr=(1.0, 1.0, 4.0))
+    assert torch.equal(ours, theirs), "BART's own acceleration parameters are not platform-bound"
+
     pqr = (1.0, 1.0, 2.0)
     ours = _drive(iterators.FISTAIteration(), A, y, term, 20, stepsize=0.7, pqr=pqr)
-    assert torch.equal(ours, optim.FISTA(term, maxiter=20, step=0.7, pqr=pqr)(y, A))
+    theirs = optim.FISTA(term, maxiter=20, step=0.7, pqr=pqr)(y, A)
+    assert not torch.equal(ours, optim.FISTA(term, maxiter=20, step=0.7)(y, A)), (
+        "the parameters changed nothing, so this proves nothing about them"
+    )
+    torch.testing.assert_close(ours, theirs, rtol=1e-5, atol=1e-6)
+
+
+def test_the_acceleration_recurrence_is_where_the_platform_shows():
+    """The measurement the test above rests on, without a solve around it.
+
+    Not a claim about this package: it is what a fused multiply-add does to
+    BART's recurrence, and it says which parameters can be held to the bit on
+    every platform and which cannot.
+    """
+    import numpy as np
+
+    def contracted(q, r, t):
+        # float32 inputs make the double exact, so this is the fused form.
+        t32 = np.float32(t)
+        return np.float32(np.float64(q) + np.float64(np.float32(r) * t32) * np.float64(t32))
+
+    def rounded(q, r, t):
+        t32 = np.float32(t)
+        return np.float32(np.float32(q) + np.float32(r) * t32 * t32)
+
+    def step(inner):
+        return float((np.float32(1.0) + np.sqrt(inner)) / np.float32(2.0))
+
+    # Twenty, because that is how many the test above runs.
+    counts = {}
+    for r in (4.0, 2.0):
+        t, differing = 1.0, 0
+        for _ in range(20):
+            one, two = step(rounded(1.0, r, t)), step(contracted(1.0, r, t))
+            differing += int(one != two)
+            t = one
+        counts[r] = differing
+
+    assert counts[4.0] == 0, (
+        "BART's own r is 4, and the exact assertion above rests on the two "
+        f"forms agreeing at every step of it -- they part at {counts[4.0]}"
+    )
+    assert counts[2.0] > 0, (
+        "r = 2 was chosen because it reaches the difference between one "
+        "rounding and two; it no longer does, so the tolerance above is idle"
+    )
 
 
 @pytest.mark.parametrize("iters", [9, 11, 31, 40])
