@@ -122,6 +122,8 @@ SYMBOLS = (
     "bartorch_linop_chain",
     "bartorch_linop_plus",
     "bartorch_linop_adjoint_op",
+    "bartorch_linop_stack_cod",
+    "bartorch_linop_stack",
     "bartorch_linop_normal_op",
     "bartorch_linop_scale",
     "bartorch_linop_zconj",
@@ -413,6 +415,19 @@ def bind(lib: ctypes.CDLL) -> ctypes.CDLL:
     lib.bartorch_linop_plus.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
     lib.bartorch_linop_adjoint_op.restype = ctypes.c_void_p
     lib.bartorch_linop_adjoint_op.argtypes = [ctypes.c_void_p]
+    lib.bartorch_linop_stack_cod.restype = ctypes.c_void_p
+    lib.bartorch_linop_stack_cod.argtypes = [
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.c_int,
+    ]
+    lib.bartorch_linop_stack.restype = ctypes.c_void_p
+    lib.bartorch_linop_stack.argtypes = [
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
     lib.bartorch_linop_normal_op.restype = ctypes.c_void_p
     lib.bartorch_linop_normal_op.argtypes = [ctypes.c_void_p]
     lib.bartorch_linop_scale.restype = ctypes.c_void_p

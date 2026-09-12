@@ -50,6 +50,7 @@ POINTERS = {
     "int*": "ctypes.POINTER(ctypes.c_int)",
     "float*": "ctypes.POINTER(ctypes.c_float)",
     "bartorch_linop*": "ctypes.c_void_p",
+    "bartorch_linop**": "ctypes.POINTER(ctypes.c_void_p)",
     "bartorch_nlop*": "ctypes.c_void_p",
     "bartorch_prox*": "ctypes.c_void_p",
     "bartorch_prox**": "ctypes.POINTER(ctypes.c_void_p)",

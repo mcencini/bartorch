@@ -16,9 +16,10 @@ records it for autograd.
 An operator is combined with others through the algebra its class defines,
 rather than by naming a combining class: `A @ B` composes, `A + B` and
 `A - B` add, `c * A` scales, `A ** n` repeats, `A.H` and `A.T` transpose,
-`A.gram()` and `A.cogram()` are the normal operators.  What each returns is
-private, because the algebra promises the operator, not the shape of the tree
-it is made of.
+`A.gram()` and `A.cogram()` are the normal operators, and `A[key]` restricts
+its output the way indexing a tensor does.  What each returns is private,
+because the algebra promises the operator, not the shape of the tree it is
+made of.
 
 ```{eval-rst}
 .. autosummary::
@@ -43,6 +44,26 @@ it is made of.
    FFT
    NUFFT
    MultiplySum
+```
+
+## Combining operators
+
+The only functions here.  Everything else BART offers maps a tensor to a
+tensor and is an operator in its own right, which makes it a class; these take
+operators and give back an operator, which is the one thing that cannot be
+written as arithmetic or as indexing.  Each is one BART operator, so what a
+solver drives is a single operator rather than a list walked per iteration.
+
+```{eval-rst}
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   concatenate
+   stack
+   hstack
+   block_diag
+   block
 ```
 
 ## Shape

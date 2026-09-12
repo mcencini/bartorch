@@ -389,6 +389,49 @@ bartorch_linop* bartorch_linop_plus(const bartorch_linop* a, const bartorch_lino
 
 struct linop_unary_args { const bartorch_linop* a; bartorch_linop* result; };
 
+struct linop_stack_cod_args { int n; const bartorch_linop** ops; int stack_dim; bartorch_linop* result; };
+
+static int linop_stack_cod_worker(void* p)
+{
+	struct linop_stack_cod_args* a = p;
+
+	const struct linop_s* ops[a->n];
+
+	for (int i = 0; i < a->n; i++)
+		ops[i] = a->ops[i]->op;
+
+	a->result = wrap_linop(linop_stack_cod(a->n, ops, a->stack_dim));
+	return 0;
+}
+
+/* One domain, codomains laid end to end along stack_dim: what stacking
+ * operators means, and what a solver then drives as a single operator. */
+bartorch_linop* bartorch_linop_stack_cod(int n, const bartorch_linop** ops, int stack_dim)
+{
+	if (1 > n)
+		error("stacking needs at least one operator\n");
+
+	struct linop_stack_cod_args a = { n, ops, stack_dim, NULL };
+	return (0 == guarded(linop_stack_cod_worker, &a)) ? a.result : NULL;
+}
+
+struct linop_stack_args { int cod_dim; int dom_dim; const bartorch_linop* a; const bartorch_linop* b; bartorch_linop* result; };
+
+static int linop_stack_worker(void* p)
+{
+	struct linop_stack_args* s = p;
+	s->result = wrap_linop(linop_stack(s->cod_dim, s->dom_dim, s->a->op, s->b->op));
+	return 0;
+}
+
+/* Both sides stacked: separate inputs to separate outputs, which is a block
+ * diagonal. */
+bartorch_linop* bartorch_linop_stack(int cod_dim, int dom_dim, const bartorch_linop* a, const bartorch_linop* b)
+{
+	struct linop_stack_args s = { cod_dim, dom_dim, a, b, NULL };
+	return (0 == guarded(linop_stack_worker, &s)) ? s.result : NULL;
+}
+
 static int linop_adjoint_op_worker(void* p)
 {
 	struct linop_unary_args* a = p;

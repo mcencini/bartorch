@@ -73,6 +73,12 @@ def padded_order(order, ndim: int) -> ctypes.Array:
     return (ctypes.c_int * DIMS)(*(out + list(range(ndim, DIMS))))
 
 
+def handles(pointers) -> ctypes.Array:
+    """An array of operator handles, for a constructor that takes several."""
+    pointers = list(pointers)
+    return (ctypes.c_void_p * len(pointers))(*pointers)
+
+
 def dims(shape: tuple[int, ...]) -> tuple[int, ctypes.Array]:
     """BART rank and dimension vector of a C-order shape, unpadded; a scalar has rank one."""
     rev = list(shape)[::-1] or [1]
