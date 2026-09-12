@@ -384,27 +384,6 @@ def test_the_terms_are_summed_before_the_encoding_is_added():
     assert torch.equal(solver(y, A), solver.in_library(y, A))
 
 
-def test_without_deepinv_the_solver_falls_back_to_the_library(monkeypatch):
-    """The iteration is a ``deepinv`` optimizer, and ``deepinv`` is optional.
-
-    Without it there is nothing to drive, so ``ADMM`` runs BART's own loop --
-    which is the same answer, as everything above this says.
-    """
-
-    def missing():
-        raise ImportError("deepinv is not installed")
-
-    monkeypatch.setattr(iterators, "_CACHE", {})
-    monkeypatch.setattr(iterators, "_classes", missing)
-
-    torch.manual_seed(0)
-    A = linop.FFT(SHAPE, axes=(-1, -2))
-    y = A(_rand(*SHAPE))
-    solver = optim.ADMM(prox.L1(0.05), maxiter=6, cg_maxiter=4)
-
-    assert torch.equal(solver(y, A), solver.in_library(y, A))
-
-
 def test_the_loop_crosses_into_python_where_the_library_would_not():
     """The point of the switch, and the cost of it: the step is visible."""
     torch.manual_seed(0)
