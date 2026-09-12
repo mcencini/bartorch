@@ -419,7 +419,7 @@ def _admm() -> type:
 
         # --- the x update ------------------------------------------------------
 
-        def _solve_x(self, x, rhs, rho, physics, params):
+        def _solve_x(self, x, rhs, rho, physics, params, first=False):
             """Conjugate gradients on ``A^H A + rho sum_j G_j^H G_j``, from ``x``.
 
             BART's ``cg_xupdate``: the same operator, the same warm start, and
@@ -459,7 +459,14 @@ def _admm() -> type:
 
             shape = tuple(x.shape)
             normal = Callback(shape, shape, apply, apply, apply)
-            solver = CG(maxiter=params.get("cg_maxiter", 10), tol=params.get("cg_eps", 1e-3))
+            budget = params.get("cg_maxiter", 10)
+            if first and params.get("cg_maxiter_first") is not None:
+                # riesling's `iters0`: more inner iterations on the first outer
+                # step, where there is no warm start to build on, and fewer
+                # after.  BART has one budget for every step; this is the one
+                # thing that implementation has that BART's does not.
+                budget = params["cg_maxiter_first"]
+            solver = CG(maxiter=budget, tol=params.get("cg_eps", 1e-3))
 
             steps: list[int] = []
             out = solver(rhs, _WithNormal(Identity(shape), normal), x0=x, steps=steps)
@@ -499,7 +506,7 @@ def _admm() -> type:
                 rhs = rhs + self._adjoint(term, r)
             rhs = rho * rhs + adjoint
 
-            x = self._solve_x(x, rhs, rho, physics, cur_params)
+            x = self._solve_x(x, rhs, rho, physics, cur_params, first=0 == X.get("it", 0))
 
             n1 = n2 = r_sq = 0.0
             s = torch.zeros_like(x)
@@ -512,7 +519,7 @@ def _admm() -> type:
 
                 if not fast:
                     residual = gx
-                    n1 += float(torch.linalg.vector_norm(residual)) ** 2
+                    n1 += _norm(residual) ** 2
                     gx = alpha * gx + (1.0 - alpha) * z[j]
                     if bias is not None:
                         gx = gx + (1.0 - alpha) * bias
@@ -528,20 +535,21 @@ def _admm() -> type:
                     r = residual - z[j]
                     if bias is not None:
                         r = r - bias
-                    r_sq += float(torch.linalg.vector_norm(r)) ** 2
+                    # `float r_norm` against `double n1, n2`: the primal
+                    # residual is accumulated in single precision and the
+                    # scalings in double, which is what `admm.c` declares.
+                    r_sq = _single(r_sq + _norm(r) ** 2)
                     s = s + self._adjoint(term, z[j] - z_old)
                     gh_usum = gh_usum + self._adjoint(term, u[j])
-                    n2 += float(torch.linalg.vector_norm(z[j])) ** 2
+                    n2 += _norm(z[j]) ** 2
 
             done = False
             if not fast:
                 r_norm = _single(math.sqrt(r_sq))
-                s_norm = _single(rho * float(torch.linalg.vector_norm(s)))
-                n3 = sum(
-                    float(torch.linalg.vector_norm(b)) ** 2 for b in self.biases if b is not None
-                )
+                s_norm = _single(rho * _norm(s))
+                n3 = sum(_norm(b) ** 2 for b in self.biases if b is not None)
                 r_scaling = math.sqrt(max(n1, n2, n3))
-                s_scaling = rho * float(torch.linalg.vector_norm(gh_usum))
+                s_scaling = rho * _norm(gh_usum)
 
                 # BART counts real numbers, which is twice the complex ones.
                 m = 2 * sum(math.prod(self._shape(t)) for t in self.terms)
@@ -595,9 +603,15 @@ def _admm() -> type:
             """BART's ``tau`` and ``rho`` moves, and hogwild's doubling."""
             sc = 1.0
 
-            if params.get("dynamic_tau", False) and s_norm:
+            if params.get("dynamic_tau", False):
                 tau_max = params.get("tau_max", 20.0)
-                t = math.sqrt(r_norm / s_norm)
+                # `sqrt(r_norm / s_norm)` with both at zero -- which is what
+                # `fast` leaves them at -- is a NaN, and every comparison
+                # below is then false, so `tau` goes to its ceiling.  BART
+                # does not guard it either.
+                # `sqrt(r_norm / s_norm)` over two floats: the division is a
+                # single-precision one, and only the root is taken in double.
+                t = math.sqrt(_single(r_norm / s_norm)) if s_norm else float("nan")
                 if tau_max > t >= 1.0:
                     tau = _single(t)
                 elif 1.0 > t > 1.0 / tau_max:
@@ -613,7 +627,7 @@ def _admm() -> type:
                 if r > mu * s:
                     sc = tau
                 elif s > mu * r:
-                    sc = 1.0 / tau
+                    sc = _single(1.0 / tau)
 
             if params.get("hogwild", False):
                 self._hw_k = getattr(self, "_hw_k", 0) + 1
@@ -623,8 +637,11 @@ def _admm() -> type:
 
             if 1.0 != sc:
                 rho = _single(rho * sc)
+                # `smul(z_dims[j], 1. / sc, u[j], u[j])`: the reciprocal once,
+                # as a float, and the vector scaled by it.
+                back = _single(1.0 / sc)
                 for j in range(len(u)):
-                    u[j] = u[j] / sc
+                    u[j] = back * u[j]
 
             return rho, tau
 

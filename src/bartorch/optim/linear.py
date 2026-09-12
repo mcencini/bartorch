@@ -222,6 +222,10 @@ def _solve(
     rho: float = -1.0,
     cg_maxiter: int = 0,
     cg_tol: float = 0.0,
+    dynamic_rho: bool = False,
+    dynamic_tau: bool = False,
+    relative_norm: bool = False,
+    fast: bool = False,
     pqr: tuple[float, float, float] | None = None,
     sigma_tau_ratio: float = 1.0,
     adaptive_step: bool = False,
@@ -266,6 +270,10 @@ def _solve(
             float(rho),
             int(cg_maxiter),
             float(cg_tol),
+            int(dynamic_rho),
+            int(dynamic_tau),
+            int(relative_norm),
+            int(fast),
             float(p),
             float(q),
             float(r),
@@ -671,12 +679,63 @@ class ADMM(_Solver):
         Conjugate-gradient iterations per step (``pics -C``); 10 is BART's
         default.
     hogwild : bool
-        BART's ``hogwild`` setting (``pics -H``).
+        BART's ``hogwild`` setting (``pics -H``), which doubles ``rho`` after
+        ten steps, then twenty, then forty.  Not combinable with
+        ``dynamic_rho``, which BART asserts against.
     cclambda : float
         Weight of an identity added to the normal operator (``pics -q``).
+    biases : sequence of tensor, optional
+        The ``b_j`` of ``f_j(G_j x - b_j)``, one per term, each of its term's
+        transformed shape.
+    dynamic_rho : bool
+        Move ``rho`` with the residuals (``pics --admm_dynamic_rho``): up by
+        ``tau`` when the primal residual leads, down when the dual does.  The
+        dual variables are rescaled to match, so the split stays where it was.
+    dynamic_tau : bool
+        Choose ``tau`` from the residuals too (``pics --admm_dynamic_tau``),
+        as ``sqrt(r / s)`` clipped to ``[1 / tau_max, tau_max]``.  Together
+        with ``dynamic_rho`` and ``relative_norm`` this is the residual
+        balancing of Wohlberg (2017).
+    relative_norm : bool
+        Compare the residuals to their scalings rather than to each other
+        (``pics --admm_relative_norm``).
+    fast : bool
+        Skip the residuals entirely, and with them the stopping test.
+    alpha : float
+        Over-relaxation; BART's default of 1.6 is what ``pics`` runs.  Out of
+        reach of :meth:`in_library`, which ``italgo_config`` gives no way to
+        set.
+    mu : float
+        How far the residuals must part before ``dynamic_rho`` moves ``rho``.
+        Out of reach of :meth:`in_library`.
+    tau_max : float
+        The clip on ``tau``.  Out of reach of :meth:`in_library`.
+    abstol, reltol : float
+        Boyd's absolute and relative tolerances, which stop the iteration when
+        both residuals are inside them.  ``italgo_config`` sets both to zero,
+        whatever ``iter_admm_defaults`` says, so the budget is what stops
+        ``pics``; these are out of reach of :meth:`in_library`.
+    cg_maxiter_first : int, optional
+        A separate budget for the first step's inner solve.  Not BART's --
+        it is riesling's ``iters0``, the one thing that implementation has
+        that BART's does not -- so it is out of reach of :meth:`in_library`
+        as well.
     """
 
     _algorithm = "admm"
+
+    #: What `italgo_config` gives no way to set, so a solve that runs inside
+    #: the library cannot honour it.  Each is the attribute and the value it
+    #: has when nothing was asked for.
+    _beyond_the_tool = {
+        "alpha": 1.6,
+        "mu": 3.0,
+        "tau_max": 20.0,
+        "abstol": 0.0,
+        "reltol": 0.0,
+        "cg_maxiter_first": None,
+        "biases": None,
+    }
 
     def __init__(
         self,
@@ -687,14 +746,75 @@ class ADMM(_Solver):
         cg_maxiter: int = 10,
         hogwild: bool = False,
         cclambda: float = 0.0,
+        biases: Sequence[torch.Tensor] | None = None,
+        dynamic_rho: bool = False,
+        dynamic_tau: bool = False,
+        relative_norm: bool = False,
+        fast: bool = False,
+        alpha: float = 1.6,
+        mu: float = 3.0,
+        tau_max: float = 20.0,
+        abstol: float = 0.0,
+        reltol: float = 0.0,
+        cg_maxiter_first: int | None = None,
     ):
         super().__init__(regularizers, maxiter, cclambda)
         self.rho = float(rho)
         self.cg_maxiter = int(cg_maxiter)
         self.hogwild = bool(hogwild)
+        self.dynamic_rho = bool(dynamic_rho)
+        self.dynamic_tau = bool(dynamic_tau)
+        self.relative_norm = bool(relative_norm)
+        self.fast = bool(fast)
+        self.alpha = float(alpha)
+        self.mu = float(mu)
+        self.tau_max = float(tau_max)
+        self.abstol = float(abstol)
+        self.reltol = float(reltol)
+        self.cg_maxiter_first = None if cg_maxiter_first is None else int(cg_maxiter_first)
+        self.biases = None if biases is None else list(biases)
+
+        if self.hogwild and self.dynamic_rho:
+            # `admm` asserts the two apart, and an assertion is the process.
+            raise ValueError("BART's ADMM takes hogwild or a dynamic rho, not both")
+        if self.fast and self.dynamic_rho:
+            # `admm` asserts this one apart too: there are no residuals in
+            # fast mode, and a dynamic rho is a move on the residuals.
+            raise ValueError("a dynamic rho needs the residuals, which fast mode does not compute")
+        if self.biases is not None and len(self.biases) != len(self.regularizers):
+            raise ValueError("one bias per term, or none at all")
 
     def _settings(self) -> dict:
-        return {"rho": self.rho, "cg_maxiter": self.cg_maxiter, "hogwild": self.hogwild}
+        return {
+            "rho": self.rho,
+            "cg_maxiter": self.cg_maxiter,
+            "hogwild": self.hogwild,
+            "dynamic_rho": self.dynamic_rho,
+            "dynamic_tau": self.dynamic_tau,
+            "relative_norm": self.relative_norm,
+            "fast": self.fast,
+        }
+
+    def in_library(self, y: torch.Tensor, A, x0: torch.Tensor | None = None) -> torch.Tensor:
+        """BART's own loop, which cannot be given everything this solver takes.
+
+        ``italgo_config`` builds the configuration ``pics`` builds and hands
+        it over; the over-relaxation, ``mu``, ``tau_max`` and the two
+        tolerances are not among the things it sets, and neither is a bias or
+        riesling's first-step budget.  Asking for one of those and then for
+        BART's loop is refused rather than quietly dropped.
+        """
+        asked = [
+            name
+            for name, default in self._beyond_the_tool.items()
+            if getattr(self, name) != default
+        ]
+        if asked:
+            raise ValueError(
+                f"{', '.join(sorted(asked))} cannot be set on BART's own loop -- "
+                "`italgo_config` has no way to pass them; the iteration written here does"
+            )
+        return super().in_library(y, A, x0)
 
     def __call__(self, y: torch.Tensor, A, x0: torch.Tensor | None = None) -> torch.Tensor:
         """Solve, by the iteration in :mod:`bartorch.optim.iterators`.
@@ -717,14 +837,24 @@ class ADMM(_Solver):
 
         op, y, x = _start(A, y, x0, self.regularizers)
 
-        iteration = ADMMIteration(self.regularizers, op.ishape)
+        iteration = ADMMIteration(self.regularizers, op.ishape, biases=self.biases)
         iteration.restart()
         params = {
             "maxiter": self.maxiter,
             "cg_maxiter": self.cg_maxiter,
+            "cg_maxiter_first": self.cg_maxiter_first,
             "rho": self.rho,
             "hogwild": self.hogwild,
             "cclambda": self.cclambda,
+            "dynamic_rho": self.dynamic_rho,
+            "dynamic_tau": self.dynamic_tau,
+            "relative_norm": self.relative_norm,
+            "fast": self.fast,
+            "alpha": self.alpha,
+            "mu": self.mu,
+            "tau_max": self.tau_max,
+            "abstol": self.abstol,
+            "reltol": self.reltol,
         }
 
         state = {"est": (x, x)}

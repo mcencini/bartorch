@@ -297,6 +297,13 @@ BARTORCH_API void bartorch_linop_free(bartorch_linop* h);
  * data has to say by how much.
  * `cg_tol` is the tolerance of conjugate gradients, which `italgo_config`
  * leaves at BART's default of zero; the other iterations ignore it.
+ * `admm_dynamic_rho`, `admm_dynamic_tau`, `admm_relative_norm` and
+ * `admm_fast` are the rest of `struct admm_conf`: Boyd's penalty adaptation
+ * and Wohlberg's residual balancing, the residuals it balances taken relative
+ * to their scalings, and the mode that skips computing them at all.  What
+ * `italgo_config` does not take -- the over-relaxation, `mu`, `tau_max` and
+ * the two tolerances -- is out of reach from here and reachable only from the
+ * iteration written in Python.
  * `iterations`, when given, is filled with the steps the algorithm took --
  * every one of BART's calls `iter_monitor` once a step, so counting those
  * counts them.  For conjugate gradients that is the number an
@@ -330,6 +337,7 @@ BARTORCH_API int bartorch_solve(const bartorch_linop* A,
 		const bartorch_prox* const* reg_ops, int n_reg,
 		float cclambda, int maxiter, float step, int eigen, int hogwild,
 		float admm_rho, int admm_maxitercg, float cg_tol,
+		int admm_dynamic_rho, int admm_dynamic_tau, int admm_relative_norm, int admm_fast,
 		float fista_p, float fista_q, float fista_r,
 		float sigma_tau_ratio, int adaptive_step,
 		int warmstart,

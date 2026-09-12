@@ -118,6 +118,41 @@ the same image answers twice differently.  Two loops therefore agree to the
 bit only when they apply it the same number of times in the same order, which
 is one more thing the comparison against the library checks.
 
+### What `optim.ADMM` takes, and where it came from
+
+`admm.c` has more in it than `pics` has flags for, and more than the wrapper
+used to pass on.  All of it is reachable now, in two groups.
+
+What `italgo_config` can be told -- `dynamic_rho`, `dynamic_tau`,
+`relative_norm`, `fast` -- goes through `bartorch_solve` as well, so
+`in_library` answers with the same bits.  `dynamic_rho` moves the penalty with
+the residuals and rescales the dual variables to match; `dynamic_tau` chooses
+how far by `sqrt(r / s)`, clipped to `[1 / tau_max, tau_max]`; `relative_norm`
+compares each residual to its own scaling first.  Those three together are the
+residual balancing of Wohlberg (2017).
+
+What it cannot be told -- `alpha`, `mu`, `tau_max`, `abstol`, `reltol`, a
+`bias` per term, and `cg_maxiter_first` -- is reachable only from the
+iteration written here, and `in_library` refuses it rather than dropping it
+quietly.  `abstol` and `reltol` are worth a word: `iter_admm_defaults` carries
+Boyd's 1e-4 and 1e-3, and `italgo_config` overwrites both with zero, so
+`pics`'s ADMM never stops on its residuals at all -- the budget is what stops
+it.
+
+The comparison against [riesling](https://github.com/spinicist/riesling)'s
+ADMM, which this was asked to make, comes out in BART's favour almost
+throughout.  Riesling has the residual balancing, the over-relaxation and a
+combined tolerance; BART has all of that plus biases, Boyd's absolute and
+relative tolerances separately, `dynamic_tau` as a setting of its own,
+hogwild, a warm start, and a budget counted in applications of the normal
+operator rather than outer steps.  Two things differ in riesling's favour: its
+x-update is LSMR with a preconditioner rather than conjugate gradients --
+deliberately not followed here, because a Toeplitz normal is the point of this
+package's encodings -- and `iters0`, a separate budget for the first outer
+step, where there is no warm start to build on.  That one is worth having, so
+`cg_maxiter_first` is it, and it is the only setting in `optim.ADMM` that is
+nobody's but riesling's.
+
 `PRIDUIteration` carries the data term as a dual of its own rather than
 differentiating it, and gives each regularization term a dual too -- except
 the first, when its transform is the identity, which becomes the primal

@@ -187,6 +187,144 @@ def test_data_whose_adjoint_has_no_norm_is_left_alone():
     assert torch.equal(solver(zero, A), solver.in_library(zero, A))
 
 
+# --- the whole of BART's ADMM ---------------------------------------------------
+#
+# `admm.c` has more in it than `pics` has flags for.  What `italgo_config` can
+# be told -- the penalty adaptation, the residual balancing, the fast mode --
+# is checked against BART's own loop below.  What it cannot is reachable only
+# from the iteration written here, and is checked by what it changes.
+
+
+@pytest.mark.parametrize("dynamic_rho", [False, True], ids=["fixed rho", "dynamic rho"])
+@pytest.mark.parametrize("dynamic_tau", [False, True], ids=["fixed tau", "dynamic tau"])
+@pytest.mark.parametrize("relative_norm", [False, True], ids=["absolute", "relative"])
+@pytest.mark.parametrize("term", [prox.L1(0.05), prox.TotalVariation((-1, -2), 0.01)], ids=repr)
+def test_the_penalty_adaptation_is_barts(dynamic_rho, dynamic_tau, relative_norm, term):
+    """Boyd's moving penalty, and the residual balancing of Wohlberg (2017)
+    that `dynamic_tau` and `relative_norm` together make of it.  BART has all
+    of it; the wrapper had none of it until now."""
+    torch.manual_seed(0)
+    n = 8
+    diag = torch.linspace(0.2, 1.0, n * n).to(torch.complex64).reshape(1, n, n)
+    A = linop.Diagonal(diag, (1, n, n))
+    y = A(_rand(1, n, n))
+    solver = optim.ADMM(
+        term,
+        maxiter=12,
+        cg_maxiter=4,
+        rho=0.5,
+        dynamic_rho=dynamic_rho,
+        dynamic_tau=dynamic_tau,
+        relative_norm=relative_norm,
+    )
+
+    assert torch.equal(solver(y, A), solver.in_library(y, A))
+
+
+def test_fast_mode_skips_the_residuals_and_is_barts():
+    torch.manual_seed(0)
+    A = linop.FFT(SHAPE, axes=(-1, -2))
+    y = A(_rand(*SHAPE))
+    solver = optim.ADMM(prox.L1(0.05), maxiter=12, cg_maxiter=4, fast=True)
+    assert torch.equal(solver(y, A), solver.in_library(y, A))
+
+
+def test_what_bart_asserts_apart_is_refused_here():
+    """An assertion in the library takes the process; these come back."""
+    with pytest.raises(ValueError, match="hogwild or a dynamic rho"):
+        optim.ADMM(prox.L1(0.05), hogwild=True, dynamic_rho=True)
+    with pytest.raises(ValueError, match="fast mode does not compute"):
+        optim.ADMM(prox.L1(0.05), fast=True, dynamic_rho=True)
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"alpha": 1.0},
+        {"mu": 1.5, "dynamic_rho": True},
+        {"tau_max": 1.05, "dynamic_rho": True, "dynamic_tau": True, "relative_norm": True},
+        {"abstol": 1.0},
+        {"reltol": 1.0},
+        {"cg_maxiter_first": 12},
+    ],
+    ids=["over-relaxation", "mu", "tau max", "abstol", "reltol", "a first-step budget"],
+)
+def test_what_the_tool_cannot_be_told_is_refused_by_its_loop(settings):
+    """`italgo_config` builds the configuration `pics` builds.  Asking for
+    something it has no way to pass and then for BART's own loop is refused
+    rather than quietly dropped."""
+    torch.manual_seed(0)
+    n = 8
+    diag = torch.linspace(0.2, 1.0, n * n).to(torch.complex64).reshape(1, n, n)
+    A = linop.Diagonal(diag, (1, n, n))
+    y = A(_rand(1, n, n))
+    solver = optim.ADMM(prox.L1(0.05), maxiter=12, cg_maxiter=2, **settings)
+
+    with pytest.raises(ValueError, match="cannot be set on BART's own loop"):
+        solver.in_library(y, A)
+
+    # The same solver but for the setting the tool cannot be told, so what is
+    # compared is that setting and nothing else.
+    reachable = {k: v for k, v in settings.items() if k not in optim.ADMM._beyond_the_tool}
+    plain = optim.ADMM(prox.L1(0.05), maxiter=12, cg_maxiter=2, **reachable)
+    assert not torch.equal(solver(y, A), plain(y, A)), f"{settings} changed nothing"
+
+
+def test_a_first_step_budget_is_rieslings_iters0():
+    """The one thing riesling's ADMM has that BART's does not: more inner
+    iterations on the first outer step, where there is no warm start to build
+    on, and fewer after."""
+    torch.manual_seed(0)
+    n = 8
+    diag = torch.linspace(0.2, 1.0, n * n).to(torch.complex64).reshape(1, n, n)
+    A = linop.Diagonal(diag, (1, n, n))
+    y = A(_rand(1, n, n))
+
+    applications = []
+    P = linop.Callback(
+        (1, n, n),
+        (1, n, n),
+        A.forward,
+        A.adjoint,
+        lambda v: (applications.append(1), A.normal(v))[1],
+    )
+
+    # One outer step, so what is counted is that step's inner solve.
+    optim.ADMM(prox.L1(0.05), maxiter=1, cg_maxiter=1, cg_maxiter_first=8)(y, P)
+    generous = len(applications)
+
+    applications.clear()
+    optim.ADMM(prox.L1(0.05), maxiter=1, cg_maxiter=1)(y, P)
+    assert generous > len(applications)
+
+    # And after the first step it is the ordinary budget again, so the whole
+    # run spends its budget sooner rather than later.
+    applications.clear()
+    optim.ADMM(prox.L1(0.05), maxiter=40, cg_maxiter=1, cg_maxiter_first=8)(y, P)
+    front_loaded = len(applications)
+    applications.clear()
+    optim.ADMM(prox.L1(0.05), maxiter=40, cg_maxiter=1)(y, P)
+    assert front_loaded < len(applications)
+
+
+def test_a_bias_is_the_offset_bart_solves_with():
+    """`f_j(G_j x - b_j)`.  BART's ADMM takes one per term; `italgo_config`
+    gives no way to pass it, so it arrives through the iteration here."""
+    torch.manual_seed(0)
+    A = linop.FFT(SHAPE, axes=(-1, -2))
+    y = A(_rand(*SHAPE))
+    term = prox.L1(0.05)
+    bias = _rand(*SHAPE)
+
+    pulled = optim.ADMM(term, maxiter=12, cg_maxiter=4, biases=[bias])(y, A)
+    plain = optim.ADMM(term, maxiter=12, cg_maxiter=4)(y, A)
+    assert not torch.equal(pulled, plain)
+    assert (pulled - bias).abs().sum() < (plain - bias).abs().sum()
+
+    with pytest.raises(ValueError, match="one bias per term"):
+        optim.ADMM([term, term], biases=[bias])
+
+
 # --- the primal-dual split -----------------------------------------------------
 
 

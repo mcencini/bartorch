@@ -427,6 +427,7 @@ int bartorch_solve(const bartorch_linop* handle,
 		const bartorch_prox* const* reg_ops, int n_reg,
 		float cclambda, int maxiter, float step, int eigen, int hogwild,
 		float admm_rho, int admm_maxitercg, float cg_tol,
+		int admm_dynamic_rho, int admm_dynamic_tau, int admm_relative_norm, int admm_fast,
 		float fista_p, float fista_q, float fista_r,
 		float sigma_tau_ratio, int adaptive_step,
 		int warmstart,
@@ -519,10 +520,11 @@ int bartorch_solve(const bartorch_linop* handle,
 	    && (-1. == step))
 		step = 0.95;
 
-	struct admm_conf admm = { false, false, false,
+	struct admm_conf admm = {
+		(bool)admm_dynamic_rho, (bool)admm_dynamic_tau, (bool)admm_relative_norm,
 		(0. < admm_rho) ? admm_rho : iter_admm_defaults.rho,
 		(0 < admm_maxitercg) ? admm_maxitercg : iter_admm_defaults.maxitercg,
-		false };
+		(bool)admm_fast };
 	struct fista_conf fista = { { fista_p, fista_q, fista_r }, false };
 	struct pridu_conf pridu = { (0. < sigma_tau_ratio) ? sigma_tau_ratio : 1., (bool)adaptive_step };
 
