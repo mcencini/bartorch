@@ -162,6 +162,9 @@ SYMBOLS = (
     "bartorch_solve_error",
     "bartorch_scaling_norm",
     "bartorch_prox_create",
+    "bartorch_prox_domain",
+    "bartorch_prox_apply",
+    "bartorch_prox_transform",
     "bartorch_prox_free",
     "bartorch_nlop_callback",
     "bartorch_nlop_from_linop",
@@ -657,6 +660,21 @@ def bind(lib: ctypes.CDLL) -> ctypes.CDLL:
         ctypes.POINTER(ctypes.c_long),
         ctypes.POINTER(ctypes.c_void_p),
     ]
+    lib.bartorch_prox_domain.restype = ctypes.c_int
+    lib.bartorch_prox_domain.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_long),
+    ]
+    lib.bartorch_prox_apply.restype = ctypes.c_int
+    lib.bartorch_prox_apply.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_float,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    lib.bartorch_prox_transform.restype = ctypes.c_void_p
+    lib.bartorch_prox_transform.argtypes = [ctypes.c_void_p]
     lib.bartorch_prox_free.restype = None
     lib.bartorch_prox_free.argtypes = [ctypes.c_void_p]
     lib.bartorch_nlop_callback.restype = ctypes.c_void_p

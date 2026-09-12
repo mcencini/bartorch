@@ -346,6 +346,14 @@ BARTORCH_API float bartorch_scaling_norm(long size, const void* image, float res
 BARTORCH_API int bartorch_prox_create(const char* kind, long xflags, long jflags,
 		float lambda, int k, int llr_blk, const char* wavelet, int shift_mode,
 		const long* img_dims, bartorch_prox** out);
+/* The shape a term's proximal operator works on -- the image's, or the
+ * codomain of the transform the term applies first.  Returns the rank. */
+BARTORCH_API int bartorch_prox_domain(const bartorch_prox* h, int N, long* dims);
+/* prox_{gamma f}(src) into dst, over that shape. */
+BARTORCH_API int bartorch_prox_apply(const bartorch_prox* h, float gamma, void* dst, const void* src);
+/* The transform the term applies before its proximal operator; the identity
+ * for a term that carries its own.  The handle is the caller's to free. */
+BARTORCH_API bartorch_linop* bartorch_prox_transform(const bartorch_prox* h);
 BARTORCH_API void bartorch_prox_free(bartorch_prox* h);
 
 BARTORCH_API bartorch_nlop* bartorch_nlop_callback(int ON, const long* odims, int IN, const long* idims,

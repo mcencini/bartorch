@@ -45,6 +45,7 @@
 /* The operator handles the ABI hands out; the host sees only the pointer. */
 struct bartorch_linop_s;
 extern const struct linop_s* bartorch_linop_unwrap(const struct bartorch_linop_s* h);
+extern bartorch_linop* bartorch_linop_wrap(const struct linop_s* op);
 
 /* BART's own letters for its regularization terms, from the run of
  * comparisons in `grecon/optreg.c`.  The host names a term rather than
@@ -143,6 +144,69 @@ int bartorch_prox_create(const char* kind, long xflags, long jflags, float lambd
 	*out = PTR_PASS(p);
 
 	return 0;
+}
+
+/* The shape a term's proximal operator works on.
+ *
+ * Usually the image's.  A term with a transform in front of it -- total
+ * variation's gradient, a wavelet, the Fourier transform an `F` term takes --
+ * has its proximal operator on the far side of that transform, and then the
+ * shape is the transform's codomain rather than the image.
+ *
+ * Returns the rank, or a negative code.  `dims` holds `N` entries and is
+ * filled with ones past the rank.
+ */
+int bartorch_prox_domain(const bartorch_prox* h, int N, long* dims)
+{
+	if ((NULL == h) || (NULL == h->op) || (NULL == dims) || (1 > N))
+		return -1;
+
+	auto dom = operator_p_domain(h->op);
+
+	if (dom->N > N)
+		return -8;
+
+	md_singleton_dims(N, dims);
+	md_copy_dims(dom->N, dims, dom->dims);
+
+	return dom->N;
+}
+
+/* prox_{gamma f}(src) into dst, over that shape.
+ *
+ * What the solvers call between their gradient steps, reached on its own so
+ * that an iteration written outside the library can call the same operator
+ * the library would have.  The shapes are the caller's to check, against
+ * `bartorch_prox_domain`.
+ */
+int bartorch_prox_apply(const bartorch_prox* h, float gamma, void* dst, const void* src)
+{
+	if ((NULL == h) || (NULL == h->op) || (NULL == dst) || (NULL == src))
+		return -1;
+
+	operator_p_apply_unchecked(h->op, gamma, dst, src);
+
+	return 0;
+}
+
+/* The transform a term applies before its proximal operator.
+ *
+ * `opt_reg_configure` gives every term one, and for most of them it is the
+ * identity: a wavelet term carries its transform inside its proximal operator
+ * rather than in front of it, which is why that one works on the image's own
+ * shape.  Total variation is the other arrangement -- the gradient in front,
+ * the threshold on its components -- and the Laplace term is a third, a real
+ * convolution in front of a proximal operator that happens to be shaped like
+ * the image.  So the shapes do not say which arrangement a term is; this does.
+ *
+ * The handle is the caller's to free.
+ */
+bartorch_linop* bartorch_prox_transform(const bartorch_prox* h)
+{
+	if ((NULL == h) || (NULL == h->trafo))
+		return NULL;
+
+	return bartorch_linop_wrap(linop_clone(h->trafo));
 }
 
 void bartorch_prox_free(bartorch_prox* h)
