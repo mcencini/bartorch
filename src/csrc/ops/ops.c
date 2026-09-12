@@ -27,6 +27,7 @@
 #include "linops/linop.h"
 #include "linops/someops.h"
 #include "linops/sum.h"
+#include "linops/grad.h"
 
 #include "sense/model.h"
 #include "noncart/nufft.h"
@@ -571,6 +572,70 @@ double bartorch_linop_maxeigen(const bartorch_linop* a)
  */
 
 struct linop_flagged_args { int N; const long* dims; unsigned long flags; const void* data; bartorch_linop* result; };
+
+static int linop_rdiag_worker(void* p)
+{
+	struct linop_flagged_args* a = p;
+	a->result = wrap_linop(linop_rdiag_create(a->N, a->dims, a->flags, a->data));
+	return 0;
+}
+
+/* md_zrmul: real parts by real parts and imaginary by imaginary, which is a
+ * diagonal on each of the two components and not a real-valued diagonal. */
+bartorch_linop* bartorch_linop_rdiag(int N, const long* dims, unsigned long flags, const void* diag)
+{
+	struct linop_flagged_args a = { N, dims, flags, diag, NULL };
+	return (0 == guarded(linop_rdiag_worker, &a)) ? a.result : NULL;
+}
+
+struct linop_matrix_args { int N; const long* odims; const long* idims; const long* mdims; const void* matrix; bartorch_linop* result; };
+
+static int linop_matrix_worker(void* p)
+{
+	struct linop_matrix_args* a = p;
+	a->result = wrap_linop(linop_matrix_create(a->N, a->odims, a->idims, a->mdims, a->matrix));
+	return 0;
+}
+
+bartorch_linop* bartorch_linop_matrix(int N, const long* odims, const long* idims, const long* mdims, const void* matrix)
+{
+	struct linop_matrix_args a = { N, odims, idims, mdims, matrix, NULL };
+	return (0 == guarded(linop_matrix_worker, &a)) ? a.result : NULL;
+}
+
+struct linop_conv_args { int N; unsigned long flags; int ctype; int cmode; const long* odims; const long* idims; const long* kdims; const void* kernel; bartorch_linop* result; };
+
+static int linop_conv_worker(void* p)
+{
+	struct linop_conv_args* a = p;
+	a->result = wrap_linop(linop_conv_create(a->N, a->flags, (enum conv_type)a->ctype,
+				(enum conv_mode)a->cmode, a->odims, a->idims, a->kdims, a->kernel));
+	return 0;
+}
+
+bartorch_linop* bartorch_linop_conv(int N, unsigned long flags, int ctype, int cmode,
+		const long* odims, const long* idims, const long* kdims, const void* kernel)
+{
+	struct linop_conv_args a = { N, flags, ctype, cmode, odims, idims, kdims, kernel, NULL };
+	return (0 == guarded(linop_conv_worker, &a)) ? a.result : NULL;
+}
+
+struct linop_grad_args { int N; const long* dims; int d; unsigned long flags; bartorch_linop* result; };
+
+static int linop_grad_worker(void* p)
+{
+	struct linop_grad_args* a = p;
+	a->result = wrap_linop(linop_grad_create(a->N, a->dims, a->d, a->flags));
+	return 0;
+}
+
+/* The finite differences along the flagged axes, stacked along d, which must
+ * be a dimension the input has only one of. */
+bartorch_linop* bartorch_linop_grad(int N, const long* dims, int d, unsigned long flags)
+{
+	struct linop_grad_args a = { N, dims, d, flags, NULL };
+	return (0 == guarded(linop_grad_worker, &a)) ? a.result : NULL;
+}
 
 static int linop_zreal_worker(void* p)
 {
