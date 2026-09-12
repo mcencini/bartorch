@@ -442,3 +442,162 @@ def test_pridu_is_given_the_scaling_the_data_was_divided_by(_whole_coil_operator
         optim.PRIDU(term, maxiter=20, sigma_tau_ratio=scale)(y, A),
         optim.PRIDU(term, maxiter=20)(y, A),
     )
+
+
+# --- quadratic penalties on the conjugate-gradient solve ----------------------
+#
+# BART's conjugate gradients takes one weight and nothing else: `iter2_conjgrad`
+# asserts it is handed no regularizing operators and no biases, and
+# `lsqr2_create` builds `A^H A + lambda I`.  So a penalty with an operator or a
+# bias is not passed to the iteration at all -- it is built into the operator
+# the iteration is given, by stacking the terms under the encoding.
+#
+# What is checked is that the stack is the right problem, against the normal
+# equations solved densely, and that stacking does not cost the encoding its
+# own normal.
+
+
+def _dense(op):
+    """``op`` as a matrix, one column per basis vector of its domain."""
+    import math
+
+    size = math.prod(op.ishape)
+    columns = []
+    for i in range(size):
+        e = torch.zeros(size, dtype=torch.complex64)
+        e[i] = 1
+        columns.append(op(e.reshape(op.ishape)).reshape(-1))
+    return torch.stack(columns, dim=1)
+
+
+def _normal_equations(A, y, terms, lambda_=0.0):
+    """``(A^H A + lambda I + sum w G^H G)^-1 (A^H y + sum w G^H b)``, exactly."""
+    M = _dense(A)
+    lhs = M.conj().T @ M
+    rhs = M.conj().T @ y.reshape(-1)
+    if lambda_:
+        lhs = lhs + lambda_ * torch.eye(lhs.shape[0], dtype=torch.complex64)
+    for term in terms:
+        G = term.operator if term.operator is not None else linop.Identity(A.ishape)
+        Gm = _dense(G)
+        lhs = lhs + term.weight * (Gm.conj().T @ Gm)
+        if term.bias is not None:
+            rhs = rhs + term.weight * (Gm.conj().T @ term.bias.reshape(-1))
+    return torch.linalg.solve(lhs, rhs).reshape(A.ishape)
+
+
+@pytest.fixture
+def _small_encoding():
+    torch.manual_seed(0)
+    maps = _rand(3, 1, 8, 8)
+    A = linop.CartesianSense(maps, (3, 8, 8))
+    return A, _rand(*A.oshape)
+
+
+def _quadratic_cases(A):
+    torch.manual_seed(1)
+    G = linop.FFT(A.ishape, axes=(-2, -1))
+    prior = _rand(*A.ishape)
+    return {
+        "a weight alone": [optim.Tikhonov(0.3)],
+        "a bias": [optim.Tikhonov(0.3, bias=prior)],
+        "an operator": [optim.Tikhonov(0.3, operator=G)],
+        "an operator and a bias": [optim.Tikhonov(0.3, operator=G, bias=_rand(*G.oshape))],
+        "two terms": [optim.Tikhonov(0.3, bias=prior), optim.Tikhonov(0.05, operator=G)],
+    }
+
+
+@pytest.mark.parametrize("case", list(_quadratic_cases(linop.FFT((1, 8, 8), axes=(-2, -1)))))
+def test_a_quadratic_penalty_is_the_normal_equations_it_claims(case, _small_encoding):
+    A, y = _small_encoding
+    terms = _quadratic_cases(A)[case]
+    got = optim.CG(terms=terms, maxiter=300)(y, A)
+    want = _normal_equations(A, y, terms)
+    assert (got - want).abs().max() / want.abs().max() < 1e-4
+
+
+def test_a_weight_and_a_term_go_together(_small_encoding):
+    """``lambda_`` stays BART's own, and the terms are added to it."""
+    A, y = _small_encoding
+    terms = [optim.Tikhonov(0.2, operator=linop.FFT(A.ishape, axes=(-2, -1)))]
+    got = optim.CG(0.05, terms=terms, maxiter=300)(y, A)
+    want = _normal_equations(A, y, terms, lambda_=0.05)
+    assert (got - want).abs().max() / want.abs().max() < 1e-4
+
+
+def test_no_terms_is_the_solve_it_always_was(_small_encoding):
+    """Nothing is stacked when there is nothing to stack."""
+    A, y = _small_encoding
+    torch.testing.assert_close(
+        optim.CG(0.1, terms=None, maxiter=12)(y, A), optim.CG(0.1, maxiter=12)(y, A), rtol=0, atol=0
+    )
+
+
+def test_stacking_does_not_cost_the_encoding_its_own_normal():
+    """The point of building the normal rather than letting the stack derive it.
+
+    A Toeplitz encoding answers A^H A as a convolution with a point spread
+    function, which is a different route from the transform and its adjoint --
+    and a measurably different answer.  The stacked operator has to take the
+    first route, or a Toeplitz encoding would quietly stop being one inside a
+    regularized solve.
+    """
+    from bartorch.optim.linear import _stacked
+
+    n, coils = 16, 4
+    torch.manual_seed(0)
+    maps = _rand(coils, 1, n, n)
+    traj = bt.traj(x=n, y=24, r=True)
+    A = linop.NoncartesianSense(maps, (coils, n, n), traj=traj, toeplitz=True)
+    y = _rand(*A.oshape)
+    G = linop.FFT(A.ishape, axes=(-2, -1))
+
+    stacked, _ = _stacked(A, y, [optim.Tikhonov(0.3, operator=G)])
+    x = _rand(*A.ishape)
+
+    grams = A.gram()(x) + 0.3 * G.gram()(x)
+    both = A.adjoint(A(x)) + 0.3 * G.adjoint(G(x))
+
+    # The same operator, not merely the same answer.
+    torch.testing.assert_close(stacked.normal(x), grams, rtol=0, atol=0)
+    # And the two routes really do differ, so the check above has teeth.
+    assert (grams - both).abs().max() / both.abs().max() > 1e-5
+
+
+def test_the_stacked_data_is_the_terms_laid_end_to_end(_small_encoding):
+    import math
+
+    A, y = _small_encoding
+    from bartorch.optim.linear import _stacked
+
+    G = linop.FFT(A.ishape, axes=(-2, -1))
+    bias = _rand(*G.oshape)
+    stacked, data = _stacked(A, y, [optim.Tikhonov(0.25, operator=G, bias=bias)])
+
+    assert stacked.oshape == (math.prod(A.oshape) + math.prod(G.oshape),)
+    torch.testing.assert_close(data[: math.prod(A.oshape)], y.reshape(-1))
+    torch.testing.assert_close(
+        data[math.prod(A.oshape) :], math.sqrt(0.25) * bias.reshape(-1), rtol=1e-6, atol=1e-6
+    )
+
+
+def test_a_penalty_that_does_not_fit_the_encoding_is_refused(_small_encoding):
+    A, y = _small_encoding
+    with pytest.raises(ValueError, match="does not fit an encoding"):
+        optim.CG(terms=optim.Tikhonov(0.1, operator=linop.FFT((1, 4, 4), axes=-1)))(y, A)
+
+
+def test_a_negative_weight_is_not_a_penalty():
+    with pytest.raises(ValueError, match="at least zero"):
+        optim.Tikhonov(-1.0)
+
+
+def test_cg_takes_quadratic_terms_and_not_proximal_ones(_small_encoding):
+    A, y = _small_encoding
+    with pytest.raises(TypeError, match="takes Tikhonov terms"):
+        optim.CG(terms=prox.L1(0.1))(y, A)
+
+
+def test_a_solver_says_what_it_was_given():
+    assert "Tikhonov" in repr(optim.CG(terms=optim.Tikhonov(0.5)))
+    assert "terms" not in repr(optim.CG(0.5))

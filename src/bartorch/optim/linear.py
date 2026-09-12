@@ -7,7 +7,9 @@ the :mod:`bartorch.prox` terms, and its settings, through the same
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import dataclasses
+import math
+from collections.abc import Iterable, Sequence
 
 import torch
 
@@ -18,7 +20,140 @@ from bartorch._operator import as_operand
 from bartorch.prox.base import Regularizer, _as_terms
 from bartorch.prox.terms import L2
 
-__all__ = ["ADMM", "CG", "EulerMaruyama", "FISTA", "IST", "NIHT", "PRIDU"]
+__all__ = ["ADMM", "CG", "PRIDU", "EulerMaruyama", "FISTA", "IST", "NIHT", "Tikhonov"]
+
+
+@dataclasses.dataclass(frozen=True)
+class Tikhonov:
+    """A quadratic penalty ``weight * ||operator x - bias||^2``.
+
+    What generalized Tikhonov regularization is, and what
+    :class:`CG` minimizes alongside the data term.  Without an operator the
+    penalty is on the image itself, and without a bias it is on its size
+    rather than its distance from something.
+
+    Every combination is still a least-squares problem, so it is still
+    conjugate gradients that solves it: the terms are stacked under the
+    encoding and the normal operator is the sum of the terms' own, which is
+    what keeps a Toeplitz encoding's normal the convolution it was.
+
+    Parameters
+    ----------
+    weight : float
+        The weight, not its square root.  Must not be negative.
+    operator : LinearOperator, optional
+        What the penalty is on, mapping the image somewhere.  By default the
+        image itself.
+    bias : tensor, optional
+        What the penalty pulls towards, of the operator's codomain shape.  By
+        default zero, which is the ordinary penalty on size.
+
+    Examples
+    --------
+    Pull towards a prior image rather than towards zero:
+
+    >>> CG(terms=Tikhonov(0.1, bias=prior))(y, A)
+
+    Penalize the first differences, which is quadratic total variation:
+
+    >>> CG(terms=Tikhonov(0.1, operator=linop.Gradient(A.ishape)))(y, A)
+    """
+
+    weight: float
+    operator: object | None = None
+    bias: torch.Tensor | None = None
+
+    def __post_init__(self):
+        if self.weight < 0:
+            raise ValueError(
+                f"a quadratic penalty has a weight of at least zero, not {self.weight}"
+            )
+
+    def _operator(self, ishape: tuple[int, ...]):
+        """This term's operator, or the identity on the image."""
+        if self.operator is not None:
+            return self.operator
+
+        from bartorch.linop import Identity
+
+        return Identity(ishape)
+
+
+Terms = Tikhonov | Iterable["Tikhonov"] | None
+
+
+def _as_quadratics(terms: Terms) -> list[Tikhonov]:
+    """``terms`` -- None, one term or an iterable of them -- as a list of terms."""
+    if terms is None:
+        return []
+    if isinstance(terms, Tikhonov):
+        return [terms]
+
+    def refuse(what):
+        return TypeError(
+            f"CG takes Tikhonov terms, not {what!r}; a term with a proximal operator "
+            "rather than a quadratic one goes to a solver that has one, such as FISTA"
+        )
+
+    try:
+        out = list(terms)
+    except TypeError:
+        raise refuse(terms) from None
+    for term in out:
+        if not isinstance(term, Tikhonov):
+            raise refuse(term)
+    return out
+
+
+def _stacked(A, y: torch.Tensor, terms: Sequence[Tikhonov]):
+    """``(A~, y~)`` for ``min ||A x - y||^2 + sum_i w_i ||G_i x - b_i||^2``.
+
+    Written as one least-squares problem, which is what conjugate gradients
+    solves::
+
+        A~ = [A; sqrt(w_1) G_1; ...]        y~ = [y; sqrt(w_1) b_1; ...]
+
+    The codomains have nothing in common -- samples against images against
+    differences -- so each is read as the line of numbers it is and they are
+    laid end to end, which is what ``linop_stack_cod`` does and what makes the
+    normal of the whole the sum of the parts' own normals.
+
+    That last part is the point.  A^H A for a Toeplitz encoding is a
+    convolution rather than two transforms, and it stays one here: the normal
+    is built as ``A.gram() + sum_i w_i G_i.gram()`` and attached with
+    ``linop_from_ops``, so the encoding is asked for its normal rather than
+    for its forward and its adjoint.
+    """
+    from bartorch.linop import Reshape, concatenate
+    from bartorch.linop.base import _WithNormal
+
+    op = A._bart()
+    y = as_operand(y, op.oshape, "y")
+
+    def flat(operator):
+        size = math.prod(operator.oshape)
+        return Reshape((size,), operator.oshape) @ operator
+
+    pieces = [flat(A)]
+    data = [y.reshape(-1)]
+    normal = A.gram()
+
+    for term in terms:
+        G = term._operator(op.ishape)
+        if G.ishape != op.ishape:
+            raise ValueError(f"a term over {G.ishape} does not fit an encoding over {op.ishape}")
+        root = math.sqrt(term.weight)
+        pieces.append(flat(root * G) if 1.0 != root else flat(G))
+
+        if term.bias is None:
+            data.append(torch.zeros(math.prod(G.oshape), dtype=y.dtype, device=y.device))
+        else:
+            data.append(root * as_operand(term.bias, G.oshape, "bias").reshape(-1))
+
+        normal = normal + (term.weight * G.gram() if 1.0 != term.weight else G.gram())
+
+    return _WithNormal(concatenate(pieces), normal), torch.cat(data)
+
 
 Regularizers = Regularizer | Iterable[Regularizer] | None
 
@@ -148,36 +283,74 @@ class _Solver:
 
 
 class CG(_Solver):
-    """Conjugate gradients for ``min ||A x - y||^2 + lambda_ ||x||^2``.
+    """Conjugate gradients for a least-squares problem with quadratic penalties.
 
-    What ``pics`` runs with no regularizer, or with ``-r`` alone.
+    Without terms it is ``min ||A x - y||^2 + lambda_ ||x||^2``, which is what
+    ``pics`` runs with no regularizer or with ``-r`` alone.  With terms it is
+
+    ``min ||A x - y||^2 + lambda_ ||x||^2 + sum_i w_i ||G_i x - b_i||^2``
+
+    which is still a least-squares problem and so still this iteration.
 
     Parameters
     ----------
     lambda_ : float
-        Tikhonov weight (``pics -r``).
+        Tikhonov weight on the image itself (``pics -r``).  BART adds it to
+        the normal operator, which is what makes this one match the tool.
+    terms : Tikhonov or iterable of Tikhonov, optional
+        Quadratic penalties with an operator, a bias, or both.  See
+        :class:`Tikhonov`.
     maxiter : int
     tol : float
         Stop once the residual of the normal equations is at most
         ``tol * ||A^H y||``.  Zero, BART's default, runs every iteration.
     cclambda : float
         Weight of an identity added to the normal operator (``pics -q``).
+
+    Notes
+    -----
+    BART's conjugate gradients takes one weight and nothing else:
+    ``iter2_conjgrad`` asserts that it is handed no regularizing operators and
+    no biases, and ``lsqr2_create`` builds ``A^H A + lambda I``.  So the terms
+    are not passed to it -- they are built into the operator it is given, as
+    the stack above, which needs nothing of BART that was not already there.
+
+    Examples
+    --------
+    >>> CG(maxiter=30)(kspace, A)
+    >>> CG(terms=Tikhonov(0.1, bias=prior))(kspace, A)
+    >>> CG(terms=[Tikhonov(0.1, operator=G), Tikhonov(0.01)])(kspace, A)
     """
 
     _algorithm = "cg"
 
     def __init__(
-        self, lambda_: float = 0.0, *, maxiter: int = 30, tol: float = 0.0, cclambda: float = 0.0
+        self,
+        lambda_: float = 0.0,
+        *,
+        terms: Terms = None,
+        maxiter: int = 30,
+        tol: float = 0.0,
+        cclambda: float = 0.0,
     ):
         super().__init__(L2(lambda_) if lambda_ else None, maxiter, cclambda)
         self.lambda_ = float(lambda_)
+        self.terms = _as_quadratics(terms)
         self.tol = float(tol)
 
     def _settings(self) -> dict:
         return {"cg_tol": self.tol}
 
+    def __call__(self, y: torch.Tensor, A, x0: torch.Tensor | None = None) -> torch.Tensor:
+        if not self.terms:
+            return super().__call__(y, A, x0)
+
+        stacked, data = _stacked(A, y, self.terms)
+        return super().__call__(data, stacked, x0)
+
     def __repr__(self) -> str:
-        return f"CG(lambda_={self.lambda_}, maxiter={self.maxiter}, tol={self.tol})"
+        terms = f", terms={self.terms!r}" if self.terms else ""
+        return f"CG(lambda_={self.lambda_}{terms}, maxiter={self.maxiter}, tol={self.tol})"
 
 
 class IST(_Solver):

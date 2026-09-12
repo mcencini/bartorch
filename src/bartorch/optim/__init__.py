@@ -6,7 +6,16 @@ iteration runs inside the library, as the one ``pics`` or ``nlinv`` runs.
 
 from __future__ import annotations
 
-from bartorch.optim.linear import ADMM, CG, FISTA, IST, NIHT, PRIDU, EulerMaruyama
+from bartorch.optim.linear import (
+    ADMM,
+    CG,
+    FISTA,
+    IST,
+    NIHT,
+    PRIDU,
+    EulerMaruyama,
+    Tikhonov,
+)
 from bartorch.optim.nonlinear import IRGNM
 from bartorch.optim.scaling import data_scaling
 
@@ -19,5 +28,6 @@ __all__ = [
     "IST",
     "NIHT",
     "PRIDU",
+    "Tikhonov",
     "data_scaling",
 ]
