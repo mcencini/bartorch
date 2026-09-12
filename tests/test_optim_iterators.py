@@ -382,3 +382,78 @@ def test_the_x_update_asks_the_encoding_for_its_own_normal():
     finally:
         del A.normal
     assert calls, "the encoding's own normal was never asked for"
+
+
+# --- primal and dual ----------------------------------------------------------
+#
+# `chambolle_pock`, which `pics --pridu` runs.  The data term is carried as its
+# own dual rather than differentiated, and each regularization term gets one
+# too -- except the first, if its transform is the identity, which becomes the
+# primal proximal step instead.  That split is `iter2_chambolle_pock`'s and is
+# reproduced here rather than chosen.
+
+import math  # noqa: E402
+
+
+def _pridu_steps(A, y, steps, *, terms=(), primal=None, step=0.95, ratio=1.0, **extra):
+    physics = bartorch.to_deepinv(A)
+    fidelity = iterators.NormalEquations()
+    iteration = iterators.PRIDUIteration(list(terms), A.ishape, primal=primal)
+    params = {
+        "sigma": math.sqrt(step) * ratio,
+        "tau": math.sqrt(step) / ratio,
+        "sigma_tau_ratio": ratio,
+        "maxiter": steps,
+        **extra,
+    }
+    X = {"est": (torch.zeros(*A.ishape, dtype=torch.complex64),) * 2}
+    for _ in range(steps):
+        X = iteration.forward(X, fidelity, None, params, y, physics)
+        if X["done"]:
+            break
+    return X["est"][0]
+
+
+@pytest.mark.parametrize("steps", [1, 2, 5, 10, 25, 60])
+def test_pridu_is_barts_pridu(problem, steps):
+    """The term's transform is the identity, so it is the primal step."""
+    A, y = problem
+    term = prox.L1(0.05)
+    ours = _pridu_steps(A, y, steps, primal=term)
+    assert torch.equal(ours, optim.PRIDU(term, maxiter=steps, step=0.95)(y, A))
+
+
+@pytest.mark.parametrize("steps", [1, 3, 8])
+def test_a_term_with_a_transform_becomes_a_dual(problem, steps):
+    """Total variation's is a gradient, so it cannot be the primal step and
+    `prox2` falls back to the identity, as `prox_zero_create` is."""
+    A, y = problem
+    term = prox.TotalVariation((-1, -2), 0.05)
+    ours = _pridu_steps(A, y, steps, terms=[term])
+    assert torch.equal(ours, optim.PRIDU(term, maxiter=steps, step=0.95)(y, A))
+
+
+@pytest.mark.parametrize("steps", [1, 3, 8, 20])
+def test_hogwild_is_a_decay_here_rather_than_a_halving(problem, steps):
+    """0.95 a step, and `(float)pow(decay, i)` from a float32 `decay` -- taken
+    in double and rounded once, which is not the same as taking it in one."""
+    A, y = problem
+    term = prox.L1(0.05)
+    ours = _pridu_steps(A, y, steps, primal=term, decay=0.95)
+    assert torch.equal(ours, optim.PRIDU(term, maxiter=steps, step=0.95, hogwild=True)(y, A))
+
+
+@pytest.mark.parametrize("steps", [1, 3, 8])
+def test_the_adaptive_step_is_barts(problem, steps):
+    A, y = problem
+    term = prox.L1(0.05)
+    ours = _pridu_steps(A, y, steps, primal=term, adaptive_step=True)
+    assert torch.equal(ours, optim.PRIDU(term, maxiter=steps, step=0.95, adaptive_step=True)(y, A))
+
+
+@pytest.mark.parametrize("ratio", [0.5, 2.0])
+def test_the_step_ratio_splits_sigma_and_tau_the_way_pics_does(problem, ratio):
+    A, y = problem
+    term = prox.L1(0.05)
+    ours = _pridu_steps(A, y, 10, primal=term, ratio=ratio)
+    assert torch.equal(ours, optim.PRIDU(term, maxiter=10, step=0.95, sigma_tau_ratio=ratio)(y, A))

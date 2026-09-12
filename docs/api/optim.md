@@ -69,6 +69,7 @@ is a few axpys on an image per step, which is nothing beside a transform.
    ISTIteration
    FISTAIteration
    ADMMIteration
+   PRIDUIteration
    NormalEquations
    TermPrior
 ```
@@ -95,6 +96,14 @@ counts conjugate-gradient iterations across the whole run, so thirty with ten
 inner iterations is about five outer steps.  `ADMMIteration` counts outer
 steps instead, which is what `BaseOptim` expects; the step itself is BART's
 either way, to the bit.
+
+`PRIDUIteration` carries the data term as a dual of its own rather than
+differentiating it, and gives each regularization term a dual too -- except
+the first, when its transform is the identity, which becomes the primal
+proximal step instead.  That split is `iter2_chambolle_pock`'s, reproduced
+rather than chosen.  Its tolerance is absolute, unlike every other iteration
+here: `iter2_chambolle_pock` leaves `eps` at one where the others scale it by
+the norm of $A^Hy$.
 
 `TermPrior` puts a {mod}`bartorch.prox` term where `deepinv` expects a prior,
 and a `deepinv` denoiser goes in the same place -- wrapped in

@@ -29,6 +29,7 @@ __all__ = [  # noqa: F822
     "ADMMIteration",
     "FISTAIteration",
     "ISTIteration",
+    "PRIDUIteration",
     "NormalEquations",
     "TermPrior",
 ]
@@ -554,8 +555,152 @@ def _admm() -> type:
     return ADMMIteration
 
 
+def _pridu() -> type:
+    _, _, OptimIterator = _classes()
+
+    class PRIDUIteration(OptimIterator):
+        r"""BART's primal-dual iteration, one step of it.
+
+        ``italgos.c``'s ``chambolle_pock``, which ``pics --pridu`` runs.  The
+        data term is carried as its own dual variable rather than
+        differentiated: ``A^H u`` is updated through the resolvent
+
+        ``A^H u <- (sigma A^H A x_avg + A^H u - sigma A^H y) / (1 + sigma)``
+
+        and each regularization term gets a dual of its own, updated through
+        its proximal operator's conjugate.  The primal step is a descent on
+        the duals followed by ``prox2``, and ``x_avg`` extrapolates.
+
+        ``pics`` takes ``sigma = sqrt(step) * ratio`` and
+        ``tau = sqrt(step) / ratio`` with ``theta = 1``, and ``hogwild`` there
+        is a decay of 0.95 a step rather than a halving.
+
+        The first term stands apart, as it does in ``iter2_chambolle_pock``:
+        a term whose transform is the identity becomes the primal ``prox2``
+        and the rest become duals.  Without such a term ``prox2`` is the
+        identity, which is what ``prox_zero_create`` is.
+        """
+
+        def __init__(self, terms, image_shape, primal=None, **kwargs):
+            kwargs.setdefault("has_cost", False)
+            super().__init__(**kwargs)
+            self.terms = list(terms)
+            self.primal = primal
+            self.image_shape = tuple(image_shape)
+
+        def _prox2(self, x, gamma):
+            if self.primal is None:
+                return x
+            return self.primal.prox(x, gamma, image_shape=self.image_shape)
+
+        def forward(self, X, cur_data_fidelity, cur_prior, cur_params, y, physics, *a, **kw):
+            x = X["est"][0]
+            avg = X.get("avg", x)
+            duals = X.get("duals")
+            adjoint_dual = X.get("adjoint_dual", torch.zeros_like(x))
+            k = X.get("it", 0)
+
+            sigma = X.get("sigma", cur_params["sigma"])
+            tau = X.get("tau", cur_params["tau"])
+            theta = cur_params.get("theta", 1.0)
+            alpha = cur_params.get("alpha", 1.0)
+            decay = cur_params.get("decay", 1.0)
+            # `float lambda = (float)pow(decay, i)`, from a float32 `decay`:
+            # the power is taken in double and rounded once at the end.
+            lam = 1.0 if 1.0 == decay else float(np.float32(float(np.float32(decay)) ** k))
+
+            if duals is None:
+                duals = [
+                    torch.zeros(t.prox_shape(self.image_shape), dtype=x.dtype, device=x.device)
+                    for t in self.terms
+                ]
+
+            op = physics.op
+
+            # The data term's dual, through its resolvent.
+            previous = adjoint_dual
+            step = sigma * _batched(op.normal, avg, op.ishape) + adjoint_dual
+            fresh = step / (1.0 + sigma) - (
+                sigma / (1.0 + sigma)
+            ) * cur_data_fidelity._adjoint_data(y, physics)
+            adjoint_dual = lam * fresh + (1.0 - lam) * previous
+            change = adjoint_dual - previous
+            moved = float(torch.real((change.conj() * change).sum()))
+
+            # Each regularization term's, through the conjugate of its prox.
+            for j, term in enumerate(self.terms):
+                over = term.apply_transform(avg, self.image_shape) + duals[j] / sigma
+                thresholded = term.prox(over, alpha / sigma, image_shape=self.image_shape)
+                fresh_j = sigma * over - sigma * thresholded
+                was = duals[j]
+                duals[j] = lam * fresh_j + (1.0 - lam) * was
+                moved += float(torch.real(((duals[j] - was).conj() * (duals[j] - was)).sum()))
+
+            # The primal step.
+            previous_x = x
+            x = x - tau * adjoint_dual
+            for j, term in enumerate(self.terms):
+                x = x - tau * term.apply_transform(duals[j], self.image_shape, mode="adjoint")
+            x = lam * self._prox2(x, tau * alpha) + (1.0 - lam) * previous_x
+
+            # `res2` is measured against the step `tau` had before the
+            # adaptation, as it is in `chambolle_pock`.
+            res2 = math.sqrt(max(moved, 0.0)) / tau
+            res1 = float(torch.linalg.vector_norm(x - previous_x)) / sigma
+
+            if cur_params.get("adaptive_step", False):
+                sigma, tau = self._adapt(x - previous_x, sigma, tau, cur_params, op)
+
+            avg = (1.0 + theta) * x - theta * previous_x
+
+            # `iter2_chambolle_pock` leaves `eps` at one, so the tolerance is
+            # absolute rather than relative to the data -- unlike every other
+            # iteration here, where it is scaled by the norm of `A^H y`.
+            epsilon = cur_params.get("tol", 1e-4)
+
+            return {
+                "est": (x, x),
+                "cost": None,
+                "avg": avg,
+                "duals": duals,
+                "adjoint_dual": adjoint_dual,
+                "sigma": sigma,
+                "tau": tau,
+                "done": epsilon > (res1 + res2),
+                "it": k + 1,
+            }
+
+        def _adapt(self, delta, sigma, tau, params, op):
+            """BART's step adaptation: the ratio of the move to what the
+            operator makes of it, clipped just under ``sqrt(sigma tau)``."""
+            squared = 0.0
+            for term in self.terms:
+                moved = term.apply_transform(delta, self.image_shape)
+                squared += float(torch.linalg.vector_norm(moved)) ** 2
+            normal = _batched(op.normal, delta, op.ishape)
+            squared += float(torch.real((normal.conj() * delta).sum()))
+
+            norm_kx = math.sqrt(max(squared, 0.0))
+            if 0.0 == norm_kx:
+                return sigma, tau
+
+            ratio = float(torch.linalg.vector_norm(delta)) / norm_kx
+            root = math.sqrt(sigma * tau)
+            threshold = 0.95 * root
+            if 0.0 != ratio < root:
+                chosen = min(threshold, ratio)
+            else:
+                chosen = root
+
+            r = params.get("sigma_tau_ratio", 1.0)
+            return chosen * r, chosen / r
+
+    return PRIDUIteration
+
+
 _BUILDERS = {
     "ADMMIteration": _admm,
+    "PRIDUIteration": _pridu,
     "NormalEquations": _normal_equations,
     "TermPrior": _term_prior,
     "ISTIteration": _ist,
