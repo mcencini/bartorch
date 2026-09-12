@@ -405,3 +405,127 @@ def test_a_kernel_bank_inflated_on_a_card_is_the_maps_it_stands_for(n, size):
     torch.testing.assert_close(
         compact.adjoint(y.cuda()).cpu(), dense.adjoint(y), rtol=1e-4, atol=1e-5
     )
+
+
+# --- the coil multiply on its own ---------------------------------------------
+#
+# The same slab loop with nothing after it, which is what an encoding whose
+# transform is not a Fourier transform has to chain its coils onto.
+
+
+def test_the_coil_multiply_alone_is_barts_own_fmac():
+    """With no slab to walk, there is nothing between it and `linop_fmac`."""
+    n, coils = 16, 4
+    torch.manual_seed(0)
+    maps = torch.randn(coils, n, n, dtype=torch.complex64)
+    x = torch.randn(1, n, n, dtype=torch.complex64)
+
+    fmac = linop.MultiplySum(maps.reshape(coils, 1, n, n), (1, n, n), (coils, 1, n, n))
+    coil = linop.Coils(maps, (coils, n, n), coil_batch=0)
+
+    assert (coil.ishape, coil.oshape) == (fmac.ishape, fmac.oshape)
+    torch.testing.assert_close(coil(x), fmac(x))
+
+
+@pytest.mark.parametrize("batch", [1, 2, 4])
+def test_the_slab_does_not_change_the_coil_multiply(batch):
+    n, coils = 16, 4
+    torch.manual_seed(0)
+    maps = torch.randn(coils, n, n, dtype=torch.complex64)
+    x = torch.randn(1, n, n, dtype=torch.complex64)
+
+    whole = linop.Coils(maps, (coils, n, n), coil_batch=0)
+    sliced = linop.Coils(maps, (coils, n, n), coil_batch=batch)
+
+    torch.testing.assert_close(sliced(x), whole(x))
+    y = whole(x)
+    torch.testing.assert_close(sliced.adjoint(y), whole.adjoint(y))
+
+
+def test_the_coil_multiply_has_the_adjoint_it_claims():
+    n, coils = 16, 3
+    torch.manual_seed(0)
+    maps = torch.randn(coils, n, n, dtype=torch.complex64)
+    A = linop.Coils(maps, (coils, n, n), coil_batch=2)
+
+    x = torch.randn(*A.ishape, dtype=torch.complex64)
+    y = torch.randn(*A.oshape, dtype=torch.complex64)
+    lhs = complex((A(x).conj() * y).sum())
+    rhs = complex((x.conj() * A.adjoint(y)).sum())
+    assert abs(lhs - rhs) < 1e-4 * max(abs(lhs), 1.0)
+
+
+def test_the_coil_multiply_takes_kernels_as_the_maps_they_stand_for():
+    """The point of it: the bank is inflated a slab at a time, never whole."""
+    n, coils = 32, 4
+    kernels, maps = _smooth_bank(n=n, coils=coils)
+    x = bt.phantom([n, n]).reshape(1, n, n)
+
+    dense = linop.Coils(maps, (coils, n, n))
+    compact = linop.Coils(kernels, (coils, n, n), kernels=True)
+
+    torch.testing.assert_close(compact(x), dense(x), rtol=1e-4, atol=1e-5)
+    y = dense(x)
+    torch.testing.assert_close(compact.adjoint(y), dense.adjoint(y), rtol=1e-4, atol=1e-5)
+
+
+def test_the_coil_multiply_and_an_fft_are_the_cartesian_encoding():
+    """Which is what says the slab loop is the transform's to choose.
+
+    `CartesianSense` is the loop with BART's FFT inside it; this is the loop
+    with nothing inside it and the FFT chained on afterwards.  The two are the
+    same arithmetic in the same order, so they agree exactly rather than
+    nearly.
+    """
+    n, coils = 32, 4
+    kernels, maps = _smooth_bank(n=n, coils=coils)
+    x = bt.phantom([n, n]).reshape(1, n, n)
+
+    inside = linop.CartesianSense(maps, (coils, n, n))
+    outside = linop.FFT(inside.oshape, axes=(-2, -1)) @ linop.Coils(maps, (coils, n, n))
+
+    assert (outside.ishape, outside.oshape) == (inside.ishape, inside.oshape)
+    torch.testing.assert_close(outside(x), inside(x), rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("coils,batch", [(3, 2), (5, 4), (12, 8), (7, 3)])
+def test_a_slab_that_does_not_divide_the_coils_is_not_walked_off_the_end(coils, batch):
+    """The loop steps by the slab and the transform is built for a slab.
+
+    A last slab with fewer coils in it than that reads sensitivities that are
+    not there and writes past the end of the samples, which is heap corruption
+    rather than a wrong answer.  The slab is cut down to a divisor of the coil
+    count instead, so what changes is residency and never arithmetic.
+
+    Held against the encoding written out rather than against another slab, so
+    that a slab which quietly became one coil is still checked against
+    something.
+    """
+    n = 16
+    torch.manual_seed(0)
+    maps = torch.randn(coils, n, n, dtype=torch.complex64)
+    x = torch.randn(1, n, n, dtype=torch.complex64)
+
+    A = linop.CartesianSense(maps, (coils, n, n), coil_batch=batch)
+    want = bartorch.fft(maps.reshape(coils, 1, n, n) * x, axes=(-2, -1), unitary=True)
+
+    torch.testing.assert_close(A(x), want, rtol=1e-5, atol=1e-5)
+
+    y = torch.randn(*A.oshape, dtype=torch.complex64)
+    conj = maps.reshape(coils, 1, n, n).conj()
+    back = (bartorch.fft(y, axes=(-2, -1), unitary=True, inverse=True) * conj).sum(0)
+    torch.testing.assert_close(A.adjoint(y), back, rtol=1e-5, atol=1e-5)
+
+
+@pytest.mark.parametrize("coils,batch", [(3, 2), (5, 4), (7, 3)])
+def test_an_uneven_slab_is_cut_down_off_the_grid_too(coils, batch):
+    n = 16
+    torch.manual_seed(0)
+    maps = torch.randn(coils, n, n, dtype=torch.complex64)
+    traj = bt.traj(x=n, y=24, r=True)
+    x = torch.randn(1, n, n, dtype=torch.complex64)
+
+    sliced = linop.NoncartesianSense(maps, (coils, n, n), traj=traj, coil_batch=batch)
+    whole = linop.NoncartesianSense(maps, (coils, n, n), traj=traj, coil_batch=0)
+
+    torch.testing.assert_close(sliced(x), whole(x), rtol=1e-4, atol=1e-5)

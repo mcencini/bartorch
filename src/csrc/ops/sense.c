@@ -43,6 +43,7 @@
 #include "num/multind.h"
 #include "num/iovec.h"
 
+#include "linops/fmac.h"
 #include "linops/linop.h"
 #include "linops/someops.h"
 
@@ -791,6 +792,24 @@ static bool sliceable(const long max_dims[DIMS], const long map_dims[DIMS], cons
 	return true;
 }
 
+/* How many coils a slab actually holds.
+ *
+ * The loop walks the bank in steps of the slab, and the transform is built for
+ * exactly that many coils: a last slab with fewer of them reads sensitivities
+ * that are not there and writes its answer past the end of the samples.  So
+ * the slab is the largest divisor of the coil count that is no larger than the
+ * one asked for -- the one asked for whenever it divides the coils, and one
+ * when nothing else does.
+ */
+static long slab_size(long coils, long want)
+{
+	for (long n = MIN(want, coils); n > 1; n--)
+		if (0 == coils % n)
+			return n;
+
+	return 1;
+}
+
 /* The parts of the operator that do not depend on which transform it is. */
 static struct sense_s* sense_slabs(const long max_dims[DIMS], const long map_dims[DIMS],
 		const long out_dims[DIMS], unsigned long shared_img_flags)
@@ -799,7 +818,7 @@ static struct sense_s* sense_slabs(const long max_dims[DIMS], const long map_dim
 	SET_TYPEID(sense_s, d);
 
 	d->coils = max_dims[COIL_DIM];
-	d->batch = MIN((long)coil_batch, d->coils);
+	d->batch = slab_size(d->coils, (long)coil_batch);
 	d->fold = (0 != fold_maps);
 	d->maps = NULL;
 	d->owned = NULL;
@@ -947,6 +966,33 @@ const struct linop_s* sense_nc_init(const long max_dims[DIMS], const long map_di
 }
 
 
+/* Hold the sensitivities the way the caller has them: as maps the loop reads
+ * where they lie, or as the kernels it inflates a slab at a time. */
+static void sense_hold(struct sense_s* d, const long sens_dims[DIMS], const complex float* sens, int kernels)
+{
+	if (0 == kernels) {
+
+		d->maps = sens;
+		return;
+	}
+
+	d->kernels = sens;
+	md_copy_dims(DIMS, d->kern_dims, sens_dims);
+	md_calc_strides(DIMS, d->kern_strs, sens_dims, CFL_SIZE);
+	d->kern_slab_offset = d->kern_strs[COIL_DIM];
+
+	d->map_slab_offset = 0;
+}
+
+/* What a caller is told when the bank is held as kernels and the loop that
+ * inflates them is not going to run. */
+static void kernels_need_the_loop(void)
+{
+	error("bartorch: sensitivities held as kernels are what the coil loop is "
+		"for, and this arrangement cannot be sliced into one; inflate "
+		"them with bartorch.kernels_to_maps first\n");
+}
+
 /* A SENSE operator built here rather than by BART, from sensitivities held
  * either way.
  *
@@ -986,9 +1032,7 @@ const struct linop_s* bartorch_sense_operator(const long max_dims[DIMS], const l
 	if (!sliced) {
 
 		if (0 != kernels)
-			error("bartorch: sensitivities held as kernels are what the coil loop is "
-				"for, and this arrangement cannot be sliced into one; inflate "
-				"them with bartorch.kernels_to_maps first\n");
+			kernels_need_the_loop();
 
 		chained();
 
@@ -1007,20 +1051,7 @@ const struct linop_s* bartorch_sense_operator(const long max_dims[DIMS], const l
 	}
 
 	struct sense_s* d = sense_slabs(max_dims, map_dims, ksp_dims2, 0UL);
-
-	if (0 != kernels) {
-
-		d->kernels = sens;
-		md_copy_dims(DIMS, d->kern_dims, sens_dims);
-		md_calc_strides(DIMS, d->kern_strs, sens_dims, CFL_SIZE);
-		d->kern_slab_offset = d->kern_strs[COIL_DIM];
-
-		d->map_slab_offset = 0;
-
-	} else {
-
-		d->maps = sens;
-	}
+	sense_hold(d, sens_dims, sens, kernels);
 
 	long slab_ksp_dims[DIMS];
 	md_copy_dims(DIMS, slab_ksp_dims, ksp_dims2);
@@ -1035,6 +1066,55 @@ const struct linop_s* bartorch_sense_operator(const long max_dims[DIMS], const l
 		d->slab = nufft_create2(DIMS, slab_ksp_dims, d->cim_dims, traj_dims, traj,
 				(weights ? wgh_dims : NULL), weights,
 				(basis ? bas_dims : NULL), basis, *conf);
+
+	sense_output_from(d);
+
+	return sense_operator(d);
+}
+
+/* The coil multiply on its own: the same slab loop with nothing after it.
+ *
+ * What a caller wants when the transform beside the coils is not a Fourier
+ * transform.  The wave encoding's is a chain of four -- a resize, a readout
+ * transform, the point spread diagonal and the phase-encode transforms -- and
+ * chaining that onto BART's own `fmac` would hold the whole bank; chaining it
+ * onto this one holds a slab of it.
+ *
+ * Without slicing this is `linop_fmac` and nothing else, which is the operator
+ * `linop.MultiplySum` builds, so the two answer alike and a test can say so.
+ * With slicing it is that operator with the bank read, or inflated, a slab at
+ * a time.
+ */
+const struct linop_s* bartorch_coils_operator(const long max_dims[DIMS], const long sens_dims[DIMS],
+		const complex float* sens, int kernels)
+{
+	long map_dims[DIMS];
+	md_select_dims(DIMS, FFT_FLAGS | COIL_FLAG | MAPS_FLAG, map_dims, max_dims);
+
+	/* The coil images the multiply answers with: every axis the operator
+	 * has except the one the sets of maps are summed over. */
+	long cim_dims[DIMS];
+	md_select_dims(DIMS, ~MAPS_FLAG, cim_dims, max_dims);
+
+	if (!sliceable(max_dims, map_dims, cim_dims, 0UL)) {
+
+		if (0 != kernels)
+			kernels_need_the_loop();
+
+		chained();
+
+		long img_dims[DIMS];
+		md_select_dims(DIMS, ~COIL_FLAG, img_dims, max_dims);
+
+		return linop_fmac_dims_create(DIMS, cim_dims, img_dims, map_dims, sens);
+	}
+
+	struct sense_s* d = sense_slabs(max_dims, map_dims, cim_dims, 0UL);
+	sense_hold(d, sens_dims, sens, kernels);
+
+	/* Nothing after the multiply, so a slab's transform is the identity and
+	 * what it answers with is the slab of coil images itself. */
+	d->slab = linop_identity_create(DIMS, d->cim_dims);
 
 	sense_output_from(d);
 

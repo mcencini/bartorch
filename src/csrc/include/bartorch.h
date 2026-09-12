@@ -220,6 +220,14 @@ BARTORCH_API bartorch_linop* bartorch_linop_sense(const long* max_dims, const lo
 		const long* traj_dims, const void* traj,
 		const long* wgh_dims, const void* weights,
 		const long* bas_dims, const void* basis, int toeplitz);
+/* The coil multiply on its own, over sensitivities held as maps or as kernels,
+ * walking the coils a slab at a time.  For an encoding whose transform is not
+ * a Fourier transform and so cannot be a SENSE operator. */
+BARTORCH_API bartorch_linop* bartorch_linop_coils(const long* max_dims, const long* sens_dims,
+		const void* sens, int kernels);
+/* `a`, answering `normal` when it is asked for A^H A, rather than the adjoint
+ * chained onto the forward. */
+BARTORCH_API bartorch_linop* bartorch_linop_with_normal(const bartorch_linop* a, const bartorch_linop* normal);
 BARTORCH_API bartorch_linop* bartorch_linop_chain(const bartorch_linop* a, const bartorch_linop* b);
 BARTORCH_API bartorch_linop* bartorch_linop_plus(const bartorch_linop* a, const bartorch_linop* b);
 BARTORCH_API bartorch_linop* bartorch_linop_adjoint_op(const bartorch_linop* a);

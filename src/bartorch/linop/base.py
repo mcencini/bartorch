@@ -496,6 +496,40 @@ class _Adjoint(LinearOperator):
         return f"{self.source!r}.H"
 
 
+class _WithNormal(LinearOperator):
+    """``a``, answering ``normal`` when it is asked for ``A^H A``.
+
+    BART derives a normal by chaining the adjoint onto the forward, which is
+    the two applications.  Where the product has a closed form -- a sampling
+    pattern and a subspace basis collapse into a single kernel applied between
+    the transforms, and the frames are never made -- this is how that form is
+    attached.  Both sides are BART operators, so the result is one operator
+    still.
+    """
+
+    def __init__(self, a: LinearOperator, normal: LinearOperator):
+        if normal.ishape != a.ishape or normal.oshape != a.ishape:
+            raise ValueError(
+                f"a normal operator maps the domain to itself, so {a.ishape} to {a.ishape}, "
+                f"not {normal.ishape} to {normal.oshape}"
+            )
+        self.a, self.normal = a._bart(), normal._bart()
+        super().__init__()
+
+    def _create(self) -> Built:
+        device = self.a.device or self.normal.device
+        ptr = self._under_lock(
+            library().bartorch_linop_with_normal,
+            self.a._h.ptr,
+            self.normal._h.ptr,
+            device=device,
+        )
+        return Built(ptr, self.a.ishape, self.a.oshape, keep=(self.a, self.normal), device=device)
+
+    def __repr__(self) -> str:
+        return f"{self.a!r}.with_normal({self.normal!r})"
+
+
 class _Normal(LinearOperator):
     """``A^H A`` as one BART operator, from ``linop_get_normal``."""
 

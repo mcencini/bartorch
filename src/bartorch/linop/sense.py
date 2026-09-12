@@ -9,7 +9,7 @@ from bartorch._lib import library
 from bartorch._operator import Built, Shape, as_operand, dims
 from bartorch.linop.base import LinearOperator
 
-__all__ = ["NoncartesianSense"]
+__all__ = ["Coils", "NoncartesianSense"]
 
 
 class NoncartesianSense(LinearOperator):
@@ -56,7 +56,15 @@ class NoncartesianSense(LinearOperator):
     coil_batch : int
         Coils applied at once; 0 uses BART's own operator over all coils.  A
         larger batch is faster and holds proportionally more.  A single-coil
-        operator is always BART's own.
+        operator is always BART's own.  A batch that does not divide the coils
+        is cut down to one that does, because the loop steps by the slab and
+        the transform is built for a slab.
+
+        On a grid, ``0`` is not only a different arrangement: BART's own
+        Cartesian SENSE leaves the samples in the modulated convention
+        ``pics`` works in, and every other batch gives the centred one
+        :func:`bartorch.fft` produces.  The two differ by an ``fftmod`` on the
+        sample axes.
     fold_maps : bool
         Apply the sensitivities inside the transform of the normal, which saves
         two coil images per batch.  Takes effect only where the transform works
@@ -196,3 +204,99 @@ class NoncartesianSense(LinearOperator):
             int(self.toeplitz),
             device=self.device,
         )
+
+
+class Coils(LinearOperator):
+    """Coil sensitivities, without the transform that usually follows them.
+
+    The multiply on its own: an image to coil images, and the conjugate
+    sensitivities summed over the coils on the way back.  Held as maps it is
+    what :class:`~bartorch.linop.MultiplySum` builds, and with ``coil_batch=0``
+    it *is* that operator.  Held as kernels, or walked a slab at a time, the
+    bank is inflated or fetched a slab at a time and never resident whole,
+    which is the arrangement :class:`NoncartesianSense` uses and the reason
+    this exists: an encoding whose transform is not a Fourier transform cannot
+    be a SENSE operator, and chaining the coils onto it should not cost the
+    whole bank.
+
+    Parameters
+    ----------
+    sensitivities : tensor
+        Coil sensitivities of shape ``(coils, *image_shape[1:])``, or their
+        k-space kernels when ``kernels`` is set.
+    image_shape : tuple of int
+        Coil-image shape, C order, for instance ``(coils, y, x)``.
+    kernels : bool
+        Read ``sensitivities`` as k-space kernels, zero-padded to the image
+        grid and transformed a slab at a time, as :class:`NoncartesianSense`
+        reads them.
+    device : device, optional
+        Where the operator is built and does its arithmetic; by default where
+        the sensitivities are.
+    coil_batch : int
+        Coils applied at once; 0 uses BART's own ``fmac`` over all of them.
+
+    Examples
+    --------
+    >>> S = Coils(kernels, (coils, y, x), kernels=True)
+    >>> A = FFT(S.oshape, axes=(-2, -1)) @ S
+    """
+
+    def __init__(
+        self,
+        sensitivities: torch.Tensor,
+        image_shape: Shape,
+        kernels: bool = False,
+        device: torch.device | str | None = None,
+        coil_batch: int = 1,
+    ):
+        image_shape = tuple(image_shape)
+        if len(image_shape) < 3:
+            raise ValueError("image_shape is (coils, *spatial), for instance (coils, y, x)")
+
+        coils, spatial = image_shape[0], image_shape[1:]
+        if len(spatial) == 2:
+            spatial = (1, *spatial)
+
+        s = as_operand(sensitivities, tuple(sensitivities.shape), "sensitivities")
+        if s.shape[0] != coils:
+            raise ValueError(f"{s.shape[0]} sensitivities for {coils} coils")
+        sens_spatial = tuple(s.shape[1:])
+        if len(sens_spatial) == 2:
+            sens_spatial = (1, *sens_spatial)
+            s = s.reshape(coils, *sens_spatial)
+
+        if coil_batch < 0:
+            raise ValueError(f"coil_batch is a number of coils, not {coil_batch}")
+
+        self.sensitivities = s
+        self.image_shape = image_shape
+        self.kernels = bool(kernels)
+        self.coil_batch = int(coil_batch)
+        self._max_shape = (coils, *spatial)
+        self._sens_shape = (coils, *sens_spatial)
+        self.ishape = spatial
+        self.oshape = (coils, *spatial)
+        self.device = torch.device(device) if device is not None else s.device
+
+        super().__init__()
+
+    def _create(self) -> Built:
+        lib = library()
+        # As in NoncartesianSense: the slab size is read from process-wide
+        # state when the operator is built, so it is set for this build alone.
+        with _lock:
+            was = lib.bartorch_sense_coil_batch()
+            lib.bartorch_sense_set_coil_batch(self.coil_batch)
+            try:
+                ptr = self._under_lock(
+                    lib.bartorch_linop_coils,
+                    dims(self._max_shape),
+                    dims(self._sens_shape),
+                    self.sensitivities.data_ptr(),
+                    int(self.kernels),
+                    device=self.device,
+                )
+            finally:
+                lib.bartorch_sense_set_coil_batch(was)
+        return Built(ptr, self.ishape, self.oshape, keep=(self.sensitivities,), device=self.device)

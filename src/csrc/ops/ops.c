@@ -359,6 +359,30 @@ bartorch_linop* bartorch_linop_sense(const long* max_dims, const long* ksp_dims,
 	return (0 == guarded(linop_sense_worker, &a)) ? a.result : NULL;
 }
 
+/* The coil multiply alone, over sensitivities held as maps or as kernels. */
+extern const struct linop_s* bartorch_coils_operator(const long max_dims[DIMS], const long sens_dims[DIMS],
+		const _Complex float* sens, int kernels);
+
+struct linop_coils_args {
+
+	const long* max_dims; const long* sens_dims; const void* sens; int kernels;
+	bartorch_linop* result;
+};
+
+static int linop_coils_worker(void* p)
+{
+	struct linop_coils_args* a = p;
+
+	a->result = wrap_linop(bartorch_coils_operator(a->max_dims, a->sens_dims, a->sens, a->kernels));
+	return 0;
+}
+
+bartorch_linop* bartorch_linop_coils(const long* max_dims, const long* sens_dims, const void* sens, int kernels)
+{
+	struct linop_coils_args a = { max_dims, sens_dims, sens, kernels, NULL };
+	return (0 == guarded(linop_coils_worker, &a)) ? a.result : NULL;
+}
+
 struct linop_pair_args { const bartorch_linop* a; const bartorch_linop* b; bartorch_linop* result; };
 
 static int linop_chain_worker(void* p)
@@ -373,6 +397,41 @@ bartorch_linop* bartorch_linop_chain(const bartorch_linop* a, const bartorch_lin
 {
 	struct linop_pair_args args = { a, b, NULL };
 	return (0 == guarded(linop_chain_worker, &args)) ? args.result : NULL;
+}
+
+static int linop_with_normal_worker(void* p)
+{
+	struct linop_pair_args* a = p;
+
+	auto dom = linop_domain(a->a->op);
+	auto nrm_dom = linop_domain(a->b->op);
+	auto nrm_cod = linop_codomain(a->b->op);
+
+	/* `linop_from_ops` asserts this, and an assertion here would take the
+	 * process rather than the call. */
+	if (!md_check_equal_dims(dom->N, dom->dims, nrm_dom->dims, ~0UL)
+	 || !md_check_equal_dims(dom->N, dom->dims, nrm_cod->dims, ~0UL))
+		error("bartorch: a normal operator maps the domain to itself\n");
+
+	/* `linop_from_ops` takes its own reference to each of these. */
+	a->result = wrap_linop(linop_from_ops(a->a->op->forward, a->a->op->adjoint,
+				a->b->op->forward, NULL));
+	return 0;
+}
+
+/* The operator `a`, answering `normal` when it is asked for A^H A.
+ *
+ * BART derives a normal by chaining the adjoint onto the forward, which is
+ * the two applications.  Where the product has a closed form -- a sampling
+ * pattern and a subspace basis collapse into one kernel applied between the
+ * transforms, and the frames never have to be made -- this is how that form
+ * is attached.  Both sides stay BART operators, so what a solver drives is
+ * still one operator in BART's own loop.
+ */
+bartorch_linop* bartorch_linop_with_normal(const bartorch_linop* a, const bartorch_linop* normal)
+{
+	struct linop_pair_args args = { a, normal, NULL };
+	return (0 == guarded(linop_with_normal_worker, &args)) ? args.result : NULL;
 }
 
 static int linop_plus_worker(void* p)
