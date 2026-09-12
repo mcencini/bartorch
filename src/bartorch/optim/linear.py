@@ -569,18 +569,11 @@ class IST(_Solver):
         The loop is here rather than in the library, so that the same solver
         can be unrolled into a network or driven to a fixed point.  The step
         is BART's, held against the library's own to the bit.
-
-        Without ``deepinv`` installed there is nothing to drive, and this
-        falls back to :meth:`in_library`.
         """
-        try:
-            from bartorch.optim.iterators import NormalEquations, TermPrior
-
-            iteration = self._iteration()
-        except ImportError:
-            return self.in_library(y, A, x0)
-
         from bartorch import to_deepinv
+        from bartorch.optim.iterators import NormalEquations, TermPrior
+
+        iteration = self._iteration()
 
         op, y, x = _start(A, y, x0, self.regularizers)
         physics = to_deepinv(A)
@@ -937,16 +930,10 @@ class PRIDU(_Solver):
 
         The loop is here rather than in the library, so that the same solver
         can be unrolled into a network or driven to a fixed point.  The steps
-        are BART's, held against the library's own to the bit.  Without
-        ``deepinv`` installed there is nothing to drive, and this falls back
-        to :meth:`in_library`.
+        are BART's, held against the library's own to the bit.
         """
-        try:
-            from bartorch.optim.iterators import NormalEquations, PRIDUIteration
-        except ImportError:
-            return self.in_library(y, A, x0)
-
         from bartorch import to_deepinv
+        from bartorch.optim.iterators import NormalEquations, PRIDUIteration
 
         op, y, x = _start(A, y, x0, self.regularizers)
         primal, duals = self._split(op.ishape)

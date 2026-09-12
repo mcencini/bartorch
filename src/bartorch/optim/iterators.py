@@ -13,7 +13,9 @@ goes into ``deepinv.optim.optim_builder``, and so into ``BaseOptim`` with
 point -- neither of which an iteration running inside the library can be part
 of, because there is nothing to differentiate through.
 
-``deepinv`` is imported on first use, so it stays an optional dependency.
+``deepinv`` is imported on first use rather than at import time -- it is a
+dependency, but importing it is not free, and a script that only builds
+operators should not pay for it.
 """
 
 from __future__ import annotations
