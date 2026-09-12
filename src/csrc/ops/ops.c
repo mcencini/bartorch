@@ -90,7 +90,9 @@ static int guarded(int (*fn)(void*), void* arg)
 	return error_catcher(guard_shim, 1, argv);
 }
 
-static bartorch_linop* wrap_linop(const struct linop_s* op)
+/* An operator as a handle the ABI can hand out.  Not static: `iter.c` wraps
+ * the transform a regularization term carries. */
+bartorch_linop* bartorch_linop_wrap(const struct linop_s* op)
 {
 	if (NULL == op)
 		return NULL;
@@ -98,6 +100,11 @@ static bartorch_linop* wrap_linop(const struct linop_s* op)
 	bartorch_linop* h = xmalloc(sizeof(*h));
 	h->op = op;
 	return h;
+}
+
+static bartorch_linop* wrap_linop(const struct linop_s* op)
+{
+	return bartorch_linop_wrap(op);
 }
 
 static bartorch_nlop* wrap_nlop(const struct nlop_s* op)

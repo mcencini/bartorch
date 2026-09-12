@@ -144,6 +144,16 @@ def dim_vector() -> ctypes.Array:
     return (ctypes.c_long * DIMS)()
 
 
+def wide_dim_vector() -> ctypes.Array:
+    """A dimension vector one entry longer than :data:`DIMS`.
+
+    A proximal operator may work a rank past BART's usual sixteen: total
+    variation thresholds the components of a gradient, which are an axis of
+    their own beyond the image's.
+    """
+    return (ctypes.c_long * (DIMS + 1))()
+
+
 def out_pointer() -> ctypes.c_void_p:
     """An address the library writes into; read it back off ``.value``."""
     return ctypes.c_void_p()

@@ -18,6 +18,36 @@ are functions on images.
    Regularizer
 ```
 
+A term can also be applied on its own, which is what an iteration written
+outside the library needs: `Regularizer.prox(x, gamma)` is the proximal
+operator a solver calls between its gradient steps, `prox_shape` says what it
+works on, and `transform` is the operator BART puts in front of it.
+
+Two things the shapes do not say.  A term's proximal operator usually works on
+the image, because the transform is folded inside it -- a wavelet term is like
+this -- but total variation's is on the components of a gradient instead, an
+axis of their own beyond the image's.  And the Laplace term's transform is a
+real convolution whose codomain *is* shaped like the image, so a caller that
+guessed from the shape would quietly leave it out.  What a solver computes is
+`prox(transform(x))`; BART's own `iter2_ist` is the exception, applying the
+proximal operator to the image and ignoring the transform, which is why BART's
+IST and FISTA cannot take a total-variation term.
+
+A term can also be applied on its own, which is what an iteration written
+outside the library needs: `Regularizer.prox(x, gamma)` is the proximal
+operator a solver calls between its gradient steps, `prox_shape` says what it
+works on, and `transform` is the operator BART puts in front of it.
+
+Two things the shapes do not say.  A term's proximal operator usually works on
+the image, because the transform is folded inside it -- a wavelet term is like
+this -- but total variation's is on the components of a gradient instead, an
+axis of their own beyond the image's.  And the Laplace term's transform is a
+real convolution whose codomain *is* shaped like the image, so a caller that
+guessed from the shape would quietly leave it out.  What a solver computes is
+`prox(transform(x))`; BART's own `iter2_ist` is the exception, applying the
+proximal operator to the image and ignoring the transform, which is why BART's
+IST and FISTA cannot take a total-variation term.
+
 ## Sparsity terms
 
 ```{eval-rst}
