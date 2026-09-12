@@ -611,7 +611,7 @@ alone.
 `LinearOperator` is the one operator class: two shapes, a forward, an adjoint,
 a normal.  A subclass is defined either by `_create`, which builds one of
 BART's operators -- `FFT`, `Diagonal`, `Sampling`, `MultiplySum`, `NUFFT`,
-`Sense`, `Callback`, `Compose`, `Add` -- or in Python by `forward` and
+`NoncartesianSense`, `Callback`, `Compose`, `Add` -- or in Python by `forward` and
 `adjoint`.  A BART-backed subclass says only which constructor makes it; the
 lock BART is called under, the device it is built on, the handle's lifetime and
 the tensors the handle holds by pointer are all in `_operator.py`, shared with
@@ -628,9 +628,9 @@ constructor, so `Adjoint` is the operator read the other way round rather than
 a second handle, and applying it costs what `adjoint` costs. Only composing it
 needs a handle, and only then is one made.
 
-`Sense` takes `coil_batch` and `fold_maps`.  The library reads both from
-process-wide state when it builds a SENSE operator, and the operator keeps its
-own copy of each, so `Sense` sets them for its build and restores them; the
+`NoncartesianSense` takes `coil_batch` and `fold_maps`.  The library reads both
+from process-wide state when it builds a SENSE operator, and the operator keeps
+its own copy of each, so it sets them for its build and restores them; the
 process-wide values (`_dispatch.set_coil_batch`, `_dispatch.set_fold_maps`)
 remain the defaults for the SENSE operators BART's tools build.
 

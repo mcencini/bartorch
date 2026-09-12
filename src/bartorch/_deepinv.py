@@ -98,7 +98,7 @@ def to_deepinv(op, **kwargs):
 
     Examples
     --------
-    >>> physics = bartorch.to_deepinv(linop.Sense(maps, (8, 128, 128), traj=traj))
+    >>> physics = bartorch.to_deepinv(linop.NoncartesianSense(maps, (8, 128, 128), traj=traj))
     >>> physics.A_dagger(kspace[None]).shape       # a batch of one
     torch.Size([1, 1, 128, 128])
     """

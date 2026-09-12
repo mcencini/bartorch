@@ -11,6 +11,35 @@ records it for autograd.
 .. currentmodule:: bartorch.linop
 ```
 
+## MRI encoding
+
+These are what most reconstructions here are: an encoding, and a solver driving
+it.  They come first because they are what the rest of the page is for.
+
+```{eval-rst}
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   CartesianSense
+   NoncartesianSense
+   WaveSense
+   FieldCorrected
+   Sampling
+```
+
+`NoncartesianSense` is BART's own operator -- the coil batching and the
+Toeplitz normal are what make it what it is.  `CartesianSense` is that same
+operator over BART's FFT rather than a NUFFT, with `Sampling` chained on;
+`WaveSense` is a composition of operators BART already has, chained by
+`linop_chain`, and is the same six in the same order that `src/wave.c` chains.
+Each is a single BART operator once built.
+
+`FieldCorrected` wraps any of them and is a sum of chains rather than one:
+off-resonance during the readout is a different transform per sample, and time
+segmentation stands in for it with a short sum of ordinary encodings.  The
+coefficients come from `mri-nufft`; everything applied is BART's.
+
 ## Linear operator class
 
 An operator is combined with others through the algebra its class defines,
@@ -105,32 +134,6 @@ gives back an operator would be a function here.
    Mean
    Repeat
 ```
-
-## MRI encoding
-
-```{eval-rst}
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
-
-   Sampling
-   Sense
-   CartesianSense
-   Wave
-   FieldCorrected
-```
-
-`Sense` is BART's own operator -- the coil batching and the Toeplitz normal
-are what make it what it is, and it serves the non-Cartesian case.
-`CartesianSense` and `Wave` are compositions of operators BART already has,
-chained by `linop_chain`, so each is a single BART operator once built:
-`Wave` is the same six in the same order that `src/wave.c` chains.
-
-`FieldCorrected` wraps any of them, `Sense` included, and is a sum of chains
-rather than one: off-resonance during the readout is a different transform per
-sample, and time segmentation stands in for it with a short sum of ordinary
-encodings.  The coefficients come from `mri-nufft`; everything applied is
-BART's.
 
 ## Python-defined operators
 

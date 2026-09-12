@@ -11,7 +11,7 @@ factors; it is not in general an inverse.
 | Component | Python | Role and convention |
 | --- | --- | --- |
 | Coil encoding, contraction | `linop.MultiplySum` | Multiply by a tensor and sum the axes missing from the output; conjugate in the adjoint.  Serves sensitivities and subspace contractions. |
-| SENSE encoding | `linop.Sense` | Sensitivities followed by an FFT or a NUFFT, applied `coil_batch` coils at a time. |
+| SENSE encoding | `linop.CartesianSense`, `linop.NoncartesianSense` | Sensitivities followed by an FFT or a NUFFT, applied `coil_batch` coils at a time. |
 | Cartesian FFT | `linop.FFT`; `bartorch.fft`, `bartorch.ifft` | The operator is centred and unitary; the function needs `unitary=True` for that scaling. |
 | Sampling | `linop.Sampling` | A mask on the full grid, broadcast over singleton axes. |
 | Phase, weights | `linop.Diagonal` | Complex pointwise multiplication; the adjoint uses the conjugate. |

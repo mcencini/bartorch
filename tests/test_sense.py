@@ -107,17 +107,17 @@ def test_the_setting_reports_itself(restore_batch):
 
 
 def test_the_batch_is_the_operators_own(restore_batch):
-    """Building a Sense leaves the default BART's tools use untouched."""
+    """Building an encoding leaves the default BART's tools use untouched."""
     lib = library()
     n, coils = 16, 4
     maps = torch.randn(coils, n, n, dtype=torch.complex64)
     _dispatch.set_coil_batch(1)
 
     lib.bartorch_sense_reset_counters()
-    linop.Sense(maps, (coils, n, n), coil_batch=0)
+    linop.CartesianSense(maps, (coils, n, n), coil_batch=0)
     assert (lib.bartorch_sense_counter(0), lib.bartorch_sense_counter(1)) == (0, 1)
 
-    linop.Sense(maps, (coils, n, n), coil_batch=2)
+    linop.CartesianSense(maps, (coils, n, n), coil_batch=2)
     assert lib.bartorch_sense_counter(0) == 1
     assert _dispatch.coil_batch() == 1
 
@@ -160,8 +160,8 @@ def test_a_kernel_bank_applies_as_the_maps_it_stands_for():
     kernels, maps = _smooth_bank(n=n, coils=coils)
     x = bt.phantom([n, n]).reshape(1, n, n)
 
-    dense = linop.Sense(maps, (coils, n, n))
-    compact = linop.Sense(kernels, (coils, n, n), kernels=True)
+    dense = linop.CartesianSense(maps, (coils, n, n))
+    compact = linop.CartesianSense(kernels, (coils, n, n), kernels=True)
 
     assert dense.ishape == compact.ishape
     assert dense.oshape == compact.oshape
@@ -177,8 +177,8 @@ def test_a_kernel_bank_applies_off_the_grid_too():
     traj = bt.traj(x=n, y=48, r=True)
     x = bt.phantom([n, n]).reshape(1, n, n)
 
-    dense = linop.Sense(maps, (coils, n, n), traj=traj)
-    compact = linop.Sense(kernels, (coils, n, n), kernels=True, traj=traj)
+    dense = linop.NoncartesianSense(maps, (coils, n, n), traj=traj)
+    compact = linop.NoncartesianSense(kernels, (coils, n, n), kernels=True, traj=traj)
 
     torch.testing.assert_close(compact(x), dense(x), rtol=1e-3, atol=1e-4)
 
@@ -191,7 +191,7 @@ def test_the_operator_is_the_sensitivities_and_the_transform():
     x = bt.phantom([n, n]).reshape(1, n, n)
     coil_images = (x * maps).reshape(coils, 1, n, n)
 
-    grid = linop.Sense(maps, (coils, n, n))
+    grid = linop.CartesianSense(maps, (coils, n, n))
     torch.testing.assert_close(
         grid(x).reshape(coils, 1, n, n),
         bartorch.fft(coil_images, axes=(-2, -1), unitary=True),
@@ -200,7 +200,7 @@ def test_the_operator_is_the_sensitivities_and_the_transform():
     )
 
     traj = bt.traj(x=n, y=48, r=True)
-    off = linop.Sense(maps, (coils, n, n), traj=traj)
+    off = linop.NoncartesianSense(maps, (coils, n, n), traj=traj)
     torch.testing.assert_close(
         off(x).reshape(coils, 48, n, 1), bartorch.nufft(coil_images, traj), rtol=1e-4, atol=1e-5
     )
@@ -223,8 +223,8 @@ def test_a_bank_left_on_the_host_is_brought_over_a_slab_at_a_time():
     traj = bt.traj(x=n, y=48, r=True)
     x = bt.phantom([n, n]).reshape(1, n, n)
 
-    resident = linop.Sense(maps.cuda(), (coils, n, n), traj=traj.cuda())
-    staged = linop.Sense(maps, (coils, n, n), traj=traj.cuda())
+    resident = linop.NoncartesianSense(maps.cuda(), (coils, n, n), traj=traj.cuda())
+    staged = linop.NoncartesianSense(maps, (coils, n, n), traj=traj.cuda())
 
     # A staged slab is dense where a resident one is a window on to the bank,
     # so the sum that ends the adjoint runs in a different order and the last
@@ -258,14 +258,14 @@ def test_fetching_a_slab_alongside_the_arithmetic_changes_nothing():
 
     was = bartorch._cuda.streams()
     try:
-        resident = linop.Sense(maps.cuda(), (coils, n, n), traj=traj)
+        resident = linop.NoncartesianSense(maps.cuda(), (coils, n, n), traj=traj)
         reference = resident.normal(x)
 
         bartorch._cuda.set_streams(1)
-        one = linop.Sense(maps, (coils, n, n), traj=traj).normal(x)
+        one = linop.NoncartesianSense(maps, (coils, n, n), traj=traj).normal(x)
 
         bartorch._cuda.set_streams(2)
-        two = linop.Sense(maps, (coils, n, n), traj=traj).normal(x)
+        two = linop.NoncartesianSense(maps, (coils, n, n), traj=traj).normal(x)
     finally:
         bartorch._cuda.set_streams(was)
 
@@ -289,8 +289,8 @@ def test_a_kernel_bank_serves_a_subspace_operator_as_the_maps_it_stands_for():
     basis[1, :, 0, 0, 0, 0, 0] = torch.linspace(-1, 1, frames)
     kernels, maps = _smooth_bank(n=n, coils=coils)
 
-    dense = linop.Sense(maps, (coils, n, n), traj=traj, basis=basis)
-    compact = linop.Sense(kernels, (coils, n, n), traj=traj, basis=basis, kernels=True)
+    dense = linop.NoncartesianSense(maps, (coils, n, n), traj=traj, basis=basis)
+    compact = linop.NoncartesianSense(kernels, (coils, n, n), traj=traj, basis=basis, kernels=True)
     assert dense.ishape == (coeffs, 1, 1, 1, 1, n, n)
 
     torch.manual_seed(0)
@@ -324,10 +324,10 @@ def test_an_operator_on_a_card_takes_and_returns_host_arrays():
     basis[1, :, 0, 0, 0, 0, 0] = torch.linspace(-1, 1, frames)
     kernels, _ = _smooth_bank(n=n, coils=coils)
 
-    on_card = linop.Sense(
+    on_card = linop.NoncartesianSense(
         kernels.cuda(), (coils, n, n), traj=traj.cuda(), basis=basis.cuda(), kernels=True
     )
-    from_host = linop.Sense(
+    from_host = linop.NoncartesianSense(
         kernels, (coils, n, n), traj=traj, basis=basis, kernels=True, device="cuda"
     )
     assert from_host.device.type == "cuda"
@@ -373,8 +373,8 @@ def test_a_three_dimensional_kernel_bank_applies_as_the_maps_it_stands_for():
     maps = bartorch.kernels_to_maps(kernels, (n, n, n))
     x = torch.randn(1, n, n, n, dtype=torch.complex64)
 
-    dense = linop.Sense(maps, (coils, n, n, n))
-    compact = linop.Sense(kernels, (coils, n, n, n), kernels=True)
+    dense = linop.CartesianSense(maps, (coils, n, n, n))
+    compact = linop.CartesianSense(kernels, (coils, n, n, n), kernels=True)
 
     torch.testing.assert_close(compact(x), dense(x), rtol=1e-4, atol=1e-5)
 
@@ -397,8 +397,8 @@ def test_a_kernel_bank_inflated_on_a_card_is_the_maps_it_stands_for(n, size):
     maps = bartorch.kernels_to_maps(kernels, (n, n, n))
     x = torch.randn(1, n, n, n, dtype=torch.complex64)
 
-    dense = linop.Sense(maps, (coils, n, n, n))
-    compact = linop.Sense(kernels.cuda(), (coils, n, n, n), kernels=True)
+    dense = linop.CartesianSense(maps, (coils, n, n, n))
+    compact = linop.CartesianSense(kernels.cuda(), (coils, n, n, n), kernels=True)
 
     y = dense(x)
     torch.testing.assert_close(compact(x.cuda()).cpu(), y, rtol=1e-4, atol=1e-5)

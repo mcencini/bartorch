@@ -138,7 +138,7 @@ def set_copy_inputs(copy: bool) -> None:
 def set_coil_batch(n: int) -> None:
     """Set the coil batch of SENSE operators BART's tools build; 0 uses BART's own operator.
 
-    :class:`bartorch.linop.Sense` takes its own and restores this after building.
+    :class:`bartorch.linop.NoncartesianSense` takes its own and restores this after building.
     """
     _ensure_ready()
     library().bartorch_sense_set_coil_batch(int(n))
@@ -151,7 +151,7 @@ def coil_batch() -> int:
 
 
 def set_fold_maps(enable: bool = True) -> None:
-    """Set ``fold_maps`` of SENSE operators BART's tools build; see ``linop.Sense``."""
+    """Set ``fold_maps`` of SENSE operators BART's tools build; see ``linop.NoncartesianSense``."""
     _ensure_ready()
     library().bartorch_sense_set_fold_maps(int(bool(enable)))
 
