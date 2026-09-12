@@ -83,8 +83,9 @@ def _normal_equations() -> type:
         ours falls back to ``A_adjoint(A(x) - y)``.
         """
 
-        def __init__(self):
+        def __init__(self, weight: float = 0.0):
             super().__init__()
+            self.weight = float(weight)
             self._adjoint: tuple | None = None
 
         def _adjoint_data(self, y: torch.Tensor, physics) -> torch.Tensor:
@@ -94,15 +95,33 @@ def _normal_equations() -> type:
                 self._adjoint = (key, _batched(op.adjoint, y, op.oshape))
             return self._adjoint[1]
 
+        def normal(self, x: torch.Tensor, physics) -> torch.Tensor:
+            """``A^H A x + lambda x``, the operator ``lsqr`` builds.
+
+            ``lambda`` is ``pics -q``, a weight on an identity added to the
+            normal operator; ``normaleq_l2_apply`` applies the encoding's
+            normal and then adds it, and so does this.
+            """
+            op = getattr(physics, "op", None)
+            out = (
+                _batched(op.normal, x, op.ishape)
+                if op is not None
+                else physics.A_adjoint(physics.A(x))
+            )
+            return out + self.weight * x if self.weight else out
+
         def grad(self, x: torch.Tensor, y: torch.Tensor, physics, *args, **kwargs):
             op = getattr(physics, "op", None)
-            if op is None:
+            if op is None and not self.weight:
                 return physics.A_adjoint(physics.A(x) - y)
-            return _batched(op.normal, x, op.ishape) - self._adjoint_data(y, physics)
+            return self.normal(x, physics) - self._adjoint_data(y, physics)
 
         def fn(self, x: torch.Tensor, y: torch.Tensor, physics, *args, **kwargs):
             residual = physics.A(x) - y
-            return 0.5 * residual.flatten(1).abs().pow(2).sum(-1)
+            out = 0.5 * residual.flatten(1).abs().pow(2).sum(-1)
+            if self.weight:
+                out = out + 0.5 * self.weight * x.flatten(1).abs().pow(2).sum(-1)
+            return out
 
     return NormalEquations
 
@@ -259,6 +278,27 @@ def _single(value: float) -> float:
     ravine's coefficients diverge at the thirteenth iteration.
     """
     return float(np.float32(value))
+
+
+def _dot(a: torch.Tensor, b: torch.Tensor) -> float:
+    """``vecops.c``'s ``dot``: the products in single precision, summed in a
+    double, over the real and imaginary parts as one long vector."""
+    x = torch.view_as_real(a) if a.is_complex() else a
+    z = torch.view_as_real(b) if b.is_complex() else b
+    return float((x * z).double().sum())
+
+
+def _norm(x: torch.Tensor) -> float:
+    """``vecops.c``'s ``norm``, which is not a single-precision norm.
+
+    BART squares the components in single precision and then sums and roots
+    them in a double, and hands back the double.  Where the result is put in a
+    ``float`` the difference is rounded away; where it is squared again --
+    which is what the primal-dual step adaptation does to it -- it is not, and
+    it reaches the iterate.
+    """
+    parts = torch.view_as_real(x) if x.is_complex() else x
+    return float(torch.sqrt((parts * parts).double().sum()))
 
 
 def _ravine(told: float, t: float) -> tuple[float, float]:
@@ -657,21 +697,25 @@ def _pridu() -> type:
                     for t in self.terms
                 ]
 
-            op = physics.op
-
             # The data term's dual, through its resolvent.
             previous = adjoint_dual
-            step = sigma * _batched(op.normal, avg, op.ishape) + adjoint_dual
-            fresh = step / (1.0 + sigma) - (
-                sigma / (1.0 + sigma)
-            ) * cur_data_fidelity._adjoint_data(y, physics)
+            step = sigma * cur_data_fidelity.normal(avg, physics) + adjoint_dual
+            # `axpbz(Ahu_new, 1. / (1. + sigma), Ahu_old, -1. * sigma / (1. + sigma), xadj)`:
+            # both coefficients are worked out in a double and rounded to the
+            # float each vector is scaled by.
+            keep = _single(1.0 / (1.0 + sigma))
+            pull = _single(-1.0 * sigma / (1.0 + sigma))
+            fresh = keep * step + pull * cur_data_fidelity._adjoint_data(y, physics)
             adjoint_dual = lam * fresh + (1.0 - lam) * previous
             change = adjoint_dual - previous
             moved = float(torch.real((change.conj() * change).sum()))
 
             # Each regularization term's, through the conjugate of its prox.
             for j, term in enumerate(self.terms):
-                over = term.apply_transform(avg, self.image_shape) + duals[j] / sigma
+                # `axpy(u_old, 1. / sigma, u[j])`: the reciprocal is worked
+                # out once, in a double, and rounded to the float the vector
+                # is scaled by -- not a division of the vector.
+                over = term.apply_transform(avg, self.image_shape) + _single(1.0 / sigma) * duals[j]
                 thresholded = term.prox(over, alpha / sigma, image_shape=self.image_shape)
                 fresh_j = sigma * over - sigma * thresholded
                 was = duals[j]
@@ -687,11 +731,13 @@ def _pridu() -> type:
 
             # `res2` is measured against the step `tau` had before the
             # adaptation, as it is in `chambolle_pock`.
-            res2 = _single(math.sqrt(max(moved, 0.0)) / tau)
-            res1 = _single(float(torch.linalg.vector_norm(x - previous_x)) / sigma)
+            res2 = _single(_single(math.sqrt(max(moved, 0.0))) / tau)
+            res1 = _single(_single(_norm(x - previous_x)) / sigma)
 
             if cur_params.get("adaptive_step", False):
-                sigma, tau = self._adapt(x - previous_x, sigma, tau, cur_params, op)
+                sigma, tau = self._adapt(
+                    x - previous_x, sigma, tau, cur_params, cur_data_fidelity, physics
+                )
 
             avg = (1.0 + theta) * x - theta * previous_x
 
@@ -712,29 +758,36 @@ def _pridu() -> type:
                 "it": k + 1,
             }
 
-        def _adapt(self, delta, sigma, tau, params, op):
+        def _adapt(self, delta, sigma, tau, params, cur_data_fidelity, physics):
             """BART's step adaptation: the ratio of the move to what the
             operator makes of it, clipped just under ``sqrt(sigma tau)``."""
+            # `float norm_Kx`, and each `+=` rounds back to a float: the
+            # terms are summed one at a time, not worked out together and
+            # rounded once.  With a single dual term the two are the same
+            # number; with a dual and the data term they are not.
             squared = 0.0
             for term in self.terms:
                 moved = term.apply_transform(delta, self.image_shape)
-                squared += float(torch.linalg.vector_norm(moved)) ** 2
-            normal = _batched(op.normal, delta, op.ishape)
-            squared += float(torch.real((normal.conj() * delta).sum()))
+                squared = _single(squared + _norm(moved) ** 2)
+            normal = cur_data_fidelity.normal(delta, physics)
+            squared = _single(squared + _dot(normal, delta))
 
             norm_kx = _single(math.sqrt(max(squared, 0.0)))
             if 0.0 == norm_kx:
                 return sigma, tau
 
-            ratio = _single(float(torch.linalg.vector_norm(delta)) / norm_kx)
-            root = _single(math.sqrt(sigma * tau))
-            threshold = _single(0.95 * root)
+            # Every one of these is a single-precision operation in C, down to
+            # the literal: `0.95f` is not 0.95, and `sqrtf(sigma * tau)` roots
+            # a product that has already been rounded.
+            ratio = _single(_single(_norm(delta)) / norm_kx)
+            root = _single(math.sqrt(_single(sigma * tau)))
+            threshold = _single(_single(0.95) * root)
             if 0.0 != ratio < root:
                 chosen = min(threshold, ratio)
             else:
                 chosen = root
 
-            r = params.get("sigma_tau_ratio", 1.0)
+            r = _single(params.get("sigma_tau_ratio", 1.0))
             return _single(chosen * r), _single(chosen / r)
 
     return PRIDUIteration

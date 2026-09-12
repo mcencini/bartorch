@@ -21,15 +21,18 @@
 #include "misc/debug.h"
 
 #include "num/multind.h"
+#include "num/flpmath.h"
 #include "num/ops.h"
 #include "num/ops_p.h"
 #include "num/iovec.h"
 
 #include "linops/linop.h"
+#include "linops/someops.h"
 
 #include "iter/iter.h"
 #include "iter/iter2.h"
 #include "iter/lsqr.h"
+#include "iter/misc.h"
 #include "iter/monitor.h"
 #include "iter/prox.h"
 #include "iter/thresh.h"
@@ -217,6 +220,51 @@ int bartorch_prox_transform_apply(const bartorch_prox* h, int mode, void* dst, c
 	return 0;
 }
 
+/* Put a term's own random generator back where a fresh term would have it.
+ *
+ * A wavelet threshold spins its transform by a random shift drawn from a
+ * generator of its own, seeded at one when BART makes the operator.  The tool
+ * builds a fresh operator per run; a term here is kept across solves, so
+ * every solve rewinds it and a reused term answers as the tool does.
+ * `bartorch_solve` does this itself; a loop written outside the library has
+ * to ask.
+ *
+ * A term with no such generator is left alone, which is most of them.
+ *
+ * Returns 0, or a negative code.
+ */
+int bartorch_prox_rewind(const bartorch_prox* h)
+{
+	if ((NULL == h) || (NULL == h->op))
+		return -1;
+
+	if (L1WAV == h->xform)
+		wavthresh_rand_state_set(h->op, 1);
+
+	return 0;
+}
+
+/* Whether that transform is the identity.
+ *
+ * `iter2_chambolle_pock` asks `linop_is_identity` of the first term and, when
+ * the answer is yes, makes it the primal proximal step instead of a dual --
+ * which changes the iteration, not just its bookkeeping.  A loop written
+ * outside the library has to split the terms the same way, and this is the
+ * same question asked of the same operator.
+ *
+ * Returns 1, 0, or a negative code.
+ */
+int bartorch_prox_transform_is_identity(const bartorch_prox* h)
+{
+	if (NULL == h)
+		return -1;
+
+	if (NULL == h->trafo)
+		return 1;
+
+	return linop_is_identity(h->trafo) ? 1 : 0;
+}
+
 /* The transform a term applies before its proximal operator.
  *
  * `opt_reg_configure` gives every term one, and for most of them it is the
@@ -269,6 +317,107 @@ struct counting_monitor {
 static void counting_monitor_fun(struct iter_monitor_s* monitor, const struct vec_iter_s* /*ops*/, const float* /*x*/)
 {
 	((struct counting_monitor*)monitor)->count++;
+}
+
+/* `lsqr`'s normal operator, rebuilt so its largest eigenvalue can be asked
+ * for on its own.
+ *
+ * `normaleq_l2_apply` is `A^H A x + lambda x`, and this is that arithmetic and
+ * not an equivalent: the estimate divides the step every iteration is taken
+ * with, so a difference in its last bits is a difference in the answer.
+ */
+struct maxeigen_data {
+
+	operator_data_t super;
+
+	float lambda;
+	long size;
+
+	const struct linop_s* model_op;
+};
+
+static DEF_TYPEID(maxeigen_data);
+
+static void maxeigen_apply(const operator_data_t* _data, int N, void* args[static N])
+{
+	const auto data = CAST_DOWN(maxeigen_data, _data);
+
+	assert(2 == N);
+	assert(args[0] != args[1]);
+
+	linop_normal_unchecked(data->model_op, args[0], args[1]);
+	md_axpy(1, MD_DIMS(data->size), args[0], data->lambda, args[1]);
+}
+
+static void maxeigen_del(const operator_data_t* _data)
+{
+	const auto data = CAST_DOWN(maxeigen_data, _data);
+
+	linop_free(data->model_op);
+	xfree(data);
+}
+
+/* The largest eigenvalue of the operator an iteration divides its step by.
+ *
+ * `pics -e` asks for it, and every iteration that takes a step -- `ist`,
+ * `fista`, `eulermaruyama`, `chambolle_pock` -- divides by what comes back.
+ * It is a power iteration from a random start, so it draws on BART's own
+ * generator: a loop written outside the library has to ask for it here, at
+ * the point in the sequence the library would have asked, or the draws that
+ * follow it are different ones.
+ *
+ * `A` and `cclambda` are the encoding and the quadratic weight, together the
+ * operator `lsqr` builds.  `proxes`, when given, are terms whose transforms
+ * are added to it -- which is what `iter2_chambolle_pock` does, and only it;
+ * the proximal iterations take the encoding alone.
+ *
+ * Returns 0 and writes `out`, or a negative code.
+ */
+int bartorch_maxeigen(const bartorch_linop* handle, float cclambda,
+		int nprox, const bartorch_prox* const* proxes,
+		int iterations, double* out)
+{
+	if ((NULL == handle) || (NULL == out) || (1 > iterations))
+		return -1;
+
+	if ((0 < nprox) && (NULL == proxes))
+		return -1;
+
+	const struct linop_s* model_op = bartorch_linop_unwrap(handle);
+
+	if (NULL == model_op)
+		return -1;
+
+	auto iov = linop_domain(model_op);
+
+	PTR_ALLOC(struct maxeigen_data, data);
+	SET_TYPEID(maxeigen_data, data);
+
+	data->lambda = cclambda;
+	data->size = 2 * md_calc_size(iov->N, iov->dims);	// FIXME: assume complex
+	data->model_op = linop_clone(model_op);
+
+	const struct operator_s* normal = operator_create(iov->N, iov->dims, iov->N, iov->dims,
+			CAST_UP(PTR_PASS(data)), maxeigen_apply, maxeigen_del);
+
+	for (int i = 0; i < nprox; i++) {
+
+		if ((NULL == proxes[i]) || (NULL == proxes[i]->trafo)) {
+
+			operator_free(normal);
+			return -1;
+		}
+
+		auto tmp = normal;
+		normal = operator_plus_create(normal, proxes[i]->trafo->normal);
+		operator_free(tmp);
+	}
+
+	*out = estimate_maxeigenval_sameplace(normal, iterations, NULL);
+
+	operator_free(normal);
+
+	return 0;
 }
 
 int bartorch_solve(const bartorch_linop* handle,

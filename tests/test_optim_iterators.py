@@ -118,6 +118,203 @@ def test_any_term_that_thresholds_an_image_goes_through(problem, term):
     assert torch.equal(ours, optim.FISTA(term, maxiter=15, step=0.7).in_library(y, A))
 
 
+# --- the public proximal solvers run these loops -------------------------------
+
+
+@pytest.mark.parametrize(
+    "make",
+    [
+        lambda term, **kw: optim.IST(term, maxiter=12, step=0.7, **kw),
+        lambda term, **kw: optim.FISTA(term, maxiter=12, step=0.7, **kw),
+        lambda term, **kw: optim.FISTA(term, maxiter=12, step=0.7, hogwild=True, **kw),
+        lambda term, **kw: optim.FISTA(term, maxiter=12, step=0.7, pqr=(1.0, 1.0, 2.0), **kw),
+        lambda term, **kw: optim.PRIDU(term, maxiter=12, step=0.95, **kw),
+        lambda term, **kw: optim.PRIDU(term, maxiter=12, step=0.95, adaptive_step=True, **kw),
+        lambda term, **kw: optim.PRIDU(term, maxiter=12, step=0.95, sigma_tau_ratio=3.0, **kw),
+    ],
+    ids=["ist", "fista", "fista hogwild", "fista pqr", "pridu", "pridu adaptive", "pridu ratio"],
+)
+@pytest.mark.parametrize(
+    "term",
+    [prox.L1(0.05), prox.Wavelet((-1, -2), 0.02), prox.Laplace((-1, -2), 0.02)],
+    ids=["l1", "wavelet", "laplace"],
+)
+@pytest.mark.parametrize("weight", [0.0, 0.1], ids=["no weight", "a quadratic weight"])
+def test_the_public_solvers_are_the_library_they_replaced(make, term, weight):
+    """`__call__` runs the iteration here; `in_library` runs BART's."""
+    torch.manual_seed(0)
+    n = 8
+    diag = torch.linspace(0.2, 1.0, n * n).to(torch.complex64).reshape(1, n, n)
+    A = linop.Diagonal(diag, (1, n, n))
+    y = A(_rand(1, n, n))
+    solver = make(term, cclambda=weight)
+
+    assert torch.equal(solver(y, A), solver.in_library(y, A))
+
+
+def test_the_proximal_iterations_take_one_term():
+    """`iter2_ist` and `iter2_fista` assert it, and an assertion is the
+    process; this is the same refusal, said in Python."""
+    with pytest.raises(ValueError, match="exactly one term"):
+        optim.FISTA([prox.L1(0.05), prox.L1(0.02)], maxiter=5)
+    with pytest.raises(ValueError, match="exactly one term"):
+        optim.IST(maxiter=5)
+
+
+def test_a_term_kept_across_solves_is_rewound_as_the_tool_rewinds_it():
+    """A wavelet threshold's cycle spinning comes from a generator of its own,
+    seeded when BART makes the operator.  The tool builds a fresh operator per
+    run; a term here is kept, so every solve puts the generator back."""
+    torch.manual_seed(0)
+    A = linop.FFT(SHAPE, axes=(-1, -2))
+    y = A(_rand(*SHAPE))
+    term = prox.Wavelet((-1, -2), 0.02)
+
+    for solver in (
+        optim.FISTA(term, maxiter=8, step=0.7),
+        optim.IST(term, maxiter=8, step=0.7),
+        optim.ADMM(term, maxiter=8, cg_maxiter=4),
+        optim.PRIDU(term, maxiter=8, step=0.95),
+    ):
+        assert torch.equal(solver(y, A), solver(y, A)), f"{solver!r} did not rewind its term"
+
+
+def test_data_whose_adjoint_has_no_norm_is_left_alone():
+    """`checkeps`: BART warns and returns without iterating."""
+    A = linop.FFT(SHAPE, axes=(-1, -2))
+    zero = torch.zeros(SHAPE, dtype=torch.complex64)
+    solver = optim.FISTA(prox.L1(0.05), maxiter=8, step=0.7)
+    assert torch.equal(solver(zero, A), solver.in_library(zero, A))
+
+
+# --- the primal-dual split -----------------------------------------------------
+
+
+def test_a_term_whose_transform_is_the_identity_becomes_the_primal_step():
+    """Not a question about shapes: the Laplace term's transform has the
+    image's shape and is a convolution, which is why BART asks the operator."""
+    assert prox.L1(0.05).transform_is_identity(SHAPE)
+    assert prox.Wavelet((-1, -2), 0.02).transform_is_identity(SHAPE)
+    assert not prox.Laplace((-1, -2), 0.02).transform_is_identity(SHAPE)
+    assert not prox.TotalVariation((-1, -2), 0.02).transform_is_identity(SHAPE)
+
+    solver = optim.PRIDU([prox.L1(0.05), prox.TotalVariation((-1, -2), 0.01)], maxiter=6)
+    primal, duals = solver._split(SHAPE)
+    assert primal is solver.regularizers[0]
+    assert duals == solver.regularizers[1:]
+
+    solver = optim.PRIDU([prox.TotalVariation((-1, -2), 0.01), prox.L1(0.05)], maxiter=6)
+    primal, duals = solver._split(SHAPE)
+    assert primal is None
+    assert duals == solver.regularizers
+
+
+@pytest.mark.parametrize("steps", [1, 4, 12])
+def test_several_terms_split_the_way_the_library_splits_them(steps):
+    torch.manual_seed(0)
+    A = linop.FFT(SHAPE, axes=(-1, -2))
+    y = A(_rand(*SHAPE))
+    terms = [prox.L1(0.05), prox.TotalVariation((-1, -2), 0.01)]
+    solver = optim.PRIDU(terms, maxiter=steps, step=0.95)
+
+    assert torch.equal(solver(y, A), solver.in_library(y, A))
+
+
+@pytest.mark.parametrize(
+    "term",
+    [prox.TotalVariation((-1, -2), 0.01), prox.Laplace((-1, -2), 0.02)],
+    ids=["total variation", "laplace"],
+)
+@pytest.mark.parametrize("steps", [1, 2, 6, 15])
+def test_the_adaptive_step_with_a_dual_term_is_barts(term, steps):
+    """The case that found the scalings.
+
+    `chambolle_pock` works its coefficients out once, in a double, and rounds
+    each to the float its vector is scaled by -- `1 / sigma`, `1 / (1 + sigma)`,
+    `-sigma / (1 + sigma)`.  Dividing a tensor by `sigma` is a different
+    number.  With `sigma` left where `pics` starts it the two agree; the
+    adaptive step moves it by an order of magnitude, and then they do not.
+    """
+    torch.manual_seed(0)
+    n = 8
+    diag = torch.linspace(0.2, 1.0, n * n).to(torch.complex64).reshape(1, n, n)
+    A = linop.Diagonal(diag, (1, n, n))
+    y = A(_rand(1, n, n))
+    solver = optim.PRIDU(term, maxiter=steps, step=0.95, adaptive_step=True)
+
+    assert torch.equal(solver(y, A), solver.in_library(y, A))
+
+
+# --- the largest eigenvalue ----------------------------------------------------
+
+
+def test_the_largest_eigenvalue_is_the_operator_the_step_divides_by():
+    """`pics -e`.  The operator is the encoding's normal with the quadratic
+    weight on its diagonal, and -- for the primal-dual iteration alone -- the
+    dual terms' transforms added to it."""
+    from bartorch.optim.linear import maxeigen
+
+    n = 8
+    assert maxeigen(linop.FFT((1, n, n), axes=(-1, -2))) == pytest.approx(1.0, rel=1e-5)
+    assert maxeigen(linop.FFT((1, n, n), axes=(-1, -2)), cclambda=0.5) == pytest.approx(
+        1.5, rel=1e-5
+    )
+
+    diag = torch.full((1, n, n), 0.1, dtype=torch.complex64)
+    diag[0, 0, 0] = 2.0
+    A = linop.Diagonal(diag, (1, n, n))
+    assert maxeigen(A) == pytest.approx(4.0, rel=1e-5)
+
+    # A gradient adds its own, which is what the primal-dual iteration
+    # estimates over and the proximal ones do not.
+    assert maxeigen(A, prox.TotalVariation((-1, -2), 0.01)) > 8.0
+
+
+def test_the_estimate_is_a_random_draw_and_the_library_does_not_repeat_it():
+    """Which is why the two paths are held close rather than to the bit when
+    `eigen` is on: `estimate_maxeigenval` starts from a random vector, and
+    BART's own answer changes from one solve to the next."""
+    from bartorch.optim.linear import maxeigen
+
+    torch.manual_seed(0)
+    n = 8
+    diag = torch.linspace(0.2, 1.0, n * n).to(torch.complex64).reshape(1, n, n)
+    A = linop.Diagonal(diag, (1, n, n))
+    y = A(_rand(1, n, n))
+
+    draws = [maxeigen(A) for _ in range(4)]
+    assert len(set(draws)) > 1
+
+    solver = optim.FISTA(prox.L1(0.05), maxiter=12, step=0.7, eigen=True)
+    assert not torch.equal(solver.in_library(y, A), solver.in_library(y, A))
+
+
+@pytest.mark.parametrize(
+    "make",
+    [
+        lambda term: optim.IST(term, maxiter=12, step=0.7, eigen=True),
+        lambda term: optim.FISTA(term, maxiter=12, step=0.7, eigen=True),
+        lambda term: optim.PRIDU(term, maxiter=12, step=0.95, eigen=True),
+    ],
+    ids=["ist", "fista", "pridu"],
+)
+def test_the_step_is_divided_by_the_estimate(make):
+    torch.manual_seed(0)
+    n = 8
+    diag = torch.full((1, n, n), 0.1, dtype=torch.complex64)
+    diag[0, 0, 0] = 2.0
+    A = linop.Diagonal(diag, (1, n, n))
+    y = A(_rand(1, n, n))
+    term = prox.L1(0.05)
+
+    ours = make(term)(y, A)
+    torch.testing.assert_close(ours, make(term).in_library(y, A), rtol=1e-4, atol=1e-6)
+
+    # And it is the estimate doing it: a step four times larger is a
+    # different answer.
+    assert not torch.equal(ours, optim.FISTA(term, maxiter=12, step=0.7)(y, A))
+
+
 # --- the encoding keeps its own normal ----------------------------------------
 
 

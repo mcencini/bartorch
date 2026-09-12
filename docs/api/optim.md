@@ -4,11 +4,11 @@
 `solver(y, A, x0=None)`; the iteration is BART's, the one `pics` or `nlinv`
 runs.
 
-Where the iteration has been written out in `bartorch.optim.iterators` -- so
-far `ADMM` -- the loop runs here and each step calls the library; everywhere
-else the whole solve is one call into it.  Either way the answer is the same
-bits, and `solver.in_library(y, A)` runs BART's own loop when that is what is
-wanted.
+Where the iteration has been written out in `bartorch.optim.iterators` --
+`IST`, `FISTA`, `ADMM` and `PRIDU` -- the loop runs here and each step calls
+the library; `CG`, `NIHT` and `EulerMaruyama` are one call into it.  Either
+way the answer is the same bits, and `solver.in_library(y, A)` runs BART's own
+loop when that is what is wanted.
 
 ```{eval-rst}
 .. currentmodule:: bartorch.optim
@@ -50,6 +50,7 @@ point-spread convolution, not the transform and its adjoint.
    PRIDU
    NIHT
    EulerMaruyama
+   maxeigen
 ```
 
 ## Iterations for unfolding and fixed points
@@ -124,6 +125,23 @@ proximal step instead.  That split is `iter2_chambolle_pock`'s, reproduced
 rather than chosen.  Its tolerance is absolute, unlike every other iteration
 here: `iter2_chambolle_pock` leaves `eps` at one where the others scale it by
 the norm of $A^Hy$.
+
+`maxeigen` is the estimate `pics -e` divides the step by: a power iteration
+over the encoding's normal with the quadratic weight on its diagonal, and --
+for the primal-dual iteration alone -- the dual terms' transforms added to it.
+It starts from a random vector, so it is a draw rather than a number: two
+solves with `eigen=True` do not agree to the bit, in this package or in BART.
+
+Reading BART's arithmetic off its source is most of the work in these
+iterations, and two habits account for nearly all of it.  Every scalar is a C
+`float` unless the library declares a `double`, and a scalar worked out in a
+double and rounded once at the end is a different number -- which is what made
+FISTA's ravine diverge at the thirteenth iteration.  And a vector is scaled by
+a coefficient rather than divided by its reciprocal: `chambolle_pock` works
+out `1 / sigma`, `1 / (1 + sigma)` and `-sigma / (1 + sigma)` once, in a
+double, and rounds each to a float.  Dividing the tensor instead agrees while
+`sigma` is where `pics` starts it, and stops agreeing once the adaptive step
+has moved it.
 
 `TermPrior` puts a {mod}`bartorch.prox` term where `deepinv` expects a prior,
 and a `deepinv` denoiser goes in the same place -- wrapped in

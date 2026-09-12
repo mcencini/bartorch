@@ -305,6 +305,24 @@ BARTORCH_API void bartorch_linop_free(bartorch_linop* h);
  *
  * Returns 0, or a code `bartorch_solve_error` turns into a sentence.
  */
+/* The largest eigenvalue of the operator a step is divided by (`pics -e`).
+ *
+ * A power iteration from a random start, so it draws on BART's own generator:
+ * a loop written outside the library has to ask for it here, at the point in
+ * the sequence the library would have asked, or the draws that follow it --
+ * a wavelet term's cycle spinning, say -- are different ones.
+ *
+ * `A` and `cclambda` are the encoding and the quadratic weight, which
+ * together are the operator `lsqr` builds.  `proxes` are terms whose
+ * transforms are added to it, which is what the primal-dual iteration
+ * estimates over and the proximal ones do not.
+ *
+ * Returns 0 and writes `out`, or a negative code.
+ */
+BARTORCH_API int bartorch_maxeigen(const bartorch_linop* A, float cclambda,
+		int nprox, const bartorch_prox* const* proxes,
+		int iterations, double* out);
+
 BARTORCH_API int bartorch_solve(const bartorch_linop* A,
 		const char* algorithm,
 		const char* const* reg_kinds, const long* reg_xflags, const long* reg_jflags,
@@ -363,6 +381,18 @@ BARTORCH_API int bartorch_prox_transform_apply(const bartorch_prox* h, int mode,
 /* The transform the term applies before its proximal operator; the identity
  * for a term that carries its own.  The handle is the caller's to free. */
 BARTORCH_API bartorch_linop* bartorch_prox_transform(const bartorch_prox* h);
+/* Whether that transform is the identity, which is the question
+ * `iter2_chambolle_pock` asks of the first term before deciding whether it
+ * is a dual or the primal proximal step.  Returns 1, 0, or a negative code.
+ */
+BARTORCH_API int bartorch_prox_transform_is_identity(const bartorch_prox* h);
+/* Put a term's own random generator back where a fresh term would have it.
+ * A wavelet threshold spins its transform by a random shift drawn from a
+ * generator seeded at one when the operator is made; the tool builds a fresh
+ * operator per run, and a term kept across solves is rewound instead.
+ * `bartorch_solve` does this itself.  Returns 0, or a negative code.
+ */
+BARTORCH_API int bartorch_prox_rewind(const bartorch_prox* h);
 BARTORCH_API void bartorch_prox_free(bartorch_prox* h);
 
 BARTORCH_API bartorch_nlop* bartorch_nlop_callback(int ON, const long* odims, int IN, const long* idims,

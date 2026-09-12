@@ -161,6 +161,52 @@ def _stacked(A, y: torch.Tensor, terms: Sequence[Tikhonov]):
 Regularizers = Regularizer | Iterable[Regularizer] | None
 
 
+def maxeigen(A, terms: Terms = None, *, cclambda: float = 0.0, iterations: int = 30) -> float:
+    """BART's estimate of the largest eigenvalue of the operator a step divides by.
+
+    What ``pics -e`` asks for.  It is a power iteration from a random start,
+    so it draws on BART's own generator: a loop written outside the library
+    has to ask for it here, at the point in the sequence the library would
+    have asked, or the draws that follow -- a wavelet term's cycle spinning,
+    say -- are different ones.
+
+    Parameters
+    ----------
+    A : LinearOperator
+        The encoding.  Its normal is the operator, with ``cclambda`` on the
+        diagonal, as ``lsqr`` builds it.
+    terms : Regularizer or iterable of Regularizer, optional
+        Terms whose transforms are added to it.  That is what the primal-dual
+        iteration estimates over; the proximal ones take the encoding alone.
+    cclambda : float
+        The quadratic weight (``pics -q``).
+    iterations : int
+        Power iterations; BART takes thirty.
+
+    Returns
+    -------
+    float
+    """
+    op = A._bart()
+    _ensure_ready()
+    lib = library()
+
+    handles = [term.build(op.ishape) for term in _as_terms(terms)]
+    value = _marshal.double_out()
+    with _lock, _on_device(op.device or torch.device("cpu")):
+        code = lib.bartorch_maxeigen(
+            op._h.ptr,
+            float(cclambda),
+            len(handles),
+            _marshal.pointers(handles) if handles else None,
+            int(iterations),
+            _marshal.by_reference(value),
+        )
+    if code != 0:
+        raise BartError("the largest eigenvalue could not be estimated")
+    return float(value.value)
+
+
 def _solve(
     A,
     y: torch.Tensor,
@@ -236,6 +282,37 @@ def _solve(
     if steps is not None:
         steps.append(int(counter.value))
     return x
+
+
+def _start(A, y: torch.Tensor, x0: torch.Tensor | None, terms: Sequence[Regularizer] = ()):
+    """The operands a loop written here starts from: the BART operator, the
+    data, and the image the iteration walks.
+
+    The terms are rewound, which is what ``bartorch_solve`` does before it
+    hands them over: a wavelet threshold's cycle spinning comes from a
+    generator of its own, and a term kept across solves would otherwise carry
+    the last solve's draws into the next.
+    """
+    op = A._bart()
+    for term in terms:
+        term.rewind(op.ishape)
+    y = as_operand(y, op.oshape, "y")
+    x = (
+        torch.zeros(op.ishape, dtype=torch.complex64, device=y.device)
+        if x0 is None
+        else as_operand(x0, op.ishape, "x0").clone()
+    )
+    return op, y, x
+
+
+def _empty(adjoint: torch.Tensor) -> bool:
+    """``checkeps``: BART declines to iterate on data whose adjoint has no
+    norm, or whose norm is not a normal number, and leaves the image be."""
+    eps = float(np.float32(float(torch.linalg.vector_norm(adjoint))))
+    if 0.0 == eps:
+        return True
+    # `isnormal`, which is finite and not a subnormal.
+    return not (math.isfinite(eps) and abs(eps) >= float(np.finfo(np.float32).tiny))
 
 
 class _Solver:
@@ -438,6 +515,14 @@ class IST(_Solver):
         cclambda: float = 0.0,
     ):
         super().__init__(regularizers, maxiter, cclambda)
+        if 1 != len(self.regularizers):
+            # `iter2_ist` and `iter2_fista` assert one, and an assertion in
+            # the library takes the process rather than coming back as an
+            # error.  ADMM is the iteration that splits several terms apart.
+            raise ValueError(
+                f"{type(self).__name__} takes exactly one term, not "
+                f"{len(self.regularizers)}; ADMM is the one that splits several apart"
+            )
         if hogwild and "ist" == self._algorithm:
             # `iter2_ist` asserts it off -- "Let's see whether somebody uses
             # it..." -- and an assertion in the library takes the process,
@@ -452,6 +537,62 @@ class IST(_Solver):
 
     def _settings(self) -> dict:
         return {"step": self.step, "eigen": self.eigen, "hogwild": self.hogwild}
+
+    def _iteration(self):
+        from bartorch.optim.iterators import ISTIteration
+
+        return ISTIteration()
+
+    def _stepsize(self, divisor: float) -> float:
+        """``ist`` is handed ``conf->super.alpha * conf->step / maxeigen``.
+
+        Two floats multiplied and then divided by a double, which the compiler
+        works out in double and the parameter rounds back to a float.  Written
+        out because rounding it anywhere else is a different step.
+        """
+        return float(np.float32(float(np.float32(self.step)) / divisor))
+
+    def _parameters(self) -> dict:
+        return {}
+
+    def __call__(self, y: torch.Tensor, A, x0: torch.Tensor | None = None) -> torch.Tensor:
+        """Solve, by the iteration in :mod:`bartorch.optim.iterators`.
+
+        The loop is here rather than in the library, so that the same solver
+        can be unrolled into a network or driven to a fixed point.  The step
+        is BART's, held against the library's own to the bit.
+
+        Without ``deepinv`` installed there is nothing to drive, and this
+        falls back to :meth:`in_library`.
+        """
+        try:
+            from bartorch.optim.iterators import NormalEquations, TermPrior
+
+            iteration = self._iteration()
+        except ImportError:
+            return self.in_library(y, A, x0)
+
+        from bartorch import to_deepinv
+
+        op, y, x = _start(A, y, x0, self.regularizers)
+        physics = to_deepinv(A)
+        fidelity = NormalEquations(self.cclambda)
+        if _empty(fidelity._adjoint_data(y, physics)):
+            return x
+
+        divisor = maxeigen(A, cclambda=self.cclambda) if self.eigen else 1.0
+        prior = TermPrior(self.regularizers[0], op.ishape)
+        params = {
+            "maxiter": self.maxiter,
+            "stepsize": self._stepsize(divisor),
+            "hogwild": self.hogwild,
+            **self._parameters(),
+        }
+
+        state = {"est": (x, x)}
+        for _ in range(self.maxiter):
+            state = iteration.forward(state, fidelity, prior, params, y, physics)
+        return iteration.finish(state["est"][0], prior, params, self.maxiter)
 
 
 class FISTA(IST):
@@ -501,6 +642,19 @@ class FISTA(IST):
 
     def _settings(self) -> dict:
         return {**super()._settings(), "pqr": self.pqr}
+
+    def _iteration(self):
+        from bartorch.optim.iterators import FISTAIteration
+
+        return FISTAIteration()
+
+    def _stepsize(self, divisor: float) -> float:
+        """``fista`` is handed ``conf->step / maxeigen`` -- ``alpha`` goes to
+        it separately, as the scaling on the threshold, and is one."""
+        return float(np.float32(float(np.float32(self.step)) / divisor))
+
+    def _parameters(self) -> dict:
+        return {} if self.pqr is None else {"pqr": self.pqr}
 
 
 class ADMM(_Solver):
@@ -561,13 +715,7 @@ class ADMM(_Solver):
         except ImportError:
             return self.in_library(y, A, x0)
 
-        op = A._bart()
-        y = as_operand(y, op.oshape, "y")
-        x = (
-            torch.zeros(op.ishape, dtype=torch.complex64, device=y.device)
-            if x0 is None
-            else as_operand(x0, op.ishape, "x0").clone()
-        )
+        op, y, x = _start(A, y, x0, self.regularizers)
 
         iteration = ADMMIteration(self.regularizers, op.ishape)
         iteration.restart()
@@ -649,6 +797,64 @@ class PRIDU(_Solver):
             "eigen": self.eigen,
             "hogwild": self.hogwild,
         }
+
+    def _split(self, image_shape: tuple[int, ...]):
+        """The primal term and the dual ones, as ``iter2_chambolle_pock``
+        splits them: the first term, if its transform is the identity, becomes
+        the primal proximal step and the rest become duals.  Otherwise every
+        term is a dual and the primal step is ``prox_zero_create``'s, which is
+        to leave the image alone."""
+        terms = list(self.regularizers)
+        if terms and terms[0].transform_is_identity(image_shape):
+            return terms[0], terms[1:]
+        return None, terms
+
+    def __call__(self, y: torch.Tensor, A, x0: torch.Tensor | None = None) -> torch.Tensor:
+        """Solve, by the iteration in :mod:`bartorch.optim.iterators`.
+
+        The loop is here rather than in the library, so that the same solver
+        can be unrolled into a network or driven to a fixed point.  The steps
+        are BART's, held against the library's own to the bit.  Without
+        ``deepinv`` installed there is nothing to drive, and this falls back
+        to :meth:`in_library`.
+        """
+        try:
+            from bartorch.optim.iterators import NormalEquations, PRIDUIteration
+        except ImportError:
+            return self.in_library(y, A, x0)
+
+        from bartorch import to_deepinv
+
+        op, y, x = _start(A, y, x0, self.regularizers)
+        primal, duals = self._split(op.ishape)
+
+        # `iter2_chambolle_pock` estimates over the encoding and the dual
+        # terms' transforms together, the primal one having been taken out of
+        # the list before it looks.
+        divisor = math.sqrt(maxeigen(A, duals, cclambda=self.cclambda)) if self.eigen else 1.0
+        root = float(np.float32(math.sqrt(self.step)))
+        ratio = float(np.float32(self.sigma_tau_ratio))
+
+        params = {
+            "maxiter": self.maxiter,
+            "sigma": float(np.float32(float(np.float32(root * ratio)) / divisor)),
+            "tau": float(np.float32(float(np.float32(root / ratio)) / divisor)),
+            "sigma_tau_ratio": ratio,
+            "theta": 1.0,
+            "decay": 0.95 if self.hogwild else 1.0,
+            "tol": 1e-4,
+            "adaptive_step": self.adaptive_step,
+        }
+
+        iteration = PRIDUIteration(duals, op.ishape, primal=primal)
+        fidelity = NormalEquations(self.cclambda)
+
+        state = {"est": (x, x)}
+        for _ in range(self.maxiter):
+            state = iteration.forward(state, fidelity, None, params, y, to_deepinv(A))
+            if state["done"]:
+                break
+        return state["est"][0]
 
 
 class NIHT(_Solver):
