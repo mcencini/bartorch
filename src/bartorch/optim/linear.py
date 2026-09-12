@@ -824,16 +824,9 @@ class ADMM(_Solver):
         is BART's -- every operator in it is, and the arithmetic is held
         against the library's own to the bit -- and so is when it stops.
 
-        The iteration is written as a ``deepinv`` optimizer, so without
-        ``deepinv`` installed there is nothing to drive; then this falls back
-        to :meth:`in_library`, which is the same answer by the other route.
         """
         from bartorch import to_deepinv
-
-        try:
-            from bartorch.optim.iterators import ADMMIteration, NormalEquations
-        except ImportError:
-            return self.in_library(y, A, x0)
+        from bartorch.optim.iterators import ADMMIteration, NormalEquations
 
         op, y, x = _start(A, y, x0, self.regularizers)
 
