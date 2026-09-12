@@ -241,6 +241,7 @@ BARTORCH_API bartorch_linop* bartorch_linop_scaled_sum(int N, const long* dims, 
 BARTORCH_API bartorch_linop* bartorch_linop_avg(int N, const long* dims, unsigned long flags);
 BARTORCH_API bartorch_linop* bartorch_linop_repmat(int N, const long* odims, unsigned long flags);
 BARTORCH_API bartorch_linop* bartorch_linop_flip(int N, const long* dims, unsigned long flags);
+BARTORCH_API bartorch_linop* bartorch_linop_hankel(int N, const long* dims, int dim, int window_dim, int window);
 BARTORCH_API bartorch_linop* bartorch_linop_reshape(int NO, const long* odims, int NI, const long* idims);
 BARTORCH_API bartorch_linop* bartorch_linop_resize(int N, const long* odims, const long* idims);
 BARTORCH_API bartorch_linop* bartorch_linop_extract(int N, const long* pos, const long* odims, const long* idims);

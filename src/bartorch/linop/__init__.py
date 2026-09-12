@@ -20,6 +20,7 @@ from bartorch.linop.sense import Sense
 from bartorch.linop.shape import (
     Extract,
     Flip,
+    Hankel,
     Mean,
     Pad,
     Permute,
@@ -49,6 +50,7 @@ __all__ = [
     "FFT",
     "Flip",
     "Gradient",
+    "Hankel",
     "Identity",
     "LinearOperator",
     "Matrix",
