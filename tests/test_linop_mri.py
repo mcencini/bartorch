@@ -184,3 +184,113 @@ def test_each_is_one_bart_operator(A):
 def test_each_carries_on_into_the_algebra(A):
     x = _rand(*A.ishape)
     torch.testing.assert_close((2.0 * A.H @ A)(x), 2.0 * A.adjoint(A(x)), rtol=1e-4, atol=1e-4)
+
+
+# --- off-resonance -----------------------------------------------------------
+
+
+def _dense(A, size):
+    cols = []
+    for i in range(size):
+        e = torch.zeros(*A.ishape, dtype=torch.complex64)
+        e.reshape(-1)[i] = 1
+        cols.append(A(e).reshape(-1).numpy())
+    import numpy as np
+
+    return np.stack(cols, axis=1)
+
+
+def _exact_off_resonance(n, fmap, times):
+    """The operator time segmentation approximates: a different phase per sample."""
+    import numpy as np
+    from mrinufft.extras.field_map import get_complex_fieldmap_rad
+
+    w = np.asarray(get_complex_fieldmap_rad(fmap.squeeze().numpy()))
+    dft = np.fft.fft(np.eye(n), axis=0)
+    return np.exp(np.outer(times.squeeze().numpy(), w)) * dft
+
+
+@pytest.fixture
+def one_dimensional():
+    n = 16
+    return (
+        n,
+        linop.FFT((1, 1, n), axes=-1, centred=False),
+        torch.linspace(-120.0, 120.0, n).reshape(1, 1, n),
+        torch.linspace(0.0, 4e-3, n).reshape(1, 1, n),
+    )
+
+
+def test_more_segments_is_a_better_approximation(one_dimensional):
+    """Which is the whole claim: a short sum standing in for a different transform per sample."""
+    import numpy as np
+
+    n, E, fmap, times = one_dimensional
+    exact = _exact_off_resonance(n, fmap, times)
+    errors = []
+    for segments in (1, 2, 4):
+        A = linop.FieldCorrected(E, fmap, times, segments=segments)
+        errors.append(np.linalg.norm(_dense(A, n) - exact) / np.linalg.norm(exact))
+    assert errors[0] > errors[1] > errors[2]
+    assert errors[-1] < 1e-2, f"four segments left {errors[-1]:.1e}"
+
+
+def test_almost_no_off_resonance_barely_changes_the_encoding(one_dimensional):
+    import numpy as np
+
+    n, E, _, times = one_dimensional
+    faint = torch.linspace(-0.05, 0.05, n).reshape(1, 1, n)  # Hz, over 4 ms
+    A = linop.FieldCorrected(E, faint, times, segments=2)
+    plain, corrected = _dense(E, n), _dense(A, n)
+    assert np.linalg.norm(corrected - plain) / np.linalg.norm(plain) < 1e-3
+
+
+def test_a_field_map_with_one_value_says_what_is_wrong(one_dimensional):
+    """mri-nufft's fit bins the map, and one value is one bin; it fails inside
+    its own reshape, which is no help to whoever passed it."""
+    n, E, _, times = one_dimensional
+    with pytest.raises(ValueError, match="nothing to segment"):
+        linop.FieldCorrected(E, torch.zeros(1, 1, n), times, segments=1)
+
+
+def test_it_wraps_any_encoding(maps):
+    """Cartesian here; the same wrapper over Sense is what mirtorch calls Gmri."""
+    E = linop.CartesianSense(
+        maps, (COILS, Y, X), pattern=torch.ones(1, 1, Y, 1).to(torch.complex64)
+    )
+    fmap = torch.linspace(-80.0, 80.0, Y * X).reshape(1, Y, X)
+    times = torch.linspace(0.0, 3e-3, Y * X).reshape(1, 1, Y, X).expand(COILS, 1, Y, X)
+    A = linop.FieldCorrected(E, fmap, times, segments=3)
+    assert A.ishape == E.ishape and A.oshape == E.oshape
+    assert A._native, "the sum of chains left BART"
+    assert _adjointness(A) < 1e-4
+
+
+def test_precomputed_coefficients_skip_the_fit(one_dimensional):
+    n, E, fmap, times = one_dimensional
+    fitted = linop.FieldCorrected(E, fmap, times, segments=3)
+    b, c = linop.mri._fit_coefficients(E, fmap, times, None, 3, "svd")
+    given = linop.FieldCorrected(E, coefficients=(b, c))
+    x = _rand(*E.ishape)
+    torch.testing.assert_close(given(x), fitted(x), rtol=1e-4, atol=1e-4)
+
+
+def test_it_needs_a_field_map_or_coefficients(one_dimensional):
+    _, E, _, _ = one_dimensional
+    with pytest.raises(ValueError, match="or coefficients"):
+        linop.FieldCorrected(E)
+
+
+def test_mismatched_coefficients_are_refused(one_dimensional):
+    _, E, _, _ = one_dimensional
+    with pytest.raises(ValueError, match="sample weights against"):
+        linop.FieldCorrected(E, coefficients=(_rand(3, 1, 1, 16), _rand(2, 1, 1, 16)))
+
+
+def test_a_segmented_encoding_is_still_one_bart_operator(one_dimensional):
+    """A sum of chains: linop_plus over linop_chain, and nothing in Python."""
+    _, E, fmap, times = one_dimensional
+    A = linop.FieldCorrected(E, fmap, times, segments=4)
+    assert A._native
+    assert hasattr(A._bart(), "_h")
+    assert A.gram()._native

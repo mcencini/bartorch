@@ -117,6 +117,7 @@ gives back an operator would be a function here.
    Sense
    CartesianSense
    Wave
+   FieldCorrected
 ```
 
 `Sense` is BART's own operator -- the coil batching and the Toeplitz normal
@@ -124,6 +125,12 @@ are what make it what it is, and it serves the non-Cartesian case.
 `CartesianSense` and `Wave` are compositions of operators BART already has,
 chained by `linop_chain`, so each is a single BART operator once built:
 `Wave` is the same six in the same order that `src/wave.c` chains.
+
+`FieldCorrected` wraps any of them, `Sense` included, and is a sum of chains
+rather than one: off-resonance during the readout is a different transform per
+sample, and time segmentation stands in for it with a short sum of ordinary
+encodings.  The coefficients come from `mri-nufft`; everything applied is
+BART's.
 
 ## Python-defined operators
 
