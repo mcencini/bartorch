@@ -115,7 +115,13 @@ def as_operand(x: Any, shape: Shape, what: str) -> torch.Tensor:
             x = x.reshape(shape)
         except RuntimeError as exc:
             raise ValueError(f"{what} has shape {tuple(x.shape)}, expected {shape}") from exc
-    return x.to(torch.complex64).contiguous()
+    # resolve_conj and resolve_neg before the pointer is taken: torch keeps a
+    # conjugation or a negation as a flag on a tensor that still shares its
+    # storage and still reports itself contiguous, so `.contiguous()` hands
+    # back the same buffer and BART would read the values as they were before
+    # the conjugation.  `x.conj()` is what a user writes for a weight or a
+    # diagonal, and it was silently arriving unconjugated.
+    return x.to(torch.complex64).resolve_conj().resolve_neg().contiguous()
 
 
 def callback(fn: Callable[[torch.Tensor], torch.Tensor], ishape: Shape, oshape: Shape, name: str):

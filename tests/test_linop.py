@@ -102,11 +102,18 @@ def test_an_operator_written_here_is_solved_by_barts_conjugate_gradients():
 # --- the adjoint as an operator --------------------------------------------
 
 
-def test_the_adjoint_of_an_operator_applies_without_building_a_second_one():
+def test_the_adjoint_is_one_of_barts_own_operators():
+    """``linop_get_adjoint`` swaps BART's forward and adjoint for us.
+
+    The adjoint used to be a Python object that called ``op.adjoint``, which
+    meant composing it had to wrap it back up as callbacks -- a crossing into
+    Python per application, in the middle of a solver's loop.  BART has a
+    constructor for this, so ``A.H`` is a BART operator like any other.
+    """
     F = linop.FFT((8, 16), axes=-1)
     y = _rand(8, 16)
     torch.testing.assert_close(F.H(y), F.adjoint(y))
-    assert not hasattr(F.H, "_h"), "the adjoint built a BART handle it does not need"
+    assert hasattr(F.H, "_h"), "the adjoint is not backed by a BART operator"
     assert F.H.H is F
 
 
@@ -307,3 +314,243 @@ def test_the_fft_operator_still_matches_numpy():
     F = linop.FFT((8, 16), axes=-1)
     ref = np.fft.fftshift(np.fft.fft(np.fft.ifftshift(x.numpy(), axes=-1), axis=-1), axes=-1)
     np.testing.assert_allclose(F(x).numpy(), ref / np.sqrt(16), rtol=1e-4, atol=1e-4)
+
+
+# --- operator algebra -------------------------------------------------------
+#
+# Each of these is a BART constructor applied to BART operators.  What the
+# tests check is the arithmetic; that no Python arithmetic is doing it is
+# checked by test_every_combination_stays_one_bart_operator.
+
+
+def _adjointness(A, seed=0):
+    """The dot test: ``<A x, y>`` against ``<x, A^H y>``, as a relative error."""
+    torch.manual_seed(seed)
+    x = _rand(*A.ishape)
+    y = _rand(*A.oshape)
+    left = torch.vdot(A(x).flatten(), y.flatten())
+    right = torch.vdot(x.flatten(), A.H(y).flatten())
+    return (left - right).abs().item() / max(left.abs().item(), 1e-12)
+
+
+def test_a_scale_multiplies_and_takes_either_side():
+    F = linop.FFT((8, 16), axes=-1)
+    x = _rand(8, 16)
+    torch.testing.assert_close((2.0 * F)(x), 2.0 * F(x), rtol=1e-5, atol=1e-5)
+    torch.testing.assert_close((F * 2.0)(x), 2.0 * F(x), rtol=1e-5, atol=1e-5)
+    torch.testing.assert_close((F / 2.0)(x), F(x) / 2.0, rtol=1e-5, atol=1e-5)
+
+
+def test_a_scale_may_be_complex():
+    F = linop.FFT((8, 16), axes=-1)
+    x = _rand(8, 16)
+    torch.testing.assert_close((1j * F)(x), 1j * F(x), rtol=1e-5, atol=1e-5)
+
+
+def test_negation_and_subtraction():
+    shape = (8, 16)
+    F = linop.FFT(shape, axes=-1)
+    G = linop.FFT(shape, axes=-2)
+    x = _rand(*shape)
+    torch.testing.assert_close((-F)(x), -F(x), rtol=1e-5, atol=1e-5)
+    torch.testing.assert_close((F - G)(x), F(x) - G(x), rtol=1e-4, atol=1e-4)
+    torch.testing.assert_close((F - F)(x), torch.zeros_like(x), rtol=1e-4, atol=1e-4)
+
+
+def test_multiplication_by_an_operator_is_refused():
+    """``*`` is a scale here and composition elsewhere, so it says so."""
+    F = linop.FFT((8, 16), axes=-1)
+    with pytest.raises(TypeError, match="compose operators with @"):
+        _ = F * F
+
+
+def test_a_power_repeats_the_operator():
+    shape = (8, 16)
+    F = linop.FFT(shape, axes=-1)
+    x = _rand(*shape)
+    torch.testing.assert_close((F**2)(x), F(F(x)), rtol=1e-4, atol=1e-4)
+    torch.testing.assert_close((F**0)(x), x, rtol=1e-5, atol=1e-5)
+    torch.testing.assert_close((F**1)(x), F(x), rtol=1e-5, atol=1e-5)
+
+
+def test_a_power_needs_a_square_operator():
+    sens = torch.ones(4, 8, 16, dtype=torch.complex64)
+    S = linop.MultiplySum(sens, (1, 8, 16), (4, 8, 16))
+    with pytest.raises(ValueError, match="square operator"):
+        _ = S**2
+    with pytest.raises(ValueError, match="negative power"):
+        _ = linop.FFT((8, 16), axes=-1) ** -1
+
+
+def test_the_identity_is_the_identity():
+    x = _rand(8, 16)
+    torch.testing.assert_close(linop.Identity((8, 16))(x), x)
+
+
+def test_the_zero_operator_sends_everything_to_zero():
+    Z = linop.Zero((4, 16), (8, 16))
+    assert Z.ishape == (8, 16) and Z.oshape == (4, 16)
+    torch.testing.assert_close(Z(_rand(8, 16)), torch.zeros(4, 16, dtype=torch.complex64))
+
+
+def test_conjugation_conjugates():
+    x = _rand(8, 16)
+    torch.testing.assert_close(linop.Conj((8, 16))(x), x.conj())
+
+
+def test_the_transpose_is_the_adjoint_without_the_conjugation():
+    F = linop.FFT((8, 16), axes=-1)
+    y = _rand(8, 16)
+    torch.testing.assert_close(F.T(y), F.H(y.conj()).conj(), rtol=1e-4, atol=1e-4)
+
+
+def test_conj_of_an_operator_conjugates_what_it_does():
+    F = linop.FFT((8, 16), axes=-1)
+    x = _rand(8, 16)
+    torch.testing.assert_close(F.conj()(x), F(x.conj()).conj(), rtol=1e-4, atol=1e-4)
+
+
+def test_the_gram_and_cogram_are_the_normal_operators():
+    sens = _rand(4, 8, 16)
+    S = linop.MultiplySum(sens, (1, 8, 16), (4, 8, 16))
+    x = _rand(1, 8, 16)
+    y = _rand(4, 8, 16)
+    torch.testing.assert_close(S.gram()(x), S.normal(x), rtol=1e-4, atol=1e-4)
+    torch.testing.assert_close(S.cogram()(y), S(S.adjoint(y)), rtol=1e-4, atol=1e-4)
+    assert S.gram().ishape == S.gram().oshape == S.ishape
+    assert S.cogram().ishape == S.cogram().oshape == S.oshape
+
+
+def test_the_spectral_norm_of_a_unitary_transform_is_one():
+    """BART's power iteration, which starts from its own generator."""
+    F = linop.FFT((8, 16), axes=(-1, -2))
+    assert abs(F.opnorm() - 1.0) < 1e-3
+    assert abs((3.0 * F).opnorm() - 3.0) < 1e-2
+
+
+def test_every_combination_stays_one_bart_operator():
+    """The point of the algebra: no Python between the steps.
+
+    A combined operator carries a BART handle, which is what a solver drives;
+    a Python-defined operator only ever enters through a callback, and none of
+    these has one.
+    """
+    shape = (8, 16)
+    F = linop.FFT(shape, axes=-1)
+    G = linop.FFT(shape, axes=-2)
+    for A in (F @ G, F + G, F - G, -F, 2.5 * F, F**3, F.H, F.T, F.conj(), F.gram(), F.cogram()):
+        assert A._native, f"{A!r} is not backed by a BART operator"
+        assert hasattr(A._bart(), "_h"), f"{A!r} has no BART handle"
+
+
+def test_the_algebra_keeps_the_adjoint_honest():
+    """A dot test over every combination, which is what pylops calls dottest."""
+    shape = (8, 16)
+    F = linop.FFT(shape, axes=-1)
+    G = linop.FFT(shape, axes=-2)
+    D = linop.Diagonal(_rand(1, 16), shape)
+    for A in (F @ D, F + G, F - G, -F, 2.5 * F, (1 + 2j) * F, F**2, F.H, F.gram(), D.conj()):
+        assert _adjointness(A) < 1e-4, f"{A!r} is not the adjoint of its adjoint"
+
+
+def test_the_combining_classes_are_not_public():
+    """They are reached through the algebra, so they are not named anywhere."""
+    for gone in ("Compose", "Add", "Adjoint"):
+        assert not hasattr(linop, gone), f"{gone} is still exported"
+    assert "Compose" not in linop.__all__
+
+
+# --- what reaches BART ------------------------------------------------------
+
+
+def test_a_conjugated_view_is_resolved_before_bart_reads_it():
+    """torch keeps a conjugation as a flag, not as values in memory.
+
+    ``x.conj()`` shares x's storage and reports itself contiguous, so nothing
+    short of ``resolve_conj`` makes the conjugated values exist anywhere for
+    BART to read.  Without it an operator applied to a conjugated tensor
+    quietly returned the answer for the unconjugated one.
+    """
+    x = _rand(4, 8)
+    view = x.conj()
+    assert view.is_conj() and view.is_contiguous() and view.data_ptr() == x.data_ptr()
+    torch.testing.assert_close(linop.Identity((4, 8))(view), view.resolve_conj())
+
+
+def test_a_conjugated_operand_builds_the_operator_it_says():
+    """The same, where it is a weight rather than the input."""
+    shape = (4, 8)
+    w = _rand(1, 8)
+    x = _rand(*shape)
+    torch.testing.assert_close(
+        linop.Diagonal(w.conj(), shape)(x), w.conj().resolve_conj() * x, rtol=1e-5, atol=1e-5
+    )
+
+
+# --- shapes and the pseudo-inverse ------------------------------------------
+
+
+def test_the_shapes_carry_pyxus_names_too():
+    """An operator should stand in for a pyxu LinOp, as it does for a deepinv one."""
+    sens = _rand(4, 8, 16)
+    S = linop.MultiplySum(sens, (1, 8, 16), (4, 8, 16))
+    assert S.dim_shape == S.ishape == (1, 8, 16)
+    assert S.codim_shape == S.oshape == (4, 8, 16)
+    assert S.dim_size == 8 * 16
+    assert S.codim_size == 4 * 8 * 16
+    assert S.dim_rank == S.codim_rank == 3
+
+
+def test_no_operator_answers_to_shape():
+    """It would mean (M, N) to one reader and a pair of shapes to another.
+
+    Some operators used to keep the shape their constructor was given under
+    that name and others had none at all, so the same attribute answered a
+    different question depending on which class you had.  The domain and the
+    codomain are what an operator is asked for, and they have names.
+    """
+    ops = [
+        linop.FFT((8, 16), axes=-1),
+        linop.Identity((8, 16)),
+        linop.Conj((8, 16)),
+        linop.Diagonal(_rand(1, 16), (8, 16)),
+        linop.MultiplySum(_rand(4, 8, 16), (1, 8, 16), (4, 8, 16)),
+    ]
+    for A in ops:
+        assert not hasattr(A, "shape"), f"{type(A).__name__} still answers to .shape"
+
+
+def test_the_pseudo_inverse_solves_the_damped_least_squares():
+    """Every operator here takes the solver; none of them carries a norm_inv."""
+    shape = (8, 16)
+    D = linop.Diagonal(_rand(1, 16) + 2.0, shape)
+    y = _rand(*shape)
+    x = D.pinv(y, damp=0.1, maxiter=200, tol=1e-9)
+    # (A^H A + damp I) x = A^H y
+    torch.testing.assert_close(D.adjoint(D(x)) + 0.1 * x, D.adjoint(y), rtol=1e-3, atol=1e-3)
+
+
+def test_the_pseudo_inverse_is_what_deepinv_asks_for():
+    shape = (8, 16)
+    D = linop.Diagonal(_rand(1, 16) + 2.0, shape)
+    y = _rand(*shape)
+    torch.testing.assert_close(D.A_dagger(y, damp=0.1, maxiter=60), D.pinv(y, damp=0.1, maxiter=60))
+
+
+def test_nothing_here_yet_has_barts_closed_form_pseudo_inverse():
+    """Which is why every pinv above goes through CG.
+
+    A constructor offers the closed form by giving BART a ``norm_inv``, and in
+    all of BART only ``linops/sum.c`` does -- the sum, average and repeat
+    operators, none of which is exposed yet.  Chaining, adding and adjoining
+    drop it even when an operand has one.  This test is here to change when
+    those operators arrive, rather than leave the fast path unexercised and
+    unremarked.
+    """
+    from bartorch._lib import library
+
+    F = linop.FFT((8, 16), axes=-1)
+    chain, added, adjoint = F @ F, F + F, F.H
+    for A in (F, linop.Identity((8, 16)), linop.Conj((8, 16)), chain, added, adjoint):
+        held = A._bart()  # held: the handle is freed with the object
+        assert not library().bartorch_linop_has_pseudo_inv(held._h.ptr)

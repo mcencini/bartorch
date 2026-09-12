@@ -341,7 +341,10 @@ def _as_input(x: Any) -> torch.Tensor:
         raise TypeError(f"bartorch tools take tensors, got {type(x).__name__}")
     if x.dtype != torch.complex64:
         x = x.to(torch.complex64)
-    return x.contiguous()
+    # See as_operand: a conjugated or negated view shares its storage and
+    # reports itself contiguous, so it has to be resolved before the pointer
+    # is handed over.
+    return x.resolve_conj().resolve_neg().contiguous()
 
 
 _output_shape = _marshal.shape_from_dims

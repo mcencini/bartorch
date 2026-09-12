@@ -1,13 +1,24 @@
-"""The linear operator base class and operator algebra."""
+"""The linear operator base class and operator algebra.
+
+The classes that combine operators are private.  Composition, addition,
+scaling and the adjoint are reached through ``@``, ``+``, ``-``, ``*`` and
+``.H``; what those return is an implementation detail, and naming it in a
+type annotation or an isinstance check would be reading into the algebra a
+structure it does not promise to keep.
+"""
 
 from __future__ import annotations
 
+import math
+from numbers import Number
+
 import torch
 
+from bartorch._dispatch import BartError
 from bartorch._lib import library
 from bartorch._operator import Built, Operator
 
-__all__ = ["Add", "Adjoint", "Compose", "LinearOperator"]
+__all__ = ["LinearOperator"]
 
 
 def _tracking(x) -> bool:
@@ -78,21 +89,117 @@ class LinearOperator(Operator):
 
         return Callback(self.oshape, self.ishape, self.forward, self.adjoint, self.normal)
 
+    # --- operator algebra ---------------------------------------------------
+    #
+    # Every one of these is a BART constructor applied to BART operators, so
+    # the result is a single operator that BART's solvers drive in their own
+    # loop.  Nothing here computes with a tensor.
+
     def __matmul__(self, other: LinearOperator) -> LinearOperator:
         """``self @ other`` applies ``other`` first, as one BART operator."""
         if not isinstance(other, LinearOperator):
             return NotImplemented
-        return Compose(self, other)
+        return _Compose(self, other)
 
     def __add__(self, other: LinearOperator) -> LinearOperator:
+        """``self + other``, as one BART operator; the shapes must agree."""
         if not isinstance(other, LinearOperator):
             return NotImplemented
-        return Add(self, other)
+        return _Add(self, other)
+
+    def __sub__(self, other: LinearOperator) -> LinearOperator:
+        """``self - other``, which is ``self + (-other)``."""
+        if not isinstance(other, LinearOperator):
+            return NotImplemented
+        return _Add(self, -other)
+
+    def __neg__(self) -> LinearOperator:
+        """``-self``, BART's scale by minus one chained onto it."""
+        return _Scale(-1.0, self.oshape) @ self
+
+    def __mul__(self, other) -> LinearOperator:
+        """``c * self`` for a real or complex number ``c``.
+
+        Composition is ``@``, not ``*``: an operator on either side is
+        refused, so that ``A * B`` cannot quietly mean one thing here and the
+        other thing in the library it was copied from.
+        """
+        if isinstance(other, LinearOperator):
+            raise TypeError("compose operators with @, not *")
+        if not isinstance(other, Number):
+            return NotImplemented
+        return _Scale(other, self.oshape) @ self
+
+    __rmul__ = __mul__
+
+    def __truediv__(self, other) -> LinearOperator:
+        """``self / c``, the scale by its reciprocal."""
+        if not isinstance(other, Number) or isinstance(other, LinearOperator):
+            return NotImplemented
+        return _Scale(1.0 / complex(other), self.oshape) @ self
+
+    def __pow__(self, power: int) -> LinearOperator:
+        """``self ** n``, ``n`` applications chained; the operator must be square."""
+        if not isinstance(power, int) or isinstance(power, bool):
+            return NotImplemented
+        if self.ishape != self.oshape:
+            raise ValueError(
+                f"a power needs a square operator, and this one maps {self.ishape} to {self.oshape}"
+            )
+        if power < 0:
+            raise ValueError("a negative power would be an inverse, which BART does not build")
+        from bartorch.linop.basic import Identity
+
+        out: LinearOperator = Identity(self.ishape)
+        for _ in range(power):
+            out = out @ self
+        return out
 
     @property
     def H(self) -> LinearOperator:  # noqa: N802  (the mathematical name)
-        """The adjoint, as an operator."""
-        return Adjoint(self)
+        """``A^H``, from BART's own adjoint constructor.
+
+        The result is a BART operator rather than a Python wrapper, so
+        ``A.H @ B`` is one operator and its normal is ``A A^H``.
+        """
+        return _Adjoint(self)
+
+    @property
+    def T(self) -> LinearOperator:  # noqa: N802  (the mathematical name)
+        """``A^T``, the adjoint without the conjugation, as ``conj(A).H``."""
+        return self.conj().H
+
+    def conj(self) -> LinearOperator:
+        """``conj(A)``: conjugate the input, apply, conjugate the output."""
+        from bartorch.linop.basic import Conj
+
+        return Conj(self.oshape) @ self @ Conj(self.ishape)
+
+    def gram(self) -> LinearOperator:
+        """``A^H A`` as an operator.
+
+        BART's own, so an encoding built with ``toeplitz=True`` gives the
+        point-spread convolution rather than the two applications.
+        """
+        return _Normal(self)
+
+    def cogram(self) -> LinearOperator:
+        """``A A^H`` as an operator."""
+        return _Normal(self.H)
+
+    def opnorm(self) -> float:
+        """The spectral norm, by BART's power iteration on ``A^H A``.
+
+        BART starts the iteration from its process-global generator, so this
+        returns a slightly different number each time it is called.  It is an
+        estimate: what a step size or a Lipschitz constant needs, not an exact
+        singular value.
+        """
+        op = self._bart()
+        largest = self._under_lock(library().bartorch_linop_maxeigen, op._h.ptr, device=op.device)
+        if largest < 0.0:
+            raise BartError("the power iteration did not converge on this operator")
+        return math.sqrt(largest)
 
     def __call__(self, x: torch.Tensor, out: torch.Tensor | None = None) -> torch.Tensor:
         """``A x``, recorded for autograd when ``x`` requires a gradient.
@@ -117,11 +224,92 @@ class LinearOperator(Operator):
             return apply_forward(self, x)
         return self.forward(x, out)
 
+    # pyxu's names for the shapes, so that an operator can stand in for one of
+    # its LinOps, the way the deepinv names below let it stand in for a
+    # LinearPhysics.  ishape and oshape stay the ones this library uses.
+    #
+    # There is deliberately no flat ``.shape``: an operator here maps a shape
+    # to a shape, not a vector of length N to one of length M, and pyxu took
+    # its own ``.shape`` out for that reason rather than keep a number whose
+    # meaning depended on which library the reader came from.  What that
+    # number was is ``codim_size`` and ``dim_size``.
+
+    @property
+    def dim_shape(self) -> tuple[int, ...]:
+        """The domain, under pyxu's name for it; the same as :attr:`ishape`."""
+        return self.ishape
+
+    @property
+    def codim_shape(self) -> tuple[int, ...]:
+        """The codomain, under pyxu's name for it; the same as :attr:`oshape`."""
+        return self.oshape
+
+    @property
+    def dim_size(self) -> int:
+        """How many elements the domain holds."""
+        return math.prod(self.ishape)
+
+    @property
+    def codim_size(self) -> int:
+        """How many elements the codomain holds."""
+        return math.prod(self.oshape)
+
+    @property
+    def dim_rank(self) -> int:
+        """How many axes the domain has."""
+        return len(self.ishape)
+
+    @property
+    def codim_rank(self) -> int:
+        """How many axes the codomain has."""
+        return len(self.oshape)
+
     def to_nonlinear(self):
         """The same operator as a :class:`~bartorch.nlop.NonlinearOperator`."""
         from bartorch.nlop.base import FromLinear
 
         return FromLinear(self)
+
+    def pinv(self, y: torch.Tensor, damp: float = 0.0, **kwargs) -> torch.Tensor:
+        """``(A^H A + damp I)^-1 A^H y``, the damped least-squares solution.
+
+        Solved in closed form where BART has one for this operator, and by
+        :class:`bartorch.optim.CG` otherwise -- the same quantity either way,
+        exact rather than iterative when it can be.  A constructor offers the
+        closed form by giving BART a ``norm_inv``, which today means the sum
+        and average operators; a chain, a sum of operators or an adjoint drops
+        it, so those take the solver.
+
+        Parameters
+        ----------
+        y : torch.Tensor
+            Array of :attr:`oshape`.
+        damp : float
+            The Tikhonov weight, ``CG``'s ``lambda_``.
+        **kwargs
+            Passed to :class:`~bartorch.optim.CG`, with ``x0`` as the warm
+            start.  Refused when the closed form applies, because there is
+            then no solver for them to configure.
+        """
+        op = self._bart()
+        lib = library()
+
+        if lib.bartorch_linop_has_pseudo_inv(op._h.ptr):
+            if kwargs:
+                raise TypeError(
+                    f"{type(self).__name__} has a closed-form pseudo-inverse in BART, so "
+                    f"there is no solver to configure; drop {sorted(kwargs)}"
+                )
+
+            def solve(ptr, dst, src):
+                return lib.bartorch_linop_pseudo_inv(ptr, float(damp), dst, src)
+
+            return op._apply(solve, y, self.oshape, self.ishape)
+
+        from bartorch.optim import CG
+
+        x0 = kwargs.pop("x0", None)
+        return CG(damp, **kwargs)(y, self, x0)
 
     # deepinv's names for the same operations, so that an operator can stand
     # in for a LinearPhysics without deepinv being imported.
@@ -139,17 +327,11 @@ class LinearOperator(Operator):
         return self.adjoint(y)
 
     def A_dagger(self, y: torch.Tensor, **kwargs) -> torch.Tensor:  # noqa: N802
-        """Least-squares solution by :class:`bartorch.optim.CG`.
-
-        ``x0`` is the warm start; the other keywords configure the solver.
-        """
-        from bartorch.optim import CG
-
-        x0 = kwargs.pop("x0", None)
-        return CG(**kwargs)(y, self, x0)
+        """The pseudo-inverse, under ``deepinv``'s name.  See :meth:`pinv`."""
+        return self.pinv(y, **kwargs)
 
 
-class Compose(LinearOperator):
+class _Compose(LinearOperator):
     """``a @ b`` as one BART operator; ``b`` is applied first."""
 
     def __init__(self, a: LinearOperator, b: LinearOperator):
@@ -175,7 +357,7 @@ class Compose(LinearOperator):
         return f"({self.a!r} @ {self.b!r})"
 
 
-class Add(LinearOperator):
+class _Add(LinearOperator):
     """``a + b`` as one BART operator; the two must have the same shapes."""
 
     def __init__(self, a: LinearOperator, b: LinearOperator):
@@ -201,27 +383,80 @@ class Add(LinearOperator):
         return f"({self.a!r} + {self.b!r})"
 
 
-class Adjoint(LinearOperator):
-    """``A^H`` as an operator.
+class _Adjoint(LinearOperator):
+    """``A^H`` as one BART operator, from ``linop_get_adjoint``.
 
-    Applying it calls ``A.adjoint``.  BART has no adjoint-of-an-operator
-    constructor, so composing it wraps it as callbacks.
+    BART builds this by swapping the operator's own forward and adjoint, so
+    the result is a real BART operator: composing it needs no callbacks, and
+    its normal is ``A A^H``.
     """
 
     def __init__(self, op: LinearOperator):
-        self.op = op
-        self.ishape, self.oshape = op.oshape, op.ishape
-        self.device = op.device
+        self.source = op
+        self.op = op._bart()
+        super().__init__()
 
-    def forward(self, x: torch.Tensor, out: torch.Tensor | None = None) -> torch.Tensor:
-        return self.op.adjoint(x, out)
-
-    def adjoint(self, y: torch.Tensor, out: torch.Tensor | None = None) -> torch.Tensor:
-        return self.op.forward(y, out)
+    def _create(self) -> Built:
+        ptr = self._under_lock(
+            library().bartorch_linop_adjoint_op, self.op._h.ptr, device=self.op.device
+        )
+        return Built(ptr, self.op.oshape, self.op.ishape, keep=(self.op,), device=self.op.device)
 
     @property
     def H(self) -> LinearOperator:  # noqa: N802
-        return self.op
+        return self.source
 
     def __repr__(self) -> str:
-        return f"{self.op!r}.H"
+        return f"{self.source!r}.H"
+
+
+class _Normal(LinearOperator):
+    """``A^H A`` as one BART operator, from ``linop_get_normal``."""
+
+    def __init__(self, op: LinearOperator):
+        self.source = op
+        self.op = op._bart()
+        super().__init__()
+
+    def _create(self) -> Built:
+        ptr = self._under_lock(
+            library().bartorch_linop_normal_op, self.op._h.ptr, device=self.op.device
+        )
+        return Built(ptr, self.op.ishape, self.op.ishape, keep=(self.op,), device=self.op.device)
+
+    @property
+    def H(self) -> LinearOperator:  # noqa: N802
+        # A normal operator is self-adjoint.
+        return self
+
+    def __repr__(self) -> str:
+        return f"{self.source!r}.gram()"
+
+
+class _Scale(LinearOperator):
+    """Multiplication by one number, BART's ``linop_scale``.
+
+    Private because ``c * A`` is how it is reached, and a scale on its own is
+    ``c * Identity(shape)``.
+    """
+
+    def __init__(self, value, shape):
+        self.value = complex(value)
+        self._shape = tuple(shape)
+        super().__init__()
+
+    def _create(self) -> Built:
+        from bartorch._lib import DIMS
+        from bartorch._operator import dims
+
+        ptr = self._under_lock(
+            library().bartorch_linop_scale,
+            DIMS,
+            dims(self._shape),
+            float(self.value.real),
+            float(self.value.imag),
+        )
+        return Built(ptr, self._shape, self._shape)
+
+    def __repr__(self) -> str:
+        return f"{self.value:g}" if self.value.imag == 0 else f"{self.value}"

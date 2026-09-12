@@ -121,6 +121,15 @@ SYMBOLS = (
     "bartorch_linop_sense",
     "bartorch_linop_chain",
     "bartorch_linop_plus",
+    "bartorch_linop_adjoint_op",
+    "bartorch_linop_normal_op",
+    "bartorch_linop_scale",
+    "bartorch_linop_zconj",
+    "bartorch_linop_identity",
+    "bartorch_linop_null",
+    "bartorch_linop_maxeigen",
+    "bartorch_linop_has_pseudo_inv",
+    "bartorch_linop_pseudo_inv",
     "bartorch_linop_domain",
     "bartorch_linop_codomain",
     "bartorch_linop_forward",
@@ -389,6 +398,39 @@ def bind(lib: ctypes.CDLL) -> ctypes.CDLL:
     lib.bartorch_linop_chain.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
     lib.bartorch_linop_plus.restype = ctypes.c_void_p
     lib.bartorch_linop_plus.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    lib.bartorch_linop_adjoint_op.restype = ctypes.c_void_p
+    lib.bartorch_linop_adjoint_op.argtypes = [ctypes.c_void_p]
+    lib.bartorch_linop_normal_op.restype = ctypes.c_void_p
+    lib.bartorch_linop_normal_op.argtypes = [ctypes.c_void_p]
+    lib.bartorch_linop_scale.restype = ctypes.c_void_p
+    lib.bartorch_linop_scale.argtypes = [
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.c_float,
+        ctypes.c_float,
+    ]
+    lib.bartorch_linop_zconj.restype = ctypes.c_void_p
+    lib.bartorch_linop_zconj.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_long)]
+    lib.bartorch_linop_identity.restype = ctypes.c_void_p
+    lib.bartorch_linop_identity.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_long)]
+    lib.bartorch_linop_null.restype = ctypes.c_void_p
+    lib.bartorch_linop_null.argtypes = [
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_long),
+    ]
+    lib.bartorch_linop_maxeigen.restype = ctypes.c_double
+    lib.bartorch_linop_maxeigen.argtypes = [ctypes.c_void_p]
+    lib.bartorch_linop_has_pseudo_inv.restype = ctypes.c_int
+    lib.bartorch_linop_has_pseudo_inv.argtypes = [ctypes.c_void_p]
+    lib.bartorch_linop_pseudo_inv.restype = ctypes.c_int
+    lib.bartorch_linop_pseudo_inv.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_float,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
     lib.bartorch_linop_domain.restype = ctypes.c_int
     lib.bartorch_linop_domain.argtypes = [
         ctypes.c_void_p,
