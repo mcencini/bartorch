@@ -208,6 +208,11 @@ def CartesianSense(  # noqa: N802  (it is a constructor)
     toeplitz : bool
         With a basis, apply the normal as one coefficient-by-coefficient
         kernel rather than as the two applications.  See the notes.
+    **kwargs
+        Passed to :class:`~bartorch.linop.NoncartesianSense`: ``coil_batch``,
+        ``kernels``, ``modulated``, ``device`` and the rest.  ``modulated``
+        asks for BART's own sample convention -- the one ``pics`` works in --
+        instead of the centred one, and does so whatever the slab.
 
     Notes
     -----
