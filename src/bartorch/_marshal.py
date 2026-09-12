@@ -40,6 +40,39 @@ def padded_dims(shape: tuple[int, ...]) -> ctypes.Array:
     return (ctypes.c_long * DIMS)(*(rev + [1] * (DIMS - len(rev))))
 
 
+def padded_offsets(values, ndim: int, what: str) -> ctypes.Array:
+    """A per-axis vector as BART's: reversed, then padded with zeros to :data:`DIMS`.
+
+    For the quantities that are an offset or a count along each axis -- where
+    a block starts, how much padding goes on each end -- rather than a size,
+    which is what :func:`padded_dims` pads with ones.
+    """
+    values = list(values)
+    if len(values) != ndim:
+        raise ValueError(f"{what} has {len(values)} entries, expected {ndim}")
+    if ndim > DIMS:
+        raise ValueError(f"BART supports at most {DIMS} dimensions, got {ndim}")
+    rev = [int(v) for v in values][::-1]
+    return (ctypes.c_long * DIMS)(*(rev + [0] * (DIMS - ndim)))
+
+
+def padded_order(order, ndim: int) -> ctypes.Array:
+    """A C-order permutation as BART's, over all :data:`DIMS` dimensions.
+
+    Both count the same way -- axis ``i`` of the output is axis ``order[i]`` of
+    the input -- so only the indices turn around: BART's dimension ``j`` is
+    C-order axis ``ndim - 1 - j``, and the dimensions past the shape are ones
+    that stay where they are.
+    """
+    order = [int(o) % ndim for o in order]
+    if sorted(order) != list(range(ndim)):
+        raise ValueError(f"{order} is not a permutation of {ndim} axes")
+    if ndim > DIMS:
+        raise ValueError(f"BART supports at most {DIMS} dimensions, got {ndim}")
+    out = [ndim - 1 - order[ndim - 1 - j] for j in range(ndim)]
+    return (ctypes.c_int * DIMS)(*(out + list(range(ndim, DIMS))))
+
+
 def dims(shape: tuple[int, ...]) -> tuple[int, ctypes.Array]:
     """BART rank and dimension vector of a C-order shape, unpadded; a scalar has rank one."""
     rev = list(shape)[::-1] or [1]

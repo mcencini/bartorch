@@ -26,6 +26,7 @@
 #include "linops/fmac.h"
 #include "linops/linop.h"
 #include "linops/someops.h"
+#include "linops/sum.h"
 
 #include "sense/model.h"
 #include "noncart/nufft.h"
@@ -520,6 +521,208 @@ double bartorch_linop_maxeigen(const bartorch_linop* a)
  * BART as it stands only the sum and average operators do -- everything else
  * leaves it null, and linop_pseudo_inv would assert on it.  So this is asked
  * before the call rather than discovered by aborting inside it. */
+/* --- operators that rearrange, reduce or restrict a shape ------------------
+ *
+ * Each is one BART constructor.  Shapes and per-axis vectors arrive already
+ * reversed and padded to DIMS by the host, so nothing here reorders anything.
+ */
+
+struct linop_flagged_args { int N; const long* dims; unsigned long flags; const void* data; bartorch_linop* result; };
+
+static int linop_zreal_worker(void* p)
+{
+	struct linop_flagged_args* a = p;
+	a->result = wrap_linop(linop_zreal_create(a->N, a->dims));
+	return 0;
+}
+
+bartorch_linop* bartorch_linop_zreal(int N, const long* dims)
+{
+	struct linop_flagged_args a = { N, dims, 0UL, NULL, NULL };
+	return (0 == guarded(linop_zreal_worker, &a)) ? a.result : NULL;
+}
+
+static int linop_sum_worker(void* p)
+{
+	struct linop_flagged_args* a = p;
+	a->result = wrap_linop(linop_sum_create(a->N, a->dims, a->flags));
+	return 0;
+}
+
+/* The one BART operator with a closed-form pseudo-inverse. */
+bartorch_linop* bartorch_linop_sum(int N, const long* dims, unsigned long flags)
+{
+	struct linop_flagged_args a = { N, dims, flags, NULL, NULL };
+	return (0 == guarded(linop_sum_worker, &a)) ? a.result : NULL;
+}
+
+static int linop_scaled_sum_worker(void* p)
+{
+	struct linop_flagged_args* a = p;
+	a->result = wrap_linop(linop_scaled_sum_create(a->N, a->dims, a->flags));
+	return 0;
+}
+
+/* The sum divided by the square root of how many were summed, so that its
+ * normal is an orthogonal projection.  That is the operator BART's closed-form
+ * pseudo-inverse is written for. */
+bartorch_linop* bartorch_linop_scaled_sum(int N, const long* dims, unsigned long flags)
+{
+	struct linop_flagged_args a = { N, dims, flags, NULL, NULL };
+	return (0 == guarded(linop_scaled_sum_worker, &a)) ? a.result : NULL;
+}
+
+static int linop_avg_worker(void* p)
+{
+	struct linop_flagged_args* a = p;
+	a->result = wrap_linop(linop_avg_create(a->N, a->dims, a->flags));
+	return 0;
+}
+
+bartorch_linop* bartorch_linop_avg(int N, const long* dims, unsigned long flags)
+{
+	struct linop_flagged_args a = { N, dims, flags, NULL, NULL };
+	return (0 == guarded(linop_avg_worker, &a)) ? a.result : NULL;
+}
+
+static int linop_repmat_worker(void* p)
+{
+	struct linop_flagged_args* a = p;
+	a->result = wrap_linop(linop_repmat_create(a->N, a->dims, a->flags));
+	return 0;
+}
+
+/* dims is the codomain: the domain is it with the flagged axes set to one. */
+bartorch_linop* bartorch_linop_repmat(int N, const long* odims, unsigned long flags)
+{
+	struct linop_flagged_args a = { N, odims, flags, NULL, NULL };
+	return (0 == guarded(linop_repmat_worker, &a)) ? a.result : NULL;
+}
+
+static int linop_flip_worker(void* p)
+{
+	struct linop_flagged_args* a = p;
+	a->result = wrap_linop(linop_flip_create(a->N, a->dims, a->flags));
+	return 0;
+}
+
+bartorch_linop* bartorch_linop_flip(int N, const long* dims, unsigned long flags)
+{
+	struct linop_flagged_args a = { N, dims, flags, NULL, NULL };
+	return (0 == guarded(linop_flip_worker, &a)) ? a.result : NULL;
+}
+
+struct linop_two_shapes_args { int NO; const long* odims; int NI; const long* idims; const long* pos; bartorch_linop* result; };
+
+static int linop_reshape_worker(void* p)
+{
+	struct linop_two_shapes_args* a = p;
+	a->result = wrap_linop(linop_reshape_create(a->NO, a->odims, a->NI, a->idims));
+	return 0;
+}
+
+bartorch_linop* bartorch_linop_reshape(int NO, const long* odims, int NI, const long* idims)
+{
+	struct linop_two_shapes_args a = { NO, odims, NI, idims, NULL, NULL };
+	return (0 == guarded(linop_reshape_worker, &a)) ? a.result : NULL;
+}
+
+static int linop_resize_worker(void* p)
+{
+	struct linop_two_shapes_args* a = p;
+	a->result = wrap_linop(linop_resize_center_create(a->NO, a->odims, a->idims));
+	return 0;
+}
+
+/* Centred: what BART's `resize -c` does, cropping or zero-filling about the
+ * middle of each axis rather than the corner. */
+bartorch_linop* bartorch_linop_resize(int N, const long* odims, const long* idims)
+{
+	struct linop_two_shapes_args a = { N, odims, N, idims, NULL, NULL };
+	return (0 == guarded(linop_resize_worker, &a)) ? a.result : NULL;
+}
+
+static int linop_extract_worker(void* p)
+{
+	struct linop_two_shapes_args* a = p;
+	a->result = wrap_linop(linop_extract_create(a->NI, a->pos, a->odims, a->idims));
+	return 0;
+}
+
+bartorch_linop* bartorch_linop_extract(int N, const long* pos, const long* odims, const long* idims)
+{
+	struct linop_two_shapes_args a = { N, odims, N, idims, pos, NULL };
+	return (0 == guarded(linop_extract_worker, &a)) ? a.result : NULL;
+}
+
+struct linop_transpose_args { int N; int a; int b; const long* dims; bartorch_linop* result; };
+
+static int linop_transpose_worker(void* p)
+{
+	struct linop_transpose_args* t = p;
+	t->result = wrap_linop(linop_transpose_create(t->N, t->a, t->b, t->dims));
+	return 0;
+}
+
+bartorch_linop* bartorch_linop_transpose(int N, int a, int b, const long* dims)
+{
+	struct linop_transpose_args t = { N, a, b, dims, NULL };
+	return (0 == guarded(linop_transpose_worker, &t)) ? t.result : NULL;
+}
+
+struct linop_permute_args { int N; const int* order; const long* idims; bartorch_linop* result; };
+
+static int linop_permute_worker(void* p)
+{
+	struct linop_permute_args* a = p;
+	a->result = wrap_linop(linop_permute_create(a->N, a->order, a->idims));
+	return 0;
+}
+
+/* order is BART's: the output's dimension i is the input's order[i]. */
+bartorch_linop* bartorch_linop_permute(int N, const int* order, const long* idims)
+{
+	struct linop_permute_args a = { N, order, idims, NULL };
+	return (0 == guarded(linop_permute_worker, &a)) ? a.result : NULL;
+}
+
+struct linop_shift_args { int N; const long* dims; int dim; long shift; int pad; bartorch_linop* result; };
+
+static int linop_shift_worker(void* p)
+{
+	struct linop_shift_args* a = p;
+	a->result = wrap_linop(linop_shift_create(a->N, a->dims, a->dim, a->shift, (enum PADDING)a->pad));
+	return 0;
+}
+
+bartorch_linop* bartorch_linop_shift(int N, const long* dims, int dim, long shift, int pad)
+{
+	struct linop_shift_args a = { N, dims, dim, shift, pad, NULL };
+	return (0 == guarded(linop_shift_worker, &a)) ? a.result : NULL;
+}
+
+struct linop_padding_args { int N; const long* dims; int pad; const long* before; const long* after; bartorch_linop* result; };
+
+static int linop_padding_worker(void* p)
+{
+	struct linop_padding_args* a = p;
+
+	/* BART takes these non-const and does not write through them. */
+	long before[DIMS];
+	long after[DIMS];
+	md_copy_dims(a->N, before, a->before);
+	md_copy_dims(a->N, after, a->after);
+
+	a->result = wrap_linop(linop_padding_create(a->N, a->dims, (enum PADDING)a->pad, before, after));
+	return 0;
+}
+
+bartorch_linop* bartorch_linop_padding(int N, const long* dims, int pad, const long* before, const long* after)
+{
+	struct linop_padding_args a = { N, dims, pad, before, after, NULL };
+	return (0 == guarded(linop_padding_worker, &a)) ? a.result : NULL;
+}
+
 int bartorch_linop_has_pseudo_inv(const bartorch_linop* h)
 {
 	return ((NULL != h) && (NULL != h->op->norm_inv)) ? 1 : 0;

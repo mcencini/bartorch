@@ -39,9 +39,36 @@ it is made of.
    Zero
    Diagonal
    Conj
+   Real
    FFT
    NUFFT
    MultiplySum
+```
+
+## Shape
+
+Rearranging, reducing and restricting are operators like any other: each maps
+a tensor to a tensor, so each is a class, composes with `@` and `+`, and is
+solved by {mod}`bartorch.optim`.  Only something that takes operators and
+gives back an operator would be a function here.
+
+```{eval-rst}
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   Reshape
+   Transpose
+   Permute
+   Flip
+   Roll
+   Pad
+   Resize
+   Extract
+   Sum
+   ScaledSum
+   Mean
+   Repeat
 ```
 
 ## MRI encoding
