@@ -13,7 +13,9 @@ goes into ``deepinv.optim.optim_builder``, and so into ``BaseOptim`` with
 point -- neither of which an iteration running inside the library can be part
 of, because there is nothing to differentiate through.
 
-``deepinv`` is imported on first use, so it stays an optional dependency.
+``deepinv`` is imported on first use rather than at import time -- it is a
+dependency, but importing it is not free, and a script that only builds
+operators should not pay for it.
 """
 
 from __future__ import annotations
@@ -50,8 +52,9 @@ def _classes():
         from deepinv.optim.optim_iterators import OptimIterator
     except ImportError as exc:  # pragma: no cover - depends on the environment
         raise ImportError(
-            "deepinv is required for bartorch.optim's iterations; "
-            "install it with `pip install 'bartorch[deepinv]'`"
+            "bartorch.optim's iterations are written as deepinv optimizers, and "
+            "deepinv is a dependency of this package -- an environment without it "
+            "is a broken one rather than a lean one"
         ) from exc
     return DataFidelity, Prior, OptimIterator
 

@@ -26,7 +26,23 @@ dependencies = [
     # for matplotlib, which its very first module imports.  That was weighed
     # and accepted -- off-resonance is the common case here, not a corner.
     "mri-nufft>=1.0",
-    "torch>=2.1",
+    # 2.2 is deepinv's floor, below; stating it here rather than letting the
+    # resolver discover it.
+    "torch>=2.2",
+    # deepinv was an extra while it was only an adapter -- `to_deepinv` handed
+    # an operator over as a `LinearPhysics` and nothing imported deepinv until
+    # someone asked.  It is not that any more.  `optim.IST`, `optim.FISTA`,
+    # `optim.ADMM` and `optim.PRIDU` run the iterations in
+    # `bartorch.optim.iterators`, which are written as
+    # `deepinv.optim.optim_iterators.OptimIterator` classes, so the ordinary
+    # way to run a regularized reconstruction imports it.  A solver whose
+    # behaviour depends on whether an extra happens to be installed is worse
+    # than the install it saves.
+    #
+    # It costs torchvision, torchmetrics, einops, h5py, tqdm, requests and
+    # natsort on top of what is here already.  Weighed and accepted, as
+    # mri-nufft was: the proximal solvers are the common case, not a corner.
+    "deepinv>=0.2",
     # FINUFFT is the NUFFT.  Every non-Cartesian transform BART makes goes
     # through the substitution under `nufft_create`, and nothing reaches BART's
     # own gridder without having been sent there, so a bartorch without FINUFFT
@@ -70,14 +86,12 @@ mkl = [
 # sample count of int64 in `cufinufftf_setpts` and defaults filled from the
 # options struct alone.  That is the API from 2.3 on.
 cufinufft = ["cufinufft>=2.3"]
-# deepinv is an adapter, not a base class: LinearOperator.to_deepinv() hands an
-# operator over as a LinearPhysics, and nothing in the package imports deepinv
-# until it is called.
-deepinv = ["deepinv>=0.2"]
+# There is no `deepinv` extra: it is a dependency, above.  An old
+# `pip install 'bartorch[deepinv]'` still installs it, and pip warns that the
+# extra is not provided -- which is the right thing to hear.
 dev = [
     "pytest>=7",
     "ruff",
-    "deepinv>=0.2",
 ]
 # Kept the same as docs/requirements.txt.  Rendering imports the package from
 # the checkout, which needs torch but not the compiled library.

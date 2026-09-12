@@ -7,6 +7,7 @@ BART's and composes and solves with it, and that a backward pass is the adjoint
 a transpose.
 """
 
+import deepinv
 import numpy as np
 import pytest
 import torch
@@ -256,7 +257,6 @@ def test_an_operator_answers_to_deepinvs_names_without_deepinv_installed():
 
 
 def test_an_operator_becomes_a_linear_physics():
-    deepinv = pytest.importorskip("deepinv")
     shape = (2, 8, 8)
     maps = _rand(*shape)
     maps = maps / maps.abs().square().sum(0, keepdim=True).sqrt()
@@ -275,7 +275,6 @@ def test_an_operator_becomes_a_linear_physics():
 
 def test_the_physics_walks_deepinvs_batch_axis():
     """An operator's shape is fixed; one axis more than it expects is a batch."""
-    pytest.importorskip("deepinv")
     shape = (2, 8, 8)
     maps = _rand(*shape)
     maps = maps / maps.abs().square().sum(0, keepdim=True).sqrt()
@@ -290,7 +289,6 @@ def test_the_physics_walks_deepinvs_batch_axis():
 
 
 def test_a_gradient_flows_through_the_physics():
-    pytest.importorskip("deepinv")
     shape = (2, 8, 8)
     physics = bartorch.to_deepinv(linop.MultiplySum(_rand(*shape), (1, 8, 8), shape))
     x = torch.stack([_rand(1, 8, 8) for _ in range(2)]).requires_grad_(True)

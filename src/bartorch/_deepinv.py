@@ -1,6 +1,8 @@
 """The ``deepinv`` adapter, :func:`to_deepinv`.
 
-``deepinv`` is imported on first use, so it stays an optional dependency.
+``deepinv`` is imported on first use rather than at import time -- it is a
+dependency, but importing it is not free, and a script that only builds
+operators should not pay for it.
 """
 
 from __future__ import annotations
@@ -30,8 +32,9 @@ def _physics_class() -> type:
         from deepinv.physics import LinearPhysics
     except ImportError as exc:  # pragma: no cover - depends on the environment
         raise ImportError(
-            "deepinv is required for bartorch.to_deepinv(); "
-            "install it with `pip install 'bartorch[deepinv]'`"
+            "bartorch.to_deepinv() hands an operator over as a deepinv "
+            "LinearPhysics, and deepinv is a dependency of this package -- an "
+            "environment without it is a broken one rather than a lean one"
         ) from exc
 
     class BartPhysics(LinearPhysics):
