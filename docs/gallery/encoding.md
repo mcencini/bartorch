@@ -11,7 +11,7 @@ factors; it is not in general an inverse.
 | Component | Python | Role and convention |
 | --- | --- | --- |
 | Coil encoding, contraction | `linop.MultiplySum` | Multiply by a tensor and sum the axes missing from the output; conjugate in the adjoint.  Serves sensitivities and subspace contractions. |
-| SENSE encoding | `linop.CartesianSense`, `linop.NoncartesianSense` | Sensitivities followed by an FFT or a NUFFT, applied `coil_batch` coils at a time.  A `basis` reads the image as a temporal subspace. |
+| SENSE encoding | `linop.CartesianSense`, `linop.NoncartesianSense` | Sensitivities followed by an FFT or a NUFFT, applied `coil_batch` coils at a time.  A `basis` reads the image as a temporal subspace; `(sets, coils, *spatial)` sensitivities are summed over the sets, as ESPIRiT's second map and ENLIVE mean them. |
 | Wave encoding | `linop.WaveSense` | The hybrid-space model below, as one BART operator; takes sensitivities as maps or as kernels, and a `basis` for Wave-Shuffling. |
 | Coil encoding alone | `linop.Coils` | The sensitivity multiply without a transform after it, for chaining onto an encoding that is not a SENSE operator. |
 | Cartesian FFT | `linop.FFT`; `bartorch.fft`, `bartorch.ifft` | The operator is centred and unitary; the function needs `unitary=True` for that scaling. |
