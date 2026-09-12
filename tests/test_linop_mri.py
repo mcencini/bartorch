@@ -152,7 +152,7 @@ def test_a_readout_shorter_than_the_image_is_refused(wave_parts):
 
 def test_the_wrong_number_of_sensitivities_is_refused(wave_parts):
     _, psf, mask = wave_parts
-    with pytest.raises(ValueError, match="sensitivities for"):
+    with pytest.raises(ValueError, match="are neither"):
         linop.WaveSense(_rand(2, Z, 5, SX), psf, SHAPE, readout=WX, pattern=mask)
 
 
@@ -479,3 +479,90 @@ def test_a_collapsed_subspace_encoding_is_still_one_bart_operator(maps, basis, f
 
     D = linop.Diagonal(_rand(*A.oshape), A.oshape)
     assert (D @ A)._native
+
+
+# --- several sets of maps -----------------------------------------------------
+#
+# What ESPIRiT's second map and ENLIVE's relaxed model produce.  The shapes are
+# checked in test_sense.py; here it is that each encoding carries them through
+# and that a reconstruction over two sets actually runs.
+
+SETS = 2
+
+
+@pytest.fixture
+def bank():
+    torch.manual_seed(9)
+    return _rand(SETS, COILS, 1, Y, X)
+
+
+def test_espirit_hands_its_second_map_over_as_it_stands():
+    """No reshaping between the calibration and the encoding."""
+    import bartorch.tools as bt
+
+    kspace = bt.phantom([Y, Y], coils=COILS, kspace=True)
+    maps = bt.ecalib(kspace, maps=SETS)
+    assert maps.shape == (SETS, COILS, 1, Y, Y)
+
+    A = linop.CartesianSense(maps, (COILS, Y, Y))
+    assert A.ishape == (1, 1, SETS, 1, 1, Y, Y)
+    assert A.oshape == (1, 1, 1, COILS, 1, Y, Y)
+
+
+def test_a_two_map_reconstruction_fits_the_data_it_was_given():
+    """Not the image it was given: two sets of ESPIRiT maps do not span an
+    arbitrary pair of images, which is the whole point of the second one.  The
+    operator has a null space, so what CG converges to is a least-squares
+    solution -- and it is the data that has to come back, not the image."""
+    import bartorch.tools as bt
+
+    kspace = bt.phantom([Y, Y], coils=COILS, kspace=True)
+    maps = bt.ecalib(kspace, maps=SETS)
+
+    A = linop.CartesianSense(maps, (COILS, Y, Y))
+    torch.manual_seed(0)
+    y = A(_rand(*A.ishape))
+    got = CG(maxiter=80)(y, A)
+    assert (A(got) - y).abs().max() / y.abs().max() < 1e-2
+
+
+def test_a_cartesian_encoding_over_sets_is_the_sum_of_the_one_set_ones(bank):
+    A = linop.CartesianSense(bank, (COILS, Y, X))
+    torch.manual_seed(0)
+    x = _rand(*A.ishape)
+
+    want = sum(linop.CartesianSense(bank[m], (COILS, Y, X))(x[0, 0, m, 0]) for m in range(SETS))
+    torch.testing.assert_close(A(x).reshape(want.shape), want, rtol=1e-4, atol=1e-5)
+
+
+def test_a_pattern_and_several_sets_go_together(bank):
+    mask = (torch.rand(1, 1, 1, 1, 1, Y, 1) > 0.4).to(torch.complex64)
+    A = linop.CartesianSense(bank, (COILS, Y, X), pattern=mask)
+    assert _adjointness(A) < 1e-5
+
+
+def test_a_subspace_and_several_sets_go_together(bank, basis, frame_pattern):
+    A = linop.CartesianSense(bank, (COILS, Y, X), pattern=frame_pattern, basis=basis)
+    slow = linop.CartesianSense(
+        bank, (COILS, Y, X), pattern=frame_pattern, basis=basis, toeplitz=False
+    )
+
+    assert A.ishape == (COEFFS, 1, SETS, 1, 1, Y, X)
+    assert A.oshape == (1, FRAMES, 1, COILS, 1, Y, X)
+    assert _adjointness(A) < 1e-5
+
+    torch.manual_seed(0)
+    x = _rand(*A.ishape)
+    want = slow.adjoint(slow(x))
+    assert (A.normal(x) - want).abs().max() / want.abs().max() < 1e-5
+
+
+def test_wave_carries_several_sets_too(wave_parts):
+    _, psf, mask = wave_parts
+    torch.manual_seed(10)
+    sets_bank = _rand(SETS, COILS, Z, 5, SX)
+
+    A = linop.WaveSense(sets_bank, psf, SHAPE, readout=WX, pattern=mask)
+    assert A.ishape == (1, 1, SETS, 1, Z, 5, SX)
+    assert A.oshape == (1, 1, 1, COILS, Z, 5, WX)
+    assert _adjointness(A) < 1e-5

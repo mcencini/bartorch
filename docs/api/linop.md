@@ -42,6 +42,13 @@ and so cannot be a SENSE operator.  It is what carries the coils through
 `WaveSense`, which is why sensitivities held as the k-space kernels `nlinv`
 produces work there too.
 
+All of them take several sets of maps -- ESPIRiT's second, ENLIVE's relaxed
+model -- as `(sets, coils, *spatial)`, which is what `tools.ecalib` and
+`tools.nlinv` return for `maps > 1` and needs no reshaping in between.  The
+image then carries the sets and the samples do not: the encoding is
+$y_c = \sum_m S_{m,c} x_m$, contracted in BART's own `md_ztenmul` rather than
+by anything in Python.
+
 `CartesianSense` and `WaveSense` read a temporal subspace when given a
 `basis` -- T2 shuffling and Wave-Shuffling, the forward `pics -B` builds.
 With `toeplitz=True` the normal collapses the frames into one

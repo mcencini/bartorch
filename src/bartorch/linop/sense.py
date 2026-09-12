@@ -12,6 +12,49 @@ from bartorch.linop.base import LinearOperator
 __all__ = ["Coils", "NoncartesianSense"]
 
 
+def _without_maps(shape: tuple[int, ...]) -> tuple[int, ...]:
+    """``shape`` with BART's MAPS axis set to one.
+
+    The operator sums the sets of maps on the way out, so the samples never
+    carry them.  In the arrangement here -- ``(coeffs, te, maps, coils,
+    *spatial)`` -- that axis is the third; a shape short enough not to have
+    one has no sets to drop.
+    """
+    return (*shape[:2], 1, *shape[3:]) if len(shape) > 4 else shape
+
+
+def _bank(sensitivities: torch.Tensor, coils: int, spatial: tuple[int, ...]):
+    """``(bank, sets, sens_spatial)`` from sensitivities held either way.
+
+    A bank is ``(coils, *spatial)`` for the one set a single-map calibration
+    gives, and ``(sets, coils, *spatial)`` for the several that ESPIRiT's
+    second map and ENLIVE's relaxed model give -- which is the shape
+    :func:`bartorch.tools.ecalib` and :func:`bartorch.tools.nlinv` return for
+    ``maps > 1``, with the spatial axes written out.
+
+    Writing them out is what tells the two apart: a bank of one set is at most
+    ``(coils, z, y, x)``, so anything with an axis beyond that and the coils in
+    second place is carrying sets.  A two-dimensional bank may still leave
+    BART's third spatial axis out, and then it is one set by construction.
+    """
+    s = as_operand(sensitivities, tuple(sensitivities.shape), "sensitivities")
+    shape = tuple(s.shape)
+
+    if len(shape) == len(spatial) + 2 and shape[1] == coils:
+        sets, sens_spatial = shape[0], shape[2:]
+    elif shape[0] == coils:
+        sets, sens_spatial = 1, shape[1:]
+        if len(sens_spatial) == 2:
+            sens_spatial = (1, *sens_spatial)
+    else:
+        raise ValueError(
+            f"sensitivities of {shape} are neither (coils, *spatial) nor "
+            f"(sets, coils, *spatial) for {coils} coils"
+        )
+
+    return s.reshape(sets, coils, *sens_spatial), sets, tuple(sens_spatial)
+
+
 class NoncartesianSense(LinearOperator):
     """Sensitivities followed by a NUFFT, applied ``coil_batch`` coils at a time.
 
@@ -28,6 +71,13 @@ class NoncartesianSense(LinearOperator):
         Coil sensitivities of shape ``(coils, *image_shape[1:])``, or their
         k-space kernels when ``kernels`` is set.  A bank on the host while the
         transform is on a card is transferred a slab at a time.
+
+        Several sets of maps -- ESPIRiT's second, ENLIVE's relaxed model --
+        are ``(sets, coils, *spatial)``, which is what
+        :func:`bartorch.tools.ecalib` and :func:`bartorch.tools.nlinv` return
+        for ``maps > 1``.  The image then carries the sets and the samples do
+        not: the encoding is ``y[c] = sum_m S[m, c] x[m]``, summed in BART's
+        own contraction rather than by anything here.
     image_shape : tuple of int
         Coil-image shape, C order, for instance ``(coils, y, x)``.
     traj : tensor
@@ -111,15 +161,10 @@ class NoncartesianSense(LinearOperator):
         if len(spatial) == 2:
             spatial = (1, *spatial)
 
-        s = as_operand(sensitivities, tuple(sensitivities.shape), "sensitivities")
-        if s.shape[0] != coils:
-            raise ValueError(f"{s.shape[0]} sensitivities for {coils} coils")
-        sens_spatial = tuple(s.shape[1:])
-        if len(sens_spatial) == 2:
-            sens_spatial = (1, *sens_spatial)
-            s = s.reshape(coils, *sens_spatial)
+        s, sets, sens_spatial = _bank(sensitivities, coils, spatial)
 
         self.sensitivities = s
+        self.sets = sets
         self.image_shape = image_shape
         self.kernels = bool(kernels)
         self.toeplitz = bool(toeplitz)
@@ -128,22 +173,25 @@ class NoncartesianSense(LinearOperator):
             None if weights is None else as_operand(weights, tuple(weights.shape), "weights")
         )
         self.basis = None if basis is None else as_operand(basis, tuple(basis.shape), "basis")
-        self._sens_shape = (coils, *sens_spatial)
+        self._sens_shape = (sets, coils, *sens_spatial)
         if coil_batch < 0:
             raise ValueError(f"coil_batch is a number of coils, not {coil_batch}")
         self.coil_batch = int(coil_batch)
         self.fold_maps = bool(fold_maps)
 
         # A basis puts the coefficients on BART's COEFF axis, three past the
-        # coils, and the image carries that axis where the coils do not.
+        # coils, and sets of maps on its MAPS axis, which is the one between.
+        # The image carries both where the coils do not; the samples carry
+        # neither the maps, which the operator sums over, nor -- behind a
+        # basis -- the coefficients, which it contracts.
         b = self.basis
         coeffs = self._coeff_count if b is None else int(b.shape[0])
-        if b is None and 1 == coeffs:
+        if b is None and 1 == coeffs and 1 == sets:
             self._max_shape = (coils, *spatial)
             self.ishape = spatial
         else:
-            self._max_shape = (coeffs, 1, 1, coils, *spatial)
-            self.ishape = (coeffs, 1, 1, 1, *spatial)
+            self._max_shape = (coeffs, 1, sets, coils, *spatial)
+            self.ishape = (coeffs, 1, sets, 1, *spatial)
 
         self.kspace_shape = tuple(
             self._default_kspace(coils) if kspace_shape is None else kspace_shape
@@ -164,7 +212,9 @@ class NoncartesianSense(LinearOperator):
 
     def _default_kspace(self, coils: int) -> Shape:
         if self.traj is None:
-            return self._max_shape
+            # The samples do not carry the sets of maps: the operator sums
+            # over them on the way out and hands them back on the way in.
+            return _without_maps(self._max_shape)
         # BART lays non-Cartesian samples out as the trajectory is, with the
         # coordinate axis a singleton and the coils on the axis after the
         # spokes -- which is where the sensitivities have them, rather than
@@ -229,7 +279,8 @@ class Coils(LinearOperator):
     ----------
     sensitivities : tensor
         Coil sensitivities of shape ``(coils, *image_shape[1:])``, or their
-        k-space kernels when ``kernels`` is set.
+        k-space kernels when ``kernels`` is set.  Several sets of maps are
+        ``(sets, coils, *spatial)``, as :class:`NoncartesianSense` takes them.
     image_shape : tuple of int
         Coil-image shape, C order, for instance ``(coils, y, x)``.
     kernels : bool
@@ -272,13 +323,7 @@ class Coils(LinearOperator):
         if len(spatial) == 2:
             spatial = (1, *spatial)
 
-        s = as_operand(sensitivities, tuple(sensitivities.shape), "sensitivities")
-        if s.shape[0] != coils:
-            raise ValueError(f"{s.shape[0]} sensitivities for {coils} coils")
-        sens_spatial = tuple(s.shape[1:])
-        if len(sens_spatial) == 2:
-            sens_spatial = (1, *sens_spatial)
-            s = s.reshape(coils, *sens_spatial)
+        s, sets, sens_spatial = _bank(sensitivities, coils, spatial)
 
         if coil_batch < 0:
             raise ValueError(f"coil_batch is a number of coils, not {coil_batch}")
@@ -288,15 +333,18 @@ class Coils(LinearOperator):
         self.kernels = bool(kernels)
         self.coil_batch = int(coil_batch)
         self.coeffs = int(coeffs)
-        if 1 == self.coeffs:
+        self.sets = sets
+        if 1 == self.coeffs and 1 == sets:
             self._max_shape = (coils, *spatial)
             self.ishape = spatial
         else:
-            # The coefficients ride on BART's COEFF axis, three past the coils.
-            self._max_shape = (self.coeffs, 1, 1, coils, *spatial)
-            self.ishape = (self.coeffs, 1, 1, 1, *spatial)
-        self.oshape = self._max_shape
-        self._sens_shape = (coils, *sens_spatial)
+            # The coefficients ride on BART's COEFF axis, three past the
+            # coils, and sets of maps on its MAPS axis, the one between.
+            self._max_shape = (self.coeffs, 1, sets, coils, *spatial)
+            self.ishape = (self.coeffs, 1, sets, 1, *spatial)
+        # The coil images are summed over the sets, so they do not carry them.
+        self.oshape = _without_maps(self._max_shape)
+        self._sens_shape = (sets, coils, *sens_spatial)
         self.device = torch.device(device) if device is not None else s.device
 
         super().__init__()

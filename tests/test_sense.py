@@ -529,3 +529,121 @@ def test_an_uneven_slab_is_cut_down_off_the_grid_too(coils, batch):
     whole = linop.NoncartesianSense(maps, (coils, n, n), traj=traj, coil_batch=0)
 
     torch.testing.assert_close(sliced(x), whole(x), rtol=1e-4, atol=1e-5)
+
+
+# --- several sets of maps -----------------------------------------------------
+#
+# ESPIRiT's second map and ENLIVE's relaxed model give a bank of sets rather
+# than one set, and the encoding sums over them: y[c] = sum_m S[m, c] x[m].
+# BART contracts that axis itself -- `sense.c` keeps MAPS on the image, drops
+# it from the coil images and sums it in `md_ztenmul2` -- so what is added here
+# is the shape, not the arithmetic.
+
+SETS = 2
+
+
+def _sets_bank(n=16, coils=4, sets=SETS, seed=7):
+    torch.manual_seed(seed)
+    return torch.randn(sets, coils, 1, n, n, dtype=torch.complex64)
+
+
+def test_a_bank_of_one_set_is_read_either_way():
+    """Writing the axis out is allowed and means the same thing."""
+    n, coils = 16, 4
+    torch.manual_seed(0)
+    bare = torch.randn(coils, 1, n, n, dtype=torch.complex64)
+
+    A = linop.Coils(bare, (coils, n, n))
+    B = linop.Coils(bare.reshape(1, coils, 1, n, n), (coils, n, n))
+
+    assert A.ishape == B.ishape and A.oshape == B.oshape
+    x = torch.randn(*A.ishape, dtype=torch.complex64)
+    torch.testing.assert_close(B(x), A(x), rtol=0, atol=0)
+
+
+def test_a_bank_that_is_neither_shape_is_refused():
+    with pytest.raises(ValueError, match="neither .coils, .spatial. nor"):
+        linop.Coils(torch.ones(3, 1, 16, 16, dtype=torch.complex64), (4, 16, 16))
+
+
+def test_the_sets_ride_on_barts_maps_axis():
+    n, coils = 16, 4
+    A = linop.Coils(_sets_bank(n, coils), (coils, n, n))
+
+    # (coeffs, te, maps, coils, z, y, x): the image carries the sets, the coil
+    # images do not, because the operator has summed over them.
+    assert A.ishape == (1, 1, SETS, 1, 1, n, n)
+    assert A.oshape == (1, 1, 1, coils, 1, n, n)
+
+
+def test_several_sets_are_summed_the_way_enlive_means_it():
+    """Not bit for bit: the sum is a reduction, and BART's runs in its own
+    order with its own fused multiply-add, which on Apple silicon contracts
+    differently from x86.  What is being checked is the model, and a float32
+    tolerance is what says it."""
+    n, coils = 16, 4
+    bank = _sets_bank(n, coils)
+    A = linop.Coils(bank, (coils, n, n))
+
+    torch.manual_seed(0)
+    x = torch.randn(*A.ishape, dtype=torch.complex64)
+    want = (bank.reshape(1, 1, SETS, coils, 1, n, n) * x.reshape(1, 1, SETS, 1, 1, n, n)).sum(
+        2, keepdim=True
+    )
+    torch.testing.assert_close(A(x), want, rtol=1e-5, atol=1e-5)
+
+
+def test_several_sets_have_the_adjoint_they_claim():
+    n, coils = 16, 4
+    A = linop.Coils(_sets_bank(n, coils), (coils, n, n), coil_batch=2)
+
+    torch.manual_seed(0)
+    x = torch.randn(*A.ishape, dtype=torch.complex64)
+    y = torch.randn(*A.oshape, dtype=torch.complex64)
+    lhs = complex((A(x).conj() * y).sum())
+    rhs = complex((x.conj() * A.adjoint(y)).sum())
+    assert abs(lhs - rhs) / abs(lhs) < 1e-5
+
+
+@pytest.mark.parametrize("batch", [0, 1, 2, 4])
+def test_the_slab_walks_the_coils_and_not_the_sets(batch):
+    """The slab is a slab of coils; the sets are inside it whatever it is."""
+    n, coils = 16, 4
+    bank = _sets_bank(n, coils)
+    sliced = linop.Coils(bank, (coils, n, n), coil_batch=batch)
+    whole = linop.Coils(bank, (coils, n, n), coil_batch=0)
+
+    torch.manual_seed(0)
+    x = torch.randn(*sliced.ishape, dtype=torch.complex64)
+    torch.testing.assert_close(sliced(x), whole(x), rtol=1e-6, atol=1e-6)
+
+
+def test_several_sets_held_as_kernels():
+    n, coils = 16, 4
+    torch.manual_seed(8)
+    kernels = torch.randn(SETS, coils, 1, 5, 5, dtype=torch.complex64)
+    dense = bartorch.kernels_to_maps(kernels, (1, n, n))
+
+    a = linop.Coils(dense, (coils, n, n))
+    b = linop.Coils(kernels, (coils, n, n), kernels=True)
+
+    torch.manual_seed(0)
+    x = torch.randn(*a.ishape, dtype=torch.complex64)
+    torch.testing.assert_close(b(x), a(x), rtol=1e-4, atol=1e-5)
+
+
+def test_several_sets_off_the_grid_are_the_sum_of_the_one_set_operators():
+    """Which is what summing over the maps axis means, said another way."""
+    n, coils = 16, 4
+    bank = _sets_bank(n, coils)
+    traj = bt.traj(x=n, y=24, r=True)
+
+    A = linop.NoncartesianSense(bank, (coils, n, n), traj=traj)
+    torch.manual_seed(0)
+    x = torch.randn(*A.ishape, dtype=torch.complex64)
+
+    want = sum(
+        linop.NoncartesianSense(bank[m], (coils, n, n), traj=traj)(x[0, 0, m, 0])
+        for m in range(SETS)
+    )
+    torch.testing.assert_close(A(x).reshape(want.shape), want, rtol=1e-4, atol=1e-5)
