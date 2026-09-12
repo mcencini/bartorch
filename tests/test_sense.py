@@ -577,6 +577,10 @@ def test_the_sets_ride_on_barts_maps_axis():
 
 
 def test_several_sets_are_summed_the_way_enlive_means_it():
+    """Not bit for bit: the sum is a reduction, and BART's runs in its own
+    order with its own fused multiply-add, which on Apple silicon contracts
+    differently from x86.  What is being checked is the model, and a float32
+    tolerance is what says it."""
     n, coils = 16, 4
     bank = _sets_bank(n, coils)
     A = linop.Coils(bank, (coils, n, n))
@@ -586,7 +590,7 @@ def test_several_sets_are_summed_the_way_enlive_means_it():
     want = (bank.reshape(1, 1, SETS, coils, 1, n, n) * x.reshape(1, 1, SETS, 1, 1, n, n)).sum(
         2, keepdim=True
     )
-    torch.testing.assert_close(A(x), want, rtol=0, atol=0)
+    torch.testing.assert_close(A(x), want, rtol=1e-5, atol=1e-5)
 
 
 def test_several_sets_have_the_adjoint_they_claim():
