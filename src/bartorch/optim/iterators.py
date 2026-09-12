@@ -32,6 +32,7 @@ __all__ = [  # noqa: F822
     "PRIDUIteration",
     "NormalEquations",
     "TermPrior",
+    "AsTerm",
 ]
 
 
@@ -161,6 +162,80 @@ def _term_prior() -> type:
             return f"TermPrior({self.term!r})"
 
     return TermPrior
+
+
+def _as_term() -> type:
+    _, Prior, _ = _classes()
+
+    class AsTerm:
+        """A ``deepinv`` prior or denoiser where a :mod:`bartorch.prox` term goes.
+
+        The iterations here ask a term for four things: the transform in front
+        of its proximal operator, the shape that transform lands in, the
+        proximal operator itself, and a rewind of whatever randomness it
+        carries.  A prior has none of the first, all of the third, and nothing
+        to rewind -- so this answers *identity*, *the image's shape*, the
+        prior's own ``prox``, and *nothing*.
+
+        That is what lets a denoiser stand in a split or a dual: an
+        alternating-direction solve with a plug-and-play prior is the same
+        loop with this in place of a term.
+
+        Parameters
+        ----------
+        prior : deepinv.optim.Prior
+            Or anything with a ``prox(x, *args, gamma=...)``.  A bare
+            denoiser is wrapped in ``deepinv.optim.PnP``; a complex image
+            needs ``deepinv.models.to_complex_denoiser`` around it first,
+            which this does not do for you, because whether a denoiser is
+            complex-capable is not something to guess at.
+        g_param : float, optional
+            The prior's own parameter -- a denoiser's noise level, say --
+            passed as ``deepinv`` passes it, before ``gamma``.
+        """
+
+        def __init__(self, prior, g_param: float | None = None, *, batched: bool = False):
+            if not hasattr(prior, "prox"):
+                if not callable(prior):
+                    raise TypeError(
+                        f"a regularizer is a term from bartorch.prox, a deepinv prior, "
+                        f"or a denoiser -- not {prior!r}"
+                    )
+                from deepinv.optim import PnP
+
+                prior = PnP(denoiser=prior)
+            self.prior = prior
+            self.g_param = g_param
+            self.batched = bool(batched)
+
+        # --- what a term answers ------------------------------------------
+
+        def prox(self, x: torch.Tensor, gamma: float = 1.0, *, image_shape=None):
+            # A denoiser is a network over a batch of images and an image here
+            # is one image, so it is given an axis to be a batch of one on --
+            # which for a three-axis image is the N of the N, C, H, W most of
+            # deepinv's models expect.  A caller whose image already carries
+            # that axis says so with `batched`.
+            if self.batched:
+                return self.prior.prox(x, self.g_param, gamma=gamma)
+            return self.prior.prox(x[None], self.g_param, gamma=gamma)[0]
+
+        def prox_shape(self, image_shape):
+            return tuple(image_shape)
+
+        def apply_transform(self, x: torch.Tensor, image_shape=None, mode: str = "forward"):
+            return x
+
+        def transform_is_identity(self, image_shape) -> bool:
+            return True
+
+        def rewind(self, image_shape) -> None:
+            return None
+
+        def __repr__(self) -> str:
+            return f"AsTerm({self.prior!r})"
+
+    return AsTerm
 
 
 def _ist() -> type:
@@ -817,6 +892,7 @@ _BUILDERS = {
     "TermPrior": _term_prior,
     "ISTIteration": _ist,
     "FISTAIteration": _fista,
+    "AsTerm": _as_term,
 }
 
 

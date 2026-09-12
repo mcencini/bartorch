@@ -9,6 +9,7 @@ step calls the library, and for the rest the whole solve is one call into it.
 
 from __future__ import annotations
 
+from bartorch.optim.functional import admm, cg, fista, ist, pridu
 from bartorch.optim.linear import (
     ADMM,
     CG,
@@ -33,6 +34,11 @@ __all__ = [
     "NIHT",
     "PRIDU",
     "Tikhonov",
+    "admm",
+    "cg",
     "data_scaling",
+    "fista",
+    "ist",
     "maxeigen",
+    "pridu",
 ]

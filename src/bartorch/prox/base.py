@@ -398,9 +398,24 @@ def _as_terms(regularizers) -> list[Regularizer]:
         return [regularizers]
     terms = list(regularizers) if isinstance(regularizers, Iterable) else [regularizers]
     for term in terms:
-        if not isinstance(term, Regularizer):
+        if not isinstance(term, Regularizer) and not _term_shaped(term):
             raise TypeError(f"a regularizer is a term from bartorch.prox, not {term!r}")
     return terms
+
+
+def _term_shaped(thing) -> bool:
+    """Whether something answers the four questions an iteration asks a term.
+
+    A ``deepinv`` prior behind :class:`~bartorch.optim.iterators.AsTerm` does,
+    which is how a denoiser stands where a term goes.  Nothing BART runs can
+    take one, so a solver holding one has no library route -- which is what
+    :meth:`~bartorch.optim.CG.in_library` refuses over, and what makes this a
+    duck-typed test rather than a second base class.
+    """
+    return all(
+        callable(getattr(thing, name, None))
+        for name in ("prox", "prox_shape", "apply_transform", "rewind")
+    )
 
 
 def _command_line(
