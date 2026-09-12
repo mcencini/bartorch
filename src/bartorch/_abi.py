@@ -128,6 +128,19 @@ SYMBOLS = (
     "bartorch_linop_identity",
     "bartorch_linop_null",
     "bartorch_linop_maxeigen",
+    "bartorch_linop_zreal",
+    "bartorch_linop_sum",
+    "bartorch_linop_scaled_sum",
+    "bartorch_linop_avg",
+    "bartorch_linop_repmat",
+    "bartorch_linop_flip",
+    "bartorch_linop_reshape",
+    "bartorch_linop_resize",
+    "bartorch_linop_extract",
+    "bartorch_linop_transpose",
+    "bartorch_linop_permute",
+    "bartorch_linop_shift",
+    "bartorch_linop_padding",
     "bartorch_linop_has_pseudo_inv",
     "bartorch_linop_pseudo_inv",
     "bartorch_linop_domain",
@@ -422,6 +435,75 @@ def bind(lib: ctypes.CDLL) -> ctypes.CDLL:
     ]
     lib.bartorch_linop_maxeigen.restype = ctypes.c_double
     lib.bartorch_linop_maxeigen.argtypes = [ctypes.c_void_p]
+    lib.bartorch_linop_zreal.restype = ctypes.c_void_p
+    lib.bartorch_linop_zreal.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_long)]
+    lib.bartorch_linop_sum.restype = ctypes.c_void_p
+    lib.bartorch_linop_sum.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_long), ctypes.c_ulong]
+    lib.bartorch_linop_scaled_sum.restype = ctypes.c_void_p
+    lib.bartorch_linop_scaled_sum.argtypes = [
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.c_ulong,
+    ]
+    lib.bartorch_linop_avg.restype = ctypes.c_void_p
+    lib.bartorch_linop_avg.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_long), ctypes.c_ulong]
+    lib.bartorch_linop_repmat.restype = ctypes.c_void_p
+    lib.bartorch_linop_repmat.argtypes = [
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.c_ulong,
+    ]
+    lib.bartorch_linop_flip.restype = ctypes.c_void_p
+    lib.bartorch_linop_flip.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_long), ctypes.c_ulong]
+    lib.bartorch_linop_reshape.restype = ctypes.c_void_p
+    lib.bartorch_linop_reshape.argtypes = [
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_long),
+    ]
+    lib.bartorch_linop_resize.restype = ctypes.c_void_p
+    lib.bartorch_linop_resize.argtypes = [
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.POINTER(ctypes.c_long),
+    ]
+    lib.bartorch_linop_extract.restype = ctypes.c_void_p
+    lib.bartorch_linop_extract.argtypes = [
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.POINTER(ctypes.c_long),
+    ]
+    lib.bartorch_linop_transpose.restype = ctypes.c_void_p
+    lib.bartorch_linop_transpose.argtypes = [
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_long),
+    ]
+    lib.bartorch_linop_permute.restype = ctypes.c_void_p
+    lib.bartorch_linop_permute.argtypes = [
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.POINTER(ctypes.c_long),
+    ]
+    lib.bartorch_linop_shift.restype = ctypes.c_void_p
+    lib.bartorch_linop_shift.argtypes = [
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.c_int,
+        ctypes.c_long,
+        ctypes.c_int,
+    ]
+    lib.bartorch_linop_padding.restype = ctypes.c_void_p
+    lib.bartorch_linop_padding.argtypes = [
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.POINTER(ctypes.c_long),
+    ]
     lib.bartorch_linop_has_pseudo_inv.restype = ctypes.c_int
     lib.bartorch_linop_has_pseudo_inv.argtypes = [ctypes.c_void_p]
     lib.bartorch_linop_pseudo_inv.restype = ctypes.c_int

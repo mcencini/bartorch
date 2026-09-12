@@ -47,6 +47,13 @@ class LinearOperator(Operator):
         operands are.
     """
 
+    #: Whether BART's closed-form pseudo-inverse for this operator has been
+    #: checked against the damped normal equations it claims to solve.  BART
+    #: offering one is necessary and not sufficient: `linop_sum_create` carries
+    #: one written for a differently scaled operator, so a subclass opts in
+    #: only once a test holds the two answers together.  See :meth:`pinv`.
+    _exact_pinv: bool = False
+
     _free_name = "bartorch_linop_free"
     _domain_name = "bartorch_linop_domain"
     _codomain_name = "bartorch_linop_codomain"
@@ -273,12 +280,20 @@ class LinearOperator(Operator):
     def pinv(self, y: torch.Tensor, damp: float = 0.0, **kwargs) -> torch.Tensor:
         """``(A^H A + damp I)^-1 A^H y``, the damped least-squares solution.
 
-        Solved in closed form where BART has one for this operator, and by
+        Solved in closed form where BART has one that has been checked, and by
         :class:`bartorch.optim.CG` otherwise -- the same quantity either way,
-        exact rather than iterative when it can be.  A constructor offers the
-        closed form by giving BART a ``norm_inv``, which today means the sum
-        and average operators; a chain, a sum of operators or an adjoint drops
-        it, so those take the solver.
+        exact rather than iterative when it can be.
+
+        A constructor offers the closed form by giving BART a ``norm_inv``,
+        and in BART that is only `linops/sum.c`.  Offering one is necessary
+        and not sufficient: the routine there divides by a count that
+        `linop_sum_create` overwrites after the fact, so it answers for a
+        differently scaled operator than the one it is attached to.  So a
+        class opts in through :attr:`_exact_pinv`, and only
+        :class:`~bartorch.linop.ScaledSum` does, where a test holds the closed
+        form and the solver to the same answer.  Everything else -- including
+        any chain, sum or adjoint, which drop the ``norm_inv`` regardless --
+        takes the solver.
 
         Parameters
         ----------
@@ -294,7 +309,7 @@ class LinearOperator(Operator):
         op = self._bart()
         lib = library()
 
-        if lib.bartorch_linop_has_pseudo_inv(op._h.ptr):
+        if self._exact_pinv and lib.bartorch_linop_has_pseudo_inv(op._h.ptr):
             if kwargs:
                 raise TypeError(
                     f"{type(self).__name__} has a closed-form pseudo-inverse in BART, so "
