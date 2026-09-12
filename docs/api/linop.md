@@ -39,11 +39,24 @@ made of.
    Identity
    Zero
    Diagonal
+   ComponentDiagonal
    Conj
    Real
    FFT
    NUFFT
    MultiplySum
+```
+
+## Filtering and differencing
+
+```{eval-rst}
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   Matrix
+   Convolve
+   Gradient
 ```
 
 ## Combining operators

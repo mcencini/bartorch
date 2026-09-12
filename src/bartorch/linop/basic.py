@@ -19,7 +19,17 @@ from bartorch._operator import (
 )
 from bartorch.linop.base import LinearOperator
 
-__all__ = ["Callback", "Conj", "Diagonal", "FFT", "Identity", "MultiplySum", "Sampling", "Zero"]
+__all__ = [
+    "Callback",
+    "ComponentDiagonal",
+    "Conj",
+    "Diagonal",
+    "FFT",
+    "Identity",
+    "MultiplySum",
+    "Sampling",
+    "Zero",
+]
 
 
 class FFT(LinearOperator):
@@ -97,6 +107,54 @@ class Diagonal(LinearOperator):
         flags = broadcast_flags(tuple(self.diag.shape), self._shape)
         ptr = self._under_lock(
             library().bartorch_linop_cdiag,
+            DIMS,
+            dims(self._shape),
+            flags,
+            self.diag.data_ptr(),
+            device=self.diag.device,
+        )
+        return Built(ptr, self._shape, self._shape, keep=(self.diag,))
+
+
+class ComponentDiagonal(LinearOperator):
+    """A diagonal on the real part and another on the imaginary part.
+
+    BART's ``linop_rdiag``, which is ``md_zrmul``: the real part of the input
+    is scaled by the real part of ``diag`` and the imaginary part by the
+    imaginary part, each on its own.  It is the operator for treating a
+    complex array as two real channels -- not a real-valued diagonal, which is
+    what its BART name suggests and what :class:`Diagonal` already is when
+    given a real diagonal, adjoint included, since conjugating a real number
+    does nothing.
+
+    So ``ComponentDiagonal(w)`` with a real ``w`` scales the real part by
+    ``w`` and annihilates the imaginary part, and it takes ``w + 1j * w`` to
+    scale both.  If that is what you want, reach for :class:`Diagonal`.
+
+    Scaling two components separately is linear over the reals and not over
+    the complex numbers, as :class:`Conj` and
+    :class:`~bartorch.linop.Real` are: it is self-adjoint for a real inner
+    product and does not pass a complex dot test on its own.
+
+    Parameters
+    ----------
+    diag : tensor
+        Its real part scales real parts and its imaginary part scales
+        imaginary parts.  Every axis is either the operator's size along that
+        axis or one, and the ones are broadcast.
+    shape : tuple of int
+        The shape the operator works on, C order.
+    """
+
+    def __init__(self, diag: torch.Tensor, shape: Shape):
+        self._shape = tuple(shape)
+        self.diag = as_operand(diag, tuple(diag.shape), "diag")
+        super().__init__()
+
+    def _create(self) -> Built:
+        flags = broadcast_flags(tuple(self.diag.shape), self._shape)
+        ptr = self._under_lock(
+            library().bartorch_linop_rdiag,
             DIMS,
             dims(self._shape),
             flags,

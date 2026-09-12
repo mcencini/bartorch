@@ -6,6 +6,7 @@ from bartorch.linop.base import LinearOperator
 from bartorch.linop.basic import (
     FFT,
     Callback,
+    ComponentDiagonal,
     Conj,
     Diagonal,
     Identity,
@@ -31,6 +32,7 @@ from bartorch.linop.shape import (
     Sum,
     Transpose,
 )
+from bartorch.linop.signal import Convolve, Gradient, Matrix
 
 __all__ = [
     "block",
@@ -39,13 +41,17 @@ __all__ = [
     "hstack",
     "stack",
     "Callback",
+    "ComponentDiagonal",
     "Conj",
+    "Convolve",
     "Diagonal",
     "Extract",
     "FFT",
     "Flip",
+    "Gradient",
     "Identity",
     "LinearOperator",
+    "Matrix",
     "Mean",
     "MultiplySum",
     "NUFFT",
