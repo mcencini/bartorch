@@ -1,15 +1,9 @@
-"""MRI encoding operators.
+"""MRI encoding operators, each a chain of BART's own.
 
-Each is a composition of operators BART already has, chained by
-``linop_chain`` -- which means what a solver drives is one BART operator, not
-a Python object walked per iteration.  That is how BART itself builds them:
-``src/wave.c`` chains the coil multiply, the resize, two Fourier transforms,
-the point-spread diagonal and the sampling mask into one ``linop_s``, and
-:class:`WaveSense` below is the same six in the same order.
-
-:class:`~bartorch.linop.NoncartesianSense` is not one of these.  It is BART's
-own operator, with the coil batching and the Toeplitz normal that make it what
-it is, and what is here composes with it rather than replacing it.
+Built with ``linop_chain``, so what a solver drives is one BART operator
+rather than a Python object walked per iteration.
+:class:`~bartorch.linop.NoncartesianSense` is not one of these: it is BART's
+own operator, and what is here composes with it.
 """
 
 from __future__ import annotations
@@ -217,21 +211,16 @@ def CartesianSense(  # noqa: N802  (it is a constructor)
     Notes
     -----
     Without a basis the normal is the two applications: a mask does not
-    commute with the transform, so there is no shortcut, and on a grid there
-    is nothing to gain from one anyway.
+    commute with the transform, so there is no shortcut to take.
 
-    With a basis there is a great deal to gain, and it is the same shortcut
-    the non-Cartesian encoding calls Toeplitz -- the product in closed form
-    rather than the two applications::
+    With a basis, ``toeplitz`` gives the normal in closed form::
 
         (A^H A x)[k'] = sum_k ( sum_t P[t] conj(B[k',t]) B[k,t] ) x[k]
 
     The sum over the frames is done once, when the operator is built, so an
-    iteration never makes the frames at all: sixty-four echoes over four
-    coefficients is sixteen times less k-space in the middle of every step.
-    Nothing is convolved and no grid is doubled -- the pattern already lies on
-    the grid the transform is circular over -- which is the one way this
-    differs from the non-Cartesian normal.  It costs a kernel of
+    iteration never makes the frames.  Unlike the non-Cartesian Toeplitz
+    normal nothing is convolved and no grid is doubled, the pattern already
+    lying on the grid the transform is circular over.  It costs a kernel of
     ``coeffs x coeffs`` over the axes the pattern varies on, so a pattern that
     is flat along the readout keeps it flat too.
 
@@ -288,9 +277,8 @@ def WaveSense(  # noqa: N802  (it is a constructor)
     with an adjoint and a normal of its own.
 
     The coils go on through :class:`~bartorch.linop.Coils` rather than a plain
-    ``fmac``, which is what lets the sensitivities be held as the k-space
-    kernels ``nlinv`` produces and inflated a slab at a time, exactly as
-    :class:`~bartorch.linop.NoncartesianSense` holds them.
+    ``fmac``, so the sensitivities may be held as the k-space kernels
+    ``nlinv`` produces and inflated a slab at a time.
 
     With a basis this is Wave-Shuffling: the same encoding over coefficient
     images, the basis contracting them into frames, the pattern keeping the
@@ -326,14 +314,13 @@ def WaveSense(  # noqa: N802  (it is a constructor)
     kernels : bool
         Read ``sensitivities`` as k-space kernels.
     coil_batch : int
-        Coils applied at once; 0 uses BART's own ``fmac`` over all of them,
-        which is what this operator did before it had a choice.
+        Coils applied at once; 0 uses BART's own ``fmac`` over all of them.
     device : device, optional
         Where the coil multiply is built.
 
     Examples
     --------
-    >>> psf = bartorch.tools.wavepsf(...)
+    >>> psf = bartorch.tools.wavepsf(x=2 * x, y=y)
     >>> A = WaveSense(maps, psf, (coils, y, x), readout=2 * x, pattern=mask)
     """
     coils, spatial = _spatial(image_shape)
@@ -395,8 +382,7 @@ def FieldCorrected(  # noqa: N802  (it is a constructor)
     the last of those is what mirtorch calls ``Gmri``.
 
     The coefficients are ``mri-nufft``'s: the fit is a least-squares problem
-    over a histogram of the field map, not something BART has a primitive for
-    and not something to write twice.
+    over a histogram of the field map, which BART has no primitive for.
 
     Parameters
     ----------

@@ -1,23 +1,10 @@
-"""The solvers as functions, for a reconstruction written in one line.
+"""The solvers as functions, for a reconstruction written in one expression.
 
-``optim.FISTA(term, maxiter=30)(y, A)`` is a solver configured and then
-called, which is the shape to keep when the same configuration is used twice
--- inside a training loop, say.  For the other case, where a reconstruction is
-run once, these are the same thing said in one expression::
-
-    x = optim.fista(y, A, term, maxiter=30)
-
-They take one more kind of argument than the classes' documentation suggests,
-which is the point of having them: a ``deepinv`` prior or denoiser goes
-wherever a :mod:`bartorch.prox` term goes.  A plug-and-play reconstruction is
-then the same call with the denoiser in place of the term::
-
-    from deepinv.models import DRUNet, to_complex_denoiser
-    x = optim.admm(y, A, to_complex_denoiser(DRUNet()), g_param=0.03)
-
-What runs is the iteration in :mod:`bartorch.optim.iterators`, which is BART's
-step for step -- so a plug-and-play solve is BART's ADMM with the threshold
-replaced, and not a second implementation of it.
+``optim.fista(y, A, term, maxiter=30)`` is ``optim.FISTA(term,
+maxiter=30)(y, A)``.  They take one argument the classes do not: a ``deepinv``
+prior or a bare denoiser goes wherever a :mod:`bartorch.prox` term goes, with
+``g_param`` as its own parameter.  What runs is still the iteration in
+:mod:`bartorch.optim.iterators`.
 """
 
 from __future__ import annotations

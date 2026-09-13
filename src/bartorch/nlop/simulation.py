@@ -1,30 +1,12 @@
 """Signal models from TorchSim, as BART nonlinear operators.
 
-A model-based reconstruction is a signal model under an encoding:
-
-    kspace = P . F . C . M(parameters)
-
-Everything to the left of ``M`` is encoding and is already here -- the linear
-operators, and the nonlinear ones when the coils are unknown too.  ``M`` is
-the part that changes with the sequence, and it is the part that should be
-written in Python rather than in C.
-
-:class:`FromTorchSim` is the bridge.  TorchSim's
-:class:`~torchsim.recon.ModelOperator` gives a model's value, its
-Jacobian-vector product and its adjoint product without ever building a
-Jacobian, which is exactly the three things BART's ``nlop_s`` asks for; the
-bridge is those three, with the axis convention translated.  Anything TorchSim
-can simulate -- a closed form, an EPG state machine, a Bloch simulation, one
-of your own -- becomes an operator BART's Gauss-Newton solves, chains with an
-encoding, and differentiates in torch.
-
-:func:`InversionRecovery`, :func:`MultiEcho` and :func:`Bloch` are BART's
-``moba`` families over TorchSim's own simulators.  They are not BART's models:
-``moba`` writes each one out in C with its own parameterisation, and these are
-written in Python on TorchSim's.  Where the two agree on the physics they agree
-on the numbers, which is what the tests hold them to; where ``moba``
-reparameterises -- the Look-Locker ``(Mss, M0, R1*)`` triple, say -- they do
-not, and the difference is the parameterisation rather than the fit.
+:class:`FromTorchSim` bridges TorchSim's
+:class:`~torchsim.recon.ModelOperator` -- a model's value, its
+Jacobian-vector product and its adjoint product, none of which builds a
+Jacobian -- onto the three things BART's ``nlop_s`` asks for.
+:func:`InversionRecovery`, :func:`MultiEcho` and :func:`Bloch` are ``moba``'s
+families written on TorchSim's simulators, and on TorchSim's
+parameterisation rather than ``moba``'s.
 
 Notes
 -----
@@ -103,7 +85,7 @@ class FromTorchSim(Callback):
     ((3, 128, 128), (8, 128, 128))
     >>> images = M(M.initial(T2=80.0))
 
-    Under an encoding, which is the whole point:
+    Under an encoding:
 
     >>> F = nlop.chain(M, encoding.to_nonlinear())
     >>> maps = optim.IRGNM()(kspace, F, x0=M.initial(T2=80.0))
@@ -325,8 +307,7 @@ def Bloch(  # noqa: N802  (it is a constructor)
     bounds : dict, optional
         ``{name: (low, high)}``, either end ``None`` for unbounded.  A bound
         is kept by solving for a transformed variable, so no iterate leaves
-        it -- which matters more under an encoding than in a voxel-wise fit,
-        where one bad voxel spoils the whole residual.
+        it.
     amplitude : bool
         Carry a complex amplitude multiplying the simulated signal.
     subspace : torchsim.Subspace, optional

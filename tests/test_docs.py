@@ -14,6 +14,7 @@ MODULES = {
     "bartorch.linop": set(),
     "bartorch.nlop": set(),
     "bartorch.optim": set(),
+    "bartorch.optim.iterators": set(),
     "bartorch.prox": set(),
     "bartorch.tools": set(),
     "bartorch.io": set(),

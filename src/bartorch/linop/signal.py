@@ -190,8 +190,7 @@ def Gradient(shape: Shape, axes) -> LinearOperator:  # noqa: N802  (it is a cons
     The difference is the forward one and the boundary is circular: component
     ``i`` at the last index along its axis is the first entry minus the last,
     not zero.  So the operator has a null space -- a constant maps to zero --
-    which is the usual thing for a gradient and worth knowing before solving
-    with one.
+    as a gradient does.
 
     **The components come out in ascending axis order**, whatever order
     ``axes`` names them in.  BART stacks them by bit position, and its bits

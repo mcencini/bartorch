@@ -1,30 +1,16 @@
 """The linear solve as a torch autograd function; the backward pass is another solve.
 
-Conjugate gradients is a loop, and differentiating it by unrolling would record
-every iteration and give the derivative of the *truncated iteration* rather
-than of the answer.  What is recorded here is the derivative of the solve.
 ``x = N^-1 A^H y`` with ``N = A^H A + lambda I`` is linear in ``y``, so the
-vector-Jacobian product is ``(N^-1 A^H)^H = A N^-1`` -- one more solve with the
-same normal operator, and then one forward application.
+vector-Jacobian product is ``A N^-1`` -- one more solve with the same normal
+operator, and then one forward application.  Recording the answer rather than
+unrolling the iteration is what ``src/nlops/norm_inv.c`` does too.
 
-That is BART's own choice too.  ``src/nlops/norm_inv.c`` is the one solver in
-the library that is an ``nlop``, and its derivative and adjoint --
-``norm_inv_der_src`` and ``norm_inv_adj_src`` -- each run a conjugate-gradient
-solve of their own rather than unrolling the forward one.
-
-Two things follow from differentiating the answer rather than the iteration.
-A warm start carries no gradient: the solution of a linear system does not
-depend on where the iteration began, so ``x0`` is treated as the constant it
-mathematically is.  And the backward solve is only as accurate as its own
-iteration count -- a forward solve stopped after ten iterations gets a backward
-stopped after ten, and neither is the exact inverse.
-
-Gradients with respect to the operator's own data -- sensitivities, a
-trajectory, the weight on a term -- are not computed, which is what
-:mod:`bartorch.linop.autograd` says of a plain application as well.  Neither
-is a second derivative: the backward pass runs the solve inside the library
-and records nothing of its own, so ``create_graph=True`` gets a first-order
-gradient with no history behind it.
+Three consequences.  A warm start carries no gradient, since the solution of a
+linear system does not depend on where the iteration began.  The backward
+solve is only as accurate as its own iteration count.  And no gradient reaches
+the operator's own data -- sensitivities, a trajectory, a term's weight -- or a
+second derivative, because the backward pass runs inside the library and
+records nothing of its own.
 """
 
 from __future__ import annotations

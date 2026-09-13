@@ -206,7 +206,9 @@ def nlinv(
     initial : tensor, optional
         Warm start (``-I``).
     alpha : float, optional
-        Initial regularization weight (``-a``).
+        The ``a`` of the Sobolev coil weighting ``(1 + a |k|^2)^(-b/2)``
+        (``-a``), not the first step's regularization weight -- that is
+        ``nlinv --alpha``, reachable through ``**extra``.
     real : bool
         Constrain the image to be real (``-c``).
     normalize : bool

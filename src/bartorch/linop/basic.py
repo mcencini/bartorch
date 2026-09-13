@@ -54,13 +54,11 @@ class FFT(LinearOperator):
     torch.Size([8, 16])
     """
 
-    # The shape a constructor was given is kept privately: an operator answers
-    # for its domain and codomain through ishape and oshape (and pyxu's
-    # dim_shape and codim_shape), and a public `.shape` that some operators
-    # had and others did not would be a third answer to the same question.
+    # The shape a constructor was given stays private: an operator answers for
+    # its domain and codomain through ishape and oshape.
 
     def __init__(self, shape: Shape, axes, inverse: bool = False, centred: bool = True, **kwargs):
-        # ``centered`` was the spelling before, and still is accepted.
+        # ``centered`` is accepted as a spelling of ``centred``.
         if "centered" in kwargs:
             centred = kwargs.pop("centered")
         if kwargs:
@@ -128,8 +126,8 @@ class ComponentDiagonal(LinearOperator):
     does nothing.
 
     So ``ComponentDiagonal(w)`` with a real ``w`` scales the real part by
-    ``w`` and annihilates the imaginary part, and it takes ``w + 1j * w`` to
-    scale both.  If that is what you want, reach for :class:`Diagonal`.
+    ``w`` and annihilates the imaginary part; scaling both takes
+    ``w + 1j * w``, or :class:`Diagonal`.
 
     Scaling two components separately is linear over the reals and not over
     the complex numbers, as :class:`Conj` and

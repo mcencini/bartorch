@@ -57,7 +57,7 @@ class Tikhonov:
 
     Penalize the first differences, which is quadratic total variation:
 
-    >>> CG(terms=Tikhonov(0.1, operator=linop.Gradient(A.ishape)))(y, A)
+    >>> CG(terms=Tikhonov(0.1, operator=linop.Gradient(A.ishape, (-1, -2))))(y, A)
     """
 
     weight: float
@@ -119,7 +119,7 @@ def _stacked(A, y: torch.Tensor, terms: Sequence[Tikhonov]):
     laid end to end, which is what ``linop_stack_cod`` does and what makes the
     normal of the whole the sum of the parts' own normals.
 
-    That last part is the point.  A^H A for a Toeplitz encoding is a
+    That last part matters.  A^H A for a Toeplitz encoding is a
     convolution rather than two transforms, and it stays one here: the normal
     is built as ``A.gram() + sum_i w_i G_i.gram()`` and attached with
     ``linop_from_ops``, so the encoding is asked for its normal rather than
@@ -356,9 +356,8 @@ def _zeros(y: torch.Tensor, image_shape: tuple[int, ...]) -> dict:
 
     ``deepinv`` starts an optimizer at ``A^H y`` instead.  Starting where the
     solver starts is what makes a network with nothing trainable in it answer
-    with the solver's numbers, which is worth more here than a better first
-    guess -- and ``custom_init=None`` restores ``deepinv``'s, which is usually
-    what a network that is going to be trained wants::
+    with the solver's numbers; ``custom_init=None`` restores ``deepinv``'s
+    start, which a network about to be trained may prefer::
 
         solver.unrolled(shape, custom_init=None)
     """
@@ -531,7 +530,10 @@ class _Solver:
             directions, ``"sigma"`` and ``"tau"`` for the primal-dual.  The
             rest stay the numbers they were given.
         **kwargs
-            Passed to ``deepinv.optim.BaseOptim``.
+            Passed to ``deepinv.optim.BaseOptim``.  ``custom_init`` defaults
+            to starting at zero, where BART starts, rather than at ``A^H y``
+            where ``deepinv`` starts an optimizer; passing ``None`` restores
+            that other start.
 
         Returns
         -------
@@ -715,8 +717,8 @@ class CG(_Solver):
     BART's conjugate gradients takes one weight and nothing else:
     ``iter2_conjgrad`` asserts that it is handed no regularizing operators and
     no biases, and ``lsqr2_create`` builds ``A^H A + lambda I``.  So the terms
-    are not passed to it -- they are built into the operator it is given, as
-    the stack above, which needs nothing of BART that was not already there.
+    are not passed to it -- they are built into the operator it is given, by
+    stacking them under the encoding.
 
     Examples
     --------
@@ -1038,8 +1040,13 @@ class ADMM(_Solver):
     Parameters
     ----------
     regularizers : Regularizer or iterable of Regularizer, optional
-        Terms from :mod:`bartorch.prox`.
+        Terms from :mod:`bartorch.prox`.  Terms that add unknowns to the
+        optimization -- total generalized variation and the two infimal
+        convolutions -- are taken here and solved inside the library.
     maxiter : int
+        A budget on conjugate-gradient iterations across the whole run, not a
+        count of outer steps: ``admm`` breaks when ``nr_invokes > maxiter``.
+        Thirty with ten inner iterations is about five outer steps.
     rho : float
         Penalty parameter (``pics -u``); 0.5 is BART's default.
     cg_maxiter : int
@@ -1272,7 +1279,9 @@ class PRIDU(_Solver):
     Parameters
     ----------
     regularizers : Regularizer or iterable of Regularizer, optional
-        Terms from :mod:`bartorch.prox`.
+        Terms from :mod:`bartorch.prox`.  Terms that add unknowns to the
+        optimization are taken here and solved inside the library, as
+        :class:`ADMM` takes them.
     maxiter : int
     step : float
         Step size (``pics -s``); 0.95 is what ``pics`` uses when none is given.

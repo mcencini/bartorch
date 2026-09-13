@@ -30,15 +30,19 @@ def traj(
     spokes : int, optional
         Readouts per frame (``-y``).
     frames : int, optional
-        Frames (``-t``).
+        Turns of a multi-shot trajectory (``-t``, BART's ``conf.turns``).
+        The name here does not describe the flag.
     radial : bool
         A radial trajectory rather than Cartesian (``-r``).
     golden : bool
         Golden-angle spacing between spokes (``-G``).
     turns : int, optional
-        Turns, for a multi-shot trajectory (``-m``).
+        SMS multiband factor (``-m``).  The name here does not describe the
+        flag either.
     oversampling : bool
-        Two-fold readout oversampling (``-o`` takes a factor; this is ``-O``).
+        Correct the transverse gradient error of a radial trajectory
+        (``-O``).  Despite the name this is not readout oversampling, which
+        is ``traj -o`` and reachable through ``**extra`` as ``o=factor``.
     **extra
         Further BART ``traj`` flags, by name.
 

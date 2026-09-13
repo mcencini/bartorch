@@ -1,22 +1,14 @@
 """Nonlinear MRI encoding operators: the image and the coils as two unknowns.
 
-The linear encodings in :mod:`bartorch.linop` take the sensitivities as a
-fixed tensor.  The nonlinear ones here do not: the coils are a second unknown,
-and what the operator maps is the *pair*.  That is what ``nlinv`` inverts, and
-what makes a reconstruction possible with no calibration data at all.
-
-:class:`NonlinearSense` is BART's own model, from ``noir/model2.c``:
+:class:`NonlinearSense` is BART's own model, from ``noir/model2.c``, built by
+the same code ``nlinv`` runs::
 
     kspace = A[ (mask * image) * ifftuc(weights * ksens) ]
 
-built by the same code ``nlinv`` runs, so a fit driven from here and one
-driven by ``nlinv`` are the same arithmetic.  :func:`CartesianSense` and
-:func:`NoncartesianSense` name the two cases the way the linear operators do.
-
-:class:`CoilSense` is the general recipe rather than BART's particular model:
-any linear encoding from coil images to data, with a product of two unknowns
-in front of it.  That is how a nonlinear wave, field-corrected or subspace
-encoding is built out of what the library already has.
+:func:`CartesianSense` and :func:`NoncartesianSense` name its two cases the
+way the linear operators do.  :class:`CoilSense` is the general recipe
+instead: any linear encoding from coil images to data, with a product of two
+unknowns in front of it.
 """
 
 from __future__ import annotations
@@ -116,13 +108,14 @@ class NonlinearSense(NonlinearOperator):
         Temporal subspace basis, off the grid.  BART's Cartesian model refuses
         one.
     mask : tensor, optional
-        A support the image is restricted to -- ``nlinv``'s ``restrict-fov``.
+        A support the image is restricted to, as ``nlinv -f`` builds one.
     sobolev : tuple of float
-        ``(a, b)`` of the coil weighting, BART's ``220, 32``.
+        ``(a, b)`` of the coil weighting ``c (1 + a |k|^2)^(-b/2)``; BART's
+        ``220, 32``.
     c : float
-        The exponent's scaling, BART's ``1``.
+        The scale on that weighting, BART's ``1``.
     real : bool
-        Constrain the image to be real, ``nlinv -g``'s ``rvc``.
+        Constrain the image to be real (``nlinv -c``).
     sos : bool
         BART's sum-of-squares variant of the coil weighting.
     oversampling_coils : float, optional
@@ -407,11 +400,9 @@ def CoilSense(  # noqa: N802  (it is a constructor)
 ) -> NonlinearOperator:
     """An image times unknown coils, through any linear encoding.
 
-    The recipe rather than BART's particular model: whatever linear operator
-    maps coil images to data -- a wave encoding, a field-corrected one, a
-    subspace one, one of your own -- put in front of it a product of two
-    unknowns.  That is the whole of what makes an encoding nonlinear, and with
-    the algebra in place it is one line::
+    The recipe rather than BART's particular model: a product of two unknowns
+    in front of any linear operator from coil images to data -- a wave
+    encoding, a field-corrected one, a subspace one, one of your own::
 
         chain(Multiply(image_shape, coil_shape), encoding.to_nonlinear())
 

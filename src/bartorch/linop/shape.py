@@ -1,16 +1,10 @@
-"""Operators that rearrange, reduce or restrict a shape.
-
-Each is one of BART's constructors.  They are classes rather than functions
-because each is a linear operator in its own right -- it maps a tensor to a
-tensor, and composes and solves like any other -- however it is spelled
-elsewhere; what becomes a function here is only something that takes operators
-and gives back an operator.
+"""Operators that rearrange, reduce or restrict a shape, each one BART constructor.
 
 BART counts its dimensions the other way round and always at
 :data:`~bartorch._lib.DIMS` of them, so a C-order shape, an axis, a set of
-axes and a per-axis vector each have to be turned around on the way in.  That
-is what the helpers at the top of this file do, in one place, so that no
-constructor below does its own arithmetic on an index.
+axes and a per-axis vector each have to be turned around on the way in.  The
+helpers at the top of this file do that in one place; no constructor below
+does its own arithmetic on an index.
 """
 
 from __future__ import annotations
@@ -99,10 +93,9 @@ class Sum(LinearOperator):
     BART does and what lets the result broadcast back against the input.  Its
     adjoint is :class:`Repeat`.
 
-    BART attaches a closed-form pseudo-inverse to this operator, but the
-    routine is written for :class:`ScaledSum` and answers for that scaling
-    instead, so :meth:`~bartorch.linop.LinearOperator.pinv` takes the solver
-    here.  Use :class:`ScaledSum` where the exact inverse matters.
+    BART attaches a closed-form pseudo-inverse to this operator, but it
+    answers for :class:`ScaledSum`'s scaling, so
+    :meth:`~bartorch.linop.LinearOperator.pinv` takes the solver here.
 
     Parameters
     ----------
@@ -134,9 +127,8 @@ class ScaledSum(LinearOperator):
     :meth:`~bartorch.linop.LinearOperator.pinv` has a closed form -- BART
     solves ``(A^H A + damp I) x = A^H y`` here directly, with no iteration.
 
-    :class:`Sum` is the plain sum, which is what a reader usually wants; this
-    is the one to reach for inside a solver, where the conditioning and the
-    exact inverse are worth the factor.
+    :class:`Sum` is the plain sum; this is the one to use inside a solver,
+    where the conditioning and the exact inverse are worth the factor.
 
     Parameters
     ----------

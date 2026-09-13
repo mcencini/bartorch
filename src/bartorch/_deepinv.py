@@ -1,8 +1,7 @@
 """The ``deepinv`` adapter, :func:`to_deepinv`.
 
-``deepinv`` is imported on first use rather than at import time -- it is a
-dependency, but importing it is not free, and a script that only builds
-operators should not pay for it.
+``deepinv`` is imported on first use rather than at import time, so a script
+that only builds operators does not pay for it.
 """
 
 from __future__ import annotations

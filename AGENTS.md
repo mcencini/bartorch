@@ -816,8 +816,8 @@ array rather than a number -- `pics(kspace, maps, t=traj)`, `-p` for a
 sampling pattern, `-B` for a basis -- and is registered and copied like any
 other input. BART's `fft` tool is
 unnormalised unless asked for the unitary form; the `linop.FFT`
-operator is unitary. `nufft` output is scaled by one over the grid side per
-transformed axis pair, with a negative exponent.
+operator is unitary. `nufft` output is scaled by one over the
+square root of the image's voxel count, with a negative exponent.
 
 Write for someone reading the code as it is now. No text about what the code
 used to be. Docstrings follow *Documentation and docstrings* below.

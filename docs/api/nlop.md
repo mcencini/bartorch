@@ -189,6 +189,11 @@ the same tuples without the run of empty axes between the batch and the image.
 A run of singletons changes no strides, so moving between the two is a reshape
 and not a copy.
 
+The iterate is the image and the coil coefficients laid end to end; `start()`
+makes the one BART starts from, `split()` and `join()` take it apart and put it
+back, and `decompose()` takes it apart *through* the model's transforms, so
+what comes back is coil profiles rather than the coefficients that were fitted.
+
 An unrolled network can be composed into a *single* `nlop`: chain the cells,
 with whatever stands between them, and BART drives the whole thing and crosses
 into Python once a step for the prior alone.
@@ -238,14 +243,8 @@ weights.load(trained)      # back into the module afterwards
 
 The packed vector is the thing to hold as the `Parameter`: it is what the
 operator differentiates, and the gradient arrives in its real part. How the
-denoiser sees the iterate is the caller's to say -- the state of a
-{class}`GaussNewton` is the image and the coil coefficients laid end to end,
-and a denoiser usually wants the image half, shaped as an image.
-
-The iterate is the image and the coil coefficients laid end to end; `start()`
-makes the one BART starts from, `split()` and `join()` take it apart and put it
-back, and `decompose()` takes it apart *through* the model's transforms, so
-what comes back is coil profiles rather than the coefficients that were fitted.
+denoiser sees the iterate is the caller's to say: a denoiser usually wants the
+image half of the state, shaped as an image.
 
 **One thing to know before reading a gradient.** BART weights the coil half of
 the state by $(1 + a|k|^2)^{-b/2}$, and its default $b = 32$ is a sixteenth

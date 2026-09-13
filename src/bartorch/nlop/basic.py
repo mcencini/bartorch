@@ -1,13 +1,9 @@
 """The basic nonlinear operators, each one BART constructor.
 
-These are what the algebra in :mod:`bartorch.nlop` is for.  :class:`Multiply`
-is a product of two inputs, broadcast the way BART broadcasts: it is the model
-``nlinv`` inverts, an image times coil profiles, and every model that fits a
-curve to data is one of the elementwise maps below wrapped around a linear one.
-
-Every operator here is complex: BART's nonlinear operators work on
-``complex float`` throughout, and :class:`Abs` returns a real quantity stored
-as a complex tensor with a zero imaginary part, as BART's ``zabs`` does.
+:class:`Multiply` is the two-input product every model is built out of,
+broadcast the way BART broadcasts.  Everything here works on ``complex
+float``, as BART's nonlinear operators do: :class:`Abs` returns a real
+quantity in a complex tensor with a zero imaginary part, as ``zabs`` does.
 """
 
 from __future__ import annotations

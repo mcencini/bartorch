@@ -1,15 +1,9 @@
-"""Putting operators side by side.
+"""Putting operators side by side: the only functions in :mod:`bartorch.linop`.
 
-These are the only functions in :mod:`bartorch.linop`.  Everything else that
-BART offers maps a tensor to a tensor and is therefore an operator in its own
-right, which makes it a class; what is here takes operators and gives back an
-operator, and cannot be spelled as arithmetic or as indexing.  So it reads the
-way the same thing reads for tensors: :func:`stack`, :func:`concatenate`,
-:func:`block_diag`, :func:`block`.
-
-Each is BART's ``linop_stack_cod`` or ``linop_stack``, so a stack is one
-operator that a solver drives in its own loop, not a Python list walked per
-iteration.
+:func:`stack`, :func:`concatenate`, :func:`block_diag` and :func:`block` each
+build one ``linop_stack_cod`` or ``linop_stack``, so a stack is a single
+operator that a solver drives in its own loop rather than a Python list walked
+per iteration.
 """
 
 from __future__ import annotations
