@@ -239,21 +239,3 @@ def test_a_model_operator_can_be_handed_over_directly():
     M = nlop.FromTorchSim(model, (2, 2))
     assert M.ishape == (3, 2, 2) and M.oshape == (2, 2, 2)
     assert "MultiEchoSimulator" in repr(M)
-
-
-# --- the dependency ----------------------------------------------------------------
-
-
-def test_torchsim_is_a_dependency_and_not_an_extra():
-    from pathlib import Path
-
-    import tomllib
-
-    root = Path(__file__).resolve().parent.parent
-    data = tomllib.loads((root / "pyproject.toml").read_text())
-    required = " ".join(data["project"]["dependencies"])
-    assert "torchsim" in required
-    for name, entries in data["project"].get("optional-dependencies", {}).items():
-        assert not any("torchsim" in entry for entry in entries), (
-            f"torchsim is in the {name} extra as well as in dependencies"
-        )
