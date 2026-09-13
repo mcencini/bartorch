@@ -332,13 +332,19 @@ class _Solver:
     def __init__(self, regularizers: Regularizers, maxiter: int, cclambda: float):
         self.regularizers = _as_terms(regularizers)
         for term in self.regularizers:
-            if term._extends:
+            if getattr(term, "_extends", False):
                 raise TypeError(
                     f"{type(term).__name__} adds variables to the optimization, which BART "
                     "configures only for the whole set of terms at once; tools.pics takes it"
                 )
         self.maxiter = int(maxiter)
         self.cclambda = float(cclambda)
+
+    @property
+    def _foreign(self) -> list:
+        """The terms BART could not have been given: a ``deepinv`` prior or a
+        denoiser standing where one of its own would."""
+        return [t for t in self.regularizers if not isinstance(t, Regularizer)]
 
     def _settings(self) -> dict:
         return {}
@@ -374,7 +380,17 @@ class _Solver:
         network or driven to a fixed point -- :meth:`__call__` runs that one
         instead, and this stays as the reference it is held against: the two
         answer with the same bits, which is what the suite checks.
+
+        A solver holding a ``deepinv`` prior has no library route at all: BART
+        has no way to be handed a denoiser, and this says so rather than
+        substituting something else.
         """
+        if self._foreign:
+            raise ValueError(
+                f"{self._foreign[0]!r} is not a term BART can be given, so there is no "
+                "library route for this solve; the iteration written here is the one that "
+                "takes it"
+            )
         return _solve(
             A,
             y,

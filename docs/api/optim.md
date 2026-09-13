@@ -53,6 +53,49 @@ point-spread convolution, not the transform and its adjoint.
    maxeigen
 ```
 
+## The same solvers as functions
+
+```{eval-rst}
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   ist
+   fista
+   admm
+   pridu
+   cg
+```
+
+`optim.FISTA(term, maxiter=30)(y, A)` is a solver configured and then called,
+which is the shape to keep when the same configuration is used twice -- inside
+a training loop, say.  For a reconstruction run once, the function says the
+same thing in one expression:
+
+```python
+x = optim.fista(y, A, term, maxiter=30)
+```
+
+They take one more kind of argument than the classes do, which is the point of
+having them: a `deepinv` prior or a bare denoiser goes wherever a
+{mod}`bartorch.prox` term goes, with `g_param` as its own parameter -- a
+denoiser's noise level, say.
+
+```python
+from deepinv.models import DRUNet, to_complex_denoiser
+
+x = optim.admm(y, A, to_complex_denoiser(DRUNet()), g_param=0.03)
+```
+
+What runs is the iteration in `bartorch.optim.iterators`, which is BART's step
+for step, so a plug-and-play reconstruction is BART's ADMM with the threshold
+replaced rather than a second implementation of it.  A denoiser and a term of
+BART's own can go in the same alternating-direction solve, each with its own
+split variable.  Two things to know: an image here is complex and most
+denoisers are not, so `to_complex_denoiser` is usually needed; and there is no
+library route for a solver holding one -- BART has no way to be handed a
+denoiser, and `in_library` says so rather than running something else.
+
 ## Iterations for unfolding and fixed points
 
 `bartorch.optim.iterators`.  BART's proximal iterations written as
