@@ -4,11 +4,11 @@
 `solver(y, A, x0=None)`; the iteration is BART's, the one `pics` or `nlinv`
 runs.
 
-Where the iteration has been written out in `bartorch.optim.iterators` -- so
-far `ADMM` -- the loop runs here and each step calls the library; everywhere
-else the whole solve is one call into it.  Either way the answer is the same
-bits, and `solver.in_library(y, A)` runs BART's own loop when that is what is
-wanted.
+Where the iteration has been written out in `bartorch.optim.iterators` --
+`IST`, `FISTA`, `ADMM` and `PRIDU` -- the loop runs here and each step calls
+the library; `CG`, `NIHT` and `EulerMaruyama` are one call into it.  Either
+way the answer is the same bits, and `solver.in_library(y, A)` runs BART's own
+loop when that is what is wanted.
 
 ```{eval-rst}
 .. currentmodule:: bartorch.optim
@@ -50,6 +50,7 @@ point-spread convolution, not the transform and its adjoint.
    PRIDU
    NIHT
    EulerMaruyama
+   maxeigen
 ```
 
 ## Iterations for unfolding and fixed points
@@ -117,6 +118,40 @@ the same image answers twice differently.  Two loops therefore agree to the
 bit only when they apply it the same number of times in the same order, which
 is one more thing the comparison against the library checks.
 
+### What `optim.ADMM` takes, and where it came from
+
+`admm.c` has more in it than `pics` has flags for, and more than the wrapper
+used to pass on.  All of it is reachable now, in two groups.
+
+What `italgo_config` can be told -- `dynamic_rho`, `dynamic_tau`,
+`relative_norm`, `fast` -- goes through `bartorch_solve` as well, so
+`in_library` answers with the same bits.  `dynamic_rho` moves the penalty with
+the residuals and rescales the dual variables to match; `dynamic_tau` chooses
+how far by `sqrt(r / s)`, clipped to `[1 / tau_max, tau_max]`; `relative_norm`
+compares each residual to its own scaling first.  Those three together are the
+residual balancing of Wohlberg (2017).
+
+What it cannot be told -- `alpha`, `mu`, `tau_max`, `abstol`, `reltol`, a
+`bias` per term, and `cg_maxiter_first` -- is reachable only from the
+iteration written here, and `in_library` refuses it rather than dropping it
+quietly.  `abstol` and `reltol` are worth a word: `iter_admm_defaults` carries
+Boyd's 1e-4 and 1e-3, and `italgo_config` overwrites both with zero, so
+`pics`'s ADMM never stops on its residuals at all -- the budget is what stops
+it.
+
+The comparison against [riesling](https://github.com/spinicist/riesling)'s
+ADMM, which this was asked to make, comes out in BART's favour almost
+throughout.  Riesling has the residual balancing, the over-relaxation and a
+combined tolerance; BART has all of that plus biases, Boyd's absolute and
+relative tolerances separately, `dynamic_tau` as a setting of its own,
+hogwild, a warm start, and a budget counted in applications of the normal
+operator rather than outer steps.  Two things differ in riesling's favour: its
+x-update is LSMR with a preconditioner rather than conjugate gradients --
+deliberately not followed here, because a Toeplitz normal is the point of this
+package's encodings -- and `iters0`, a separate budget for the first outer
+step, where there is no warm start to build on.  That one is worth having, so
+`cg_maxiter_first` is it, and it is the only setting in `optim.ADMM` that is
+nobody's but riesling's.
 `PRIDUIteration` is the one iteration whose answer depends on how BART was
 compiled.  `vecops.c` has a single kernel behind `axpy`, `xpay` and `axpbz`,
 `dst[i] = a1 * src1[i] + a2 * src2[i]`, and clang folds the first product into
@@ -136,6 +171,23 @@ proximal step instead.  That split is `iter2_chambolle_pock`'s, reproduced
 rather than chosen.  Its tolerance is absolute, unlike every other iteration
 here: `iter2_chambolle_pock` leaves `eps` at one where the others scale it by
 the norm of $A^Hy$.
+
+`maxeigen` is the estimate `pics -e` divides the step by: a power iteration
+over the encoding's normal with the quadratic weight on its diagonal, and --
+for the primal-dual iteration alone -- the dual terms' transforms added to it.
+It starts from a random vector, so it is a draw rather than a number: two
+solves with `eigen=True` do not agree to the bit, in this package or in BART.
+
+Reading BART's arithmetic off its source is most of the work in these
+iterations, and two habits account for nearly all of it.  Every scalar is a C
+`float` unless the library declares a `double`, and a scalar worked out in a
+double and rounded once at the end is a different number -- which is what made
+FISTA's ravine diverge at the thirteenth iteration.  And a vector is scaled by
+a coefficient rather than divided by its reciprocal: `chambolle_pock` works
+out `1 / sigma`, `1 / (1 + sigma)` and `-sigma / (1 + sigma)` once, in a
+double, and rounds each to a float.  Dividing the tensor instead agrees while
+`sigma` is where `pics` starts it, and stops agreeing once the adaptive step
+has moved it.
 
 `TermPrior` puts a {mod}`bartorch.prox` term where `deepinv` expects a prior,
 and a `deepinv` denoiser goes in the same place -- wrapped in

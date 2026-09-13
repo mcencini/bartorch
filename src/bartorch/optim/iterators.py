@@ -13,7 +13,9 @@ goes into ``deepinv.optim.optim_builder``, and so into ``BaseOptim`` with
 point -- neither of which an iteration running inside the library can be part
 of, because there is nothing to differentiate through.
 
-``deepinv`` is imported on first use, so it stays an optional dependency.
+``deepinv`` is imported on first use rather than at import time -- it is a
+dependency, but importing it is not free, and a script that only builds
+operators should not pay for it.
 """
 
 from __future__ import annotations
@@ -84,8 +86,9 @@ def _normal_equations() -> type:
         ours falls back to ``A_adjoint(A(x) - y)``.
         """
 
-        def __init__(self):
+        def __init__(self, weight: float = 0.0):
             super().__init__()
+            self.weight = float(weight)
             self._adjoint: tuple | None = None
 
         def _adjoint_data(self, y: torch.Tensor, physics) -> torch.Tensor:
@@ -95,15 +98,33 @@ def _normal_equations() -> type:
                 self._adjoint = (key, _batched(op.adjoint, y, op.oshape))
             return self._adjoint[1]
 
+        def normal(self, x: torch.Tensor, physics) -> torch.Tensor:
+            """``A^H A x + lambda x``, the operator ``lsqr`` builds.
+
+            ``lambda`` is ``pics -q``, a weight on an identity added to the
+            normal operator; ``normaleq_l2_apply`` applies the encoding's
+            normal and then adds it, and so does this.
+            """
+            op = getattr(physics, "op", None)
+            out = (
+                _batched(op.normal, x, op.ishape)
+                if op is not None
+                else physics.A_adjoint(physics.A(x))
+            )
+            return out + self.weight * x if self.weight else out
+
         def grad(self, x: torch.Tensor, y: torch.Tensor, physics, *args, **kwargs):
             op = getattr(physics, "op", None)
-            if op is None:
+            if op is None and not self.weight:
                 return physics.A_adjoint(physics.A(x) - y)
-            return _batched(op.normal, x, op.ishape) - self._adjoint_data(y, physics)
+            return self.normal(x, physics) - self._adjoint_data(y, physics)
 
         def fn(self, x: torch.Tensor, y: torch.Tensor, physics, *args, **kwargs):
             residual = physics.A(x) - y
-            return 0.5 * residual.flatten(1).abs().pow(2).sum(-1)
+            out = 0.5 * residual.flatten(1).abs().pow(2).sum(-1)
+            if self.weight:
+                out = out + 0.5 * self.weight * x.flatten(1).abs().pow(2).sum(-1)
+            return out
 
     return NormalEquations
 
@@ -414,7 +435,7 @@ def _admm() -> type:
 
         # --- the x update ------------------------------------------------------
 
-        def _solve_x(self, x, rhs, rho, physics, params):
+        def _solve_x(self, x, rhs, rho, physics, params, first=False):
             """Conjugate gradients on ``A^H A + rho sum_j G_j^H G_j``, from ``x``.
 
             BART's ``cg_xupdate``: the same operator, the same warm start, and
@@ -454,7 +475,14 @@ def _admm() -> type:
 
             shape = tuple(x.shape)
             normal = Callback(shape, shape, apply, apply, apply)
-            solver = CG(maxiter=params.get("cg_maxiter", 10), tol=params.get("cg_eps", 1e-3))
+            budget = params.get("cg_maxiter", 10)
+            if first and params.get("cg_maxiter_first") is not None:
+                # riesling's `iters0`: more inner iterations on the first outer
+                # step, where there is no warm start to build on, and fewer
+                # after.  BART has one budget for every step; this is the one
+                # thing that implementation has that BART's does not.
+                budget = params["cg_maxiter_first"]
+            solver = CG(maxiter=budget, tol=params.get("cg_eps", 1e-3))
 
             steps: list[int] = []
             out = solver(rhs, _WithNormal(Identity(shape), normal), x0=x, steps=steps)
@@ -494,7 +522,7 @@ def _admm() -> type:
                 rhs = rhs + self._adjoint(term, r)
             rhs = rho * rhs + adjoint
 
-            x = self._solve_x(x, rhs, rho, physics, cur_params)
+            x = self._solve_x(x, rhs, rho, physics, cur_params, first=0 == X.get("it", 0))
 
             n1 = n2 = r_sq = 0.0
             s = torch.zeros_like(x)
@@ -507,7 +535,7 @@ def _admm() -> type:
 
                 if not fast:
                     residual = gx
-                    n1 += float(torch.linalg.vector_norm(residual)) ** 2
+                    n1 += _norm(residual) ** 2
                     gx = alpha * gx + (1.0 - alpha) * z[j]
                     if bias is not None:
                         gx = gx + (1.0 - alpha) * bias
@@ -523,20 +551,21 @@ def _admm() -> type:
                     r = residual - z[j]
                     if bias is not None:
                         r = r - bias
-                    r_sq += float(torch.linalg.vector_norm(r)) ** 2
+                    # `float r_norm` against `double n1, n2`: the primal
+                    # residual is accumulated in single precision and the
+                    # scalings in double, which is what `admm.c` declares.
+                    r_sq = _single(r_sq + _norm(r) ** 2)
                     s = s + self._adjoint(term, z[j] - z_old)
                     gh_usum = gh_usum + self._adjoint(term, u[j])
-                    n2 += float(torch.linalg.vector_norm(z[j])) ** 2
+                    n2 += _norm(z[j]) ** 2
 
             done = False
             if not fast:
                 r_norm = _single(math.sqrt(r_sq))
-                s_norm = _single(rho * float(torch.linalg.vector_norm(s)))
-                n3 = sum(
-                    float(torch.linalg.vector_norm(b)) ** 2 for b in self.biases if b is not None
-                )
+                s_norm = _single(rho * _norm(s))
+                n3 = sum(_norm(b) ** 2 for b in self.biases if b is not None)
                 r_scaling = math.sqrt(max(n1, n2, n3))
-                s_scaling = rho * float(torch.linalg.vector_norm(gh_usum))
+                s_scaling = rho * _norm(gh_usum)
 
                 # BART counts real numbers, which is twice the complex ones.
                 m = 2 * sum(math.prod(self._shape(t)) for t in self.terms)
@@ -590,9 +619,15 @@ def _admm() -> type:
             """BART's ``tau`` and ``rho`` moves, and hogwild's doubling."""
             sc = 1.0
 
-            if params.get("dynamic_tau", False) and s_norm:
+            if params.get("dynamic_tau", False):
                 tau_max = params.get("tau_max", 20.0)
-                t = math.sqrt(r_norm / s_norm)
+                # `sqrt(r_norm / s_norm)` with both at zero -- which is what
+                # `fast` leaves them at -- is a NaN, and every comparison
+                # below is then false, so `tau` goes to its ceiling.  BART
+                # does not guard it either.
+                # `sqrt(r_norm / s_norm)` over two floats: the division is a
+                # single-precision one, and only the root is taken in double.
+                t = math.sqrt(_single(r_norm / s_norm)) if s_norm else float("nan")
                 if tau_max > t >= 1.0:
                     tau = _single(t)
                 elif 1.0 > t > 1.0 / tau_max:
@@ -608,7 +643,7 @@ def _admm() -> type:
                 if r > mu * s:
                     sc = tau
                 elif s > mu * r:
-                    sc = 1.0 / tau
+                    sc = _single(1.0 / tau)
 
             if params.get("hogwild", False):
                 self._hw_k = getattr(self, "_hw_k", 0) + 1
@@ -618,8 +653,11 @@ def _admm() -> type:
 
             if 1.0 != sc:
                 rho = _single(rho * sc)
+                # `smul(z_dims[j], 1. / sc, u[j], u[j])`: the reciprocal once,
+                # as a float, and the vector scaled by it.
+                back = _single(1.0 / sc)
                 for j in range(len(u)):
-                    u[j] = u[j] / sc
+                    u[j] = back * u[j]
 
             return rho, tau
 
@@ -708,11 +746,9 @@ def _pridu() -> type:
                     for t in self.terms
                 ]
 
-            op = physics.op
-
             # The data term's dual, through its resolvent.
             previous = adjoint_dual
-            step = sigma * _batched(op.normal, avg, op.ishape) + adjoint_dual
+            step = sigma * cur_data_fidelity.normal(avg, physics) + adjoint_dual
             # `axpbz(Ahu_new, 1. / (1. + sigma), Ahu_old, -1. * sigma / (1. + sigma), xadj)`:
             # both coefficients are worked out in a double and rounded to the
             # float each vector is scaled by.
@@ -748,7 +784,9 @@ def _pridu() -> type:
             res1 = _single(_single(_norm(x - previous_x)) / sigma)
 
             if cur_params.get("adaptive_step", False):
-                sigma, tau = self._adapt(x - previous_x, sigma, tau, cur_params, op)
+                sigma, tau = self._adapt(
+                    x - previous_x, sigma, tau, cur_params, cur_data_fidelity, physics
+                )
 
             avg = (1.0 + theta) * x - theta * previous_x
 
@@ -769,17 +807,18 @@ def _pridu() -> type:
                 "it": k + 1,
             }
 
-        def _adapt(self, delta, sigma, tau, params, op):
+        def _adapt(self, delta, sigma, tau, params, cur_data_fidelity, physics):
             """BART's step adaptation: the ratio of the move to what the
             operator makes of it, clipped just under ``sqrt(sigma tau)``."""
             # `float norm_Kx`, and each `+=` rounds back to a float: the
             # terms are summed one at a time, not worked out together and
-            # rounded once.
+            # rounded once.  With a single dual term the two are the same
+            # number; with a dual and the data term they are not.
             squared = 0.0
             for term in self.terms:
                 moved = term.apply_transform(delta, self.image_shape)
                 squared = _single(squared + _norm(moved) ** 2)
-            normal = _batched(op.normal, delta, op.ishape)
+            normal = cur_data_fidelity.normal(delta, physics)
             squared = _single(squared + _dot(normal, delta))
 
             norm_kx = _single(math.sqrt(max(squared, 0.0)))

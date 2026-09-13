@@ -158,6 +158,7 @@ SYMBOLS = (
     "bartorch_linop_adjoint",
     "bartorch_linop_normal",
     "bartorch_linop_free",
+    "bartorch_maxeigen",
     "bartorch_solve",
     "bartorch_solve_error",
     "bartorch_scaling_norm",
@@ -166,6 +167,8 @@ SYMBOLS = (
     "bartorch_prox_apply",
     "bartorch_prox_transform_apply",
     "bartorch_prox_transform",
+    "bartorch_prox_transform_is_identity",
+    "bartorch_prox_rewind",
     "bartorch_prox_free",
     "bartorch_nlop_callback",
     "bartorch_nlop_from_linop",
@@ -610,6 +613,15 @@ def bind(lib: ctypes.CDLL) -> ctypes.CDLL:
     lib.bartorch_linop_normal.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
     lib.bartorch_linop_free.restype = None
     lib.bartorch_linop_free.argtypes = [ctypes.c_void_p]
+    lib.bartorch_maxeigen.restype = ctypes.c_int
+    lib.bartorch_maxeigen.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_float,
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_double),
+    ]
     lib.bartorch_solve.restype = ctypes.c_int
     lib.bartorch_solve.argtypes = [
         ctypes.c_void_p,
@@ -629,6 +641,10 @@ def bind(lib: ctypes.CDLL) -> ctypes.CDLL:
         ctypes.c_float,
         ctypes.c_int,
         ctypes.c_float,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
         ctypes.c_float,
         ctypes.c_float,
         ctypes.c_float,
@@ -684,6 +700,10 @@ def bind(lib: ctypes.CDLL) -> ctypes.CDLL:
     ]
     lib.bartorch_prox_transform.restype = ctypes.c_void_p
     lib.bartorch_prox_transform.argtypes = [ctypes.c_void_p]
+    lib.bartorch_prox_transform_is_identity.restype = ctypes.c_int
+    lib.bartorch_prox_transform_is_identity.argtypes = [ctypes.c_void_p]
+    lib.bartorch_prox_rewind.restype = ctypes.c_int
+    lib.bartorch_prox_rewind.argtypes = [ctypes.c_void_p]
     lib.bartorch_prox_free.restype = None
     lib.bartorch_prox_free.argtypes = [ctypes.c_void_p]
     lib.bartorch_nlop_callback.restype = ctypes.c_void_p

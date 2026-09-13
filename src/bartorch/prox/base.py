@@ -249,6 +249,44 @@ class Regularizer(abc.ABC):
             raise
         return _Transform(ptr, ishape, oshape)
 
+    def rewind(self, image_shape: tuple[int, ...]) -> None:
+        """Put this term's own random generator back to where it started.
+
+        A wavelet threshold spins its transform by a shift drawn from a
+        generator of its own, seeded at one when BART makes the operator.  The
+        tool builds a fresh operator per run; a term here is kept, so a solve
+        rewinds it and a reused term answers as the tool does.  Every solver
+        does this before it iterates, whether the loop is BART's or written
+        out here; a term with no such generator is left alone, which is most
+        of them.
+        """
+        handle = self.build(tuple(image_shape))
+        with _lock:
+            code = library().bartorch_prox_rewind(handle)
+        if code != 0:
+            raise BartError(f"{self!r} could not be rewound")
+
+    def transform_is_identity(self, image_shape: tuple[int, ...]) -> bool:
+        """Whether that transform is the identity, as BART decides it.
+
+        Not a question about shapes: the Laplace term's transform has the
+        image's shape and is a convolution, and total variation's has a rank
+        BART cannot hand over at all.  It is `linop_is_identity` over the
+        operator itself, which is what `iter2_chambolle_pock` asks of the
+        first term before making it the primal proximal step rather than a
+        dual.
+
+        Returns
+        -------
+        bool
+        """
+        handle = self.build(tuple(image_shape))
+        with _lock:
+            answer = library().bartorch_prox_transform_is_identity(handle)
+        if answer < 0:
+            raise BartError(f"{self!r} could not be asked about its transform")
+        return 1 == answer
+
     def _options(self) -> tuple[int, str, int]:
         """Block size, wavelet family and shift mode for ``opt_reg_configure``.
 

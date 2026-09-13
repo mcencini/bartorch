@@ -159,6 +159,11 @@ def long_out() -> ctypes.c_long:
     return ctypes.c_long()
 
 
+def double_out() -> ctypes.c_double:
+    """A double the library writes into; read it back off ``.value``."""
+    return ctypes.c_double()
+
+
 def out_pointer() -> ctypes.c_void_p:
     """An address the library writes into; read it back off ``.value``."""
     return ctypes.c_void_p()
