@@ -202,6 +202,11 @@ typedef struct bartorch_prox_s bartorch_prox;
 typedef struct bartorch_nlop_s bartorch_nlop;
 typedef struct bartorch_noir_s bartorch_noir;
 typedef int (*bartorch_apply_fn)(void* ctx, void* dst, const void* src);
+/* A many-argument apply: `args` holds the output buffers and then the input
+ * ones, which is the order `nlop_generic_create` passes them in. */
+typedef int (*bartorch_generic_apply_fn)(void* ctx, int N, void** args);
+/* One derivative, or its adjoint, for the pair of arguments `(o, i)`. */
+typedef int (*bartorch_pair_apply_fn)(void* ctx, int o, int i, void* dst, const void* src);
 typedef void (*bartorch_release_fn)(void* ctx);
 
 BARTORCH_API bartorch_linop* bartorch_linop_callback(int ON, const long* odims, int IN, const long* idims,
@@ -417,6 +422,24 @@ BARTORCH_API void bartorch_prox_free(bartorch_prox* h);
 
 BARTORCH_API bartorch_nlop* bartorch_nlop_callback(int ON, const long* odims, int IN, const long* idims,
 		bartorch_apply_fn forward, bartorch_apply_fn derivative, bartorch_apply_fn adjoint,
+		void* ctx, bartorch_release_fn release);
+
+/* The same, for an operator of many arguments.
+ *
+ * `nlop_generic_create`.  The shapes arrive flat, one argument's dimension
+ * vector after another's: `OO` outputs of rank `ON`, then `II` inputs of rank
+ * `IN`.  The forward callback is handed every buffer at once -- the outputs
+ * first and then the inputs, which is BART's order -- and the derivative and
+ * its adjoint are handed the pair `(o, i)` they are being asked for.
+ *
+ * What this is for is a Python function with more than one argument standing
+ * inside a BART graph: a denoiser whose weights are an *input* rather than
+ * something it closed over, so that a gradient reaches them. */
+BARTORCH_API bartorch_nlop* bartorch_nlop_callback_generic(int OO, int ON, const long* odims,
+		int II, int IN, const long* idims,
+		bartorch_generic_apply_fn forward,
+		bartorch_pair_apply_fn derivative,
+		bartorch_pair_apply_fn adjoint,
 		void* ctx, bartorch_release_fn release);
 BARTORCH_API bartorch_nlop* bartorch_nlop_from_linop(const bartorch_linop* lin);
 BARTORCH_API bartorch_nlop* bartorch_nlop_chain(const bartorch_nlop* a, const bartorch_nlop* b);

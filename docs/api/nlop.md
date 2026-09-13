@@ -200,11 +200,24 @@ whole = nlop.chain(nlop.chain(first, prior, output=0, input=0), second, output=0
 
 That operator differentiates by its own arguments -- data, iterate, centre,
 weight -- with `FromTorch` answering for the prior through `torch.func`'s jvp
-and vjp. What it does *not* do is train the prior: a weight the denoiser
-closed over is not an argument of anything BART knows about, so no gradient
-reaches it. Composing is what makes the network one operator; keeping the loop
-in Python is what trains a denoiser. They are alternatives today, not the same
-thing.
+and vjp.
+
+**The prior's weights train through it too, if they are arguments.** A weight
+the denoiser *closes over* is not an argument of anything BART knows about, so
+no gradient reaches it. Give the function the weights instead and they become
+inputs of the network:
+
+```python
+prior = nlop.FromTorch(lambda x, w: w * x, [first.state_shape, ()], first.state_shape)
+whole = nlop.chain(nlop.chain(first, prior, output=0, input=0), second, output=0, input=1)
+...
+whole(y, x0, alpha, weight, ...).abs().square().sum().backward()   # reaches `weight`
+```
+
+BART applies the whole network and torch reaches every one of its arguments,
+the prior's parameters included. A real parameter rides in the real part of a
+complex one, because BART's operators are complex throughout, so its gradient
+comes back complex and the real part is the one to take.
 
 The iterate is the image and the coil coefficients laid end to end; `start()`
 makes the one BART starts from, `split()` and `join()` take it apart and put it
@@ -224,6 +237,19 @@ that has to mean something in the coil coefficients wants a gentler weighting:
 `sobolev=(220.0, 8.0)`.
 
 ## Python-defined operators
+
+One argument or many.  A function of several tensors becomes an `nlop` of
+several inputs -- `FromTorch(fn, [shape, ()], shape)` for a function of a
+tensor and a scalar -- which is what lets a denoiser's weights be *arguments*
+of a BART graph rather than something the function closed over, and so what
+lets a gradient reach them when the graph is BART's to apply.
+
+With several arguments the derivative and its adjoint are asked for a pair:
+`derivative(o, i, dx)` is the derivative of output `o` by input `i`, and
+`adjoint(o, i, dy)` the adjoint of that. {class}`FromTorch` works them out
+with `torch.func`, zeroing the tangent in every argument but the one it was
+asked about. The single-argument forms are unchanged and still go through
+BART's single-argument constructor.
 
 ```{eval-rst}
 .. autosummary::

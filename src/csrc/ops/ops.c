@@ -1104,6 +1104,124 @@ static int nlop_callback_worker(void* p)
 	return 0;
 }
 
+/* --- host-defined nonlinear operator of many arguments ---------------------- */
+
+struct cb_generic_data {
+
+	nlop_data_t super;
+	bartorch_generic_apply_fn forward;
+	bartorch_pair_apply_fn derivative;
+	bartorch_pair_apply_fn adjoint;
+	void* ctx;
+	bartorch_release_fn release;
+};
+
+static DEF_TYPEID(cb_generic_data);
+
+static void cbg_forward(const nlop_data_t* _d, int N, complex float* args[N])
+{
+	const struct cb_generic_data* d = CAST_DOWN(cb_generic_data, _d);
+
+	if (0 != d->forward(d->ctx, N, (void**)args))
+		error("bartorch: forward callback failed\n");
+}
+
+static void cbg_derivative(const nlop_data_t* _d, int o, int i, complex float* dst, const complex float* src)
+{
+	const struct cb_generic_data* d = CAST_DOWN(cb_generic_data, _d);
+
+	if (0 != d->derivative(d->ctx, o, i, dst, src))
+		error("bartorch: derivative callback failed\n");
+}
+
+static void cbg_adjoint(const nlop_data_t* _d, int o, int i, complex float* dst, const complex float* src)
+{
+	const struct cb_generic_data* d = CAST_DOWN(cb_generic_data, _d);
+
+	if (0 != d->adjoint(d->ctx, o, i, dst, src))
+		error("bartorch: adjoint callback failed\n");
+}
+
+static void cbg_del(const nlop_data_t* _d)
+{
+	const struct cb_generic_data* d = CAST_DOWN(cb_generic_data, _d);
+
+	if (NULL != d->release)
+		d->release(d->ctx);
+
+	xfree(d);
+}
+
+struct nlop_callback_generic_args {
+
+	int OO; int ON; const long* odims;
+	int II; int IN; const long* idims;
+	bartorch_generic_apply_fn forward;
+	bartorch_pair_apply_fn derivative;
+	bartorch_pair_apply_fn adjoint;
+	void* ctx; bartorch_release_fn release;
+	bartorch_nlop* result;
+};
+
+static int nlop_callback_generic_worker(void* p)
+{
+	struct nlop_callback_generic_args* a = p;
+
+	PTR_ALLOC(struct cb_generic_data, d);
+	SET_TYPEID(cb_generic_data, d);
+	d->super.clear_der = NULL;
+	d->super.data_der = NULL;
+	d->forward = a->forward;
+	d->derivative = a->derivative;
+	d->adjoint = a->adjoint;
+	d->ctx = a->ctx;
+	d->release = a->release;
+
+	/* The shapes arrive flat, one argument after another; BART wants them
+	 * as arrays of arrays, which is the same memory read differently. */
+	const long (*od)[a->ON] = (const long (*)[a->ON])a->odims;
+	const long (*id)[a->IN] = (const long (*)[a->IN])a->idims;
+
+	/* One derivative and one adjoint for every (input, output) pair.  The
+	 * two shims below dispatch on the pair themselves, so every entry is
+	 * the same function; what BART reads from the table is *which* pairs
+	 * exist at all. */
+	nlop_der_fun_t der[a->II][a->OO];
+	nlop_der_fun_t adj[a->II][a->OO];
+
+	for (int i = 0; i < a->II; i++) {
+
+		for (int o = 0; o < a->OO; o++) {
+
+			der[i][o] = cbg_derivative;
+			adj[i][o] = cbg_adjoint;
+		}
+	}
+
+	a->result = wrap_nlop(nlop_generic_create(a->OO, a->ON, od, a->II, a->IN, id,
+			CAST_UP(PTR_PASS(d)), cbg_forward, der, adj, NULL, NULL, cbg_del));
+	return 0;
+}
+
+bartorch_nlop* bartorch_nlop_callback_generic(int OO, int ON, const long* odims,
+		int II, int IN, const long* idims,
+		bartorch_generic_apply_fn forward,
+		bartorch_pair_apply_fn derivative,
+		bartorch_pair_apply_fn adjoint,
+		void* ctx, bartorch_release_fn release)
+{
+	if ((NULL == odims) || (NULL == idims) || (0 >= OO) || (0 >= II))
+		return NULL;
+
+	struct nlop_callback_generic_args args = {
+
+		OO, ON, odims, II, IN, idims,
+		forward, derivative, adjoint, ctx, release, NULL,
+	};
+
+	return (0 == guarded(nlop_callback_generic_worker, &args)) ? args.result : NULL;
+}
+
 bartorch_nlop* bartorch_nlop_callback(int ON, const long* odims, int IN, const long* idims,
 		bartorch_apply_fn forward, bartorch_apply_fn derivative, bartorch_apply_fn adjoint,
 		void* ctx, bartorch_release_fn release)
