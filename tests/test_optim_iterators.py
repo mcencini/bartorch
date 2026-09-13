@@ -992,6 +992,28 @@ def _pridu_agrees(ours, theirs):
         torch.testing.assert_close(ours, theirs, rtol=1e-5, atol=1e-6)
 
 
+def test_the_build_does_not_fold_a_multiply_into_an_add():
+    """`CMakeLists.txt` pins `-ffp-contract=off`, and this is what says so.
+
+    Without it clang folds the product into the add on any target that has a
+    fused multiply-add, and BART then computes something slightly different
+    from what it computes elsewhere -- which no amount of rearranging on this
+    side can follow, because torch cannot fold across two kernels.  Measured
+    on arm64 before the flag: the primal-dual solver a few times 1e-5 from the
+    library over twelve steps, and every solve carrying a quadratic weight
+    adrift as well.
+
+    If this fails, the flag has been lost from the build rather than anything
+    being wrong with the iterations.  `_pridu_agrees` keeps the rest of the
+    suite readable in that case rather than failing everywhere at once.
+    """
+    assert not _library_fuses(), (
+        "this build folds a multiply into an add, so it is not the arithmetic "
+        "the rest of the suite is checked against; `-ffp-contract=off` has "
+        "gone missing from CMakeLists.txt"
+    )
+
+
 def test_the_fusion_is_in_the_resolvent_and_not_in_the_steps():
     """Which operations it reaches, measured rather than reasoned about.
 

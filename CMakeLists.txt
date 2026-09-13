@@ -44,6 +44,28 @@ endif()
 set(CMAKE_C_FLAGS_RELEASE "-O2")
 set(CMAKE_CXX_FLAGS_RELEASE "-O2")
 
+# Do not let the compiler fold a multiply into an add.
+#
+# `vecops.c` has one kernel behind `axpy`, `xpay` and `axpbz`, and
+# `flpmath.c`'s `md_axpy` another: `dst[i] = a1 * src1[i] + a2 * src2[i]`.
+# clang's default is `-ffp-contract=on` and GCC's is `fast`, so on a target
+# with a fused multiply-add -- arm64 always, x86-64 as soon as `-march` allows
+# it -- the product is not rounded before the add, and BART computes something
+# slightly different from what it computes elsewhere.
+#
+# That would be nobody's business but the compiler's, except that this package
+# claims to reproduce BART's iterations to the bit, and it cannot fold across
+# two torch kernels.  Measured on arm64, the primal-dual solver drifted a few
+# times 1e-5 from the library over twelve steps, and every solve carrying a
+# quadratic weight drifted too, because `normaleq_l2_apply` adds it with
+# `md_axpy`.
+#
+# So the arithmetic is pinned instead: the same two roundings on every target,
+# which is what x86-64 was already doing and what every comparison in the
+# suite was checked against.  It costs the fused instruction in kernels that
+# are memory-bound anyway.
+add_compile_options(-ffp-contract=off)
+
 # ---------------------------------------------------------------------------
 # Compiler mode
 # ---------------------------------------------------------------------------
