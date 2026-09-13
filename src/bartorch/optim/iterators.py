@@ -29,6 +29,7 @@ __all__ = [  # noqa: F822
     "ADMMIteration",
     "FISTAIteration",
     "ISTIteration",
+    "PRIDUIteration",
     "NormalEquations",
     "TermPrior",
 ]
@@ -246,6 +247,38 @@ def _fista() -> type:
             )
 
     return FISTAIteration
+
+
+def _single(value: float) -> float:
+    """``value`` as the single-precision number BART would have held.
+
+    Every scalar in these iterations is a C ``float`` unless BART declares it
+    a ``double``.  Python has only doubles, so each scalar is rounded where
+    the library would have rounded it; a scalar worked out in a double and
+    rounded once at the end is a different number.
+    """
+    return float(np.float32(value))
+
+
+def _dot(a: torch.Tensor, b: torch.Tensor) -> float:
+    """``vecops.c``'s ``dot``: the products in single precision, summed in a
+    double, over the real and imaginary parts as one long vector."""
+    x = torch.view_as_real(a) if a.is_complex() else a
+    z = torch.view_as_real(b) if b.is_complex() else b
+    return float((x * z).double().sum())
+
+
+def _norm(x: torch.Tensor) -> float:
+    """``vecops.c``'s ``norm``, which is not a single-precision norm.
+
+    BART squares the components in single precision and then sums and roots
+    them in a double, and hands back the double.  Where the result is put in a
+    ``float`` the difference is rounded away; where it is squared again --
+    which is what the primal-dual step adaptation does to it -- it is not, and
+    it reaches the iterate.
+    """
+    parts = torch.view_as_real(x) if x.is_complex() else x
+    return float(torch.sqrt((parts * parts).double().sum()))
 
 
 def _ravine(told: float, t: float) -> tuple[float, float]:
@@ -568,8 +601,181 @@ def _admm() -> type:
     return ADMMIteration
 
 
+def _pridu() -> type:
+    _, _, OptimIterator = _classes()
+
+    class PRIDUIteration(OptimIterator):
+        r"""BART's primal-dual iteration, one step of it.
+
+        ``italgos.c``'s ``chambolle_pock``, which ``pics --pridu`` runs.  The
+        data term is carried as its own dual variable rather than
+        differentiated: ``A^H u`` is updated through the resolvent
+
+        ``A^H u <- (sigma A^H A x_avg + A^H u - sigma A^H y) / (1 + sigma)``
+
+        and each regularization term gets a dual of its own, updated through
+        its proximal operator's conjugate.  The primal step is a descent on
+        the duals followed by ``prox2``, and ``x_avg`` extrapolates.
+
+        ``pics`` takes ``sigma = sqrt(step) * ratio`` and
+        ``tau = sqrt(step) / ratio`` with ``theta = 1``, and ``hogwild`` there
+        is a decay of 0.95 a step rather than a halving.
+
+        The first term stands apart, as it does in ``iter2_chambolle_pock``:
+        a term whose transform is the identity becomes the primal ``prox2``
+        and the rest become duals.  Without such a term ``prox2`` is the
+        identity, which is what ``prox_zero_create`` is.
+
+        Notes
+        -----
+        This is the one iteration here whose answer depends on how BART was
+        compiled.  ``vecops.c`` has a single kernel behind ``axpy``, ``xpay``
+        and ``axpbz``, ``dst[i] = a1 * src1[i] + a2 * src2[i]``, and clang
+        folds the first product into the add where the hardware has a fused
+        multiply-add -- arm64 does, the x86-64 baseline does not.  A fused
+        multiply-add does not round the product, and torch cannot fuse across
+        two kernels.
+
+        Every other iteration escapes it because its updates are ``axpy``,
+        whose ``a1`` is one: folding an exact product in changes nothing.  The
+        data term's resolvent here is an ``xpay`` and an ``axpbz`` with two
+        real coefficients, so on a platform that folds them this iteration is
+        within a few times 1e-7 of the library rather than the same bits.
+        """
+
+        def __init__(self, terms, image_shape, primal=None, **kwargs):
+            kwargs.setdefault("has_cost", False)
+            super().__init__(**kwargs)
+            self.terms = list(terms)
+            self.primal = primal
+            self.image_shape = tuple(image_shape)
+
+        def _prox2(self, x, gamma):
+            if self.primal is None:
+                return x
+            return self.primal.prox(x, gamma, image_shape=self.image_shape)
+
+        def forward(self, X, cur_data_fidelity, cur_prior, cur_params, y, physics, *a, **kw):
+            x = X["est"][0]
+            avg = X.get("avg", x)
+            duals = X.get("duals")
+            adjoint_dual = X.get("adjoint_dual", torch.zeros_like(x))
+            k = X.get("it", 0)
+
+            # `float sigma, tau` in `chambolle_pock`, and so are the residuals.
+            sigma = _single(X.get("sigma", cur_params["sigma"]))
+            tau = _single(X.get("tau", cur_params["tau"]))
+            theta = cur_params.get("theta", 1.0)
+            alpha = cur_params.get("alpha", 1.0)
+            decay = cur_params.get("decay", 1.0)
+            # `float lambda = (float)pow(decay, i)`, from a float32 `decay`:
+            # the power is taken in double and rounded once at the end.
+            lam = 1.0 if 1.0 == decay else float(np.float32(float(np.float32(decay)) ** k))
+
+            if duals is None:
+                duals = [
+                    torch.zeros(t.prox_shape(self.image_shape), dtype=x.dtype, device=x.device)
+                    for t in self.terms
+                ]
+
+            op = physics.op
+
+            # The data term's dual, through its resolvent.
+            previous = adjoint_dual
+            step = sigma * _batched(op.normal, avg, op.ishape) + adjoint_dual
+            # `axpbz(Ahu_new, 1. / (1. + sigma), Ahu_old, -1. * sigma / (1. + sigma), xadj)`:
+            # both coefficients are worked out in a double and rounded to the
+            # float each vector is scaled by.
+            keep = _single(1.0 / (1.0 + sigma))
+            pull = _single(-1.0 * sigma / (1.0 + sigma))
+            fresh = keep * step + pull * cur_data_fidelity._adjoint_data(y, physics)
+            adjoint_dual = lam * fresh + (1.0 - lam) * previous
+            change = adjoint_dual - previous
+            moved = float(torch.real((change.conj() * change).sum()))
+
+            # Each regularization term's, through the conjugate of its prox.
+            for j, term in enumerate(self.terms):
+                # `axpy(u_old, 1. / sigma, u[j])`: the reciprocal is worked
+                # out once, in a double, and rounded to the float the vector
+                # is scaled by -- not a division of the vector.
+                over = term.apply_transform(avg, self.image_shape) + _single(1.0 / sigma) * duals[j]
+                thresholded = term.prox(over, alpha / sigma, image_shape=self.image_shape)
+                fresh_j = sigma * over - sigma * thresholded
+                was = duals[j]
+                duals[j] = lam * fresh_j + (1.0 - lam) * was
+                moved += float(torch.real(((duals[j] - was).conj() * (duals[j] - was)).sum()))
+
+            # The primal step.
+            previous_x = x
+            x = x - tau * adjoint_dual
+            for j, term in enumerate(self.terms):
+                x = x - tau * term.apply_transform(duals[j], self.image_shape, mode="adjoint")
+            x = lam * self._prox2(x, tau * alpha) + (1.0 - lam) * previous_x
+
+            # `res2` is measured against the step `tau` had before the
+            # adaptation, as it is in `chambolle_pock`.
+            res2 = _single(_single(math.sqrt(max(moved, 0.0))) / tau)
+            res1 = _single(_single(_norm(x - previous_x)) / sigma)
+
+            if cur_params.get("adaptive_step", False):
+                sigma, tau = self._adapt(x - previous_x, sigma, tau, cur_params, op)
+
+            avg = (1.0 + theta) * x - theta * previous_x
+
+            # `iter2_chambolle_pock` leaves `eps` at one, so the tolerance is
+            # absolute rather than relative to the data -- unlike every other
+            # iteration here, where it is scaled by the norm of `A^H y`.
+            epsilon = cur_params.get("tol", 1e-4)
+
+            return {
+                "est": (x, x),
+                "cost": None,
+                "avg": avg,
+                "duals": duals,
+                "adjoint_dual": adjoint_dual,
+                "sigma": sigma,
+                "tau": tau,
+                "done": epsilon > (res1 + res2),
+                "it": k + 1,
+            }
+
+        def _adapt(self, delta, sigma, tau, params, op):
+            """BART's step adaptation: the ratio of the move to what the
+            operator makes of it, clipped just under ``sqrt(sigma tau)``."""
+            # `float norm_Kx`, and each `+=` rounds back to a float: the
+            # terms are summed one at a time, not worked out together and
+            # rounded once.
+            squared = 0.0
+            for term in self.terms:
+                moved = term.apply_transform(delta, self.image_shape)
+                squared = _single(squared + _norm(moved) ** 2)
+            normal = _batched(op.normal, delta, op.ishape)
+            squared = _single(squared + _dot(normal, delta))
+
+            norm_kx = _single(math.sqrt(max(squared, 0.0)))
+            if 0.0 == norm_kx:
+                return sigma, tau
+
+            # Every one of these is a single-precision operation in C, down to
+            # the literal: `0.95f` is not 0.95, and `sqrtf(sigma * tau)` roots
+            # a product that has already been rounded.
+            ratio = _single(_single(_norm(delta)) / norm_kx)
+            root = _single(math.sqrt(_single(sigma * tau)))
+            threshold = _single(_single(0.95) * root)
+            if 0.0 != ratio < root:
+                chosen = min(threshold, ratio)
+            else:
+                chosen = root
+
+            r = _single(params.get("sigma_tau_ratio", 1.0))
+            return _single(chosen * r), _single(chosen / r)
+
+    return PRIDUIteration
+
+
 _BUILDERS = {
     "ADMMIteration": _admm,
+    "PRIDUIteration": _pridu,
     "NormalEquations": _normal_equations,
     "TermPrior": _term_prior,
     "ISTIteration": _ist,
