@@ -187,3 +187,71 @@ def test_cycle_spinning_makes_the_wavelet_threshold_a_random_one():
 def test_a_term_builds_its_operator_once_per_shape():
     term = prox.L1(0.1)
     assert term.build(SHAPE) == term.build(SHAPE)
+
+
+# --- in a solve that is being differentiated ---------------------------------
+
+
+def test_the_transform_backward_pass_is_its_transpose():
+    """``<G x, v> == <x, G^H v>``, read off autograd rather than asserted.
+
+    The transform is where a differentiated step passes through a term, so
+    what it records has to be the adjoint BART would have applied.
+    """
+    term = prox.TotalVariation(AXES, 0.01)
+    transformed = term.prox_shape(SHAPE)
+
+    x = _rand(*SHAPE).requires_grad_(True)
+    v = _rand(*transformed)
+    (gradient,) = torch.autograd.grad(term.apply_transform(x, SHAPE), x, grad_outputs=v)
+    torch.testing.assert_close(
+        gradient, term.apply_transform(v, SHAPE, mode="adjoint"), rtol=1e-5, atol=1e-6
+    )
+
+
+def test_the_normal_of_a_transform_is_its_own_transpose():
+    term = prox.TotalVariation(AXES, 0.01)
+    x = _rand(*SHAPE).requires_grad_(True)
+    v = _rand(*SHAPE)
+    (gradient,) = torch.autograd.grad(
+        term.apply_transform(x, SHAPE, mode="normal"), x, grad_outputs=v
+    )
+    torch.testing.assert_close(
+        gradient, term.apply_transform(v, SHAPE, mode="normal"), rtol=1e-5, atol=1e-6
+    )
+
+
+def test_recording_the_transform_does_not_change_it():
+    term = prox.Laplace(AXES, 0.01)
+    x = _rand(*SHAPE)
+    plain = term.apply_transform(x, SHAPE)
+    recorded = term.apply_transform(x.clone().requires_grad_(True), SHAPE)
+    assert recorded.grad_fn is not None
+    assert torch.equal(plain, recorded.detach())
+
+
+def test_the_proximal_operator_refuses_a_gradient_rather_than_dropping_one():
+    """BART's is an ``operator_p_s`` and has no derivative to give, so a term
+    inside a differentiated iteration says so instead of contributing the
+    gradient of the constant map."""
+    term = prox.L1(0.1)
+    with pytest.raises(ValueError, match="carries no derivative"):
+        term.prox(_rand(*SHAPE).requires_grad_(True), 1.0)
+
+
+def test_a_frozen_term_thresholds_the_same_way_and_says_it_meant_to():
+    term = prox.L1(0.1)
+    x = _rand(*SHAPE)
+    torch.testing.assert_close(prox.frozen(term).prox(x, 0.5), term.prox(x, 0.5), rtol=0, atol=0)
+
+    tracked = x.clone().requires_grad_(True)
+    made = prox.frozen(term).prox(tracked, 0.5)
+    assert made.grad_fn is None
+
+
+def test_a_frozen_term_is_still_the_term_bart_was_given():
+    term = prox.frozen(prox.Wavelet(AXES, 0.01))
+    assert isinstance(term, prox.Regularizer)
+    assert "W" == term.kind
+    assert term.prox_shape(SHAPE) == prox.Wavelet(AXES, 0.01).prox_shape(SHAPE)
+    assert "frozen(" in repr(term)

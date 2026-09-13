@@ -13,7 +13,7 @@ from bartorch._dispatch import BartError, _ensure_ready, _lock, _on_device
 from bartorch._lib import DIMS, library
 from bartorch._operator import as_operand, axes_flags
 
-__all__ = ["Regularizer"]
+__all__ = ["Regularizer", "frozen"]
 
 
 class Regularizer(abc.ABC):
@@ -145,6 +145,18 @@ class Regularizer(abc.ABC):
         --------
         >>> prox.Wavelet((-1, -2), 0.01).prox(image, gamma=0.95)
         """
+        from bartorch.linop.base import _tracking
+
+        if _tracking(x):
+            raise ValueError(
+                f"{self!r} is one of BART's proximal operators and carries no derivative: "
+                "`operator_p_fun_t` is (data, mu, dst, src), with nowhere for one to live, "
+                "so an iteration with this term in it cannot be differentiated.  Put a "
+                "denoiser where the term goes -- `optim.admm(y, A, denoiser)` differentiates "
+                "end to end -- or `prox.frozen(term)` to say that this one is meant to be a "
+                "constant in the graph"
+            )
+
         image_shape = tuple(x.shape) if image_shape is None else tuple(image_shape)
         shape = self.prox_shape(image_shape)
         if tuple(x.shape) != shape:
@@ -189,7 +201,29 @@ class Regularizer(abc.ABC):
         Returns
         -------
         torch.Tensor
+
+        Notes
+        -----
+        Recorded for autograd when ``x`` carries a gradient: the backward pass
+        is the transpose, which is the other of ``forward`` and ``adjoint``,
+        and ``normal`` itself.  An unrolled network differentiates through the
+        transform this way; the proximal operator behind it is BART's and has
+        no derivative, which is what the denoiser slot is for.
         """
+        from bartorch.linop.base import _tracking
+
+        if _tracking(x):
+            from bartorch.prox.autograd import apply_transform
+
+            return apply_transform(
+                self, x, tuple(image_shape if image_shape is not None else x.shape), mode
+            )
+        return self._transform_apply(x, image_shape, mode)
+
+    def _transform_apply(
+        self, x: torch.Tensor, image_shape: tuple[int, ...] | None = None, mode: str = "forward"
+    ) -> torch.Tensor:
+        """:meth:`apply_transform`, without recording for autograd."""
         modes = {"forward": 0, "adjoint": 1, "normal": 2}
         if mode not in modes:
             raise ValueError(f"mode is forward, adjoint or normal, not {mode!r}")
@@ -451,3 +485,54 @@ def _command_line(
 def _release(handle: int) -> None:
     with _lock:
         library().bartorch_prox_free(handle)
+
+
+class _Frozen:
+    """A term whose proximal operator is a constant in the graph.
+
+    Everything but :meth:`prox` is the term's own, and that one detaches
+    first.  Registered as a :class:`Regularizer` because it is one as far as
+    BART is concerned -- detaching changes no numbers -- so a solve with it in
+    still has a library route and still answers with the library's bits.
+    """
+
+    def __init__(self, term):
+        self.term = term
+
+    def __getattr__(self, name):
+        # `term` itself is never delegated: asking for it before __init__ has
+        # set it -- which is what unpickling does -- would recur forever.
+        if "term" == name:
+            raise AttributeError(name)
+        return getattr(self.term, name)
+
+    def prox(self, x, gamma: float = 1.0, *, image_shape=None):
+        return self.term.prox(x.detach(), gamma, image_shape=image_shape)
+
+    def __repr__(self) -> str:
+        return f"frozen({self.term!r})"
+
+
+Regularizer.register(_Frozen)
+
+
+def frozen(term: Regularizer) -> Regularizer:
+    """``term``, with its proximal operator a constant in a differentiated solve.
+
+    BART's proximal operators carry no derivative, so
+    :meth:`Regularizer.prox` refuses a tensor that is being differentiated
+    rather than quietly contributing a wrong gradient -- soft thresholding is
+    not the constant map, and treating it as one zeroes the whole path through
+    the prior.  This is how to say that the refusal is not what you want: the
+    term thresholds as it always did, and the gradient is the one the
+    iteration has with this term held fixed.
+
+    What it is for is the mixed solve -- a denoiser in one slot and a term of
+    BART's own in another -- where the gradient is meant to reach the denoiser
+    and the other term is furniture.
+
+    Examples
+    --------
+    >>> optim.admm(y, A, [denoiser, prox.frozen(prox.Wavelet((-1, -2), 0.01))])
+    """
+    return _Frozen(term)

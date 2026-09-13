@@ -337,7 +337,7 @@ def _start(A, y: torch.Tensor, x0: torch.Tensor | None, terms: Sequence[Regulari
 def _empty(adjoint: torch.Tensor) -> bool:
     """``checkeps``: BART declines to iterate on data whose adjoint has no
     norm, or whose norm is not a normal number, and leaves the image be."""
-    eps = float(np.float32(float(torch.linalg.vector_norm(adjoint))))
+    eps = float(np.float32(float(torch.linalg.vector_norm(adjoint.detach()))))
     if 0.0 == eps:
         return True
     # `isnormal`, which is finite and not a subnormal.
@@ -406,6 +406,10 @@ class _Solver:
         A solver holding a ``deepinv`` prior has no library route at all: BART
         has no way to be handed a denoiser, and this says so rather than
         substituting something else.
+
+        Nothing here is recorded for autograd, whichever solver it is: the
+        loop is the library's and there is no graph to be had from it.  That
+        is what :meth:`__call__` is for.
         """
         if self._foreign:
             raise ValueError(
@@ -501,20 +505,64 @@ class CG(_Solver):
 
         The count is what an alternating-direction solver budgets by, and the
         only way to see it from outside the library.
+
+        When ``y`` carries a gradient the solve is recorded: the forward pass
+        is the same iteration and the same bits, and the backward pass is
+        another solve with the same operator, as
+        :mod:`bartorch.optim.autograd` describes.  That is what lets a solve
+        stand inside an unrolled network -- the data-consistency layer of a
+        MoDL, say -- rather than only at the end of one.
         """
+        from bartorch.linop.base import _tracking
+
         if self.terms:
             A, y = _stacked(A, y, self.terms)
 
+        def forward(data: torch.Tensor) -> torch.Tensor:
+            return _solve(
+                A,
+                data,
+                x0,
+                self._algorithm,
+                self.regularizers,
+                maxiter=self.maxiter,
+                cclambda=self.cclambda,
+                precond=self.precond,
+                steps=steps,
+                **self._settings(),
+            )
+
+        if not _tracking(y):
+            return forward(y)
+
+        from bartorch.optim.autograd import apply_solve
+
+        return apply_solve(y, forward, lambda g: A.forward(self._inverse(A, g)))
+
+    def _inverse(self, A, g: torch.Tensor) -> torch.Tensor:
+        """``N^-1 g``, driven from the right-hand side rather than from data.
+
+        ``_WithNormal(Identity, A.gram())`` is an operator whose adjoint is the
+        identity and whose normal is ``A^H A``, so conjugate gradients on it
+        solves ``N w = g`` instead of ``N w = A^H g``.  The same terms and the
+        same weight go in, so it is the same ``N`` the forward pass inverted;
+        and an encoding built with ``toeplitz=True`` keeps its point-spread
+        convolution through :meth:`~bartorch.linop.LinearOperator.gram`, so the
+        backward pass costs what the forward one does.
+        """
+        from bartorch.linop import Identity
+        from bartorch.linop.base import _WithNormal
+
+        shape = A.ishape
         return _solve(
-            A,
-            y,
-            x0,
+            _WithNormal(Identity(shape), A.gram()),
+            g,
+            None,
             self._algorithm,
             self.regularizers,
             maxiter=self.maxiter,
             cclambda=self.cclambda,
             precond=self.precond,
-            steps=steps,
             **self._settings(),
         )
 

@@ -109,6 +109,44 @@ nothing to differentiate through; one written out can be, and `optim_builder`
 takes these straight into `BaseOptim` with `unfold=True` or `DEQ`.  The cost
 is a few axpys on an image per step, which is nothing beside a transform.
 
+### What differentiates, and what does not
+
+Every operator a step applies is recorded, so an unrolled iteration is a torch
+graph over BART's arithmetic: the encoding, its normal operator
+(`LinearOperator.A_adjoint_A`, the recording counterpart of `normal`), the
+transform in front of a term, and the linear solve in ADMM's x-update.  Put a
+denoiser where a term goes and the gradient reaches whatever is inside it:
+
+```python
+x = optim.admm(y, A, my_network, maxiter=10, cg_maxiter=8)
+x.abs().square().sum().backward()      # reaches my_network's parameters
+```
+
+Two things are deliberately not in the graph.
+
+BART's proximal operators have no derivative to give -- `operator_p_fun_t` is
+`(data, mu, dst, src)`, with nowhere for one to live -- so
+`Regularizer.prox` refuses a tensor that carries a gradient rather than
+contributing the gradient of the constant map, which is not what soft
+thresholding is.  {func}`bartorch.prox.frozen` says that a constant is what
+was meant, for the mixed solve where a denoiser is in one slot and a term of
+BART's own is furniture in another.
+
+And the residual norms that steer $\rho$, $\tau$ and the stopping test are
+read as numbers.  They are BART's schedule for the iteration rather than part
+of the model it solves, and an unrolled network differentiates through the
+iterate, not through the schedule that steered it.
+
+`ADMMIteration`'s x-update differentiates by implicit differentiation rather
+than by unrolling the conjugate gradients inside it: $x=N^{-1}A^Hy$ is linear
+in $y$, so the backward pass is one more solve with the same operator.  That
+is what BART does for the one solver it made an `nlop` -- `norm_inv_der_src`
+and `norm_inv_adj_src` in `src/nlops/norm_inv.c` each run a solve of their own
+-- and it means a truncated forward pass gets the converged derivative, and a
+warm start carries no gradient because the solution of a linear system does
+not depend on where the iteration began.  `optim.CG` is differentiable for the
+same reason and on its own, which is the data-consistency layer of a MoDL.
+
 ```{eval-rst}
 .. currentmodule:: bartorch.optim.iterators
 

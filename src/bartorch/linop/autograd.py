@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import torch
 
-__all__ = ["apply_adjoint", "apply_forward"]
+__all__ = ["apply_adjoint", "apply_forward", "apply_normal"]
 
 
 def _restore(grad: torch.Tensor, real: bool, dtype: torch.dtype) -> torch.Tensor:
@@ -55,3 +55,24 @@ def apply_forward(op, x: torch.Tensor) -> torch.Tensor:
 def apply_adjoint(op, y: torch.Tensor) -> torch.Tensor:
     """``A^H y``, recorded so that the backward pass is ``A``."""
     return _Adjoint.apply(y, op)
+
+
+class _NormalOp(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, op):  # noqa: D102
+        ctx.op = op
+        ctx.real = not x.is_complex()
+        ctx.dtype = x.dtype
+        with torch.no_grad():
+            return op.normal(x)
+
+    @staticmethod
+    def backward(ctx, grad):  # noqa: D102
+        # A^H A is its own adjoint, so the backward pass is the same operator.
+        g = ctx.op.normal(grad.resolve_conj().contiguous())
+        return _restore(g, ctx.real, ctx.dtype), None
+
+
+def apply_normal(op, x: torch.Tensor) -> torch.Tensor:
+    """``A^H A x``, recorded so that the backward pass is ``A^H A`` again."""
+    return _NormalOp.apply(x, op)

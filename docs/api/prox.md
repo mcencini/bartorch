@@ -39,6 +39,30 @@ dual, and `rewind` puts a term's own random generator back where a fresh term
 would have it -- which is what a wavelet threshold's cycle spinning draws on,
 and what makes a term kept across solves answer as the tool does.
 
+## In a solve that is being differentiated
+
+An iteration in {mod}`bartorch.optim` is a torch graph over BART's arithmetic,
+so an unrolled network or a deep-equilibrium fixed point differentiates
+through the operators in it -- including a term's transform, whose backward
+pass is its transpose.  The proximal operator is where that stops.  BART's are
+`operator_p_s`, and `operator_p_fun_t` is `(data, mu, dst, src)` with nowhere
+for a derivative to live, so `Regularizer.prox` refuses a tensor that carries
+one rather than contributing a wrong gradient: soft thresholding is not the
+constant map, and treating it as one zeroes the whole path through the prior.
+
+What goes in that slot instead is a denoiser, which differentiates on its own
+terms.  {func}`frozen` is for the mixed solve -- a denoiser in one slot and a
+term of BART's own in another -- where the gradient is meant to reach the
+denoiser and the other term is furniture.
+
+```{eval-rst}
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   frozen
+```
+
 ## Sparsity terms
 
 ```{eval-rst}
