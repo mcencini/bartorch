@@ -44,10 +44,17 @@ from bartorch.nlop.mri import (
     NoncartesianSense,
     NonlinearSense,
 )
+from bartorch.nlop.simulation import (
+    Bloch,
+    FromTorchSim,
+    InversionRecovery,
+    MultiEcho,
+)
 
 __all__ = [
     "Abs",
     "Add",
+    "Bloch",
     "Callback",
     "CartesianSense",
     "Chain",
@@ -58,8 +65,11 @@ __all__ = [
     "Exp",
     "FromLinear",
     "FromTorch",
+    "FromTorchSim",
+    "InversionRecovery",
     "Inverse",
     "Log",
+    "MultiEcho",
     "Multiply",
     "NoncartesianSense",
     "NonlinearOperator",

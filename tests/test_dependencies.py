@@ -15,6 +15,11 @@ deepinv until someone asked -- and it stopped being that when `optim.IST`,
 that runs a different loop depending on whether an extra happens to be
 installed is worse than the install it saves.
 
+torchsim is a dependency for the same reason deepinv is: `nlop.FromTorchSim`
+turns any of its simulators into a BART nonlinear operator, and
+`nlop.InversionRecovery`, `nlop.MultiEcho` and `nlop.Bloch` are `moba`'s
+families written on it, so every quantitative reconstruction here imports it.
+
 cuFINUFFT is the one that stays optional: it serves a transform on a card, and
 most machines have no card.
 
@@ -66,6 +71,29 @@ def test_deepinv_is_a_dependency_and_not_an_extra():
     assert "deepinv" not in project["optional-dependencies"], (
         "an extra named deepinv says the solvers are optional, and they are not"
     )
+
+
+def test_torchsim_is_a_dependency_and_not_an_extra():
+    """Every quantitative reconstruction here goes through it."""
+    project = _pyproject()["project"]
+    assert _requirements(project["dependencies"], "torchsim"), (
+        "nlop.FromTorchSim turns a TorchSim simulator into a BART operator and "
+        "the moba families are written on it; torchsim belongs in dependencies, "
+        "not in optional-dependencies"
+    )
+    assert "torchsim" not in project["optional-dependencies"], (
+        "an extra named torchsim says the signal models are optional, and they are not"
+    )
+
+
+def test_the_models_really_do_reach_torchsim():
+    """The claim the requirement rests on, rather than the requirement alone."""
+    from torchsim.recon import ModelOperator
+
+    from bartorch import nlop
+
+    model = nlop.MultiEcho((10.0, 40.0), (2,))
+    assert isinstance(model.model, ModelOperator)
 
 
 def test_the_solvers_really_do_reach_deepinv():
