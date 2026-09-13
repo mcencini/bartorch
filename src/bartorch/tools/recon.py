@@ -183,7 +183,7 @@ def nlinv(
     initial: torch.Tensor | None = None,
     alpha: float | None = None,
     real: bool = False,
-    normalize: bool = False,
+    normalize: bool = True,
     return_sensitivities: bool = False,
     **extra,
 ):
@@ -210,7 +210,9 @@ def nlinv(
     real : bool
         Constrain the image to be real (``-c``).
     normalize : bool
-        Normalize the sensitivities (``-N``).
+        Divide the image by the root sum of squares of the sensitivities,
+        which is what ``nlinv`` does unless told not to.  BART spells this the
+        other way round, as ``-N`` for "do not normalize".
     return_sensitivities : bool
         Also return the sensitivities, which BART writes as a second array.
     **extra
@@ -234,7 +236,8 @@ def nlinv(
         flags["a"] = alpha
     if real:
         flags["c"] = True
-    if normalize:
+    if not normalize:
+        # BART's -N is "do not normalize", and its own default is to do it.
         flags["N"] = True
     return dispatch("nlinv", [kspace], None, _n_out=2 if return_sensitivities else 1, **flags)
 

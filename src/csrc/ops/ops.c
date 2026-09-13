@@ -32,6 +32,8 @@
 #include "sense/model.h"
 #include "noncart/nufft.h"
 
+#include "noir/model2.h"
+
 #include "nlops/cast.h"
 #include "nlops/chain.h"
 #include "nlops/const.h"
@@ -61,6 +63,8 @@ const struct linop_s* bartorch_linop_unwrap(const struct bartorch_linop_s* h)
 	return (NULL == h) ? NULL : h->op;
 }
 struct bartorch_nlop_s { const struct nlop_s* op; };
+
+struct bartorch_noir_s { struct noir2_s model; };
 
 
 /* --- guarded execution ---------------------------------------------------- */
@@ -1420,6 +1424,32 @@ bartorch_nlop* bartorch_nlop_permute(const bartorch_nlop* x, int outputs, int n,
 
 struct nlop_index1_args { const bartorch_nlop* x; int i; bartorch_nlop* result; };
 
+/* Many arguments made one.
+ *
+ * `nlop_flatten` reshapes every input into one flat vector and every output
+ * into another, which is how `noir/recon2.c` hands a two-unknown model to a
+ * solver that knows only one vector: the image and the coil coefficients are
+ * laid out one after the other, in argument order.
+ */
+static int nlop_flatten_worker(void* p)
+{
+	struct nlop_index1_args* v = p;
+	v->result = wrap_nlop(v->i ? nlop_flatten_inputs_F(nlop_clone(v->x->op))
+				   : nlop_flatten(v->x->op));
+	return 0;
+}
+
+bartorch_nlop* bartorch_nlop_flatten(const bartorch_nlop* x, int inputs_only)
+{
+	if (NULL == x)
+		return NULL;
+
+	struct nlop_index1_args v = { x, inputs_only, NULL };
+
+	return (0 == guarded(nlop_flatten_worker, &v)) ? v.result : NULL;
+}
+
+
 static int nlop_del_out_worker(void* p)
 {
 	struct nlop_index1_args* v = p;
@@ -1735,6 +1765,248 @@ void bartorch_nlop_free(bartorch_nlop* h)
 		return;
 
 	nlop_free(h->op);
+	xfree(h);
+}
+
+
+/* --- the nonlinear SENSE model ---------------------------------------------
+ *
+ * `nlinv` does not fit an image against known sensitivities: it fits both at
+ * once, and the map it inverts is
+ *
+ *	kspace = A[ (mask * image) * ifftuc(weights * ksens) ]
+ *
+ * which is exactly the encoding the linear operators here already build, with
+ * the coils turned from a fixed tensor into a second unknown.  BART builds it
+ * in `noir/model2.c` out of a `tenmul` and three linear operators, and this
+ * hands that same model over rather than rebuilding it: `nlinv` and a fit
+ * driven from here run the same arithmetic.
+ *
+ * The coils are unknown as k-space coefficients, not as maps.  `lop_coil`
+ * carries the Sobolev weighting `(1 + a |k|^2)^(-b/2)` that keeps them smooth
+ * and the transform to image space; what comes out of a fit is coefficients,
+ * and `lop_coil` is what turns them into sensitivities.
+ *
+ * Off the grid the model is asymmetric: it returns gridded coil images rather
+ * than k-space samples, and the data has to be gridded to match with the
+ * adjoint of `lop_asym`.  On the grid `lop_asym` is the identity and the
+ * model returns k-space.  `bartorch_noir_data` hands that operator out so a
+ * caller can prepare the data BART's way in either case.
+ */
+struct noir_create_args {
+
+	int N;
+	const long* ksp_dims;
+	const long* cim_dims;
+	const long* img_dims;
+	const long* kco_dims;
+	const long* col_dims;
+	const long* pat_dims;
+	const void* pattern;
+	const long* trj_dims;
+	const void* traj;
+	const long* wgh_dims;
+	const void* weights;
+	const long* bas_dims;
+	const void* basis;
+	const long* msk_dims;
+	const void* mask;
+	int noncart;
+	int optimized;
+	int toeplitz;
+	struct noir2_model_conf_s conf;
+	bartorch_noir* result;
+};
+
+static int noir_create_worker(void* p)
+{
+	struct noir_create_args* a = p;
+
+	struct nufft_conf_s nufft_conf = nufft_conf_defaults;
+	nufft_conf.toeplitz = (0 != a->toeplitz);
+
+	a->conf.nufft_conf = &nufft_conf;
+	a->conf.noncart = (0 != a->noncart);
+
+	bartorch_noir* h = xmalloc(sizeof(*h));
+
+	if (a->noncart) {
+
+		h->model = (a->optimized ? noir2_noncart_optimized_create : noir2_noncart_create)(
+				a->N, a->trj_dims, a->traj, a->wgh_dims, a->weights,
+				a->bas_dims, a->basis, a->msk_dims, a->mask,
+				a->ksp_dims, a->cim_dims, a->img_dims, a->kco_dims, a->col_dims,
+				&a->conf);
+
+	} else {
+
+		h->model = noir2_cart_create(a->N, a->pat_dims, a->pattern,
+				a->bas_dims, a->basis, a->msk_dims, a->mask,
+				a->ksp_dims, a->cim_dims, a->img_dims, a->kco_dims, a->col_dims,
+				&a->conf);
+	}
+
+	/* The conf is copied into the model, and the nufft conf it points at is
+	 * on this stack; nufft_create2 has already read it. */
+	h->model.model_conf.nufft_conf = NULL;
+
+	a->result = h;
+
+	return 0;
+}
+
+bartorch_noir* bartorch_noir_create(int N,
+		const long* ksp_dims, const long* cim_dims, const long* img_dims,
+		const long* kco_dims, const long* col_dims,
+		const long* pat_dims, const void* pattern,
+		const long* trj_dims, const void* traj,
+		const long* wgh_dims, const void* weights,
+		const long* bas_dims, const void* basis,
+		const long* msk_dims, const void* mask,
+		int noncart, int optimized, int toeplitz,
+		unsigned long fft_flags, unsigned long wght_flags,
+		int rvc, int sos, float a, float b, float c,
+		float oversampling_coils, int ret_os_coils)
+{
+	if ((NULL == ksp_dims) || (NULL == cim_dims) || (NULL == img_dims)
+	    || (NULL == kco_dims) || (NULL == col_dims))
+		return NULL;
+
+	if (noncart ? (NULL == trj_dims) : (NULL == pat_dims))
+		return NULL;
+
+	struct noir_create_args args = {
+
+		.N = N,
+		.ksp_dims = ksp_dims, .cim_dims = cim_dims, .img_dims = img_dims,
+		.kco_dims = kco_dims, .col_dims = col_dims,
+		.pat_dims = pat_dims, .pattern = pattern,
+		.trj_dims = trj_dims, .traj = traj,
+		.wgh_dims = wgh_dims, .weights = weights,
+		.bas_dims = bas_dims, .basis = basis,
+		.msk_dims = msk_dims, .mask = mask,
+		.noncart = noncart, .optimized = optimized, .toeplitz = toeplitz,
+		.conf = noir2_model_conf_defaults,
+		.result = NULL,
+	};
+
+	args.conf.fft_flags = fft_flags;
+	args.conf.wght_flags = wght_flags;
+	args.conf.rvc = (0 != rvc);
+	args.conf.sos = (0 != sos);
+	args.conf.a = a;
+	args.conf.b = b;
+	args.conf.c = c;
+	args.conf.oversampling_coils = oversampling_coils;
+	args.conf.ret_os_coils = (0 != ret_os_coils);
+
+	return (0 == guarded(noir_create_worker, &args)) ? args.result : NULL;
+}
+
+struct noir_part_args { const bartorch_noir* h; int which; bartorch_nlop* nlop; bartorch_linop* linop; };
+
+static int noir_model_worker(void* p)
+{
+	struct noir_part_args* v = p;
+	v->nlop = wrap_nlop(nlop_clone(v->h->model.model));
+	return 0;
+}
+
+bartorch_nlop* bartorch_noir_model(const bartorch_noir* h)
+{
+	if (NULL == h)
+		return NULL;
+
+	struct noir_part_args v = { h, 0, NULL, NULL };
+
+	return (0 == guarded(noir_model_worker, &v)) ? v.nlop : NULL;
+}
+
+static int noir_linop_worker(void* p)
+{
+	struct noir_part_args* v = p;
+
+	const struct linop_s* op = NULL;
+
+	switch (v->which) {
+	case 0: op = v->h->model.lop_coil; break;
+	case 1: op = v->h->model.lop_im; break;
+	case 2: op = v->h->model.lop_asym; break;
+	default: op = v->h->model.lop_fft; break;
+	}
+
+	v->linop = wrap_linop(linop_clone(op));
+
+	return 0;
+}
+
+static bartorch_linop* noir_linop(const bartorch_noir* h, int which)
+{
+	if (NULL == h)
+		return NULL;
+
+	struct noir_part_args v = { h, which, NULL, NULL };
+
+	return (0 == guarded(noir_linop_worker, &v)) ? v.linop : NULL;
+}
+
+bartorch_linop* bartorch_noir_coils(const bartorch_noir* h)
+{
+	return noir_linop(h, 0);
+}
+
+bartorch_linop* bartorch_noir_image(const bartorch_noir* h)
+{
+	return noir_linop(h, 1);
+}
+
+bartorch_linop* bartorch_noir_data(const bartorch_noir* h)
+{
+	return noir_linop(h, 2);
+}
+
+bartorch_linop* bartorch_noir_transform(const bartorch_noir* h)
+{
+	return noir_linop(h, 3);
+}
+
+int bartorch_noir_dims(const bartorch_noir* h, int which, int N, long* dims)
+{
+	if ((NULL == h) || (NULL == dims) || (N < h->model.N))
+		return -1;
+
+	const long* src = NULL;
+
+	switch (which) {
+	case 0: src = h->model.ksp_dims; break;
+	case 1: src = h->model.cim_dims; break;
+	case 2: src = h->model.img_dims; break;
+	case 3: src = h->model.col_dims; break;
+	case 4: src = h->model.col_ten_dims; break;
+	case 5: src = h->model.pat_dims; break;
+	case 6: src = h->model.trj_dims; break;
+	default: return -1;
+	}
+
+	/* The shape of the coil coefficients the model takes is not kept on the
+	 * struct; it is the model's second input, which the arity queries
+	 * report. */
+
+	if (NULL == src)
+		return -1;
+
+	for (int i = 0; i < N; i++)
+		dims[i] = (i < h->model.N) ? src[i] : 1;
+
+	return h->model.N;
+}
+
+void bartorch_noir_free(bartorch_noir* h)
+{
+	if (NULL == h)
+		return;
+
+	noir2_free(&h->model);
 	xfree(h);
 }
 

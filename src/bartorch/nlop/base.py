@@ -12,6 +12,7 @@ which is the order every index below and every buffer handed to BART is in.
 
 from __future__ import annotations
 
+import math
 from functools import cached_property
 
 import torch
@@ -349,6 +350,16 @@ class NonlinearOperator(Operator):
         ``nlop_del_out``.
         """
         return _DelOut(self, output)
+
+    def flatten(self, inputs_only: bool = False) -> NonlinearOperator:
+        """Every input as one flat vector, and every output as another.
+
+        ``nlop_flatten``.  What a two-unknown model needs to reach a solver
+        that knows one vector: ``noir/recon2.c`` lays the image and the coil
+        coefficients out one after the other, in argument order, and that is
+        what :class:`~bartorch.optim.IRGNM` is handed.
+        """
+        return _Flattened(self, inputs_only)
 
     def combine(self, other: NonlinearOperator) -> NonlinearOperator:
         """``self`` and ``other`` side by side, sharing nothing."""
@@ -763,6 +774,46 @@ class _DelOut(_Unary):
 
     def __repr__(self) -> str:
         return f"{self.x!r}.del_out({self.output})"
+
+
+class _Flattened(_Unary):
+    """``nlop_flatten``: every argument laid out end to end in one vector."""
+
+    def __init__(self, x, inputs_only: bool):
+        self.inputs_only = bool(inputs_only)
+        self.sizes = tuple(math.prod(s) for s in x.ishapes)
+        self.out_sizes = tuple(math.prod(s) for s in x.oshapes)
+        super().__init__(x)
+
+    def _create(self) -> Built:
+        ptr = self._under_lock(
+            library().bartorch_nlop_flatten,
+            self.x._h.ptr,
+            int(self.inputs_only),
+            device=self.x.device,
+        )
+        oshapes = self.x.oshapes if self.inputs_only else ((sum(self.out_sizes),),)
+        return _built(ptr, ((sum(self.sizes),),), oshapes, keep=(self.x,), device=self.x.device)
+
+    def split(self, x: torch.Tensor) -> tuple[torch.Tensor, ...]:
+        """One flat vector back into a tensor per input of the operator it flattened."""
+        if math.prod(tuple(x.shape)) != sum(self.sizes):
+            raise ValueError(f"expected {sum(self.sizes)} values, got {tuple(x.shape)}")
+        flat = x.reshape(-1)
+        out, at = [], 0
+        for shape, size in zip(self.x.ishapes, self.sizes):
+            out.append(flat[at : at + size].reshape(shape))
+            at += size
+        return tuple(out)
+
+    @cached_property
+    def _stages(self):
+        o, i = self.x._stages
+        least = lambda group: (min(group),) if group else ()  # noqa: E731
+        return (o if self.inputs_only else least(o)), least(i)
+
+    def __repr__(self) -> str:
+        return f"{self.x!r}.flatten()"
 
 
 class _Pinned(_Unary):

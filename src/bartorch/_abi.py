@@ -192,6 +192,7 @@ SYMBOLS = (
     "bartorch_nlop_stack_outputs",
     "bartorch_nlop_permute",
     "bartorch_nlop_del_out",
+    "bartorch_nlop_flatten",
     "bartorch_nlop_tenmul",
     "bartorch_nlop_zdiv",
     "bartorch_nlop_zaxpbz",
@@ -208,6 +209,14 @@ SYMBOLS = (
     "bartorch_nlop_const",
     "bartorch_nlop_set_input_const",
     "bartorch_nlop_free",
+    "bartorch_noir_create",
+    "bartorch_noir_model",
+    "bartorch_noir_coils",
+    "bartorch_noir_image",
+    "bartorch_noir_data",
+    "bartorch_noir_transform",
+    "bartorch_noir_dims",
+    "bartorch_noir_free",
     "bartorch_irgnm",
     "bartorch_cuda_built",
     "bartorch_cuda_device_count",
@@ -831,6 +840,8 @@ def bind(lib: ctypes.CDLL) -> ctypes.CDLL:
     ]
     lib.bartorch_nlop_del_out.restype = ctypes.c_void_p
     lib.bartorch_nlop_del_out.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    lib.bartorch_nlop_flatten.restype = ctypes.c_void_p
+    lib.bartorch_nlop_flatten.argtypes = [ctypes.c_void_p, ctypes.c_int]
     lib.bartorch_nlop_tenmul.restype = ctypes.c_void_p
     lib.bartorch_nlop_tenmul.argtypes = [
         ctypes.c_int,
@@ -902,6 +913,56 @@ def bind(lib: ctypes.CDLL) -> ctypes.CDLL:
     ]
     lib.bartorch_nlop_free.restype = None
     lib.bartorch_nlop_free.argtypes = [ctypes.c_void_p]
+    lib.bartorch_noir_create.restype = ctypes.c_void_p
+    lib.bartorch_noir_create.argtypes = [
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_ulong,
+        ctypes.c_ulong,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_float,
+        ctypes.c_float,
+        ctypes.c_float,
+        ctypes.c_float,
+        ctypes.c_int,
+    ]
+    lib.bartorch_noir_model.restype = ctypes.c_void_p
+    lib.bartorch_noir_model.argtypes = [ctypes.c_void_p]
+    lib.bartorch_noir_coils.restype = ctypes.c_void_p
+    lib.bartorch_noir_coils.argtypes = [ctypes.c_void_p]
+    lib.bartorch_noir_image.restype = ctypes.c_void_p
+    lib.bartorch_noir_image.argtypes = [ctypes.c_void_p]
+    lib.bartorch_noir_data.restype = ctypes.c_void_p
+    lib.bartorch_noir_data.argtypes = [ctypes.c_void_p]
+    lib.bartorch_noir_transform.restype = ctypes.c_void_p
+    lib.bartorch_noir_transform.argtypes = [ctypes.c_void_p]
+    lib.bartorch_noir_dims.restype = ctypes.c_int
+    lib.bartorch_noir_dims.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_long),
+    ]
+    lib.bartorch_noir_free.restype = None
+    lib.bartorch_noir_free.argtypes = [ctypes.c_void_p]
     lib.bartorch_irgnm.restype = ctypes.c_int
     lib.bartorch_irgnm.argtypes = [
         ctypes.c_void_p,
