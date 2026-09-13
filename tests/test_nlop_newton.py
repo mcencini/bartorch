@@ -489,7 +489,7 @@ def test_a_convolutional_denoiser_trains_inside_the_one_operator(problem):
     image, _, kspace = problem
     torch.manual_seed(0)
     cells = _cells()
-    datas = [cell.prepare()(kspace, _ones()) for cell in cells]
+    prepared = [cell.prepare()(kspace, _ones()) for cell in cells]
     x0 = cells[0].start()
     state = cells[0].state_shape
     pixels = N * N
@@ -516,7 +516,14 @@ def test_a_convolutional_denoiser_trains_inside_the_one_operator(problem):
     for _ in range(6):
         optimiser.zero_grad()
         made = whole(
-            datas[1], x0, cells[1].weight(0.5), trained, datas[0], x0, x0, cells[0].weight(1.0)
+            prepared[1],
+            x0,
+            cells[1].weight(0.5),
+            trained,
+            prepared[0],
+            x0,
+            x0,
+            cells[0].weight(1.0),
         )[:, :pixels].abs()
         scale = (made * truth).sum() / (made * made).sum().clamp_min(1e-12)
         loss = ((scale * made - truth) ** 2).sum()
