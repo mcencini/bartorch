@@ -431,12 +431,38 @@ int bartorch_solve(const bartorch_linop* handle,
 		float fista_p, float fista_q, float fista_r,
 		float sigma_tau_ratio, int adaptive_step,
 		int warmstart,
+		const bartorch_linop* precond,
+		const bartorch_linop* em_precond, float em_precond_diag, float em_precond_tol,
+		int em_precond_maxiter,
 		void* x, const void* y, long* iterations)
 {
 	const struct linop_s* model_op = bartorch_linop_unwrap(handle);
 
 	if (NULL == model_op)
 		return -1;
+
+	/* The one preconditioner BART's least-squares solvers take.
+	 *
+	 * `lsqr2_create` chains it onto the normal operator and onto the
+	 * adjoint, so what the iteration sees is `M (A^H A + lambda) x = M A^H y`
+	 * -- left preconditioning by composition.  It is plumbed all the way
+	 * through `sense_recon_create` and `pics.c` passes NULL, so nothing on
+	 * the command line has ever used it.
+	 *
+	 * `conjgrad` itself has no preconditioner argument at all; this is the
+	 * only place one enters.  M has to map the image to itself, and for
+	 * conjugate gradients to mean anything it has to be positive definite. */
+	const struct operator_s* precond_op = NULL;
+
+	if (NULL != precond) {
+
+		const struct linop_s* m = bartorch_linop_unwrap(precond);
+
+		if (NULL == m)
+			return -1;
+
+		precond_op = m->forward;
+	}
 
 	enum algo_t algo = algo_by_name(algorithm);
 
@@ -539,6 +565,22 @@ int bartorch_solve(const bartorch_linop* handle,
 		nr_penalties = 0;
 	}
 
+	/* The sampler's own preconditioner, which is a different thing from
+	 * `lsqr`'s and the only genuinely preconditioned conjugate gradients in
+	 * BART: `eulermaruyama_precond` solves `(M^H M + diag) o = x` with
+	 * `conjgrad` at every step.  `italgo_config` cannot be told about it and
+	 * `pics` has no flag for it, so this is the only way to reach it. */
+	if ((ALGO_EULERMARUYAMA == algo) && (0. < em_precond_diag)) {
+
+		struct iter_eulermaruyama_conf* em =
+			CAST_DOWN(iter_eulermaruyama_conf, CAST_DOWN(iter_call_s, it.iconf)->_conf);
+
+		em->precond_diag = em_precond_diag;
+		em->precond_tol = em_precond_tol;
+		em->precond_max_iter = em_precond_maxiter;
+		em->precond_linop = (NULL == em_precond) ? NULL : bartorch_linop_unwrap(em_precond);
+	}
+
 	/* Only three of the iterations take the regularizers' transforms; the
 	 * rest assert that they were not given any.  `pics` decides the same
 	 * way, and getting it wrong is an assertion rather than a wrong answer. */
@@ -565,7 +607,7 @@ int bartorch_solve(const bartorch_linop* handle,
 	lsqr2(DIMS, &conf, it.italgo, it.iconf, owned,
 			nr_penalties, thresh_ops, trafos_cond ? trafos : NULL,
 			img_dims, (complex float*)x, ksp_dims, (const complex float*)y,
-			NULL, (NULL != iterations) ? &counter.super : NULL);
+			precond_op, (NULL != iterations) ? &counter.super : NULL);
 
 	if (NULL != iterations)
 		*iterations = counter.count;

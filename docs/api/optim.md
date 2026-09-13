@@ -241,6 +241,51 @@ not.
 .. currentmodule:: bartorch.optim
 ```
 
+## Preconditioning
+
+BART's `conjgrad` has **no preconditioner argument at all**.  What BART calls
+preconditioning is three unrelated things, and only one of them touches the
+linear solvers.
+
+**`lsqr2_create`'s `precond_op`** is the real one: it is chained onto the
+normal operator and onto the adjoint, so what the iteration sees is
+$M(A^HA+\lambda)x = MA^Hy$ -- left preconditioning by composition.  It is
+plumbed all the way through `sense_recon_create`, and `pics.c` passes `NULL`,
+so nothing on the command line has ever used it.  Every solver here takes it:
+
+```python
+M = linop.Diagonal(1.0 / weights, shape)      # any operator image -> image
+optim.CG(maxiter=30, precond=M)(kspace, A)
+```
+
+For conjugate gradients to mean anything, $M$ has to be positive definite;
+BART composes it without symmetrizing, so an $M$ that is not gives an
+iteration that is not conjugate gradients on anything.
+
+**`pics --precond`** is not preconditioning.  `opt_precond_configure` adds a
+`prox_weighted_leastsquares` term with the inverse sampling pattern as weights
+and chains it through the model operator -- a reformulation of the data
+fidelity, not a change of metric.  The tell is that `pics` asserts the
+algorithm is ADMM or the primal-dual one; a preconditioner would not care.  It
+is reachable through {func}`bartorch.tools.pics`, where it belongs.
+
+**`eulermaruyama_precond`** is a genuinely preconditioned sampler, and the one
+place in BART where a preconditioned conjugate-gradient solve really runs:
+every step solves $(M^HM + \text{diag})o = x$ with `conjgrad`.  `pics` has no
+flag for it, so {class}`EulerMaruyama`'s `sampler_precond=` is the only way to
+reach it.
+
+```python
+optim.EulerMaruyama(
+    term, step=0.1,
+    sampler_precond=M, sampler_precond_diag=1.0,
+    sampler_precond_tol=1e-4, sampler_precond_maxiter=10,
+)(kspace, A)
+```
+
+BART enters that path on a positive diagonal rather than on the operator, so a
+preconditioner without one would be silently ignored; this refuses it instead.
+
 ## Nonlinear least squares
 
 BART has Gauss-Newton in two forms.  `irgnm` solves the linearized problem

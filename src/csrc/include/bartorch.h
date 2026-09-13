@@ -342,6 +342,17 @@ BARTORCH_API int bartorch_solve(const bartorch_linop* A,
 		float fista_p, float fista_q, float fista_r,
 		float sigma_tau_ratio, int adaptive_step,
 		int warmstart,
+		/* Left preconditioning, chained onto the normal operator and the
+		 * adjoint by `lsqr2_create`.  NULL for none, which is what `pics`
+		 * passes and what every solve did before.  `conjgrad` has no
+		 * preconditioner of its own; this is the only place one enters. */
+		const bartorch_linop* precond,
+		/* The Euler-Maruyama sampler's own preconditioner, which is a
+		 * different thing: `eulermaruyama_precond` solves `(M^H M + diag) o = x`
+		 * with `conjgrad` every step, and `pics` has no flag for it.  A
+		 * `diag` of zero leaves the plain sampler. */
+		const bartorch_linop* em_precond, float em_precond_diag, float em_precond_tol,
+		int em_precond_maxiter,
 		void* x, const void* y, long* iterations);
 BARTORCH_API const char* bartorch_solve_error(int code);
 
