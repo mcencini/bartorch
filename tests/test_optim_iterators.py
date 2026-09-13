@@ -11,6 +11,7 @@ point by ``deepinv``, because there is nothing to differentiate through; one
 written out here can be, and costs a few axpys on an image per step to say so.
 """
 
+import numpy as np
 import pytest
 import torch
 
@@ -481,7 +482,95 @@ def test_pridu_is_barts_pridu(problem, steps):
     A, y = problem
     term = prox.L1(0.05)
     ours = _pridu_steps(A, y, steps, primal=term)
-    assert torch.equal(ours, optim.PRIDU(term, maxiter=steps, step=0.95)(y, A))
+    theirs = optim.PRIDU(term, maxiter=steps, step=0.95)(y, A)
+    assert torch.equal(ours, theirs), _where_it_parts(A, y, term, steps)
+
+
+# --- what to do when the line above fails somewhere I cannot run -------------
+#
+# The iteration agrees with the library on x86-64 and not on arm64, by a
+# little over 1e-7, from the second step on.  Reading the source has not found
+# the place, and the expressions that could plausibly differ are all
+# indistinguishable on x86-64 -- which is exactly why they have to be told
+# apart somewhere else.
+#
+# So the assertion carries its own diagnosis.  `_where_it_parts` writes the
+# step out again under every combination of the candidate readings and says
+# which ones reproduce the library, on whatever machine ran it.  It costs
+# nothing until the assertion fails.
+
+
+def _f32(v):
+    return float(np.float32(v))
+
+
+def _fused(a, x, y):
+    """``a * x + y`` as a fused multiply-add: the product is not rounded."""
+    parts = torch.view_as_real(x).double() * float(a) + torch.view_as_real(y).double()
+    return parts.float().view(torch.complex64).squeeze(-1)
+
+
+def _replay(A, y, term, steps, *, two_transforms, divide, fuse_step, fuse_fresh, fuse_primal):
+    """`chambolle_pock` for a single primal term, one reading at a time.
+
+    Written out rather than driven through `PRIDUIteration` because the point
+    is to vary the arithmetic inside the step; the baseline reading is checked
+    against the iteration itself before any of this is believed.
+    """
+    op = A._bart()
+    normal = (lambda v: op.adjoint(op(v))) if two_transforms else op.normal
+    adjoint = op.adjoint(y)
+
+    sigma = tau = _f32(math.sqrt(0.95))
+    keep, pull = _f32(1.0 / (1.0 + sigma)), _f32(-1.0 * sigma / (1.0 + sigma))
+
+    x = torch.zeros(*op.ishape, dtype=torch.complex64)
+    avg, dual = x, x
+    for _ in range(steps):
+        moved = normal(avg)
+        step = _fused(sigma, moved, dual) if fuse_step else sigma * moved + dual
+        if divide:
+            fresh = step / (1.0 + sigma) - (sigma / (1.0 + sigma)) * adjoint
+        elif fuse_fresh:
+            fresh = _fused(keep, step, pull * adjoint)
+        else:
+            fresh = keep * step + pull * adjoint
+        dual = fresh
+
+        previous = x
+        x = _fused(-tau, dual, x) if fuse_primal else x - tau * dual
+        x = term.prox(x, tau, image_shape=op.ishape)
+        avg = 2.0 * x - previous
+    return x
+
+
+def _where_it_parts(A, y, term, steps):
+    """Which readings of the step reproduce the library, and which do not."""
+    import itertools
+
+    names = ("two_transforms", "divide", "fuse_step", "fuse_fresh", "fuse_primal")
+    theirs = optim.PRIDU(term, maxiter=steps, step=0.95)(y, A)
+
+    baseline = dict.fromkeys(names, False)
+    if not torch.equal(
+        _replay(A, y, term, steps, **baseline), _pridu_steps(A, y, steps, primal=term)
+    ):
+        return (
+            "the replay does not reproduce the iteration it is meant to vary, "
+            "so nothing it says about the library can be trusted"
+        )
+
+    matched = []
+    for combination in itertools.product([False, True], repeat=len(names)):
+        flags = dict(zip(names, combination))
+        got = _replay(A, y, term, steps, **flags)
+        if torch.equal(got, theirs):
+            matched.append(", ".join(n for n, on in flags.items() if on) or "the baseline")
+
+    worst = float((_replay(A, y, term, steps, **baseline) - theirs).abs().max())
+    if not matched:
+        return f"no reading of the step reproduces the library; baseline is {worst:.3e} away"
+    return f"the library is reproduced by: {' | '.join(matched)} (baseline {worst:.3e} away)"
 
 
 @pytest.mark.parametrize("steps", [1, 3, 8])
