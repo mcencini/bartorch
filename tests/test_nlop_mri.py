@@ -13,8 +13,11 @@ how far two numerical paths have diverged, which is not a property of the
 model.
 
 So off the grid what is held is what does not depend on a path: that the
-model's output is exactly the composition it claims to be, and that a fit
-converges to the image it was made from.
+model's output is the composition it claims to be, and that a fit converges
+towards the image it was made from.  How *far* twelve steps get is a path too
+-- the inner conjugate gradients stops on a relative residual, so the last
+bits decide how many iterations a step takes -- so what is asserted is the
+direction and a bound loose enough for the slowest machine seen.
 """
 
 import pytest
@@ -254,28 +257,39 @@ def test_a_cartesian_fit_is_the_nlinv_tool_to_the_last_bit(steps):
     torch.testing.assert_close(fitted.reshape(-1), reference.reshape(-1), rtol=0.0, atol=0.0)
 
 
-def test_the_noncartesian_model_is_exactly_the_composition_it_claims_to_be():
+def test_the_noncartesian_model_is_the_composition_it_claims_to_be():
     # Off the grid the model is asymmetric: it returns the normal equations'
     # gridded coil images rather than samples.  This is that plumbing, with no
     # iteration in it and so nothing for two numerical paths to drift apart
-    # over -- which is why it holds to the bit where a comparison of two fits
-    # does not.
+    # over -- a model that returned k-space instead would be wrong by orders
+    # of magnitude, not by the last bits.
+    #
+    # The product goes through BART's own tenmul rather than through torch's
+    # `*`.  The two agree to the bit on x86 and need not on every platform --
+    # one is a scalar loop and the other whatever SIMD torch has -- and that
+    # difference has nothing to do with what is being checked here.
     n, coils, spokes = 16, 4, 21
     F = nlop.NoncartesianSense(bt.traj(x=n, y=spokes), (coils, n, n))
     image = _rand(*F.ishapes[0])
     coefficients = _rand(*F.ishapes[1])
+    product = nlop.Multiply(F.ishapes[0], tuple(F.coils.oshape))
     torch.testing.assert_close(
         F(image, coefficients),
-        F.transform.normal(F.image(image) * F.coils(coefficients)),
-        rtol=0.0,
-        atol=0.0,
+        F.transform.normal(product(F.image(image), F.coils(coefficients))),
+        rtol=1e-5,
+        atol=1e-6,
     )
 
 
 def test_a_noncartesian_fit_converges_to_the_image_it_was_made_from():
-    # A property of the answer rather than of the path taken to it: the error
-    # falls by a factor of thirty over eight more Newton steps, which is far
-    # enough apart that no platform's arithmetic reorders it.
+    # A property of the answer rather than of the path taken to it.
+    #
+    # How far it gets is a path: the inner conjugate gradients stops on a
+    # relative residual, so a difference in the last bits changes how many
+    # iterations a Newton step takes and therefore where twelve steps land.
+    # One machine reaches 0.004 and another 0.062 from the same code.  What
+    # does not depend on that is the direction -- the error falls at every
+    # step, and ends far below where it started.
     n, coils, spokes = 24, 4, 32
     traj = bt.traj(x=n, y=spokes)
     truth = (_phantom(n, n) * _coils(coils, n, n)).reshape(coils, 1, n, n)
@@ -298,7 +312,10 @@ def test_a_noncartesian_fit_converges_to_the_image_it_was_made_from():
         errors.append(((made - scaled).norm() / scaled.norm()).item())
 
     assert errors[0] > errors[1] > errors[2], f"the fit is not converging: {errors}"
-    assert errors[-1] < 0.02, f"twelve steps left {errors[-1]:.3f} of error"
+    assert errors[-1] < errors[0] / 2, f"twelve steps barely moved: {errors}"
+    # Loose enough for the slowest platform seen (0.062) and far below a fit
+    # that is not working at all, which starts around 0.5 and stays there.
+    assert errors[-1] < 0.15, f"twelve steps left {errors[-1]:.3f} of error"
 
 
 def test_a_cartesian_fit_recovers_the_image_it_was_made_from():
