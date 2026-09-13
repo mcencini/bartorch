@@ -285,6 +285,26 @@ def signature_for(name: str) -> inspect.Signature:
     return inspect.Signature(parameters, return_annotation="torch.Tensor | tuple | str | None")
 
 
+#: Commands whose only output BART marks optional and then creates anyway.
+#
+# `create_cfl` hands the name to `io_unlink_if_opened`, which calls `strcmp`
+# on it, so an omitted name is a segmentation fault rather than a tool that
+# quietly writes nothing -- `mobafit.c:398` and `morphop.c:77` are both
+# unguarded.  Every other command with an optional output writes it through
+# `anon_cfl` or behind an `if`, prints its answer instead when no name is
+# given, and is left alone: passing one would silently turn the printed line
+# `estdelay` and `measure` return here into a tensor.
+_WRITES_ITS_OPTIONAL_OUTPUT = frozenset({"mobafit", "morphop"})
+
+
+def _outputs(command: Command) -> int:
+    """How many output arrays to ask the command for."""
+    required = len([a for a in command.outputs if a.required])
+    if required or command.name not in _WRITES_ITS_OPTIONAL_OUTPUT:
+        return required
+    return 1
+
+
 def _docstring(command: Command, parameters: list[inspect.Parameter]) -> str:
     """BART's own help, as numpydoc."""
     lines = [command.help.strip(), "", f"Runs ``bart {command.name}``.", ""]
@@ -338,7 +358,7 @@ def build(name: str, module: str):
     # An output BART does not require is one the caller has to ask for, and a
     # derived wrapper has no way to be asked: `ecalib` writes eigenvalues only
     # when given somewhere to put them.
-    n_out = len([a for a in command.outputs if a.required])
+    n_out = _outputs(command)
 
     def call(*args: Any, **kwargs: Any):
         bound = call.__signature__.bind(*args, **kwargs)
