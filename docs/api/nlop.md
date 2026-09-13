@@ -40,6 +40,18 @@ that consumes it first.  {func}`chain` arranges that itself; a
 {meth}`~NonlinearOperator.link` the other way round is refused rather than
 left to read a buffer nothing has written.
 
+Two arguments of the same shape can still be held at different *ranks*.
+`nlop_chain2` and `nlop_link` compare `iovec`s, and an `iovec` carries its
+rank: BART builds each of its own operators at whatever rank it needs -- the
+state of {class}`GaussNewton`'s step is two axes long -- while an operator
+defined here through {class}`Callback` or {class}`FromTorch` is built at
+DIMS. Padding a shape with ones is not a change to it, so {func}`chain` and
+{meth}`~NonlinearOperator.link` write the shorter side out to match rather
+than refusing with BART's `Cannot chain args 0 -> 0!`.
+{meth}`~NonlinearOperator.reshape_input` and
+{meth}`~NonlinearOperator.reshape_output` are the same thing said by hand,
+for the cases where the two shapes differ by more than padding.
+
 ```{eval-rst}
 .. autosummary::
    :toctree: generated
@@ -176,6 +188,23 @@ caller passes and what comes back is `shapes` and `output_shapes`, which are
 the same tuples without the run of empty axes between the batch and the image.
 A run of singletons changes no strides, so moving between the two is a reshape
 and not a copy.
+
+An unrolled network can be composed into a *single* `nlop`: chain the cells,
+with whatever stands between them, and BART drives the whole thing and crosses
+into Python once a step for the prior alone.
+
+```python
+prior = nlop.FromTorch(denoise, first.state_shape, first.state_shape)
+whole = nlop.chain(nlop.chain(first, prior, output=0, input=0), second, output=0, input=1)
+```
+
+That operator differentiates by its own arguments -- data, iterate, centre,
+weight -- with `FromTorch` answering for the prior through `torch.func`'s jvp
+and vjp. What it does *not* do is train the prior: a weight the denoiser
+closed over is not an argument of anything BART knows about, so no gradient
+reaches it. Composing is what makes the network one operator; keeping the loop
+in Python is what trains a denoiser. They are alternatives today, not the same
+thing.
 
 The iterate is the image and the coil coefficients laid end to end; `start()`
 makes the one BART starts from, `split()` and `join()` take it apart and put it

@@ -456,6 +456,72 @@ def test_the_adjoint_of_a_derivative_is_the_adjoint_of_what_it_applies(make):
     assert _inner(F.derivative(u), v) == pytest.approx(_inner(u, F.adjoint(v)), rel=1e-3)
 
 
+# --- rank, and the two shapes that are the same shape -------------------------
+
+
+def test_an_argument_can_be_written_at_another_rank():
+    F = nlop.Multiply((2, 3), (2, 3))
+    made = F.reshape_output(0, (6,))
+    assert ((6,),) == made.oshapes
+    assert F.ishapes == made.ishapes
+
+    x, y = _rand(2, 3), _rand(2, 3)
+    torch.testing.assert_close(made(x, y), F(x, y).reshape(6), rtol=0, atol=0)
+
+
+def test_a_reshape_that_would_add_or_drop_entries_is_refused():
+    F = nlop.Multiply((2, 3), (2, 3))
+    with pytest.raises(ValueError, match="does not add or drop any"):
+        F.reshape_output(0, (7,))
+
+
+def test_an_input_reshapes_too():
+    F = nlop.Exp((6,))
+    made = F.reshape_input(0, (2, 3))
+    assert ((2, 3),) == made.ishapes
+    x = _rand(2, 3)
+    torch.testing.assert_close(made(x), F(x.reshape(6)), rtol=0, atol=0)
+
+
+def test_a_chain_holds_the_two_sides_at_the_same_rank():
+    """BART compares ``iovec``s, and an ``iovec`` carries its rank.
+
+    An operator defined in Python is built at DIMS; one of BART's own is built
+    at whatever rank it needs.  Two arguments of the same shape then refuse to
+    meet -- ``Cannot chain args 0 -> 0!`` -- although padding a shape with
+    ones is not a change to it.  This is what says the padding is done.
+    """
+    low = nlop.Exp((4,)).reshape_output(0, (1, 1, 4))
+    high = nlop.Callback(
+        (1, 1, 4), (1, 1, 4), lambda x: 2.0 * x, lambda d: 2.0 * d, lambda v: 2.0 * v
+    )
+
+    x = _rand(4)
+    torch.testing.assert_close(
+        nlop.chain(low, high)(x.reshape(1, 1, 4)),
+        2.0 * torch.exp(x).reshape(1, 1, 4),
+        rtol=1e-5,
+        atol=1e-6,
+    )
+    # And the other way round, where it is the second operator that is short.
+    short = nlop.Exp((4,)).reshape_input(0, (1, 1, 4))
+    torch.testing.assert_close(
+        nlop.chain(high, short)(x.reshape(1, 1, 4)), torch.exp(2.0 * x), rtol=1e-5, atol=1e-6
+    )
+
+
+def test_a_link_holds_them_at_the_same_rank_too():
+    # The same shape on both sides, and two different ranks behind it.
+    a = nlop.Exp((4,)).reshape_output(0, (1, 1, 4))
+    b = nlop.Multiply((1, 1, 4), (1, 1, 4))
+    # `combine(b, a)` runs `a` first, which is the order a link needs.
+    linked = nlop.combine(b, a).link(output=1, input=0)
+    x, y = _rand(4), _rand(1, 1, 4)
+    torch.testing.assert_close(
+        linked(y, x), y * torch.exp(x).reshape(1, 1, 4), rtol=1e-5, atol=1e-6
+    )
+
+
 # --- the algebra reaching the rest of the library ----------------------------
 
 

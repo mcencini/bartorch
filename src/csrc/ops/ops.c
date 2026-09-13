@@ -1308,6 +1308,41 @@ bartorch_linop* bartorch_nlop_derivative_linop(const bartorch_nlop* h, int o, in
  * operators side by side, an output tied back to an input, two inputs made
  * one, and the reorderings that make those usable.
  */
+struct nlop_reshape_args { const bartorch_nlop* a; int at; int N; const long* dims; int output; bartorch_nlop* result; };
+
+static int nlop_reshape_worker(void* p)
+{
+	struct nlop_reshape_args* a = p;
+	const struct nlop_s* made = nlop_clone(a->a->op);
+
+	made = a->output
+		? nlop_reshape_out_F(made, a->at, a->N, a->dims)
+		: nlop_reshape_in_F(made, a->at, a->N, a->dims);
+
+	a->result = wrap_nlop(made);
+	return 0;
+}
+
+static bartorch_nlop* nlop_reshape(const bartorch_nlop* a, int at, int N, const long* dims, int output)
+{
+	if ((NULL == a) || (NULL == dims) || (0 >= N))
+		return NULL;
+
+	struct nlop_reshape_args args = { a, at, N, dims, output, NULL };
+
+	return (0 == guarded(nlop_reshape_worker, &args)) ? args.result : NULL;
+}
+
+bartorch_nlop* bartorch_nlop_reshape_in(const bartorch_nlop* a, int i, int N, const long* dims)
+{
+	return nlop_reshape(a, i, N, dims, 0);
+}
+
+bartorch_nlop* bartorch_nlop_reshape_out(const bartorch_nlop* a, int o, int N, const long* dims)
+{
+	return nlop_reshape(a, o, N, dims, 1);
+}
+
 struct nlop_chain2_args { const bartorch_nlop* a; int o; const bartorch_nlop* b; int i; bartorch_nlop* result; };
 
 static int nlop_chain2_worker(void* p)
