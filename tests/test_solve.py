@@ -7,7 +7,7 @@ Two things are checked.  That the mechanism is BART's: the loop does not cross
 back into Python, every iteration is reachable, a term means what its ``-R``
 string means, and nothing is rebuilt per solve.  And that a reconstruction
 assembled from operators, terms and a solver is ``bart pics`` to the bit,
-across ten configurations (``test_an_assembled_pics_is_the_tool_to_the_last_bit``).
+across fifteen configurations (``test_an_assembled_pics_is_the_tool_to_the_last_bit``).
 """
 
 import pytest
@@ -25,6 +25,11 @@ def _rand(*shape):
 def _unitary():
     """An operator whose normal is the identity, so the answer is known."""
     return linop.FFT((8, 8), axes=(-1, -2))
+
+
+#: The coefficient axis of a subspace image, as an index into its shape:
+#: ``COEFF_DIM`` is BART's sixth, so it is the seventh from the end.
+_COEFFS = -7
 
 
 # --- the loop stays in C ----------------------------------------------------
@@ -225,21 +230,128 @@ def test_a_term_is_built_once_and_handed_over_as_it_stands():
     assert term.build((8, 8)) == first
 
 
+def _extending():
+    return [
+        prox.TotalGeneralizedVariation((-1, -2), 0.01),
+        prox.InfimalConvolutionTV((-1, -2, -7), 0.01),
+        prox.InfimalConvolutionTGV((-1, -2, -7), 0.01),
+    ]
+
+
+@pytest.mark.parametrize("term", _extending(), ids=repr)
+@pytest.mark.parametrize("solver", [optim.ADMM, optim.PRIDU])
+def test_a_term_that_adds_unknowns_goes_to_the_iterations_given_a_transform(term, solver):
+    """Total generalized variation and the infimal convolutions extend the
+    optimization variable, so they are several penalties over a vector larger
+    than the image.  ``iter2_admm`` and ``iter2_chambolle_pock`` are the two
+    iterations BART hands a term's transform to, and they take them."""
+    assert solver(term).regularizers == [term]
+
+
+@pytest.mark.parametrize("term", _extending(), ids=repr)
+@pytest.mark.parametrize("solver", [optim.IST, optim.FISTA, optim.NIHT])
+def test_no_other_iteration_takes_a_term_that_adds_unknowns(term, solver):
+    """``italgo_choose`` sends these to the alternating directions for the same
+    reason: nothing else is given the transform that reaches the extra
+    unknowns."""
+    with pytest.raises(TypeError, match="adds unknowns"):
+        solver(term)
+
+
 @pytest.mark.parametrize(
     "term",
-    [
-        prox.TotalGeneralizedVariation((-1, -2), 0.01),
-        prox.InfimalConvolutionTV((-1, -2), 0.01),
-        prox.InfimalConvolutionTGV((-1, -2), 0.01),
-    ],
+    [prox.InfimalConvolutionTV((-1, -2), 0.01), prox.InfimalConvolutionTGV((-1, -2), 0.01)],
     ids=repr,
 )
-def test_a_term_bart_configures_with_the_whole_set_is_left_to_pics(term):
-    """Total generalized variation and the infimal convolutions extend the
-    optimization variable, which BART counts across every term, so one cannot
-    be built alone.  ``tools.pics`` takes them."""
-    with pytest.raises(TypeError, match="tools.pics"):
-        optim.ADMM(term)
+def test_an_infimal_convolution_needs_an_axis_of_each_kind(term):
+    """``ictv_reg`` and ``ictgv_reg`` open with ``assert(0 != (flags &
+    FFT_FLAGS))`` and ``assert(0 != (flags & ~FFT_FLAGS))`` -- the convolution
+    separates what is smooth over the spatial axes from what is smooth over the
+    others, so it needs both.  An assertion ends the process, so the same
+    question is asked before BART is reached."""
+    A = linop.FFT((1, 8, 8), axes=(-1, -2))
+    with pytest.raises(ValueError, match="at least one of the image's last three axes"):
+        optim.ADMM(term, maxiter=4)(_rand(1, 8, 8), A)
+
+
+@pytest.mark.parametrize(
+    "term,other,flag",
+    [
+        (
+            prox.TotalGeneralizedVariation((-1, -2), 0.01, alpha=(2.0, 0.5)),
+            prox.TotalGeneralizedVariation((-1, -2), 0.01),
+            {"alpha": (2.0, 0.5)},
+        ),
+        (
+            prox.InfimalConvolutionTV((-1, -2, _COEFFS), 0.01, gamma=(0.3, 2.0)),
+            prox.InfimalConvolutionTV((-1, -2, _COEFFS), 0.01),
+            {"gamma": (0.3, 2.0)},
+        ),
+    ],
+    ids=["alpha", "gamma"],
+)
+def test_the_pairs_pics_takes_once_reach_the_solve(term, other, flag, _whole_coil_operator):
+    """``--alpha`` and ``--gamma`` live on ``struct opt_reg_s`` and not on a
+    term, so they travel beside the set rather than inside it.  Against the
+    tool given the same flag, and against the default, which they change."""
+    kspace, maps, basis, A, y = _subspace_problem()
+    tool = bt.pics(kspace, maps, basis=basis, maxiter=20, regularizers=term, solver="admm")
+    assembled = optim.ADMM(term, maxiter=20)(y, A)
+    assert torch.equal(assembled, tool.reshape(assembled.shape)), (
+        f"maximum difference {float((assembled - tool.reshape(assembled.shape)).abs().max()):.3e}"
+    )
+    assert not torch.equal(assembled, optim.ADMM(other, maxiter=20)(y, A))
+
+
+def test_two_terms_cannot_ask_for_different_pairs():
+    """One ``--alpha`` for the whole set, as for the block size."""
+    A = linop.FFT((1, 8, 8), axes=(-1, -2))
+    solver = optim.ADMM(
+        [
+            prox.TotalGeneralizedVariation((-1, -2), 0.01, alpha=(2.0, 0.5)),
+            prox.TotalGeneralizedVariation(0, 0.01),
+        ],
+        maxiter=4,
+    )
+    with pytest.raises(ValueError, match="alpha is one pair"):
+        solver(_rand(1, 8, 8), A)
+
+
+def test_two_terms_cannot_ask_for_different_shared_options():
+    """`opt_reg_configure` takes one block size, one wavelet family and one
+    shift mode for the whole set -- ``pics`` has a single ``-b`` and a single
+    ``-w`` -- so two terms disagreeing is refused rather than one of them
+    silently winning."""
+    A = linop.FFT((1, 8, 8), axes=(-1, -2))
+    solver = optim.ADMM(
+        [
+            prox.TotalGeneralizedVariation((-1, -2), 0.01),
+            prox.Wavelet((-1, -2), 0.01, family="haar"),
+            prox.LocallyLowRank((-1, -2), 0.01, block=4),
+        ],
+        maxiter=4,
+    )
+    with pytest.raises(ValueError, match="one block size"):
+        solver(_rand(1, 8, 8), A)
+
+
+def test_a_term_that_adds_unknowns_refuses_a_tracked_right_hand_side():
+    """The solve is the library's loop, which records nothing, so a gradient
+    asked of it would silently be lost; it says so instead."""
+    A = linop.FFT((1, 8, 8), axes=(-1, -2))
+    y = _rand(1, 8, 8).requires_grad_()
+    solver = optim.ADMM(prox.TotalGeneralizedVariation((-1, -2), 0.01), maxiter=4)
+    with pytest.raises(RuntimeError, match="cannot be differentiated through"):
+        solver(y, A)
+
+
+def test_a_term_that_adds_unknowns_does_not_unroll():
+    """The step written out in ``bartorch.optim.iterators`` walks the image;
+    this one walks the image and the fields behind it, and BART is where that
+    vector is laid out."""
+    solver = optim.ADMM(prox.TotalGeneralizedVariation((-1, -2), 0.01), maxiter=4)
+    with pytest.raises(TypeError, match="does not unroll"):
+        solver.unrolled((1, 8, 8))
 
 
 @pytest.mark.parametrize(
@@ -374,6 +486,10 @@ def _llr():
     return prox.LocallyLowRank(axes=(-1, -2), weight=0.01, block=4)
 
 
+def _tgv(weight=0.01):
+    return prox.TotalGeneralizedVariation(axes=(-1, -2), weight=weight)
+
+
 #: One configuration of ``pics``, as the tool's arguments and as a solver built
 #: from the data scaling (which only PRIDU reads).  The same terms go to both.
 _CONFIGURATIONS = [
@@ -419,6 +535,34 @@ _CONFIGURATIONS = [
         {"regularizers": [_wavelet(), _tv(0.005)], "solver": "admm"},
         lambda scale: optim.ADMM([_wavelet(), _tv(0.005)], maxiter=20),
     ),
+    (
+        "tgv admm",
+        {"regularizers": _tgv(), "solver": "admm"},
+        lambda scale: optim.ADMM(_tgv(), maxiter=20),
+    ),
+    (
+        "tgv pridu",
+        {"regularizers": _tgv(), "solver": "pridu"},
+        lambda scale: optim.PRIDU(_tgv(), maxiter=20, sigma_tau_ratio=scale),
+    ),
+    # The path that adds unknowns builds the whole set inside the solve, from
+    # the one block size, wavelet family and shift mode `opt_reg_configure`
+    # takes -- so a term beside it that reads one of those has to reach it.
+    (
+        "tgv and a haar wavelet",
+        {"regularizers": [_tgv(), _wavelet(family="haar")], "solver": "admm"},
+        lambda scale: optim.ADMM([_tgv(), _wavelet(family="haar")], maxiter=20),
+    ),
+    (
+        "tgv and no cycle spinning",
+        {"regularizers": [_tgv(), _wavelet(randshift=False)], "solver": "admm"},
+        lambda scale: optim.ADMM([_tgv(), _wavelet(randshift=False)], maxiter=20),
+    ),
+    (
+        "tgv and low rank over blocks of four",
+        {"regularizers": [_tgv(), _llr()], "solver": "admm"},
+        lambda scale: optim.ADMM([_tgv(), _llr()], maxiter=20),
+    ),
 ]
 
 
@@ -431,6 +575,71 @@ def test_an_assembled_pics_is_the_tool_to_the_last_bit(theirs, ours, _whole_coil
     kspace, maps, A, y, scale = _pics_problem()
     tool = bt.pics(kspace, maps, maxiter=20, **theirs).squeeze()
     assembled = ours(scale)(y, A).squeeze()
+    assert torch.equal(assembled, tool), (
+        f"maximum difference {float((assembled - tool).abs().max()):.3e}"
+    )
+
+
+def _subspace_problem(size=16, coils=4, frames=4, coeffs=2):
+    """A ``pics -B`` problem, and the same problem assembled from this package.
+
+    The image is the coefficients of a temporal subspace, which sit on BART's
+    ``COEFF_DIM`` -- an axis that is not one of the three spatial ones.  The
+    infimal convolutions need such an axis: they separate what is smooth over
+    the spatial axes from what is smooth over the rest, and BART asserts that
+    both exist.
+    """
+    base = bt.phantom(size, coils=coils, kspace=True)
+    decay = torch.linspace(1.0, 0.5, frames).to(torch.complex64)
+    kspace = base.reshape(1, 1, 1, coils, 1, size, size) * decay.reshape(1, frames, 1, 1, 1, 1, 1)
+
+    mask = torch.zeros(1, frames, 1, 1, 1, size, 1, dtype=torch.complex64)
+    for t in range(frames):
+        mask[0, t, 0, 0, 0, t::2, 0] = 1.0
+        mask[0, t, 0, 0, 0, size // 2 - 2 : size // 2 + 2, 0] = 1.0
+    kspace = kspace * mask
+
+    basis = torch.zeros(coeffs, frames, 1, 1, 1, 1, 1, dtype=torch.complex64)
+    basis[0, :, 0, 0, 0, 0, 0] = 1.0
+    basis[1, :, 0, 0, 0, 0, 0] = torch.linspace(-1, 1, frames)
+
+    maps = bt.ecalib(base, maps=1)
+    pattern = bt.pattern(kspace).reshape(1, frames, 1, 1, 1, size, size)
+    y = bartorch.fftmod(kspace * pattern, axes=(-1, -2, -3), inverse=True)
+    scale = optim.data_scaling(y)
+
+    # `toeplitz=False` because the tool applies the encoding and its adjoint;
+    # the closed-form normal is this package's shortcut and not BART's step.
+    A = linop.CartesianSense(
+        maps.squeeze(1),
+        (coils, size, size),
+        pattern=pattern,
+        basis=basis,
+        toeplitz=False,
+        coil_batch=0,
+        modulated=True,
+    )
+    return kspace, maps, basis, A, (y * (1.0 / scale)).reshape(A.oshape)
+
+
+@pytest.mark.parametrize(
+    "term",
+    [
+        prox.Wavelet((-1, -2), 0.01),
+        prox.TotalGeneralizedVariation((-1, -2), 0.01),
+        prox.InfimalConvolutionTV((-1, -2, _COEFFS), 0.01),
+        prox.InfimalConvolutionTGV((-1, -2, _COEFFS), 0.01),
+    ],
+    ids=["wavelet", "tgv", "ictv", "ictgv"],
+)
+def test_an_extending_term_over_a_subspace_is_the_tool_to_the_last_bit(term, _whole_coil_operator):
+    """The terms that add unknowns, against ``pics -B`` itself.  A wavelet term
+    is there as the baseline: it adds nothing, and if it drifted the assembly
+    would be what drifted, not the enlarged variable."""
+    kspace, maps, basis, A, y = _subspace_problem()
+    tool = bt.pics(kspace, maps, basis=basis, maxiter=20, regularizers=term, solver="admm")
+    assembled = optim.ADMM(term, maxiter=20)(y, A)
+    tool = tool.reshape(assembled.shape)
     assert torch.equal(assembled, tool), (
         f"maximum difference {float((assembled - tool).abs().max()):.3e}"
     )

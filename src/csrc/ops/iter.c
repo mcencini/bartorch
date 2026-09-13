@@ -434,6 +434,8 @@ int bartorch_solve(const bartorch_linop* handle,
 		const bartorch_linop* precond,
 		const bartorch_linop* em_precond, float em_precond_diag, float em_precond_tol,
 		int em_precond_maxiter,
+		int llr_blk, const char* wavelet, int shift_mode,
+		const float* alpha, const float* gamma,
 		void* x, const void* y, long* iterations)
 {
 	const struct linop_s* model_op = bartorch_linop_unwrap(handle);
@@ -513,27 +515,68 @@ int bartorch_solve(const bartorch_linop* handle,
 	long ksp_dims[DIMS];
 	md_copy_dims(DIMS, ksp_dims, linop_codomain(model_op)->dims);
 
-	/* The terms were built when the caller made them, so nothing is
-	 * configured here: what the solver is given is the operators the
-	 * objects have been holding. */
-	for (int i = 0; i < n_reg; i++) {
+	/* Three terms are not one proximal operator on the image: total
+	 * generalized variation and the two infimal convolutions add unknowns
+	 * and split into several penalties at offsets into the enlarged vector,
+	 * and `opt_reg_configure` works those offsets out across the whole set
+	 * at once.  So the set is configured here when one of them is in it,
+	 * rather than taken as the objects the caller built one at a time. */
+	bool extending = false;
 
-		if (NULL == reg_ops[i])
-			return -7;
+	for (int i = 0; i < n_reg; i++)
+		if (   (TGV == ropts.regs[i].xform)
+		    || (ICTV == ropts.regs[i].xform)
+		    || (ICTGV == ropts.regs[i].xform))
+			extending = true;
 
-		thresh_ops[i] = reg_ops[i]->op;
-		trafos[i] = reg_ops[i]->trafo;
+	int nr_penalties;
 
-		/* A wavelet threshold spins its transform by a random shift drawn
-		 * from a generator of its own, seeded at one when BART makes the
-		 * operator.  The tool builds a fresh one per run; a term here is
-		 * kept, so the generator is put back where a fresh one would have
-		 * it and a reused term answers as the tool does. */
-		if (L1WAV == reg_ops[i]->xform)
-			wavthresh_rand_state_set(reg_ops[i]->op, 1);
+	if (extending) {
+
+		const long (*sdims[NUM_REGS])[DIMS + 1] = { NULL };
+
+		/* `--alpha` and `--gamma` are one pair each for the whole set, and
+		 * only these three terms read them; `opt_reg_init` has already put
+		 * BART's own there, so NULL leaves them. */
+		if (NULL != alpha)
+			for (int i = 0; i < 2; i++)
+				ropts.alpha[i] = alpha[i];
+
+		if (NULL != gamma)
+			for (int i = 0; i < 2; i++)
+				ropts.gamma[i] = gamma[i];
+
+		opt_reg_configure(DIMS, img_dims, &ropts, thresh_ops, trafos, sdims,
+				llr_blk, shift_mode, (NULL != wavelet) ? wavelet : "dau2",
+				false, ITER_DIM);
+
+		nr_penalties = ropts.r + ropts.sr;
+
+	} else {
+
+		/* The terms were built when the caller made them, so nothing is
+		 * configured here: what the solver is given is the operators the
+		 * objects have been holding. */
+		for (int i = 0; i < n_reg; i++) {
+
+			if (NULL == reg_ops[i])
+				return -7;
+
+			thresh_ops[i] = reg_ops[i]->op;
+			trafos[i] = reg_ops[i]->trafo;
+
+			/* A wavelet threshold spins its transform by a random shift
+			 * drawn from a generator of its own, seeded at one when BART
+			 * makes the operator.  The tool builds a fresh one per run; a
+			 * term here is kept, so the generator is put back where a
+			 * fresh one would have it and a reused term answers as the
+			 * tool does. */
+			if (L1WAV == reg_ops[i]->xform)
+				wavthresh_rand_state_set(reg_ops[i]->op, 1);
+		}
+
+		nr_penalties = ropts.r;
 	}
-
-	int nr_penalties = ropts.r;
 
 	if (ALGO_DEFAULT == algo)
 		algo = italgo_choose(nr_penalties, ropts.regs);
@@ -602,18 +645,72 @@ int bartorch_solve(const bartorch_linop* handle,
 	 * reach it corrupts the heap the moment the host frees the operator. */
 	const struct linop_s* owned = linop_clone(model_op);
 
-	struct counting_monitor counter = { { NULL, counting_monitor_fun, NULL, 0., 0. }, 0 };
+	/* The supporting variables sit behind the image in one long vector, and
+	 * the model still takes an image: `linop_extract_create` pulls the front
+	 * of that vector out and the encoding is chained onto it, which is what
+	 * `pics.c` does.  The solve then walks the long vector and the image is
+	 * the front of the answer. */
+	long total = md_calc_size(DIMS, img_dims);
+	long ext = total + ropts.svars;
 
-	lsqr2(DIMS, &conf, it.italgo, it.iconf, owned,
-			nr_penalties, thresh_ops, trafos_cond ? trafos : NULL,
-			img_dims, (complex float*)x, ksp_dims, (const complex float*)y,
-			precond_op, (NULL != iterations) ? &counter.super : NULL);
+	complex float* xbig = NULL;
+
+	if (0 < ropts.svars) {
+
+		/* The transforms `opt_reg_configure` built have this vector as
+		 * their domain, one axis long, so the encoding is chained onto an
+		 * extract of the same rank: `check_ops` compares the whole iovec,
+		 * and a shape written at DIMS would not be the same iovec even
+		 * with the same number of entries in it. */
+		const struct linop_s* extract = linop_extract_create(1, MD_DIMS(0),
+				MD_DIMS(total), MD_DIMS(ext));
+
+		extract = linop_reshape_out_F(extract, DIMS, img_dims);
+
+		owned = linop_chain_FF(extract, owned);
+
+		/* Zero behind the image, which is where `pics` starts them, and the
+		 * caller's image in front of it so a warm start stays one. */
+		xbig = md_alloc_sameplace(1, MD_DIMS(ext), CFL_SIZE, x);
+		md_clear(1, MD_DIMS(ext), xbig, CFL_SIZE);
+		md_copy(1, MD_DIMS(total), xbig, x, CFL_SIZE);
+	}
+
+	struct counting_monitor counter = { { NULL, counting_monitor_fun, NULL, 0., 0. }, 0 };
+	struct iter_monitor_s* monitor = (NULL != iterations) ? &counter.super : NULL;
+
+	if (NULL != xbig) {
+
+		/* `lsqr2` takes one rank for both sides; here the image is one axis
+		 * long and the data is not, so the two are given separately. */
+		const struct operator_p_s* op = lsqr2_create(&conf, it.italgo, it.iconf, NULL,
+				owned, precond_op,
+				nr_penalties, thresh_ops, trafos_cond ? trafos : NULL, monitor);
+
+		operator_p_apply(op, 1., 1, MD_DIMS(ext), xbig, DIMS, ksp_dims, (const complex float*)y);
+		operator_p_free(op);
+
+		md_copy(1, MD_DIMS(total), x, xbig, CFL_SIZE);
+		md_free(xbig);
+
+	} else {
+
+		lsqr2(DIMS, &conf, it.italgo, it.iconf, owned,
+				nr_penalties, thresh_ops, trafos_cond ? trafos : NULL,
+				img_dims, (complex float*)x, ksp_dims, (const complex float*)y,
+				precond_op, monitor);
+	}
 
 	if (NULL != iterations)
 		*iterations = counter.count;
 
 	linop_free(owned);
 	italgo_config_free(it);
+
+	/* What `opt_reg_configure` built belongs to this call: the terms on that
+	 * path are the solve's own and not the caller's objects. */
+	if (extending)
+		opt_reg_free(&ropts, thresh_ops, trafos);
 
 	return 0;
 }

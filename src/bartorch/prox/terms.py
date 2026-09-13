@@ -2,8 +2,10 @@
 
 Total generalized variation and the two infimal convolutions extend the
 optimization variable, which BART counts across the whole set of terms, so
-they cannot be built one at a time: :func:`bartorch.tools.pics` takes them,
-and a solver in :mod:`bartorch.optim` does not.
+they cannot be built one at a time.  :func:`bartorch.tools.pics` takes them,
+and so do :class:`bartorch.optim.ADMM` and :class:`bartorch.optim.PRIDU`,
+which are the iterations BART gives a term's transform to; the solve is then
+the library's own loop over the enlarged variable, so it does not unroll.
 """
 
 from __future__ import annotations
@@ -235,6 +237,40 @@ class ImageNIHT(_Counted):
     kind = "N"
 
 
+#: BART's `FFT_FLAGS`: the three spatial axes, which are the image's last
+#: three in C order.
+_FFT_FLAGS = 7
+
+
+def _both_kinds_of_axis(term, ndim: int | None) -> None:
+    """Refuse an infimal convolution that has no axis of each kind.
+
+    `ictv_reg` and `ictgv_reg` (``iter/tgv.c``) each open with
+
+    .. code-block:: c
+
+        assert(0 != (flags & FFT_FLAGS));
+        assert(0 != (flags & ~FFT_FLAGS));
+
+    -- the infimal convolution splits the image into a part that is smooth
+    over one set of axes and a part that is smooth over the other, so it
+    needs both to exist.  Plain total generalized variation asserts neither.
+    An assertion aborts the process, so the same question is asked here.
+    """
+    xflags, _ = term._flags(ndim)
+    if 0 != (xflags & _FFT_FLAGS) and 0 != (xflags & ~_FFT_FLAGS):
+        return
+    kind = "spatial" if xflags & _FFT_FLAGS else "non-spatial"
+    over = "" if ndim is None else f" of an image of {ndim} axes"
+    raise ValueError(
+        f"{term!r} needs at least one of the image's last three axes and at least one "
+        f"axis before them: the infimal convolution separates what is smooth over the "
+        f"one from what is smooth over the other, so it needs both to exist. "
+        f"axes={term.axes}{over} gives only {kind} axes. BART states this as an "
+        f"assertion in iter/tgv.c, which would end the process rather than raise"
+    )
+
+
 def _pair(values, name: str) -> tuple[float, float]:
     pair = tuple(float(v) for v in values)
     if len(pair) != 2:
@@ -245,7 +281,9 @@ def _pair(values, name: str) -> tuple[float, float]:
 class TotalGeneralizedVariation(_Weighted):
     """Total generalized variation over ``axes`` (``pics -R G``).
 
-    Only :func:`bartorch.tools.pics` takes it; see the module's introduction.
+    Adds unknowns to the optimization: :func:`bartorch.tools.pics`,
+    :class:`bartorch.optim.ADMM` and :class:`bartorch.optim.PRIDU` take it, and
+    nothing else does.  See the module's introduction.
 
     Parameters
     ----------
@@ -271,7 +309,14 @@ class TotalGeneralizedVariation(_Weighted):
 class InfimalConvolutionTV(_Weighted):
     """Infimal convolution of total variation over ``axes`` (``pics -R C``).
 
-    Only :func:`bartorch.tools.pics` takes it; see the module's introduction.
+    Adds unknowns to the optimization: :func:`bartorch.tools.pics`,
+    :class:`bartorch.optim.ADMM` and :class:`bartorch.optim.PRIDU` take it, and
+    nothing else does.  See the module's introduction.
+
+    The infimal convolution separates what is smooth over one set of axes
+    from what is smooth over the other, so ``axes`` must name at least one of
+    the image's last three -- BART's spatial axes -- and at least one before
+    them, typically the coefficients of a subspace or the frames of a series.
 
     Parameters
     ----------
@@ -293,11 +338,21 @@ class InfimalConvolutionTV(_Weighted):
     def _settings(self) -> dict[str, object]:
         return {"gamma": self.gamma}
 
+    def _check(self, ndim: int | None) -> None:
+        _both_kinds_of_axis(self, ndim)
+
 
 class InfimalConvolutionTGV(_Weighted):
     """Infimal convolution of total generalized variation over ``axes`` (``pics -R V``).
 
-    Only :func:`bartorch.tools.pics` takes it; see the module's introduction.
+    Adds unknowns to the optimization: :func:`bartorch.tools.pics`,
+    :class:`bartorch.optim.ADMM` and :class:`bartorch.optim.PRIDU` take it, and
+    nothing else does.  See the module's introduction.
+
+    The infimal convolution separates what is smooth over one set of axes
+    from what is smooth over the other, so ``axes`` must name at least one of
+    the image's last three -- BART's spatial axes -- and at least one before
+    them, typically the coefficients of a subspace or the frames of a series.
 
     Parameters
     ----------
@@ -323,3 +378,6 @@ class InfimalConvolutionTGV(_Weighted):
 
     def _settings(self) -> dict[str, object]:
         return {"alpha": self.alpha, "gamma": self.gamma}
+
+    def _check(self, ndim: int | None) -> None:
+        _both_kinds_of_axis(self, ndim)

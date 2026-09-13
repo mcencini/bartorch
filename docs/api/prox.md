@@ -120,11 +120,16 @@ denoiser and the other term is furniture.
    ImageNIHT
 ```
 
-## Terms for pics only
+## Terms that add unknowns
 
-{func}`bartorch.tools.pics` takes these; a solver in {mod}`bartorch.optim`
-does not, because they add variables BART counts across the whole set of
-terms.
+These split into several penalties over a variable larger than the image:
+BART carries the supporting fields alongside it and counts them across the
+whole set of terms, so a term cannot be built on its own the way the others
+are.  {func}`bartorch.tools.pics` takes them, and so do
+{class}`bartorch.optim.ADMM` and {class}`bartorch.optim.PRIDU` -- the two
+iterations BART hands a term's transform to.  The solve then runs in the
+library, where that larger vector is laid out, so these terms do not unroll
+into a network and the other solvers refuse them.
 
 ```{eval-rst}
 .. autosummary::
