@@ -54,6 +54,7 @@ POINTERS = {
     "bartorch_linop**": "ctypes.POINTER(ctypes.c_void_p)",
     "bartorch_nlop*": "ctypes.c_void_p",
     "bartorch_noir*": "ctypes.c_void_p",
+    "bartorch_noir_net*": "ctypes.c_void_p",
     "bartorch_prox*": "ctypes.c_void_p",
     "bartorch_prox**": "ctypes.POINTER(ctypes.c_void_p)",
 }

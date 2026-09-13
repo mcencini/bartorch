@@ -44,6 +44,7 @@ from bartorch.nlop.mri import (
     NoncartesianSense,
     NonlinearSense,
 )
+from bartorch.nlop.newton import GaussNewton
 from bartorch.nlop.simulation import (
     Bloch,
     FromTorchSim,
@@ -66,6 +67,7 @@ __all__ = [
     "FromLinear",
     "FromTorch",
     "FromTorchSim",
+    "GaussNewton",
     "InversionRecovery",
     "Inverse",
     "Log",
