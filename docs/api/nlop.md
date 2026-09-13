@@ -219,6 +219,29 @@ the prior's parameters included. A real parameter rides in the real part of a
 complex one, because BART's operators are complex throughout, so its gradient
 comes back complex and the real part is the one to take.
 
+A real denoiser is a `torch.nn.Module` with its parameters in several tensors
+of several shapes, and {class}`Parameters` is the one vector BART can carry and
+the way back:
+
+```python
+weights = nlop.Parameters(denoiser)
+prior = nlop.FromTorch(
+    lambda x, w: torch.func.functional_call(denoiser, weights.unpack(w), (x,)),
+    [state, weights.shape],
+    state,
+)
+trained = torch.nn.Parameter(weights.pack())
+optimiser = torch.optim.Adam([trained], lr=1e-3)
+...
+weights.load(trained)      # back into the module afterwards
+```
+
+The packed vector is the thing to hold as the `Parameter`: it is what the
+operator differentiates, and the gradient arrives in its real part. How the
+denoiser sees the iterate is the caller's to say -- the state of a
+{class}`GaussNewton` is the image and the coil coefficients laid end to end,
+and a denoiser usually wants the image half, shaped as an image.
+
 The iterate is the image and the coil coefficients laid end to end; `start()`
 makes the one BART starts from, `split()` and `join()` take it apart and put it
 back, and `decompose()` takes it apart *through* the model's transforms, so
@@ -258,4 +281,5 @@ BART's single-argument constructor.
 
    Callback
    FromTorch
+   Parameters
 ```

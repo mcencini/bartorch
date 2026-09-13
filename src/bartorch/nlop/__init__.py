@@ -36,7 +36,7 @@ from bartorch.nlop.basic import (
     Sum,
     Weighted,
 )
-from bartorch.nlop.callback import Callback, FromTorch
+from bartorch.nlop.callback import Callback, FromTorch, Parameters
 from bartorch.nlop.derivative import Derivative
 from bartorch.nlop.mri import (
     CartesianSense,
@@ -76,6 +76,7 @@ __all__ = [
     "NoncartesianSense",
     "NonlinearOperator",
     "NonlinearSense",
+    "Parameters",
     "Phase",
     "Power",
     "RootSumOfSquares",
