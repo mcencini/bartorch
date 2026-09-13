@@ -529,6 +529,13 @@ BARTORCH_API void bartorch_noir_free(bartorch_noir* h);
 /* Iteratively regularised Gauss-Newton: x starts at its initial value and returns the solution. */
 BARTORCH_API int bartorch_irgnm(const bartorch_nlop* F, int iter, float alpha, float alpha_min, float redu,
 		int cgiter, float cgtol, void* x, const void* y, const void* xref);
+/* The second form: the extra derivative application that lets the inner
+ * problem go to a generic solver.  A NULL solver, which is what this passes,
+ * is BART's own conjugate gradients; the Python loop that takes any of the
+ * proximal solvers instead is held against this one. */
+BARTORCH_API int bartorch_irgnm2(const bartorch_nlop* F, int iter, float alpha, float alpha_min,
+		float alpha_min0, float redu, int cgiter, float cgtol,
+		void* x, const void* y, const void* xref);
 
 /*
  * CUDA.  Every entry point exists in both builds; without CUDA compiled in,

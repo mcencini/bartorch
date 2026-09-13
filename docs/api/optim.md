@@ -243,6 +243,24 @@ not.
 
 ## Nonlinear least squares
 
+BART has Gauss-Newton in two forms.  `irgnm` solves the linearized problem
+with its own conjugate gradients and nothing else, which is what `nlinv` runs.
+`irgnm2` pays an extra application of the derivative and hands that problem to
+a *generic* regularized least-squares solver, which is how a regularized
+`nlinv` or `moba` works: `noir/recon2.c` and `moba/iter_l1.c` build the inner
+solver with `iter2_fista`, `iter2_admm` or `iter2_chambolle_pock` over
+`nlop_get_derivative` and pass it in.
+
+{class}`IRGNM` is both.  Without `inner=` it is the first form, run entirely
+inside the library.  With one it is the second, and the inner problem goes to
+any solver here:
+
+```python
+optim.IRGNM(inner="cg")                                     # iter4_irgnm2, to the bit
+optim.IRGNM(inner=optim.FISTA(prox.Wavelet(0.001)))         # moba -l1's shape
+optim.IRGNM(inner=optim.ADMM([prox.Wavelet(w), prox.TotalVariation(v)]))
+```
+
 ```{eval-rst}
 .. autosummary::
    :toctree: generated

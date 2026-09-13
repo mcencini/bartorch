@@ -1434,8 +1434,30 @@ struct nlop_index1_args { const bartorch_nlop* x; int i; bartorch_nlop* result; 
 static int nlop_flatten_worker(void* p)
 {
 	struct nlop_index1_args* v = p;
-	v->result = wrap_nlop(v->i ? nlop_flatten_inputs_F(nlop_clone(v->x->op))
-				   : nlop_flatten(v->x->op));
+
+	const struct nlop_s* op = v->i ? (const struct nlop_s*)nlop_flatten_inputs_F(nlop_clone(v->x->op))
+				       : (const struct nlop_s*)nlop_flatten(v->x->op);
+
+	/* BART's flatten declares its vector at rank one.  Everything else in
+	 * this wrapper is declared over all sixteen axes, and `lsqr2_create`
+	 * checks the rank it was given against the operator's own -- so a
+	 * flattened model handed to a solver asserts unless the vector is
+	 * restated the way the rest of the library states it. */
+	long dims[DIMS];
+	md_singleton_dims(DIMS, dims);
+
+	dims[0] = md_calc_size(nlop_generic_domain(op, 0)->N, nlop_generic_domain(op, 0)->dims);
+	op = nlop_reshape_in_F(op, 0, DIMS, dims);
+
+	if (!v->i) {
+
+		md_singleton_dims(DIMS, dims);
+		dims[0] = md_calc_size(nlop_generic_codomain(op, 0)->N, nlop_generic_codomain(op, 0)->dims);
+		op = nlop_reshape_out_F(op, 0, DIMS, dims);
+	}
+
+	v->result = wrap_nlop(op);
+
 	return 0;
 }
 
@@ -2046,4 +2068,52 @@ int bartorch_irgnm(const bartorch_nlop* F, int iter, float alpha, float alpha_mi
 {
 	struct irgnm_args a = { F, iter, alpha, alpha_min, redu, cgiter, cgtol, x, y, xref };
 	return guarded(irgnm_worker, &a);
+}
+
+/* The second form, the one that takes a generic regularized least-squares
+ * solver for its inner problem.
+ *
+ * `irgnm2` costs an extra application of the derivative and buys the ability
+ * to solve the linearized problem with anything at all: `noir/recon2.c` and
+ * `moba/iter_l1.c` hand it FISTA, ADMM or Chambolle-Pock built over
+ * `nlop_get_derivative`, which is how a regularized `nlinv` or `moba` works.
+ * A NULL solver is BART's own conjugate gradients, and that is what this
+ * exposes: the outer loop written out in Python is held against it.
+ */
+struct irgnm2_args {
+
+	const bartorch_nlop* F; int iter; float alpha; float alpha_min; float alpha_min0; float redu;
+	int cgiter; float cgtol;
+	void* x; const void* y; const void* xref;
+};
+
+static int irgnm2_worker(void* p)
+{
+	struct irgnm2_args* a = p;
+
+	struct iter3_irgnm_conf conf = iter3_irgnm_defaults;
+	conf.iter = a->iter;
+	conf.alpha = a->alpha;
+	conf.alpha_min = a->alpha_min;
+	conf.alpha_min0 = a->alpha_min0;
+	conf.redu = a->redu;
+	conf.cgiter = a->cgiter;
+	conf.cgtol = a->cgtol;
+
+	const struct iovec_s* dom = nlop_domain(a->F->op);
+	const struct iovec_s* cod = nlop_codomain(a->F->op);
+
+	long N = 2 * md_calc_size(dom->N, dom->dims);
+	long M = 2 * md_calc_size(cod->N, cod->dims);
+
+	iter4_irgnm2(CAST_UP(&conf), a->F->op, N, a->x, a->xref, M, a->y, NULL,
+			(struct iter_op_s){ NULL, NULL });
+	return 0;
+}
+
+int bartorch_irgnm2(const bartorch_nlop* F, int iter, float alpha, float alpha_min, float alpha_min0,
+		float redu, int cgiter, float cgtol, void* x, const void* y, const void* xref)
+{
+	struct irgnm2_args a = { F, iter, alpha, alpha_min, alpha_min0, redu, cgiter, cgtol, x, y, xref };
+	return guarded(irgnm2_worker, &a);
 }

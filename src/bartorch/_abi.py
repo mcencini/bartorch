@@ -218,6 +218,7 @@ SYMBOLS = (
     "bartorch_noir_dims",
     "bartorch_noir_free",
     "bartorch_irgnm",
+    "bartorch_irgnm2",
     "bartorch_cuda_built",
     "bartorch_cuda_device_count",
     "bartorch_cuda_enable",
@@ -967,6 +968,20 @@ def bind(lib: ctypes.CDLL) -> ctypes.CDLL:
     lib.bartorch_irgnm.argtypes = [
         ctypes.c_void_p,
         ctypes.c_int,
+        ctypes.c_float,
+        ctypes.c_float,
+        ctypes.c_float,
+        ctypes.c_int,
+        ctypes.c_float,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    lib.bartorch_irgnm2.restype = ctypes.c_int
+    lib.bartorch_irgnm2.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.c_float,
         ctypes.c_float,
         ctypes.c_float,
         ctypes.c_float,
