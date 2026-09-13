@@ -1,8 +1,66 @@
-"""Nonlinear operators, BART's own and Python-defined, composable with linear ones."""
+"""Nonlinear operators, BART's own and Python-defined, composable with linear ones.
+
+An operator maps many inputs to many outputs, as BART's ``nlop_s`` does, and
+the algebra here is ``nlops/chain.h``: :func:`combine` puts two side by side,
+:func:`chain` feeds one output into one input, and
+:meth:`~bartorch.nlop.NonlinearOperator.link`,
+:meth:`~bartorch.nlop.NonlinearOperator.dup`,
+:meth:`~bartorch.nlop.NonlinearOperator.stack_inputs` and the permutations
+rearrange what is left.  Arguments are counted BART's way -- outputs first,
+then inputs.
+"""
 
 from __future__ import annotations
 
-from bartorch.nlop.base import Chain, FromLinear, NonlinearOperator
+from bartorch.nlop.base import (
+    Chain,
+    FromLinear,
+    NonlinearOperator,
+    chain,
+    combine,
+)
+from bartorch.nlop.basic import (
+    Abs,
+    Add,
+    Constant,
+    Divide,
+    Exp,
+    Inverse,
+    Log,
+    Multiply,
+    Phase,
+    Power,
+    RootSumOfSquares,
+    SmoothAbs,
+    Sqrt,
+    Sum,
+    Weighted,
+)
 from bartorch.nlop.callback import Callback, FromTorch
+from bartorch.nlop.derivative import Derivative
 
-__all__ = ["Callback", "Chain", "FromLinear", "FromTorch", "NonlinearOperator"]
+__all__ = [
+    "Abs",
+    "Add",
+    "Callback",
+    "Chain",
+    "Constant",
+    "Derivative",
+    "Divide",
+    "Exp",
+    "FromLinear",
+    "FromTorch",
+    "Inverse",
+    "Log",
+    "Multiply",
+    "NonlinearOperator",
+    "Phase",
+    "Power",
+    "RootSumOfSquares",
+    "SmoothAbs",
+    "Sqrt",
+    "Sum",
+    "Weighted",
+    "chain",
+    "combine",
+]

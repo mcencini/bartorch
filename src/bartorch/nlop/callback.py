@@ -39,7 +39,7 @@ class Callback(NonlinearOperator):
         derivative: Callable[[torch.Tensor], torch.Tensor],
         adjoint: Callable[[torch.Tensor], torch.Tensor],
     ):
-        self.oshape, self.ishape = tuple(oshape), tuple(ishape)
+        self.oshapes, self.ishapes = (tuple(oshape),), (tuple(ishape),)
         self.forward_fn = forward
         self.derivative_fn = derivative
         self.adjoint_fn = adjoint

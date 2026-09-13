@@ -178,6 +178,35 @@ SYMBOLS = (
     "bartorch_nlop_apply",
     "bartorch_nlop_derivative",
     "bartorch_nlop_adjoint",
+    "bartorch_nlop_inputs",
+    "bartorch_nlop_outputs",
+    "bartorch_nlop_input_domain",
+    "bartorch_nlop_output_codomain",
+    "bartorch_nlop_apply_generic",
+    "bartorch_nlop_derivative_linop",
+    "bartorch_nlop_chain2",
+    "bartorch_nlop_combine",
+    "bartorch_nlop_link",
+    "bartorch_nlop_dup",
+    "bartorch_nlop_stack_inputs",
+    "bartorch_nlop_stack_outputs",
+    "bartorch_nlop_permute",
+    "bartorch_nlop_del_out",
+    "bartorch_nlop_tenmul",
+    "bartorch_nlop_zdiv",
+    "bartorch_nlop_zaxpbz",
+    "bartorch_nlop_zexp",
+    "bartorch_nlop_zlog",
+    "bartorch_nlop_zinv",
+    "bartorch_nlop_zsqrt",
+    "bartorch_nlop_zspow",
+    "bartorch_nlop_zsadd",
+    "bartorch_nlop_zabs",
+    "bartorch_nlop_smo_abs",
+    "bartorch_nlop_zrss",
+    "bartorch_nlop_zss",
+    "bartorch_nlop_const",
+    "bartorch_nlop_set_input_const",
     "bartorch_nlop_free",
     "bartorch_irgnm",
     "bartorch_cuda_built",
@@ -740,6 +769,137 @@ def bind(lib: ctypes.CDLL) -> ctypes.CDLL:
     lib.bartorch_nlop_derivative.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
     lib.bartorch_nlop_adjoint.restype = ctypes.c_int
     lib.bartorch_nlop_adjoint.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+    lib.bartorch_nlop_inputs.restype = ctypes.c_int
+    lib.bartorch_nlop_inputs.argtypes = [ctypes.c_void_p]
+    lib.bartorch_nlop_outputs.restype = ctypes.c_int
+    lib.bartorch_nlop_outputs.argtypes = [ctypes.c_void_p]
+    lib.bartorch_nlop_input_domain.restype = ctypes.c_int
+    lib.bartorch_nlop_input_domain.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_long),
+    ]
+    lib.bartorch_nlop_output_codomain.restype = ctypes.c_int
+    lib.bartorch_nlop_output_codomain.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_long),
+    ]
+    lib.bartorch_nlop_apply_generic.restype = ctypes.c_int
+    lib.bartorch_nlop_apply_generic.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_void_p),
+    ]
+    lib.bartorch_nlop_derivative_linop.restype = ctypes.c_void_p
+    lib.bartorch_nlop_derivative_linop.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
+    lib.bartorch_nlop_chain2.restype = ctypes.c_void_p
+    lib.bartorch_nlop_chain2.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        ctypes.c_int,
+    ]
+    lib.bartorch_nlop_combine.restype = ctypes.c_void_p
+    lib.bartorch_nlop_combine.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    lib.bartorch_nlop_link.restype = ctypes.c_void_p
+    lib.bartorch_nlop_link.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
+    lib.bartorch_nlop_dup.restype = ctypes.c_void_p
+    lib.bartorch_nlop_dup.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
+    lib.bartorch_nlop_stack_inputs.restype = ctypes.c_void_p
+    lib.bartorch_nlop_stack_inputs.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+    ]
+    lib.bartorch_nlop_stack_outputs.restype = ctypes.c_void_p
+    lib.bartorch_nlop_stack_outputs.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+    ]
+    lib.bartorch_nlop_permute.restype = ctypes.c_void_p
+    lib.bartorch_nlop_permute.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_int),
+    ]
+    lib.bartorch_nlop_del_out.restype = ctypes.c_void_p
+    lib.bartorch_nlop_del_out.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    lib.bartorch_nlop_tenmul.restype = ctypes.c_void_p
+    lib.bartorch_nlop_tenmul.argtypes = [
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.POINTER(ctypes.c_long),
+    ]
+    lib.bartorch_nlop_zdiv.restype = ctypes.c_void_p
+    lib.bartorch_nlop_zdiv.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_long), ctypes.c_float]
+    lib.bartorch_nlop_zaxpbz.restype = ctypes.c_void_p
+    lib.bartorch_nlop_zaxpbz.argtypes = [
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.c_float,
+        ctypes.c_float,
+    ]
+    lib.bartorch_nlop_zexp.restype = ctypes.c_void_p
+    lib.bartorch_nlop_zexp.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_long)]
+    lib.bartorch_nlop_zlog.restype = ctypes.c_void_p
+    lib.bartorch_nlop_zlog.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_long)]
+    lib.bartorch_nlop_zinv.restype = ctypes.c_void_p
+    lib.bartorch_nlop_zinv.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_long), ctypes.c_float]
+    lib.bartorch_nlop_zsqrt.restype = ctypes.c_void_p
+    lib.bartorch_nlop_zsqrt.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_long)]
+    lib.bartorch_nlop_zspow.restype = ctypes.c_void_p
+    lib.bartorch_nlop_zspow.argtypes = [
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.c_float,
+        ctypes.c_float,
+    ]
+    lib.bartorch_nlop_zsadd.restype = ctypes.c_void_p
+    lib.bartorch_nlop_zsadd.argtypes = [
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.c_float,
+        ctypes.c_float,
+    ]
+    lib.bartorch_nlop_zabs.restype = ctypes.c_void_p
+    lib.bartorch_nlop_zabs.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_long)]
+    lib.bartorch_nlop_smo_abs.restype = ctypes.c_void_p
+    lib.bartorch_nlop_smo_abs.argtypes = [
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.c_float,
+    ]
+    lib.bartorch_nlop_zrss.restype = ctypes.c_void_p
+    lib.bartorch_nlop_zrss.argtypes = [
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.c_ulong,
+        ctypes.c_float,
+    ]
+    lib.bartorch_nlop_zss.restype = ctypes.c_void_p
+    lib.bartorch_nlop_zss.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_long), ctypes.c_ulong]
+    lib.bartorch_nlop_const.restype = ctypes.c_void_p
+    lib.bartorch_nlop_const.argtypes = [
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.c_void_p,
+    ]
+    lib.bartorch_nlop_set_input_const.restype = ctypes.c_void_p
+    lib.bartorch_nlop_set_input_const.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.c_void_p,
+    ]
     lib.bartorch_nlop_free.restype = None
     lib.bartorch_nlop_free.argtypes = [ctypes.c_void_p]
     lib.bartorch_irgnm.restype = ctypes.c_int

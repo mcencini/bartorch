@@ -42,6 +42,11 @@ class Built:
     device : torch.device, optional
         Where the operator does its arithmetic, when that is not where its
         operands are.
+    ishapes, oshapes : tuple of tuple of int, optional
+        The shape of every argument, for an operator that takes more than one.
+        BART's nonlinear operators are many inputs to many outputs; a linear
+        operator is always one to one and leaves these unset, in which case
+        ``ishape`` and ``oshape`` are the whole of it.
     """
 
     ptr: int
@@ -49,6 +54,8 @@ class Built:
     oshape: Shape
     keep: tuple = ()
     device: torch.device | None = None
+    ishapes: tuple[Shape, ...] | None = None
+    oshapes: tuple[Shape, ...] | None = None
 
 
 class _Handle:
