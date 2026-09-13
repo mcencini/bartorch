@@ -11,6 +11,7 @@ import dataclasses
 import math
 from collections.abc import Iterable, Sequence
 
+import numpy as np
 import torch
 
 from bartorch import _marshal
@@ -142,7 +143,9 @@ def _stacked(A, y: torch.Tensor, terms: Sequence[Tikhonov]):
         G = term._operator(op.ishape)
         if G.ishape != op.ishape:
             raise ValueError(f"a term over {G.ishape} does not fit an encoding over {op.ishape}")
-        root = math.sqrt(term.weight)
+        # The weight meets a complex64 tensor, so its square root is taken in
+        # the precision that tensor is held at.
+        root = float(np.float32(math.sqrt(term.weight)))
         pieces.append(flat(root * G) if 1.0 != root else flat(G))
 
         if term.bias is None:
@@ -176,9 +179,13 @@ def _solve(
     pqr: tuple[float, float, float] | None = None,
     sigma_tau_ratio: float = 1.0,
     adaptive_step: bool = False,
+    steps: list | None = None,
 ) -> torch.Tensor:
     """Run ``bartorch_solve``.  A negative ``step`` or ``rho``, a zero
-    ``cg_maxiter`` and ``pqr=None`` keep BART's defaults."""
+    ``cg_maxiter`` and ``pqr=None`` keep BART's defaults.
+
+    ``steps``, when given, has the number of iterations the algorithm took
+    appended to it."""
     op = A._bart()
     y = as_operand(y, op.oshape, "y")
     if x0 is None:
@@ -193,6 +200,7 @@ def _solve(
     handles = [term.build(op.ishape) for term in terms]
     p, q, r = pqr if pqr is not None else (-1.0, -1.0, -1.0)
 
+    counter = _marshal.long_out()
     with _lock, _on_device(op.device or y.device):
         code = lib.bartorch_solve(
             op._h.ptr,
@@ -220,10 +228,13 @@ def _solve(
             int(x0 is not None),
             x.data_ptr(),
             y.data_ptr(),
+            _marshal.by_reference(counter) if steps is not None else None,
         )
     if code != 0:
         said = lib.bartorch_solve_error(code).decode(errors="replace")
         raise BartError(f"the solve failed: {said}")
+    if steps is not None:
+        steps.append(int(counter.value))
     return x
 
 
@@ -266,6 +277,18 @@ class _Solver:
         -------
         torch.Tensor
             Complex64 solution of ``A.ishape``.
+        """
+        return self.in_library(y, A, x0)
+
+    def in_library(self, y: torch.Tensor, A, x0: torch.Tensor | None = None) -> torch.Tensor:
+        """Solve with BART's own loop, without crossing back into Python.
+
+        This is what :meth:`__call__` does for every solver whose iteration is
+        the library's.  Where the iteration has been written out in
+        :mod:`bartorch.optim.iterators` -- so that it can be unrolled into a
+        network or driven to a fixed point -- :meth:`__call__` runs that one
+        instead, and this stays as the reference it is held against: the two
+        answer with the same bits, which is what the suite checks.
         """
         return _solve(
             A,
@@ -341,12 +364,42 @@ class CG(_Solver):
     def _settings(self) -> dict:
         return {"cg_tol": self.tol}
 
-    def __call__(self, y: torch.Tensor, A, x0: torch.Tensor | None = None) -> torch.Tensor:
-        if not self.terms:
-            return super().__call__(y, A, x0)
+    def __call__(
+        self,
+        y: torch.Tensor,
+        A,
+        x0: torch.Tensor | None = None,
+        *,
+        steps: list | None = None,
+    ) -> torch.Tensor:
+        """Solve, and with ``steps`` say how many iterations it took.
 
-        stacked, data = _stacked(A, y, self.terms)
-        return super().__call__(data, stacked, x0)
+        The count is what an alternating-direction solver budgets by, and the
+        only way to see it from outside the library.
+        """
+        if self.terms:
+            A, y = _stacked(A, y, self.terms)
+
+        return _solve(
+            A,
+            y,
+            x0,
+            self._algorithm,
+            self.regularizers,
+            maxiter=self.maxiter,
+            cclambda=self.cclambda,
+            steps=steps,
+            **self._settings(),
+        )
+
+    def in_library(self, y: torch.Tensor, A, x0: torch.Tensor | None = None) -> torch.Tensor:
+        """The same as :meth:`__call__`: conjugate gradients stays BART's.
+
+        It is the one solver here with no iteration of its own, because it is
+        the one whose step is nothing but the normal operator -- there is no
+        proximal operator to unroll around.
+        """
+        return self(y, A, x0)
 
     def __repr__(self) -> str:
         terms = f", terms={self.terms!r}" if self.terms else ""
@@ -488,6 +541,50 @@ class ADMM(_Solver):
 
     def _settings(self) -> dict:
         return {"rho": self.rho, "cg_maxiter": self.cg_maxiter, "hogwild": self.hogwild}
+
+    def __call__(self, y: torch.Tensor, A, x0: torch.Tensor | None = None) -> torch.Tensor:
+        """Solve, by the iteration in :mod:`bartorch.optim.iterators`.
+
+        The loop is here rather than in the library, so that the same solver
+        can be unrolled into a network or driven to a fixed point.  The step
+        is BART's -- every operator in it is, and the arithmetic is held
+        against the library's own to the bit -- and so is when it stops.
+
+        """
+        from bartorch import to_deepinv
+        from bartorch.optim.iterators import ADMMIteration, NormalEquations
+
+        op = A._bart()
+        y = as_operand(y, op.oshape, "y")
+        x = (
+            torch.zeros(op.ishape, dtype=torch.complex64, device=y.device)
+            if x0 is None
+            else as_operand(x0, op.ishape, "x0").clone()
+        )
+
+        iteration = ADMMIteration(self.regularizers, op.ishape)
+        iteration.restart()
+        params = {
+            "maxiter": self.maxiter,
+            "cg_maxiter": self.cg_maxiter,
+            "rho": self.rho,
+            "hogwild": self.hogwild,
+            "cclambda": self.cclambda,
+        }
+
+        state = {"est": (x, x)}
+        for _ in range(self.maxiter):
+            state = iteration.forward(
+                state,
+                NormalEquations(),
+                None,
+                params,
+                y,
+                to_deepinv(A),
+            )
+            if state["done"]:
+                break
+        return state["est"][0]
 
 
 class PRIDU(_Solver):

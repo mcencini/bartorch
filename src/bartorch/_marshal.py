@@ -154,6 +154,11 @@ def wide_dim_vector() -> ctypes.Array:
     return (ctypes.c_long * (DIMS + 1))()
 
 
+def long_out() -> ctypes.c_long:
+    """A number the library writes into; read it back off ``.value``."""
+    return ctypes.c_long()
+
+
 def out_pointer() -> ctypes.c_void_p:
     """An address the library writes into; read it back off ``.value``."""
     return ctypes.c_void_p()

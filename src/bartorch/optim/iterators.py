@@ -253,9 +253,11 @@ def _single(value: float) -> float:
     """``value`` as the single-precision number BART would have held.
 
     Every scalar in these iterations is a C ``float`` unless BART declares it
-    a ``double``.  Python has only doubles, so each scalar is rounded where
-    the library would have rounded it; a scalar worked out in a double and
-    rounded once at the end is a different number.
+    a ``double`` -- which it does for the residual accumulators in ``admm``
+    and nowhere else.  Python has only doubles, so each scalar is rounded
+    where the library would have rounded it; a scalar worked out in a double
+    and rounded once at the end is a different number, which is what made the
+    ravine's coefficients diverge at the thirteenth iteration.
     """
     return float(np.float32(value))
 
@@ -318,7 +320,7 @@ def _formula(p: float, q: float, r: float, t: float) -> float:
 def _tau(params: dict, k: int) -> float:
     """BART's step at iteration ``k``: the step over the largest eigenvalue,
     halved by ``hogwild`` after 10 steps, then 20, then 40."""
-    tau = params["stepsize"]
+    tau = _single(params["stepsize"])
     if not params.get("hogwild", False):
         return tau
 
@@ -326,7 +328,7 @@ def _tau(params: dict, k: int) -> float:
     for _ in range(k + 1):
         seen += 1
         if seen == period:
-            seen, period, tau = 0, period * 2, tau / 2
+            seen, period, tau = 0, period * 2, _single(tau / 2)
     return tau
 
 
@@ -336,7 +338,7 @@ def _scale(params: dict, k: int) -> float:
     c = params.get("continuation", 1.0)
     if 1.0 == c:
         return 1.0
-    a = np.float32(math.log(c)) / np.float32(params["maxiter"])
+    a = np.log(np.float32(c)) / np.float32(params["maxiter"])
     return float(np.exp(a * np.float32(k)))
 
 
@@ -428,35 +430,48 @@ def _admm() -> type:
                 return x
 
             op = getattr(physics, "op", None)
-            counted = []
+
+            cclambda = params.get("cclambda", 0.0)
 
             def apply(v):
-                counted.append(1)
-                out = (
+                # `admm_normaleq`'s order, which is not the obvious one: the
+                # terms are summed first, scaled by `rho` as they go, and the
+                # encoding's normal -- with the quadratic weight folded into
+                # it, as `normaleq_l2_apply` does -- is added last.  With one
+                # term the two orders agree bit for bit; with two they do not.
+                out = None
+                for term in self.terms:
+                    contribution = rho * self._normal(term, v)
+                    out = contribution if out is None else out + contribution
+                normal = (
                     _batched(op.normal, v, op.ishape)
                     if op is not None
                     else physics.A_adjoint(physics.A(v))
                 )
-                for term in self.terms:
-                    out = out + rho * self._normal(term, v)
-                return out
+                if cclambda:
+                    normal = normal + cclambda * v
+                return normal if out is None else out + normal
 
             shape = tuple(x.shape)
             normal = Callback(shape, shape, apply, apply, apply)
             solver = CG(maxiter=params.get("cg_maxiter", 10), tol=params.get("cg_eps", 1e-3))
-            out = solver(rhs, _WithNormal(Identity(shape), normal), x0=x)
 
-            # `conjgrad` applies the operator once before its loop and once an
-            # iteration, and `admm` counts only the iterations.
-            self._invokes += max(len(counted) - 1, 0)
+            steps: list[int] = []
+            out = solver(rhs, _WithNormal(Identity(shape), normal), x0=x, steps=steps)
+
+            # `nr_invokes` is the conjugate-gradient iterations, which the
+            # library now reports rather than leaving to be inferred.
+            self._invokes += steps[0]
             return out
 
         # --- one step ----------------------------------------------------------
 
         def forward(self, X, cur_data_fidelity, cur_prior, cur_params, y, physics, *a, **kw):
             x = X["est"][0]
-            rho = X.get("rho", cur_params.get("rho", 0.5))
-            tau = X.get("tau", cur_params.get("tau", 2.0))
+            # `float rho, tau` in `admm.c`; the accumulators below are its
+            # `double n1, n2, n3, r_scaling, s_scaling`, kept as such.
+            rho = _single(X.get("rho", cur_params.get("rho", 0.5)))
+            tau = _single(X.get("tau", cur_params.get("tau", 2.0)))
             alpha = cur_params.get("alpha", 1.6)
             lam = cur_params.get("lambda", 1.0)
             fast = cur_params.get("fast", False)
@@ -515,8 +530,8 @@ def _admm() -> type:
 
             done = False
             if not fast:
-                r_norm = math.sqrt(r_sq)
-                s_norm = rho * float(torch.linalg.vector_norm(s))
+                r_norm = _single(math.sqrt(r_sq))
+                s_norm = _single(rho * float(torch.linalg.vector_norm(s)))
                 n3 = sum(
                     float(torch.linalg.vector_norm(b)) ** 2 for b in self.biases if b is not None
                 )
@@ -526,23 +541,21 @@ def _admm() -> type:
                 # BART counts real numbers, which is twice the complex ones.
                 m = 2 * sum(math.prod(self._shape(t)) for t in self.terms)
                 n = 2 * math.prod(tuple(x.shape))
-                eps_pri = (
-                    cur_params.get("abstol", 1e-4) * math.sqrt(m)
-                    + cur_params.get("reltol", 1e-3) * r_scaling
-                )
-                eps_dual = (
-                    cur_params.get("abstol", 1e-4) * math.sqrt(n)
-                    + cur_params.get("reltol", 1e-3) * s_scaling
-                )
+                # Zero by default, which is what `italgo_config` sets them to:
+                # `iter_admm_defaults` carries 1e-4 and 1e-3, and `pics`
+                # overrides both, so the residual test never fires and the
+                # budget is the only thing that stops the iteration.
+                abstol = cur_params.get("abstol", 0.0)
+                reltol = cur_params.get("reltol", 0.0)
+                eps_pri = _single(abstol * math.sqrt(m) + reltol * r_scaling)
+                eps_dual = _single(abstol * math.sqrt(n) + reltol * s_scaling)
 
-                done = (self._invokes > cur_params["maxiter"]) or (
-                    r_norm < eps_pri and s_norm < eps_dual
-                )
+                done = self._spent(cur_params, X) or (r_norm < eps_pri and s_norm < eps_dual)
                 rho, tau = self._adapt(
                     cur_params, rho, tau, r_norm, s_norm, r_scaling, s_scaling, u
                 )
             else:
-                done = self._invokes > cur_params["maxiter"]
+                done = self._spent(cur_params, X)
                 rho, tau = self._adapt(cur_params, rho, tau, 0.0, 0.0, 1.0, 1.0, u)
 
             return {
@@ -556,6 +569,23 @@ def _admm() -> type:
                 "it": X.get("it", 0) + 1,
             }
 
+        def _spent(self, params, X) -> bool:
+            """Whether BART would stop here, budget-wise.
+
+            Two limits, not one, and missing the second is what made this hard
+            to read off the source: `admm`'s own loop runs at most `maxiter`
+            times, *and* it breaks when `nr_invokes > maxiter`, where
+            `nr_invokes` is the conjugate-gradient iterations across the whole
+            run.  Whichever comes first.
+
+            On a well-conditioned problem the inner solve takes one iteration
+            a step, so the loop bound is what stops it and `maxiter` does look
+            like a count of steps.  On a hard one the iterations pile up and
+            the budget stops it long before.
+            """
+            maxiter = params["maxiter"]
+            return (X.get("it", 0) + 1 >= maxiter) or (self._invokes > maxiter)
+
         def _adapt(self, params, rho, tau, r_norm, s_norm, r_scaling, s_scaling, u):
             """BART's ``tau`` and ``rho`` moves, and hogwild's doubling."""
             sc = 1.0
@@ -564,11 +594,11 @@ def _admm() -> type:
                 tau_max = params.get("tau_max", 20.0)
                 t = math.sqrt(r_norm / s_norm)
                 if tau_max > t >= 1.0:
-                    tau = t
+                    tau = _single(t)
                 elif 1.0 > t > 1.0 / tau_max:
-                    tau = 1.0 / t
+                    tau = _single(1.0 / t)
                 else:
-                    tau = tau_max
+                    tau = _single(tau_max)
 
             if params.get("dynamic_rho", False):
                 r, s = r_norm, s_norm
@@ -587,7 +617,7 @@ def _admm() -> type:
                     self._hw_k, self._hw_K, sc = 0, self._hw_K * 2, 2.0
 
             if 1.0 != sc:
-                rho = rho * sc
+                rho = _single(rho * sc)
                 for j in range(len(u)):
                     u[j] = u[j] / sc
 

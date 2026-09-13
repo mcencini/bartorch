@@ -1,8 +1,14 @@
 # Optimization
 
 `bartorch.optim`.  A solver is configured once and called as
-`solver(y, A, x0=None)`; the iteration runs inside BART, as the one `pics` or
-`nlinv` runs.
+`solver(y, A, x0=None)`; the iteration is BART's, the one `pics` or `nlinv`
+runs.
+
+Where the iteration has been written out in `bartorch.optim.iterators` -- so
+far `ADMM` -- the loop runs here and each step calls the library; everywhere
+else the whole solve is one call into it.  Either way the answer is the same
+bits, and `solver.in_library(y, A)` runs BART's own loop when that is what is
+wanted.
 
 ```{eval-rst}
 .. currentmodule:: bartorch.optim
@@ -89,13 +95,27 @@ encoding keeps its own normal there too.  Total variation reaches it through
 past BART's sixteen, so there is no operator to hand over, and the transform is
 applied in place instead.
 
-Two things to know about `maxiter`.  On `optim.ADMM` it is BART's, and BART's
-is a budget on applications of the normal operator rather than a count of
-outer steps -- `admm` breaks when `nr_invokes > maxiter`, and `nr_invokes`
-counts conjugate-gradient iterations across the whole run, so thirty with ten
-inner iterations is about five outer steps.  `ADMMIteration` counts outer
-steps instead, which is what `BaseOptim` expects; the step itself is BART's
-either way, to the bit.
+Its x-update sums the terms first, each scaled by $\rho$ as it goes, and adds
+the encoding's normal last.  That is `admm_normaleq`'s order and not the
+obvious one; with a single term the two orders are the same two numbers added
+up, and with two they differ in the last place of the answer.
+
+`maxiter` there is two limits rather than one, which is worth knowing because
+`maxiter=30` does not mean thirty steps.  `admm`'s loop runs at most `maxiter`
+times *and* breaks when `nr_invokes > maxiter`, where `nr_invokes` counts
+conjugate-gradient iterations across the whole run -- so thirty with ten inner
+iterations is about five outer steps, and on a well-conditioned problem, where
+the inner solve takes one iteration a step, it really is thirty.  The
+iterations are counted in C and handed back: `CG.__call__` takes a `steps`
+list, which is where `ADMMIteration` gets the number, and nothing outside the
+library could have worked it out.
+
+One term is not a function of its argument.  A `prox.Wavelet` with
+`randshift` on -- BART's default, and `pics`'s -- shifts its transform by a
+draw of BART's own before every application, so the same term applied twice to
+the same image answers twice differently.  Two loops therefore agree to the
+bit only when they apply it the same number of times in the same order, which
+is one more thing the comparison against the library checks.
 
 `PRIDUIteration` is the one iteration whose answer depends on how BART was
 compiled.  `vecops.c` has a single kernel behind `axpy`, `xpay` and `axpbz`,
