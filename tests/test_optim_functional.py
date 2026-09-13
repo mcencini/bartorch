@@ -175,3 +175,42 @@ def test_something_that_is_neither_is_still_refused(problem):
     A, y = problem
     with pytest.raises(TypeError, match="a deepinv prior, or a denoiser"):
         optim.fista(y, A, object(), maxiter=6)
+
+
+# --- and what runs underneath it ----------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "call,iteration",
+    [
+        (lambda y, A, t: optim.ist(y, A, t, maxiter=4, step=0.7), "ISTIteration"),
+        (lambda y, A, t: optim.fista(y, A, t, maxiter=4, step=0.7), "FISTAIteration"),
+        (lambda y, A, t: optim.admm(y, A, t, maxiter=2, cg_maxiter=4), "ADMMIteration"),
+        (lambda y, A, t: optim.pridu(y, A, t, maxiter=4, step=0.95), "PRIDUIteration"),
+    ],
+    ids=["ist", "fista", "admm", "pridu"],
+)
+def test_the_function_runs_the_iteration_and_not_a_second_implementation(
+    problem, monkeypatch, call, iteration
+):
+    """The route is function -> solver -> the iteration in
+    :mod:`bartorch.optim.iterators`, and nothing in between writes the
+    algorithm out again.
+
+    Worth pinning rather than assuming: the whole claim that a plug-and-play
+    solve is BART's own iteration with the threshold replaced rests on there
+    being exactly one copy of each iteration, and that is the copy the suite
+    holds against the library.
+    """
+    from bartorch.optim import iterators
+
+    cls = getattr(iterators, iteration)
+    seen = []
+    original = cls.forward
+    monkeypatch.setattr(
+        cls, "forward", lambda self, *a, **kw: seen.append(1) or original(self, *a, **kw)
+    )
+
+    A, y = problem
+    call(y, A, prox.L1(0.01))
+    assert seen, f"{iteration} was never stepped, so something else ran the iteration"

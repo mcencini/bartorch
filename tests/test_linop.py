@@ -177,6 +177,42 @@ def test_the_adjoint_differentiates_too():
     assert y.grad is not None
 
 
+def test_the_normal_operator_differentiates_as_itself():
+    """``A^H A`` is Hermitian, so its backward pass is the same operator.
+
+    ``normal`` is the raw application and records nothing -- it takes ``out=``
+    and is what a solver drives inside the library.  ``A_adjoint_A`` is the
+    recording one, and it is what an unrolled gradient step applies: taking
+    the normal operator as a constant would leave the step looking like a
+    plain move towards the prior.
+    """
+    shape = (4, 8)
+    A = linop.Diagonal(_rand(*shape), shape)
+    v = _rand(*shape)
+
+    x = _rand(*shape).requires_grad_(True)
+    (gradient,) = torch.autograd.grad(A.A_adjoint_A(x), x, grad_outputs=v)
+    torch.testing.assert_close(gradient, A.normal(v), rtol=1e-5, atol=1e-6)
+
+    # And the same gradient the two recorded applications give, which is the
+    # route it replaces.
+    through = x.detach().clone().requires_grad_(True)
+    A.A_adjoint_A(through).abs().square().sum().backward()
+    composed = x.detach().clone().requires_grad_(True)
+    A.A_adjoint(A(composed)).abs().square().sum().backward()
+    torch.testing.assert_close(through.grad, composed.grad, rtol=1e-5, atol=1e-6)
+
+
+def test_the_raw_normal_records_nothing_and_the_recorded_one_agrees_with_it():
+    shape = (4, 8)
+    A = linop.FFT(shape, axes=-1)
+    x = _rand(*shape).requires_grad_(True)
+    assert A.normal(x).grad_fn is None
+    recorded = A.A_adjoint_A(x)
+    assert recorded.grad_fn is not None
+    assert torch.equal(recorded.detach(), A.normal(x.detach()))
+
+
 def test_applying_an_operator_to_a_plain_tensor_records_nothing():
     A = linop.FFT((4, 8), axes=-1)
     assert A(_rand(4, 8)).grad_fn is None

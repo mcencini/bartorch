@@ -96,7 +96,7 @@ def _normal_equations() -> type:
             key = (id(y), y._version, y.shape)
             if self._adjoint is None or self._adjoint[0] != key:
                 op = physics.op
-                self._adjoint = (key, _batched(op.adjoint, y, op.oshape))
+                self._adjoint = (key, _batched(op.A_adjoint, y, op.oshape))
             return self._adjoint[1]
 
         def normal(self, x: torch.Tensor, physics) -> torch.Tensor:
@@ -108,7 +108,10 @@ def _normal_equations() -> type:
             """
             op = getattr(physics, "op", None)
             out = (
-                _batched(op.normal, x, op.ishape)
+                # `A_adjoint_A` rather than `normal`: the recording entry
+                # point, so that an unrolled step differentiates through the
+                # normal operator instead of treating it as a constant.
+                _batched(op.A_adjoint_A, x, op.ishape)
                 if op is not None
                 else physics.A_adjoint(physics.A(x))
             )
@@ -360,9 +363,12 @@ def _single(value: float) -> float:
 
 def _dot(a: torch.Tensor, b: torch.Tensor) -> float:
     """``vecops.c``'s ``dot``: the products in single precision, summed in a
-    double, over the real and imaginary parts as one long vector."""
-    x = torch.view_as_real(a) if a.is_complex() else a
-    z = torch.view_as_real(b) if b.is_complex() else b
+    double, over the real and imaginary parts as one long vector.
+
+    Detached for the reason :func:`_norm` gives.
+    """
+    x = torch.view_as_real(a.detach()) if a.is_complex() else a.detach()
+    z = torch.view_as_real(b.detach()) if b.is_complex() else b.detach()
     return float((x * z).double().sum())
 
 
@@ -374,7 +380,15 @@ def _norm(x: torch.Tensor) -> float:
     ``float`` the difference is rounded away; where it is squared again --
     which is what the primal-dual step adaptation does to it -- it is not, and
     it reaches the iterate.
+
+    The iterate is detached first.  These norms are read by the step and
+    weight adaptations and by the stopping test -- BART's schedule for the
+    iteration, not part of the model it solves -- and an unrolled network
+    differentiates through the iterate and not through the schedule that
+    steered it.  ``float()`` would drop the graph anyway; saying so here is
+    what stops torch warning about it once a step.
     """
+    x = x.detach()
     parts = torch.view_as_real(x) if x.is_complex() else x
     return float(torch.sqrt((parts * parts).double().sum()))
 
@@ -522,7 +536,7 @@ def _admm() -> type:
             from bartorch.linop.base import _WithNormal
             from bartorch.optim.linear import CG
 
-            if 0.0 == float(torch.linalg.vector_norm(rhs)):
+            if 0.0 == float(torch.linalg.vector_norm(rhs.detach())):
                 return x
 
             op = getattr(physics, "op", None)
@@ -831,7 +845,10 @@ def _pridu() -> type:
             pull = _single(-1.0 * sigma / (1.0 + sigma))
             fresh = keep * step + pull * cur_data_fidelity._adjoint_data(y, physics)
             adjoint_dual = lam * fresh + (1.0 - lam) * previous
-            change = adjoint_dual - previous
+            # Detached for the reason :func:`_norm` gives: `moved` steers
+            # `tau` and the stopping test, which are the schedule and not
+            # the model.
+            change = (adjoint_dual - previous).detach()
             moved = float(torch.real((change.conj() * change).sum()))
 
             # Each regularization term's, through the conjugate of its prox.
@@ -844,7 +861,8 @@ def _pridu() -> type:
                 fresh_j = sigma * over - sigma * thresholded
                 was = duals[j]
                 duals[j] = lam * fresh_j + (1.0 - lam) * was
-                moved += float(torch.real(((duals[j] - was).conj() * (duals[j] - was)).sum()))
+                moved_j = (duals[j] - was).detach()
+                moved += float(torch.real((moved_j.conj() * moved_j).sum()))
 
             # The primal step.
             previous_x = x

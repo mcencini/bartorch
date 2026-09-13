@@ -412,6 +412,22 @@ class LinearOperator(Operator):
             return apply_adjoint(self, y)
         return self.adjoint(y)
 
+    def A_adjoint_A(self, x: torch.Tensor, **kwargs) -> torch.Tensor:  # noqa: N802
+        """``A^H A x``, under ``deepinv``'s name, recorded for autograd.
+
+        The recording entry point for :meth:`normal`, which is the raw one.
+        It matters where the normal operator stands inside a loop that is
+        being differentiated -- the gradient step of an unrolled network --
+        because ``A^H A`` is what that step applies, and taking it as a
+        constant would leave the step looking like a plain move towards the
+        prior.
+        """
+        if _tracking(x):
+            from bartorch.linop.autograd import apply_normal
+
+            return apply_normal(self, x)
+        return self.normal(x)
+
     def A_dagger(self, y: torch.Tensor, **kwargs) -> torch.Tensor:  # noqa: N802
         """The pseudo-inverse, under ``deepinv``'s name.  See :meth:`pinv`."""
         return self.pinv(y, **kwargs)
