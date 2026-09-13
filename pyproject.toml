@@ -155,3 +155,15 @@ exclude = ["src/bartorch/_abi.py", "src/bartorch/_catalogue.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.codespell]
+# One place for what the spelling check reads, so that `scripts/lint.sh` and
+# the workflow cannot drift apart.  The skips need the `./` codespell prints,
+# or they match nothing: `external/` did not exclude `./external/bart`, which
+# is why this check had never passed.  `nd` and `optin` are identifiers rather
+# than typos -- BART writes `int ND` for a doubled dimension count, and CUDA
+# spells its own attribute `cudaDevAttrMaxSharedMemoryPerBlockOptin`.  `build`
+# and `docs/_build` are outputs a fresh checkout does not have and a local run
+# does.
+skip = "./attic,./external,./.git,./build,./docs/_build,*.ipynb,pyproject.toml"
+ignore-words-list = "ist,te,reconet,pyramide,nd,optin,lamda"

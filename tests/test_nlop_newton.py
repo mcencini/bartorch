@@ -431,3 +431,110 @@ def test_the_trained_network_answers_what_the_loop_answers(problem):
     torch.testing.assert_close(
         run(0.9), second(yb, 0.9 * first(ya, x0, x0, 1.0), x0, 0.5), rtol=1e-5, atol=1e-6
     )
+
+
+# --- a real denoiser, trained through the one operator ---------------------------
+
+
+class _Denoiser(torch.nn.Module):
+    """Two convolutions over the real and imaginary parts, which is what a
+    denoiser is shaped like even when it is this small."""
+
+    def __init__(self):
+        super().__init__()
+        self.body = torch.nn.Sequential(
+            torch.nn.Conv2d(2, 4, 3, padding=1),
+            torch.nn.ReLU(),
+            torch.nn.Conv2d(4, 2, 3, padding=1),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        parts = torch.view_as_real(x).permute(0, 3, 1, 2)
+        made = self.body(parts).permute(0, 2, 3, 1).contiguous()
+        return torch.view_as_complex(made)
+
+
+def test_a_modules_parameters_pack_and_come_back():
+    net = _Denoiser()
+    weights = nlop.Parameters(net)
+    assert (sum(p.numel() for p in net.parameters()),) == weights.shape
+
+    packed = weights.pack()
+    assert torch.complex64 == packed.dtype
+    made = weights.unpack(packed)
+    assert all(torch.equal(made[name], p) for name, p in net.named_parameters())
+
+    weights.load(torch.zeros_like(packed))
+    assert all(torch.all(0 == p) for p in net.parameters())
+
+
+def test_a_vector_of_the_wrong_length_says_so():
+    weights = nlop.Parameters(_Denoiser())
+    with pytest.raises(ValueError, match="parameters, not"):
+        weights.unpack(torch.zeros(3, dtype=torch.complex64))
+
+
+def test_a_module_with_nothing_to_train_says_so():
+    with pytest.raises(ValueError, match="no parameters to train"):
+        nlop.Parameters(torch.nn.ReLU())
+
+
+def test_a_convolutional_denoiser_trains_inside_the_one_operator(problem):
+    """The whole of it: BART applies an unrolled network, the prior is a torch
+    module, and an optimizer over the module's weights reduces the loss.
+
+    Six steps is not a reconstruction -- what it says is that the gradient is
+    a real one and points the way it should.
+    """
+    image, _, kspace = problem
+    torch.manual_seed(0)
+    cells = _cells()
+    prepared = [cell.prepare()(kspace, _ones()) for cell in cells]
+    x0 = cells[0].start()
+    state = cells[0].state_shape
+    pixels = N * N
+
+    net = _Denoiser()
+    weights = nlop.Parameters(net)
+
+    def prior(x, w):
+        # The denoiser touches the image half of the state; the coil
+        # coefficients go through untouched.
+        made = torch.func.functional_call(net, weights.unpack(w), (x[:, :pixels].reshape(1, N, N),))
+        return torch.cat([made.reshape(1, pixels), x[:, pixels:]], dim=1)
+
+    operator = nlop.FromTorch(prior, [state, weights.shape], state)
+    whole = nlop.chain(
+        nlop.chain(cells[0], operator, output=0, input=0), cells[1], output=0, input=1
+    )
+
+    trained = torch.nn.Parameter(weights.pack())
+    optimiser = torch.optim.Adam([trained], lr=1e-2)
+    truth = image.abs().reshape(1, pixels)
+
+    losses = []
+    for _ in range(6):
+        optimiser.zero_grad()
+        made = whole(
+            prepared[1],
+            x0,
+            cells[1].weight(0.5),
+            trained,
+            prepared[0],
+            x0,
+            x0,
+            cells[0].weight(1.0),
+        )[:, :pixels].abs()
+        scale = (made * truth).sum() / (made * made).sum().clamp_min(1e-12)
+        loss = ((scale * made - truth) ** 2).sum()
+        loss.backward()
+        assert trained.grad is not None and torch.isfinite(trained.grad).all()
+        losses.append(loss.item())
+        optimiser.step()
+
+    assert losses[-1] < losses[0]
+    assert losses == sorted(losses, reverse=True), "the loss should fall at every step"
+
+    # And the trained values go back where they came from.
+    weights.load(trained)
+    torch.testing.assert_close(nlop.Parameters(net).pack(), trained.detach(), rtol=1e-5, atol=1e-6)
