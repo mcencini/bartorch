@@ -209,6 +209,19 @@ def test_a_flattened_model_computes_what_the_model_computes():
     torch.testing.assert_close(flat(joined), F(image, coefficients), rtol=1e-5, atol=1e-6)
 
 
+def test_a_flattened_model_reaches_a_solver():
+    # BART declares its flattened vector at rank one and everything else in
+    # the wrapper at sixteen, and `lsqr2_create` checks the rank it was given
+    # against the operator's own -- so a flattened model handed to a solver
+    # asserted inside BART, which takes the process rather than raising.  The
+    # vector is restated at the wrapper's rank; this is what says so.
+    F = nlop.CartesianSense((2, 8, 8))
+    flat = F.flatten(inputs_only=True)
+    flat.forward(torch.zeros(flat.ishape, dtype=torch.complex64))
+    J = flat.jacobian()
+    assert torch.isfinite(optim.CG(maxiter=3)(_rand(*J.oshape), J)).all()
+
+
 def test_flattening_the_outputs_too_gives_one_vector_each_way():
     F = nlop.CartesianSense((4, 8, 8))
     flat = F.flatten()
