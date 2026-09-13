@@ -117,6 +117,18 @@ the same image answers twice differently.  Two loops therefore agree to the
 bit only when they apply it the same number of times in the same order, which
 is one more thing the comparison against the library checks.
 
+`PRIDUIteration` is the one iteration whose answer depends on how BART was
+compiled.  `vecops.c` has a single kernel behind `axpy`, `xpay` and `axpbz`,
+`dst[i] = a1 * src1[i] + a2 * src2[i]`, and clang folds the first product into
+the add where the hardware has a fused multiply-add -- arm64 does, the x86-64
+baseline does not -- which is one rounding where this package computes two.
+The other three iterations escape it because their updates are `axpy`, whose
+`a1` is one, and folding an exact product in changes nothing; the data term's
+resolvent here is an `xpay` and an `axpbz` with two real coefficients.  So on
+arm64 this iteration is within a few times $10^{-7}$ of the library rather
+than the same bits, and the tests ask the library which arithmetic it was
+compiled with rather than assuming.
+
 `PRIDUIteration` carries the data term as a dual of its own rather than
 differentiating it, and gives each regularization term a dual too -- except
 the first, when its transform is the identity, which becomes the primal
