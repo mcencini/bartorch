@@ -252,7 +252,13 @@ def _solve(
     lib = library()
     ndim = len(op.ishape)
     flags = [term._flags(ndim) for term in terms]
-    handles = [term.build(op.ishape) for term in terms]
+    # A term that adds unknowns cannot be built on its own -- the offsets its
+    # transforms sit at are worked out across the whole set -- so on that path
+    # the solve configures the set itself and there is nothing to hand over.
+    extends = _extending(terms)
+    for term in terms:
+        term._check(ndim)
+    handles = [] if extends else [term.build(op.ishape) for term in terms]
     p, q, r = pqr if pqr is not None else (-1.0, -1.0, -1.0)
     # The preconditioner is one more BART operator, and it has to outlive the
     # call; the wrapper a Python-defined one produces is kept here for that.
@@ -266,6 +272,12 @@ def _solve(
         )
     sampler = None if sampler_precond is None else sampler_precond._bart()
 
+    # `opt_reg_configure` takes one block size, one wavelet family and one
+    # shift mode for the whole set, and reaches for them only on the path that
+    # configures the set -- which is the path an extending term forces.
+    block, family, shift_mode = _shared_options(terms)
+    alpha, gamma = _shared_pairs(terms)
+
     counter = _marshal.long_out()
     with _lock, _on_device(op.device or y.device):
         code = lib.bartorch_solve(
@@ -276,7 +288,7 @@ def _solve(
             _marshal.longs([j for _, j in flags]) if terms else None,
             _marshal.floats([term.weight for term in terms]) if terms else None,
             _marshal.ints([term.count for term in terms]) if terms else None,
-            _marshal.pointers(handles) if terms else None,
+            _marshal.pointers(handles) if handles else None,
             len(terms),
             float(cclambda),
             int(maxiter),
@@ -301,6 +313,11 @@ def _solve(
             float(sampler_precond_diag),
             float(sampler_precond_tol),
             int(sampler_precond_maxiter),
+            block,
+            family.encode(),
+            shift_mode,
+            _marshal.floats(alpha),
+            _marshal.floats(gamma),
             x.data_ptr(),
             y.data_ptr(),
             _marshal.by_reference(counter) if steps is not None else None,
@@ -360,6 +377,98 @@ def _empty(adjoint: torch.Tensor) -> bool:
     return not (math.isfinite(eps) and abs(eps) >= float(np.finfo(np.float32).tiny))
 
 
+#: The two iterations that take a term's transform, and so the only two BART
+#: lets an extending term reach.  `italgo_choose` sends every one of the three
+#: to the alternating directions.
+_TAKES_A_TRANSFORM = ("admm", "pridu")
+
+#: What `opt_reg_configure` falls back on, and what a term that does not read
+#: these answers with.
+_SHARED_OPTIONS = (8, "dau2", 1)
+
+
+#: The pairs ``pics`` takes once for the whole set, and BART's own values for
+#: them (`opt_reg_init`, optreg.c:309-313).  Only the terms that add unknowns
+#: read them.
+_SHARED_PAIRS: dict[str, tuple[float, float]] = {
+    "alpha": (1.0, 3.0**0.5),
+    "gamma": (1.0, 1.0),
+}
+
+
+def _shared_pairs(terms) -> tuple[tuple[float, float], tuple[float, float]]:
+    """``--alpha`` and ``--gamma`` for the whole set.
+
+    They live on ``struct opt_reg_s`` rather than on a term, which is why
+    ``pics`` has a single ``--alpha``; two terms disagreeing is refused rather
+    than one of them silently winning, as it is for the block size.
+    """
+    resolved = dict(_SHARED_PAIRS)
+    asked: dict[str, tuple[float, float]] = {}
+    for term in terms:
+        for name, value in term._settings().items():
+            if name not in resolved:
+                continue
+            if asked.setdefault(name, value) != value:
+                raise ValueError(
+                    f"{name} is one pair for the whole set -- `pics` has a single "
+                    f"--{name} -- and these terms ask for {asked[name]!r} and {value!r}; "
+                    "give them the same, or solve for them separately"
+                )
+            resolved[name] = value
+    return resolved["alpha"], resolved["gamma"]
+
+
+def _extending(terms) -> bool:
+    """Whether any of ``terms`` adds unknowns to the optimization variable."""
+    return any(getattr(term, "_extends", False) for term in terms)
+
+
+def _in_library(solver, y, A, x0):
+    """The library's loop, for a solver holding a term that adds unknowns.
+
+    There is no written-out step for one -- the iteration here walks the image,
+    and this one walks the image and the fields behind it -- so `__call__`
+    comes here instead.  The library's loop records nothing, so a tracked ``y``
+    is refused rather than answered with a tensor that has quietly lost its
+    graph.
+    """
+    from bartorch.linop.base import _tracking
+
+    # A prior BART cannot be given is the more basic problem, and `in_library`
+    # is where that is said; this speaks only for a solve BART can run.
+    if not solver._foreign and _tracking(y):
+        raise RuntimeError(
+            f"{type(solver).__name__} cannot be differentiated through with a term that "
+            "adds unknowns to the optimization: the solve runs inside the library, which "
+            "is where BART lays that larger vector out, and the library's loop records "
+            "nothing.  Detach the data, or regularize with a term that walks the image "
+            "alone -- prox.TotalVariation is the one nearest to these"
+        )
+    return solver.in_library(y, A, x0)
+
+
+def _shared_options(terms) -> tuple[int, str, int]:
+    """The one block size, wavelet family and shift mode for the whole set.
+
+    ``opt_reg_configure`` takes one of each and hands them to whichever terms
+    read them, which is how ``pics`` has a single ``-b`` and a single ``-w``.
+    A term that reads none answers with the defaults, so what is looked for is
+    the terms that said something, and two of those disagreeing is refused
+    rather than silently resolved.
+    """
+    asked = {term._options() for term in terms if term._options() != _SHARED_OPTIONS}
+    if not asked:
+        return _SHARED_OPTIONS
+    if 1 < len(asked):
+        raise ValueError(
+            "BART configures a set of terms with one block size, one wavelet family and "
+            f"one shift mode -- `pics` has a single -b and a single -w -- and these ask for "
+            f"{sorted(asked)}; give them the same, or solve for them separately"
+        )
+    return next(iter(asked))
+
+
 class _Solver:
     """Base of the solvers that run BART's ``lsqr2``."""
 
@@ -368,12 +477,14 @@ class _Solver:
 
     def __init__(self, regularizers: Regularizers, maxiter: int, cclambda: float, precond=None):
         self.regularizers = _as_terms(regularizers)
-        for term in self.regularizers:
-            if getattr(term, "_extends", False):
-                raise TypeError(
-                    f"{type(term).__name__} adds variables to the optimization, which BART "
-                    "configures only for the whole set of terms at once; tools.pics takes it"
-                )
+        if _extending(self.regularizers) and self._algorithm not in _TAKES_A_TRANSFORM:
+            raise TypeError(
+                f"{type(self).__name__} cannot take a term that adds unknowns to the "
+                "optimization: total generalized variation and the two infimal convolutions "
+                "split into several penalties over the enlarged variable, and only the "
+                "alternating-direction and primal-dual iterations are given a term's "
+                "transform at all; optim.ADMM takes them"
+            )
         self.maxiter = int(maxiter)
         self.cclambda = float(cclambda)
         self.precond = precond
@@ -466,6 +577,15 @@ class _Solver:
         from deepinv.optim import BaseOptim
 
         from bartorch.optim.iterators import NormalEquations
+
+        if _extending(self.regularizers):
+            raise TypeError(
+                "a term that adds unknowns to the optimization has no step written out "
+                "here: the iterations in bartorch.optim.iterators walk the image, and this "
+                "one walks the image and the supporting variables behind it.  It solves -- "
+                "inside the library, which is where BART lays that vector out -- but it "
+                "does not unroll"
+            )
 
         iteration, prior, params = self._pieces(tuple(image_shape))
 
@@ -1120,6 +1240,12 @@ class ADMM(_Solver):
         from bartorch import to_deepinv
         from bartorch.optim.iterators import NormalEquations
 
+        if _extending(self.regularizers):
+            # The step written out here walks the image; this one walks the
+            # image and the supporting variables behind it, and BART is where
+            # that vector is laid out.  Same answer, the library's loop.
+            return _in_library(self, y, A, x0)
+
         op, y, x = _start(A, y, x0, self.regularizers)
 
         iteration, _, params = self._pieces(op.ishape)
@@ -1253,6 +1379,11 @@ class PRIDU(_Solver):
         """
         from bartorch import to_deepinv
         from bartorch.optim.iterators import NormalEquations
+
+        if _extending(self.regularizers):
+            # As for the alternating directions: the enlarged variable is laid
+            # out inside the library, so that is where this one is solved.
+            return _in_library(self, y, A, x0)
 
         op, y, x = _start(A, y, x0, self.regularizers)
 

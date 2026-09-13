@@ -316,6 +316,18 @@ BARTORCH_API void bartorch_linop_free(bartorch_linop* h);
  * alternating-direction solver budgets by, and there is no other way to see
  * it from outside.
  *
+ *
+ * Three terms are not one proximal operator on the image.  Total generalized
+ * variation and the two infimal convolutions add unknowns -- BART calls them
+ * supporting variables -- and split into several penalties at offsets into
+ * the enlarged vector, and `opt_reg_configure` works those offsets out across
+ * the whole set at once, which is why they cannot be built one at a time.
+ * When one of them is in the set, this configures the set itself rather than
+ * taking `reg_ops`, chains `linop_extract_create` onto the encoding so the
+ * model still sees an image, solves over the longer vector, and hands back
+ * the image part of it.  That is what `pics.c` does, and the terms that are
+ * built here are built fresh per solve, as the tool builds them.
+ *
  * Returns 0, or a code `bartorch_solve_error` turns into a sentence.
  */
 /* The largest eigenvalue of the operator a step is divided by (`pics -e`).
@@ -358,6 +370,13 @@ BARTORCH_API int bartorch_solve(const bartorch_linop* A,
 		 * `diag` of zero leaves the plain sampler. */
 		const bartorch_linop* em_precond, float em_precond_diag, float em_precond_tol,
 		int em_precond_maxiter,
+		/* What `opt_reg_configure` needs when the set has to be built here:
+		 * one block size, one wavelet family and one shift mode for the whole
+		 * of it, as `pics` has one `-b` and one `-w`; and the two pairs
+		 * `pics --alpha` and `pics --gamma` set, two floats each or NULL for
+		 * BART's own.  Ignored otherwise. */
+		int llr_blk, const char* wavelet, int shift_mode,
+		const float* alpha, const float* gamma,
 		void* x, const void* y, long* iterations);
 BARTORCH_API const char* bartorch_solve_error(int code);
 

@@ -260,6 +260,15 @@ def test_a_setting_pics_gives_once_has_to_agree_across_terms():
         bt.pics(kspace, maps, regularizers=terms)
 
 
+def test_pics_refuses_an_infimal_convolution_with_no_axis_of_each_kind():
+    """`ictv_reg` asserts that the axes cover a spatial one and a non-spatial
+    one, and an assertion would end the process; the tool's wrapper asks the
+    same question first."""
+    kspace, maps = _pics_data()
+    with pytest.raises(ValueError, match="at least one of the image's last three axes"):
+        bt.pics(kspace, maps, regularizers=prox.InfimalConvolutionTV((-1, -2), 0.01))
+
+
 def test_a_command_refuses_a_term_its_parser_does_not_know():
     kspace, maps = _pics_data()
     with pytest.raises(TypeError, match="sqpics does not take"):

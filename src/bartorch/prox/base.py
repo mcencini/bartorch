@@ -337,6 +337,17 @@ class Regularizer(abc.ABC):
         """
         return {}
 
+    def _check(self, ndim: int | None) -> None:
+        """Raise if this term cannot be built over an ``ndim``-axis image.
+
+        BART states some of a term's preconditions as assertions, which end
+        the process rather than return; and a term that adds variables is
+        built by `opt_reg_configure`, deep inside the solve, where there is
+        nothing left to catch.  Whatever can be decided from the rank is
+        decided here instead, while an exception still reaches the caller.
+        Most terms have nothing to say and this does nothing.
+        """
+
     def _flags(self, ndim: int) -> tuple[int, int]:
         """BART's bitmasks for :attr:`axes` and :attr:`joint_axes`, for an ``ndim``-axis image."""
         return (
@@ -472,6 +483,7 @@ def _command_line(
     for term in terms:
         if kinds is not None and term.kind not in kinds:
             raise TypeError(f"{command} does not take {type(term).__name__} terms")
+        term._check(ndim)
         arguments.append(term._argument(ndim))
         for name, value in term._settings().items():
             if shared.setdefault(name, value) != value:
