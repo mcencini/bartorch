@@ -38,12 +38,20 @@ from bartorch.nlop.basic import (
 )
 from bartorch.nlop.callback import Callback, FromTorch
 from bartorch.nlop.derivative import Derivative
+from bartorch.nlop.mri import (
+    CartesianSense,
+    CoilSense,
+    NoncartesianSense,
+    NonlinearSense,
+)
 
 __all__ = [
     "Abs",
     "Add",
     "Callback",
+    "CartesianSense",
     "Chain",
+    "CoilSense",
     "Constant",
     "Derivative",
     "Divide",
@@ -53,7 +61,9 @@ __all__ = [
     "Inverse",
     "Log",
     "Multiply",
+    "NoncartesianSense",
     "NonlinearOperator",
+    "NonlinearSense",
     "Phase",
     "Power",
     "RootSumOfSquares",

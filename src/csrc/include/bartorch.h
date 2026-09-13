@@ -200,6 +200,7 @@ BARTORCH_API void bartorch_fft_reset_counters(void);
 typedef struct bartorch_linop_s bartorch_linop;
 typedef struct bartorch_prox_s bartorch_prox;
 typedef struct bartorch_nlop_s bartorch_nlop;
+typedef struct bartorch_noir_s bartorch_noir;
 typedef int (*bartorch_apply_fn)(void* ctx, void* dst, const void* src);
 typedef void (*bartorch_release_fn)(void* ctx);
 
@@ -447,6 +448,10 @@ BARTORCH_API bartorch_nlop* bartorch_nlop_stack_outputs(const bartorch_nlop* x, 
 /* `outputs` non-zero permutes the outputs, zero the inputs. */
 BARTORCH_API bartorch_nlop* bartorch_nlop_permute(const bartorch_nlop* x, int outputs, int n, const int* perm);
 BARTORCH_API bartorch_nlop* bartorch_nlop_del_out(const bartorch_nlop* x, int o);
+/* Every input reshaped into one flat vector, and every output into another,
+ * which is how a many-unknown model reaches a solver that knows one vector.
+ * `inputs_only` leaves the outputs as they are. */
+BARTORCH_API bartorch_nlop* bartorch_nlop_flatten(const bartorch_nlop* x, int inputs_only);
 
 /* The basic nonlinear operators: the tensor product and the elementwise maps.
  *
@@ -479,6 +484,47 @@ BARTORCH_API bartorch_nlop* bartorch_nlop_const(int N, const long* dims, const v
 BARTORCH_API bartorch_nlop* bartorch_nlop_set_input_const(const bartorch_nlop* a, int i, int N, const long* dims, const void* val);
 
 BARTORCH_API void bartorch_nlop_free(bartorch_nlop* h);
+
+/* The nonlinear SENSE model `nlinv` inverts, from `noir/model2.c`.
+ *
+ *	kspace = A[ (mask * image) * ifftuc(weights * ksens) ]
+ *
+ * The model takes the image and the coil coefficients, in that order, and
+ * returns data of whatever shape `bartorch_noir_data` takes: off the grid the
+ * model is asymmetric and returns gridded coil images, so the measurement has
+ * to be gridded with that operator's adjoint first; on the grid it is the
+ * identity and the model returns k-space.
+ *
+ * The coils are unknown as k-space coefficients; `bartorch_noir_coils` is the
+ * Sobolev weighting and transform that turn a fitted set of them into
+ * sensitivities.  A NULL data pointer beside a dimension vector means the
+ * quantity is not used; `pat_dims` is required on the grid and `trj_dims` off
+ * it.
+ *
+ * `bartorch_noir_dims` reports the shapes BART settled on: 0 k-space, 1 coil
+ * images, 2 image, 3 coils, 4 coils as the product takes them, 5 pattern,
+ * 6 trajectory.  The shape of the coil coefficients is the model's second
+ * input, which the arity queries above report.
+ */
+BARTORCH_API bartorch_noir* bartorch_noir_create(int N,
+		const long* ksp_dims, const long* cim_dims, const long* img_dims,
+		const long* kco_dims, const long* col_dims,
+		const long* pat_dims, const void* pattern,
+		const long* trj_dims, const void* traj,
+		const long* wgh_dims, const void* weights,
+		const long* bas_dims, const void* basis,
+		const long* msk_dims, const void* mask,
+		int noncart, int optimized, int toeplitz,
+		unsigned long fft_flags, unsigned long wght_flags,
+		int rvc, int sos, float a, float b, float c,
+		float oversampling_coils, int ret_os_coils);
+BARTORCH_API bartorch_nlop* bartorch_noir_model(const bartorch_noir* h);
+BARTORCH_API bartorch_linop* bartorch_noir_coils(const bartorch_noir* h);
+BARTORCH_API bartorch_linop* bartorch_noir_image(const bartorch_noir* h);
+BARTORCH_API bartorch_linop* bartorch_noir_data(const bartorch_noir* h);
+BARTORCH_API bartorch_linop* bartorch_noir_transform(const bartorch_noir* h);
+BARTORCH_API int bartorch_noir_dims(const bartorch_noir* h, int which, int N, long* dims);
+BARTORCH_API void bartorch_noir_free(bartorch_noir* h);
 
 /* Iteratively regularised Gauss-Newton: x starts at its initial value and returns the solution. */
 BARTORCH_API int bartorch_irgnm(const bartorch_nlop* F, int iter, float alpha, float alpha_min, float redu,

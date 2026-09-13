@@ -79,6 +79,25 @@ The tensor product and the elementwise maps, each one BART constructor.
    RootSumOfSquares
 ```
 
+## MRI encodings
+
+The nonlinear variants of the linear encodings: the coils are a second
+unknown rather than a fixed tensor, which is what `nlinv` inverts.
+{class}`NonlinearSense` is BART's own `noir` model -- the same code `nlinv`
+runs, so a fit driven from here is the same arithmetic -- and
+{func}`CoilSense` is the general recipe over any linear encoding.
+
+```{eval-rst}
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   NonlinearSense
+   CartesianSense
+   NoncartesianSense
+   CoilSense
+```
+
 ## Python-defined operators
 
 ```{eval-rst}
