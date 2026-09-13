@@ -334,6 +334,22 @@ def _start(A, y: torch.Tensor, x0: torch.Tensor | None, terms: Sequence[Regulari
     return op, y, x
 
 
+def _zeros(y: torch.Tensor, image_shape: tuple[int, ...]) -> dict:
+    """Where a network starts: the image BART starts at, which is zero.
+
+    ``deepinv`` starts an optimizer at ``A^H y`` instead.  Starting where the
+    solver starts is what makes a network with nothing trainable in it answer
+    with the solver's numbers, which is worth more here than a better first
+    guess -- and ``custom_init=None`` restores ``deepinv``'s, which is usually
+    what a network that is going to be trained wants::
+
+        solver.unrolled(shape, custom_init=None)
+    """
+    batch = y.shape[0] if y.ndim == len(image_shape) + 1 else 1
+    zeros = torch.zeros((batch, *image_shape), dtype=torch.complex64, device=y.device)
+    return {"est": (zeros, zeros)}
+
+
 def _empty(adjoint: torch.Tensor) -> bool:
     """``checkeps``: BART declines to iterate on data whose adjoint has no
     norm, or whose norm is not a normal number, and leaves the image be."""
@@ -370,6 +386,122 @@ class _Solver:
 
     def _settings(self) -> dict:
         return {}
+
+    # --- as a network ------------------------------------------------------
+
+    def _pieces(self, image_shape: tuple[int, ...]):
+        """The iteration, the prior and the parameters a loop here drives.
+
+        What :meth:`__call__` assembles, minus everything that needs the
+        encoding: a network is handed one per call rather than built around
+        one.
+        """
+        raise TypeError(
+            f"{type(self).__name__} runs inside the library and has no iteration written "
+            "out here, so there is nothing to unroll; the proximal solvers have one"
+        )
+
+    def unrolled(self, image_shape, *, trainable=(), **kwargs):
+        """This solver as a network of ``maxiter`` steps, trained end to end.
+
+        The steps are BART's, and the thing standing where a term goes is
+        whatever was handed over -- so an unrolled network here is the
+        library's iteration with a denoiser in the threshold's place, and not
+        an architecture that resembles it.
+
+        Parameters
+        ----------
+        image_shape : tuple of int
+            What the terms are configured for.  A network is not built around
+            an encoding, so this is the one shape it has to be told.
+        trainable : iterable of str, optional
+            Parameters to learn, one value per step: ``"stepsize"`` for the
+            proximal-gradient solvers, ``"rho"`` for the alternating
+            directions, ``"sigma"`` and ``"tau"`` for the primal-dual.  The
+            rest stay the numbers they were given.
+        **kwargs
+            Passed to ``deepinv.optim.BaseOptim``.
+
+        Returns
+        -------
+        deepinv.optim.BaseOptim
+            A ``torch.nn.Module`` taking ``(y, physics)``, where ``physics``
+            is :func:`bartorch.to_deepinv` of the encoding -- or the encoding
+            itself, which answers to the same names.
+
+        Notes
+        -----
+        A learned parameter is a tensor, and an iteration with one in it works
+        its scalars out in single precision throughout rather than in a double
+        rounded at the end.  So a network does not answer with the library's
+        bits, and could not: the numbers in it are no longer the library's.
+        With nothing trainable it still does.
+
+        Examples
+        --------
+        >>> net = optim.FISTA(denoiser, maxiter=10, step=0.9).unrolled(
+        ...     (1, 256, 256), trainable=["stepsize"]
+        ... )
+        >>> torch.optim.Adam(net.parameters(), lr=1e-3)
+        >>> net(kspace[None], bartorch.to_deepinv(A))
+        """
+        return self._network(image_shape, deq=False, trainable=trainable, **kwargs)
+
+    def fixed_point(self, image_shape, *, trainable=(), **kwargs):
+        """This solver as a deep-equilibrium model: the step's fixed point.
+
+        The same step as :meth:`unrolled`, run to convergence rather than a
+        set number of times, and differentiated through the fixed point rather
+        than through the run.  ``maxiter`` is then a cap on the search.
+
+        A step has to be the same map every time for its fixed point to mean
+        anything, which is what :class:`FISTA` refuses over: its momentum
+        depends on the iteration number.
+
+        Parameters and returns are :meth:`unrolled`'s.
+        """
+        return self._network(image_shape, deq=True, trainable=trainable, **kwargs)
+
+    def _network(self, image_shape, *, deq: bool, trainable, **kwargs):
+        from deepinv.optim import BaseOptim
+
+        from bartorch.optim.iterators import NormalEquations
+
+        iteration, prior, params = self._pieces(tuple(image_shape))
+
+        trainable = list(trainable)
+        unknown = [name for name in trainable if name not in params]
+        if unknown:
+            raise ValueError(
+                f"{type(self).__name__} has no parameter called {unknown[0]!r} to learn; "
+                f"it takes {sorted(k for k, v in params.items() if isinstance(v, float))}"
+            )
+
+        shape = tuple(image_shape)
+        kwargs.setdefault("custom_init", lambda data, physics: _zeros(data, shape))
+
+        network = BaseOptim(
+            iteration,
+            params_algo=params,
+            data_fidelity=NormalEquations(self.cclambda),
+            prior=prior,
+            max_iter=self.maxiter,
+            unfold=not deq,
+            DEQ=deq,
+            trainable_params=trainable,
+            **kwargs,
+        )
+
+        if hasattr(iteration, "finish") and "get_output" not in kwargs:
+            # `italgo_config` leaves `last` false, so BART thresholds once more
+            # after the loop -- which for a network is its final layer, and has
+            # to read the parameters as they are now rather than as they were
+            # when this was built.
+            last = max(self.maxiter - 1, 0)
+            network.get_output = lambda X: iteration.finish(
+                X["est"][0], prior, network.update_params_fn(last), self.maxiter
+            )
+        return network
 
     def __call__(self, y: torch.Tensor, A, x0: torch.Tensor | None = None) -> torch.Tensor:
         """Solve for the image given data ``y`` and encoding ``A``.
@@ -653,6 +785,23 @@ class IST(_Solver):
     def _parameters(self) -> dict:
         return {}
 
+    def _pieces(self, image_shape: tuple[int, ...]):
+        from bartorch.optim.iterators import TermPrior
+
+        if self.eigen:
+            raise ValueError(
+                "eigen=True divides the step by a power iteration over the encoding, and a "
+                "network is handed one per call rather than built around one; give the step "
+                "itself, or learn it with trainable=['stepsize']"
+            )
+        params = {
+            "maxiter": self.maxiter,
+            "stepsize": self._stepsize(1.0),
+            "hogwild": self.hogwild,
+            **self._parameters(),
+        }
+        return self._iteration(), TermPrior(self.regularizers[0], image_shape), params
+
     def __call__(self, y: torch.Tensor, A, x0: torch.Tensor | None = None) -> torch.Tensor:
         """Solve, by the iteration in :mod:`bartorch.optim.iterators`.
 
@@ -748,6 +897,19 @@ class FISTA(IST):
 
     def _parameters(self) -> dict:
         return {} if self.pqr is None else {"pqr": self.pqr}
+
+    def fixed_point(self, image_shape, *, trainable=(), **kwargs):
+        """Refused: the ravine step is not the same map twice.
+
+        ``t <- (p + sqrt(q + r t^2)) / 2`` carries the iteration number into
+        the momentum, so the step has no fixed point to find.  Iterative soft
+        thresholding is the same iteration without it, and does.
+        """
+        raise TypeError(
+            "FISTA's momentum depends on the iteration number, so its step is a different "
+            "map every time and has no fixed point; optim.IST is this iteration without "
+            "the ravine, and fixed_point() takes that"
+        )
 
 
 class ADMM(_Solver):
@@ -902,22 +1064,28 @@ class ADMM(_Solver):
             )
         return super().in_library(y, A, x0)
 
-    def __call__(self, y: torch.Tensor, A, x0: torch.Tensor | None = None) -> torch.Tensor:
-        """Solve, by the iteration in :mod:`bartorch.optim.iterators`.
+    def fixed_point(self, image_shape, *, trainable=(), **kwargs):
+        """Refused: the fixed point of an alternating-direction step is not in ``x``.
 
-        The loop is here rather than in the library, so that the same solver
-        can be unrolled into a network or driven to a fixed point.  The step
-        is BART's -- every operator in it is, and the arithmetic is held
-        against the library's own to the bit -- and so is when it stops.
+        The step moves ``(x, z, u)`` together, and its ``x`` depends on the
+        previous ``x`` only as the warm start of the inner solve -- which
+        carries no gradient, because what is differentiated is the linear
+        system and not the walk towards it.  A deep-equilibrium model built on
+        ``x`` alone would therefore be differentiating a map that does not
+        depend on its argument.
 
+        :class:`IST` and :class:`PRIDU` have fixed points in the iterate and
+        take this.
         """
-        from bartorch import to_deepinv
-        from bartorch.optim.iterators import ADMMIteration, NormalEquations
+        raise TypeError(
+            "an alternating-direction step's fixed point is in (x, z, u) rather than in the "
+            "image, and its x-update depends on the previous image only through a warm start "
+            "that carries no gradient; optim.IST and optim.PRIDU take fixed_point()"
+        )
 
-        op, y, x = _start(A, y, x0, self.regularizers)
+    def _pieces(self, image_shape: tuple[int, ...]):
+        from bartorch.optim.iterators import ADMMIteration
 
-        iteration = ADMMIteration(self.regularizers, op.ishape, biases=self.biases)
-        iteration.restart()
         params = {
             "maxiter": self.maxiter,
             "cg_maxiter": self.cg_maxiter,
@@ -935,6 +1103,27 @@ class ADMM(_Solver):
             "abstol": self.abstol,
             "reltol": self.reltol,
         }
+        iteration = ADMMIteration(self.regularizers, image_shape, biases=self.biases)
+        # ADMM asks the terms for their proximal operators itself, so the
+        # prior slot a `deepinv` optimizer would fill is empty here.
+        return iteration, None, params
+
+    def __call__(self, y: torch.Tensor, A, x0: torch.Tensor | None = None) -> torch.Tensor:
+        """Solve, by the iteration in :mod:`bartorch.optim.iterators`.
+
+        The loop is here rather than in the library, so that the same solver
+        can be unrolled into a network or driven to a fixed point.  The step
+        is BART's -- every operator in it is, and the arithmetic is held
+        against the library's own to the bit -- and so is when it stops.
+
+        """
+        from bartorch import to_deepinv
+        from bartorch.optim.iterators import NormalEquations
+
+        op, y, x = _start(A, y, x0, self.regularizers)
+
+        iteration, _, params = self._pieces(op.ishape)
+        iteration.restart()
 
         state = {"est": (x, x)}
         for _ in range(self.maxiter):
@@ -1019,6 +1208,42 @@ class PRIDU(_Solver):
             return terms[0], terms[1:]
         return None, terms
 
+    def _steps(self, divisor: float) -> tuple[float, float, float]:
+        """``sigma``, ``tau`` and the ratio between them, each rounded where
+        ``iter2_chambolle_pock`` rounds it."""
+        root = float(np.float32(math.sqrt(self.step)))
+        ratio = float(np.float32(self.sigma_tau_ratio))
+        return (
+            float(np.float32(float(np.float32(root * ratio)) / divisor)),
+            float(np.float32(float(np.float32(root / ratio)) / divisor)),
+            ratio,
+        )
+
+    def _pieces(self, image_shape: tuple[int, ...], divisor: float | None = None):
+        from bartorch.optim.iterators import PRIDUIteration
+
+        if divisor is None and self.eigen:
+            raise ValueError(
+                "eigen=True divides the steps by a power iteration over the encoding and the "
+                "dual terms' transforms, and a network is handed an encoding per call rather "
+                "than built around one; give the step itself, or learn the two with "
+                "trainable=['sigma', 'tau']"
+            )
+        primal, duals = self._split(image_shape)
+        sigma, tau, ratio = self._steps(1.0 if divisor is None else divisor)
+        params = {
+            "maxiter": self.maxiter,
+            "sigma": sigma,
+            "tau": tau,
+            "sigma_tau_ratio": ratio,
+            "theta": 1.0,
+            "decay": 0.95 if self.hogwild else 1.0,
+            "tol": 1e-4,
+            "adaptive_step": self.adaptive_step,
+        }
+        # The terms are the iteration's own duals, so the prior slot is empty.
+        return PRIDUIteration(duals, image_shape, primal=primal), None, params
+
     def __call__(self, y: torch.Tensor, A, x0: torch.Tensor | None = None) -> torch.Tensor:
         """Solve, by the iteration in :mod:`bartorch.optim.iterators`.
 
@@ -1027,30 +1252,19 @@ class PRIDU(_Solver):
         are BART's, held against the library's own to the bit.
         """
         from bartorch import to_deepinv
-        from bartorch.optim.iterators import NormalEquations, PRIDUIteration
+        from bartorch.optim.iterators import NormalEquations
 
         op, y, x = _start(A, y, x0, self.regularizers)
-        primal, duals = self._split(op.ishape)
 
         # `iter2_chambolle_pock` estimates over the encoding and the dual
         # terms' transforms together, the primal one having been taken out of
         # the list before it looks.
-        divisor = math.sqrt(maxeigen(A, duals, cclambda=self.cclambda)) if self.eigen else 1.0
-        root = float(np.float32(math.sqrt(self.step)))
-        ratio = float(np.float32(self.sigma_tau_ratio))
+        divisor = 1.0
+        if self.eigen:
+            _, duals = self._split(op.ishape)
+            divisor = math.sqrt(maxeigen(A, duals, cclambda=self.cclambda))
 
-        params = {
-            "maxiter": self.maxiter,
-            "sigma": float(np.float32(float(np.float32(root * ratio)) / divisor)),
-            "tau": float(np.float32(float(np.float32(root / ratio)) / divisor)),
-            "sigma_tau_ratio": ratio,
-            "theta": 1.0,
-            "decay": 0.95 if self.hogwild else 1.0,
-            "tol": 1e-4,
-            "adaptive_step": self.adaptive_step,
-        }
-
-        iteration = PRIDUIteration(duals, op.ishape, primal=primal)
+        iteration, _, params = self._pieces(op.ishape, divisor)
         fidelity = NormalEquations(self.cclambda)
 
         state = {"est": (x, x)}
