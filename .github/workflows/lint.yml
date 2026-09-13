@@ -19,8 +19,10 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install ruff
-        run: pip install ruff
+      # `scripts/lint.sh` runs codespell as well as ruff, so that what a
+      # contributor runs is what CI runs.
+      - name: Install ruff and codespell
+        run: pip install ruff "codespell[toml]"
 
-      - name: Ruff
+      - name: Lint
         run: ./scripts/lint.sh

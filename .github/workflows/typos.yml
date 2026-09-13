@@ -15,16 +15,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The `toml` extra is what lets codespell read `[tool.codespell]`
+      # from pyproject.toml on a Python that has no `tomllib`.
       - name: Install codespell
-        run: pip install codespell
+        run: pip install "codespell[toml]"
 
       - name: Run codespell
-        # The skips need the `./` codespell prints, or they match nothing:
-        # `external/` did not exclude `./external/bart`, which is why this
-        # check had never passed.  `nd` and `optin` are identifiers rather
-        # than typos -- BART writes `int ND` for a doubled dimension count,
-        # and CUDA spells its own attribute
-        # `cudaDevAttrMaxSharedMemoryPerBlockOptin`.  `build` and
-        # `docs/_build` are outputs a fresh checkout does not have and a
-        # local run does.
-        run: codespell --skip="./attic,./external,./.git,./build,./docs/_build,*.ipynb,pyproject.toml" --ignore-words-list=ist,te,reconet,pyramide,nd,optin,lamda
+        # What to skip, and what is a word here rather than a typo, is in
+        # `[tool.codespell]` in pyproject.toml -- the same place
+        # `scripts/lint.sh` reads it, so a local run and this one cannot
+        # disagree.  That they could is why this check failed on a branch
+        # whose author had run the lint script and seen it pass.
+        run: codespell
