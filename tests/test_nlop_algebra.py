@@ -456,6 +456,100 @@ def test_the_adjoint_of_a_derivative_is_the_adjoint_of_what_it_applies(make):
     assert _inner(F.derivative(u), v) == pytest.approx(_inner(u, F.adjoint(v)), rel=1e-3)
 
 
+# --- a Python operator of many arguments --------------------------------------
+
+
+def test_a_torch_function_of_two_tensors_is_an_operator_of_two_inputs():
+    F = nlop.FromTorch(lambda x, w: w * x, [(4,), ()], (4,))
+    assert ((4,), ()) == F.ishapes
+    assert ((4,),) == F.oshapes
+
+    x, w = _rand(4), torch.tensor(0.9, dtype=torch.complex64)
+    torch.testing.assert_close(F(x, w), 0.9 * x, rtol=1e-5, atol=1e-6)
+
+
+def test_each_partial_derivative_is_the_one_it_should_be():
+    """``d(w x)/dx`` is ``w``, and ``d(w x)/dw`` is ``x``.
+
+    The tangent is zero in every argument but the one being asked about,
+    which is what makes a forward-mode product a *partial* derivative.
+    """
+    F = nlop.FromTorch(lambda x, w: w * x, [(4,), ()], (4,))
+    x, w = _rand(4), torch.tensor(0.9, dtype=torch.complex64)
+    F(x, w)
+
+    dx = _rand(4)
+    torch.testing.assert_close(F.jacobian(0, 0)(dx), 0.9 * dx, rtol=1e-5, atol=1e-6)
+    one = torch.tensor(1.0, dtype=torch.complex64)
+    torch.testing.assert_close(F.jacobian(0, 1)(one), x, rtol=1e-5, atol=1e-6)
+
+
+def test_the_adjoints_are_the_adjoints_of_those():
+    F = nlop.FromTorch(lambda x, w: w * x, [(4,), ()], (4,))
+    x, w = _rand(4), torch.tensor(0.7, dtype=torch.complex64)
+    F(x, w)
+
+    for at in (0, 1):
+        J = F.jacobian(0, at)
+        u = _rand(*J.ishape) if J.ishape else torch.tensor(1.0, dtype=torch.complex64)
+        v = _rand(4)
+        assert abs(_inner(J(u), v) - _inner(u, J.H(v))) < 1e-4
+
+
+def test_a_gradient_reaches_every_argument():
+    F = nlop.FromTorch(lambda x, w: w * x, [(4,), ()], (4,))
+    x = _rand(4).requires_grad_(True)
+    w = torch.tensor(0.9, dtype=torch.complex64).requires_grad_(True)
+    F(x, w).abs().square().sum().backward()
+    assert x.grad is not None and torch.any(x.grad != 0)
+    assert w.grad is not None and 0.0 != w.grad
+
+
+def test_a_function_of_one_tensor_is_the_operator_it_always_was():
+    """The single-argument form goes through BART's single-argument
+    constructor, unchanged: this is what says nothing moved under it."""
+    F = nlop.FromTorch(lambda x: torch.exp(x), (4,), (4,))
+    assert 1 == len(F.ishapes) == len(F.oshapes)
+    x = _rand(4)
+    torch.testing.assert_close(F(x), torch.exp(x), rtol=1e-5, atol=1e-6)
+
+
+def test_several_outputs_come_back_in_order():
+    F = nlop.FromTorch(lambda x: (x + 1.0, 2.0 * x), (3,), [(3,), (3,)])
+    x = _rand(3)
+    first, second = F(x)
+    torch.testing.assert_close(first, x + 1.0, rtol=1e-5, atol=1e-6)
+    torch.testing.assert_close(second, 2.0 * x, rtol=1e-5, atol=1e-6)
+
+
+def test_a_callback_of_many_arguments_says_which_pair_it_is_asked_for():
+    seen = []
+
+    def forward(x, w):
+        return w * x
+
+    def derivative(o, i, d):
+        # The derivative by input `i` maps *that* input's shape to the
+        # output's, so the one by the weight broadcasts a scalar.
+        seen.append(("der", o, i))
+        return d * torch.ones(4, dtype=torch.complex64)
+
+    def adjoint(o, i, v):
+        seen.append(("adj", o, i))
+        return v if 0 == i else v.sum()
+
+    F = nlop.Callback((4,), [(4,), ()], forward, derivative, adjoint)
+    x, w = _rand(4), torch.tensor(0.5, dtype=torch.complex64)
+    F(x, w)
+    F.jacobian(0, 1)(torch.tensor(1.0, dtype=torch.complex64))
+    assert ("der", 0, 1) in seen
+
+
+def test_a_shape_that_is_not_one_says_so():
+    with pytest.raises(TypeError, match="a shape is a tuple of ints"):
+        nlop.FromTorch(lambda x: x, 4, (4,))
+
+
 # --- rank, and the two shapes that are the same shape -------------------------
 
 

@@ -153,6 +153,62 @@ def callback(fn: Callable[[torch.Tensor], torch.Tensor], ishape: Shape, oshape: 
     return APPLY_FN(cb)
 
 
+def generic_callback(fn, oshapes, ishapes, name: str):
+    """``fn`` as a BART apply callback of many arguments.
+
+    BART hands over every buffer at once, the outputs first and then the
+    inputs.  ``fn`` receives one view per input, without a copy, and returns
+    one tensor per output.
+    """
+    from bartorch._lib import GENERIC_APPLY_FN
+
+    def cb(_ctx, n, args):
+        try:
+            with torch.no_grad():
+                wanted = len(oshapes) + len(ishapes)
+                if n != wanted:
+                    raise ValueError(f"BART passed {n} buffers where {wanted} were expected")
+                xs = [
+                    _buffer.view(args[len(oshapes) + at], shape) for at, shape in enumerate(ishapes)
+                ]
+                made = fn(*xs)
+                made = (made,) if isinstance(made, torch.Tensor) else tuple(made)
+                if len(made) != len(oshapes):
+                    raise ValueError(
+                        f"{name} returned {len(made)} outputs where {len(oshapes)} were expected"
+                    )
+                for at, (value, shape) in enumerate(zip(made, oshapes)):
+                    _buffer.view(args[at], shape).copy_(value.reshape(shape).to(torch.complex64))
+            return 0
+        except Exception:
+            _log.error("%s callback failed:\n%s", name, traceback.format_exc())
+            return -1
+
+    return GENERIC_APPLY_FN(cb)
+
+
+def pair_callback(fn, oshapes, ishapes, name: str, *, adjoint: bool = False):
+    """``fn(o, i, x)`` as a BART derivative or adjoint callback.
+
+    The derivative of output ``o`` by input ``i`` maps that input's shape to
+    that output's; its adjoint maps back.
+    """
+    from bartorch._lib import PAIR_APPLY_FN
+
+    def cb(_ctx, o, i, dst, src):
+        try:
+            with torch.no_grad():
+                take, give = (oshapes[o], ishapes[i]) if adjoint else (ishapes[i], oshapes[o])
+                y = fn(o, i, _buffer.view(src, take))
+                _buffer.view(dst, give).copy_(y.reshape(give).to(torch.complex64))
+            return 0
+        except Exception:
+            _log.error("%s callback failed:\n%s", name, traceback.format_exc())
+            return -1
+
+    return PAIR_APPLY_FN(cb)
+
+
 class Operator:
     """Base of the linear and nonlinear operator classes.
 

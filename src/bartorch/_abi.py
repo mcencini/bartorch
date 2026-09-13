@@ -50,6 +50,20 @@ APPLY_FN = ctypes.CFUNCTYPE(
     ctypes.c_void_p,
     ctypes.c_void_p,
 )
+GENERIC_APPLY_FN = ctypes.CFUNCTYPE(
+    ctypes.c_int,
+    ctypes.c_void_p,
+    ctypes.c_int,
+    ctypes.POINTER(ctypes.c_void_p),
+)
+PAIR_APPLY_FN = ctypes.CFUNCTYPE(
+    ctypes.c_int,
+    ctypes.c_void_p,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_void_p,
+    ctypes.c_void_p,
+)
 RELEASE_FN = ctypes.CFUNCTYPE(
     None,
     ctypes.c_void_p,
@@ -171,6 +185,7 @@ SYMBOLS = (
     "bartorch_prox_rewind",
     "bartorch_prox_free",
     "bartorch_nlop_callback",
+    "bartorch_nlop_callback_generic",
     "bartorch_nlop_from_linop",
     "bartorch_nlop_chain",
     "bartorch_nlop_domain",
@@ -769,6 +784,20 @@ def bind(lib: ctypes.CDLL) -> ctypes.CDLL:
         APPLY_FN,
         APPLY_FN,
         APPLY_FN,
+        ctypes.c_void_p,
+        RELEASE_FN,
+    ]
+    lib.bartorch_nlop_callback_generic.restype = ctypes.c_void_p
+    lib.bartorch_nlop_callback_generic.argtypes = [
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_long),
+        GENERIC_APPLY_FN,
+        PAIR_APPLY_FN,
+        PAIR_APPLY_FN,
         ctypes.c_void_p,
         RELEASE_FN,
     ]

@@ -355,14 +355,12 @@ def test_the_composed_network_differentiates_by_its_own_arguments(problem, at):
 
 
 def test_a_weight_the_prior_closed_over_does_not_train_through_the_one_operator(problem):
-    """Worth knowing before building a network this way.
+    """Closing over a weight puts it outside the graph BART applies.
 
-    Composed into one ``nlop``, the network is BART's to apply, and
     :class:`~bartorch.nlop.FromTorch` answers for the derivative by its
-    *input* -- ``torch.func``'s jvp and vjp of the function it was given.  A
-    weight the function closed over is not an argument of anything BART knows
-    about, so no gradient reaches it.  Keeping the loop in Python is what
-    trains a denoiser; composing is what makes the network one operator.
+    *arguments*, and a weight the function closed over is not one of them, so
+    no gradient reaches it.  The fix is to make it an argument, which is the
+    test below; keeping the loop in Python is the other way.
     """
     _, _, kspace = problem
     first, second = _cells()
@@ -380,3 +378,56 @@ def test_a_weight_the_prior_closed_over_does_not_train_through_the_one_operator(
     loop = second(yb, weight * first(ya, x0, x0, 1.0), x0, 0.5)
     loop.abs().square().sum().backward()
     assert weight.grad is not None and 0.0 != weight.grad
+
+
+def _trainable(problem):
+    """The two-cell network with the prior's weight as an argument of it."""
+    _, _, kspace = problem
+    first, second = _cells()
+    ya, yb = first.prepare()(kspace, _ones()), second.prepare()(kspace, _ones())
+    x0 = first.start()
+    state = first.state_shape
+
+    prior = nlop.FromTorch(lambda x, w: w * x, [state, ()], state)
+    whole = nlop.chain(nlop.chain(first, prior, output=0, input=0), second, output=0, input=1)
+
+    def run(weight):
+        value = (
+            weight
+            if isinstance(weight, torch.Tensor)
+            else torch.tensor(weight, dtype=torch.complex64)
+        )
+        return whole(yb, x0, second.weight(0.5), value, ya, x0, x0, first.weight(1.0))
+
+    return whole, run
+
+
+def test_a_weight_that_is_an_argument_trains_through_the_one_operator(problem):
+    """The gap closed: BART applies the whole network, and the prior's weight
+    is one of the network's own arguments, so torch reaches it."""
+    whole, run = _trainable(problem)
+    # The weight is the argument the prior contributed.
+    assert () in whole.ishapes
+
+    weight = torch.nn.Parameter(torch.tensor(0.9 + 0j))
+    run(weight).abs().square().sum().backward()
+    assert weight.grad is not None and torch.isfinite(weight.grad)
+
+    h = 1e-3
+    measured = (run(0.9 + h).abs().square().sum() - run(0.9 - h).abs().square().sum()).item() / (
+        2 * h
+    )
+    assert abs(weight.grad.real.item() - measured) <= 1e-2 * abs(measured)
+
+
+def test_the_trained_network_answers_what_the_loop_answers(problem):
+    """Same arithmetic either way; what differs is where the weight lives."""
+    _, _, kspace = problem
+    whole, run = _trainable(problem)
+    first, second = _cells()
+    ya, yb = first.prepare()(kspace, _ones()), second.prepare()(kspace, _ones())
+    x0 = first.start()
+
+    torch.testing.assert_close(
+        run(0.9), second(yb, 0.9 * first(ya, x0, x0, 1.0), x0, 0.5), rtol=1e-5, atol=1e-6
+    )
