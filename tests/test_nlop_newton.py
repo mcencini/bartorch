@@ -200,17 +200,28 @@ def test_the_steps_compose_the_way_the_unrolled_form_does(problem):
 # --- and it differentiates -------------------------------------------------------
 
 
+#: A coil weighting float32 can hold the gradient of.  BART's default is
+#: ``b = 32``, which is ``(1 + 220 |k|^2)^-16``: measured over the state of a
+#: 16 by 16 fit, that puts a few per cent of the gradient below float32's
+#: smallest normal number and a little under half of the weight's gradient at
+#: exactly zero.  What happens past that edge is the platform's business --
+#: a norm that is no longer a normal number is one BART's `checkeps` declines
+#: to iterate on, and the solve comes back untouched -- so the tests that
+#: measure a gradient measure it where the arithmetic has room.  The docstring
+#: says the same thing to a caller.
+_HOLDS = (220.0, 8.0)
+
+
 @pytest.mark.parametrize("at", ["data", "iterate", "centre", "weight"])
 def test_every_argument_carries_a_gradient(problem, at):
     _, _, kspace = problem
-    newton = nlop.GaussNewton((COILS, N, N), iterations=2)
+    newton = nlop.GaussNewton((COILS, N, N), iterations=2, sobolev=_HOLDS)
     y = newton.prepare()(kspace, _ones())
     x0 = newton.start()
 
-    arguments = {"data": y, "iterate": x0, "centre": x0, "weight": newton.weight(1.0)}
-    tracked = arguments[at].clone().requires_grad_(True)
     order = {"data": 0, "iterate": 1, "centre": 2, "weight": 3}[at]
     xs = [y, x0, x0, newton.weight(1.0)]
+    tracked = xs[order].clone().requires_grad_(True)
     xs[order] = tracked
 
     newton(*xs).abs().square().sum().backward()
@@ -219,10 +230,29 @@ def test_every_argument_carries_a_gradient(problem, at):
     assert torch.any(tracked.grad != 0)
 
 
+def test_a_gentler_weighting_keeps_the_whole_gradient_in_range(problem):
+    """No part of it is a subnormal, which is the claim :data:`_HOLDS` rests on.
+
+    One direction only.  That the default *does* run past the edge is a fact
+    about float32 on a particular machine and not something to assert; that
+    ``b = 8`` does not is the same on every machine, and it is what the tests
+    above stand on.
+    """
+    _, _, kspace = problem
+    newton = nlop.GaussNewton((COILS, N, N), iterations=2, sobolev=_HOLDS)
+    y = newton.prepare()(kspace, _ones())
+    x0 = newton.start()
+    tracked = x0.clone().requires_grad_(True)
+    newton(y, tracked, x0, newton.weight(1.0)).abs().square().sum().backward()
+
+    size = tracked.grad.abs()
+    assert torch.all(size > torch.finfo(torch.float32).tiny)
+
+
 def test_a_denoiser_between_two_cells_trains(problem):
     """NLINV-Net's shape, and the gradient finite differences measure."""
     _, _, kspace = problem
-    cells = [nlop.GaussNewton((COILS, N, N), iterations=1) for _ in range(2)]
+    cells = [nlop.GaussNewton((COILS, N, N), iterations=1, sobolev=_HOLDS) for _ in range(2)]
 
     def run(weight):
         x = cells[0].start()

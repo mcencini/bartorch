@@ -239,6 +239,19 @@ class GaussNewton(_Noir):
     ``norm_inv_der_src`` and ``norm_inv_adj_src`` in ``nlops/norm_inv.c``.
     So the memory of a K-step unroll is K cells and not K times the inner
     iterations, and BART's ``nlop_checkpoint_create_F`` takes it down further.
+
+    The coil weighting is worth knowing about before reading a gradient.  BART
+    weights the coil half of the state by ``(1 + a |k|^2)^(-b/2)``, and its
+    default ``b = 32`` is a sixteenth power: over the state of a small fit the
+    gradient of that half spans tens of decades and its tail runs below
+    float32's smallest normal number.  Below that edge the arithmetic is the
+    platform's business rather than the library's -- a right-hand side whose
+    norm is no longer a normal number is one BART's ``checkeps`` declines to
+    iterate on, and the solve comes back untouched, with ``Warning: data
+    corrupted`` in the log and a gradient of zeros.  Forward, none of this
+    matters and the default is what ``nlinv`` reconstructs with; a *gradient*
+    that has to be meaningful in the coil coefficients wants a gentler
+    weighting, which is what ``sobolev=(220.0, 8.0)`` is.
     """
 
     def __init__(

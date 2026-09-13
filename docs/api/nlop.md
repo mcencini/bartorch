@@ -182,6 +182,18 @@ makes the one BART starts from, `split()` and `join()` take it apart and put it
 back, and `decompose()` takes it apart *through* the model's transforms, so
 what comes back is coil profiles rather than the coefficients that were fitted.
 
+**One thing to know before reading a gradient.** BART weights the coil half of
+the state by $(1 + a|k|^2)^{-b/2}$, and its default $b = 32$ is a sixteenth
+power: over the state of a small fit the gradient of that half spans tens of
+decades, and its tail runs below float32's smallest normal number. Below that
+edge the arithmetic belongs to the platform rather than to the library -- a
+right-hand side whose norm is no longer a normal number is one BART's
+`checkeps` declines to iterate on, and the solve comes back untouched, with
+`Warning: data corrupted` in the log and a gradient of zeros. Forward none of
+this matters, and the default is what `nlinv` reconstructs with. A *gradient*
+that has to mean something in the coil coefficients wants a gentler weighting:
+`sobolev=(220.0, 8.0)`.
+
 ## Python-defined operators
 
 ```{eval-rst}
