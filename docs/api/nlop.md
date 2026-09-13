@@ -126,6 +126,15 @@ agree on the physics they agree on the numbers -- the multi-echo decay matches
 `bart signal -S` to single precision -- and where `moba` reparameterises they
 do not.
 
+The fits agree as well as the curves.  Measurements `bart signal` produced,
+handed to `bart mobafit`'s pixel-wise Gauss-Newton and to
+{class}`~bartorch.optim.IRGNM` over the model here, come back with the same
+relaxation time, and under noise the two land together rather than each near
+the truth.  What differs is the variables: `mobafit -I` reports
+`(M0, R1, c)` where this reports a T1 and an amplitude, and `mobafit -m3`
+carries an `fB0` that TorchSim's multi-echo model has nowhere to put -- its
+`offset` is an additive baseline, not a frequency.
+
 ```{eval-rst}
 .. autosummary::
    :toctree: generated

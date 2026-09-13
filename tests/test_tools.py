@@ -269,6 +269,47 @@ def test_pics_refuses_an_infimal_convolution_with_no_axis_of_each_kind():
         bt.pics(kspace, maps, regularizers=prox.InfimalConvolutionTV((-1, -2), 0.01))
 
 
+# --- `signal -C` reads memory nothing wrote -----------------------------------
+#
+# `ir_multi_grad_echo_model` (simu/signals.c:461-467) fills `(N / NE) * NE` of
+# the `N` entries `signal.c:234` leaves uninitialized, and `get_signal`
+# averages all `N` of them into the output.  The values that come back are
+# finite, so only a check before the command runs catches it.
+
+_ONE_T1 = {"1": (1.0, 1.0, 1)}
+
+
+@pytest.mark.parametrize("n,m", [(6, 3), (9, 3), (8, 4), (100, 4)])
+def test_an_ir_mgre_signal_whose_echoes_divide_the_train_is_computed(n, m):
+    assert bt.signal(C=True, n=n, m=m, **_ONE_T1).shape[0] == n
+
+
+@pytest.mark.parametrize("n,m", [(4, 3), (5, 3), (7, 4), (10, 4)])
+def test_an_ir_mgre_signal_whose_echoes_do_not_divide_the_train_is_refused(n, m):
+    with pytest.raises(ValueError, match="uninitialized memory"):
+        bt.signal(C=True, n=n, m=m, **_ONE_T1)
+
+
+def test_an_ir_mgre_signal_without_echoes_is_refused():
+    """BART leaves ``NE`` at -1, so the loop runs zero times and *none* of the
+    signal is written."""
+    with pytest.raises(ValueError, match="signal -C needs m="):
+        bt.signal(C=True, n=6, **_ONE_T1)
+
+
+def test_averaged_spokes_count_towards_the_echo_train():
+    """The model is given ``n * av_spokes`` entries to fill, not ``n``."""
+    assert bt.signal(C=True, n=5, m=3, av_spokes=3, **_ONE_T1).shape[0] == 5
+    with pytest.raises(ValueError, match="uninitialized memory"):
+        bt.signal(C=True, n=6, m=4, av_spokes=1, **_ONE_T1)
+
+
+def test_the_guard_is_only_for_the_ir_mgre_sequence():
+    """``-m`` reaches no other model, so nothing else is held to it."""
+    assert bt.signal(G=True, n=5, **_ONE_T1).shape[0] == 5
+    assert bt.signal(F=True, n=5, **_ONE_T1).shape[0] == 5
+
+
 def test_a_command_refuses_a_term_its_parser_does_not_know():
     kspace, maps = _pics_data()
     with pytest.raises(TypeError, match="sqpics does not take"):

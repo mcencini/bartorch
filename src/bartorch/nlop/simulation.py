@@ -6,7 +6,8 @@ Jacobian-vector product and its adjoint product, none of which builds a
 Jacobian -- onto the three things BART's ``nlop_s`` asks for.
 :func:`InversionRecovery`, :func:`MultiEcho` and :func:`Bloch` are ``moba``'s
 families written on TorchSim's simulators, and on TorchSim's
-parameterisation rather than ``moba``'s.
+parameterisation rather than ``moba``'s.  The suite holds both the curves
+against ``bart signal`` and the fits against ``bart mobafit``'s.
 
 Notes
 -----

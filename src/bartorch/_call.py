@@ -305,6 +305,45 @@ def _outputs(command: Command) -> int:
     return 1
 
 
+def _signal_whole_echo_trains(flags: dict) -> None:
+    """Refuse a ``signal -C`` whose echoes do not divide the measurements.
+
+    ``ir_multi_grad_echo_model`` (``simu/signals.c:461-467``) fills
+    ``(N / NE) * NE`` entries of the ``N``-entry array ``signal.c:234``
+    leaves uninitialized, and ``get_signal`` averages all ``N`` of them into
+    the output.  Without ``-m`` at all, ``NE`` is BART's ``-1``, the loop runs
+    zero times and none of the array is written.  What comes back is finite
+    stack memory, so nothing downstream notices.
+    """
+    if not flags.get("C"):
+        return
+
+    # `signal.c:59` starts `dims[TE_DIM]` at 100; the model is given
+    # `dims[TE_DIM] * averaged_spokes` entries to fill.
+    measurements = int(flags.get("n", 100)) * int(flags.get("av_spokes", 1))
+    echoes = flags.get("m")
+
+    if echoes is None:
+        raise ValueError(
+            "signal -C needs m=, the number of gradient echoes: BART leaves it at -1 and "
+            "then writes none of the signal it returns, which is uninitialized memory and "
+            "not an error"
+        )
+    if int(echoes) < 1 or measurements % int(echoes):
+        raise ValueError(
+            f"signal -C measures {measurements} points over {echoes} gradient echoes, and "
+            f"BART writes only {measurements // int(echoes) * int(echoes)} of them; the "
+            "rest of what it returns is uninitialized memory.  Give an m= that divides "
+            "n= (times av_spokes=)"
+        )
+
+
+#: What a command's flags have to satisfy for BART to define what it does.
+#: Checked before the command runs, because what BART does otherwise is read
+#: memory nothing wrote and answer with it.
+_PRECONDITIONS = {"signal": _signal_whole_echo_trains}
+
+
 def _docstring(command: Command, parameters: list[inspect.Parameter]) -> str:
     """BART's own help, as numpydoc."""
     lines = [command.help.strip(), "", f"Runs ``bart {command.name}``.", ""]
@@ -377,6 +416,11 @@ def build(name: str, module: str):
             if name in options and value not in (None, False)
         }
         flags.update(passed_through)
+
+        check = _PRECONDITIONS.get(command.name)
+        if check is not None:
+            check(flags)
+
         return dispatch(
             command.name,
             [x for x in inputs if x is not None],

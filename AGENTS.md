@@ -830,6 +830,14 @@ in `linops/` and `nlops/` -- which would let an application assembled here stay
 one BART operator.  `ictv`, which fails inside BART for every input
 (`ictv.c:97` reshapes the wrong side of an operator).
 
+`signal -C` is guarded rather than fixed.  `ir_multi_grad_echo_model`
+(`simu/signals.c:461-467`) fills `(N / NE) * NE` entries of the `N`-entry
+stack array `signal.c:234` leaves uninitialized, and `get_signal` averages all
+`N` of them into the output; without `-m` at all, `NE` is BART's `-1` and none
+of it is written.  What comes back is finite stack memory.  `_call`'s
+`_PRECONDITIONS` refuses those combinations before the command runs, which is
+where any further "BART does not define this" case belongs.
+
 Windows is not on this list because it is not a target: BART does not build
 there, and WSL2 is a Linux install like any other.
 
