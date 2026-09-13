@@ -229,6 +229,11 @@ def _solve(
     pqr: tuple[float, float, float] | None = None,
     sigma_tau_ratio: float = 1.0,
     adaptive_step: bool = False,
+    precond=None,
+    sampler_precond=None,
+    sampler_precond_diag: float = 0.0,
+    sampler_precond_tol: float = 0.0,
+    sampler_precond_maxiter: int = 10,
     steps: list | None = None,
 ) -> torch.Tensor:
     """Run ``bartorch_solve``.  A negative ``step`` or ``rho``, a zero
@@ -249,6 +254,17 @@ def _solve(
     flags = [term._flags(ndim) for term in terms]
     handles = [term.build(op.ishape) for term in terms]
     p, q, r = pqr if pqr is not None else (-1.0, -1.0, -1.0)
+    # The preconditioner is one more BART operator, and it has to outlive the
+    # call; the wrapper a Python-defined one produces is kept here for that.
+    conditioner = None if precond is None else precond._bart()
+    if conditioner is not None and (
+        conditioner.ishape != op.ishape or conditioner.oshape != op.ishape
+    ):
+        raise ValueError(
+            f"a preconditioner maps the image to itself, so it is {op.ishape} to "
+            f"{op.ishape}, not {conditioner.ishape} to {conditioner.oshape}"
+        )
+    sampler = None if sampler_precond is None else sampler_precond._bart()
 
     counter = _marshal.long_out()
     with _lock, _on_device(op.device or y.device):
@@ -280,6 +296,11 @@ def _solve(
             float(sigma_tau_ratio),
             int(adaptive_step),
             int(x0 is not None),
+            None if conditioner is None else conditioner._h.ptr,
+            None if sampler is None else sampler._h.ptr,
+            float(sampler_precond_diag),
+            float(sampler_precond_tol),
+            int(sampler_precond_maxiter),
             x.data_ptr(),
             y.data_ptr(),
             _marshal.by_reference(counter) if steps is not None else None,
@@ -329,7 +350,7 @@ class _Solver:
     #: The name ``bartorch_solve`` selects the iteration by.
     _algorithm = ""
 
-    def __init__(self, regularizers: Regularizers, maxiter: int, cclambda: float):
+    def __init__(self, regularizers: Regularizers, maxiter: int, cclambda: float, precond=None):
         self.regularizers = _as_terms(regularizers)
         for term in self.regularizers:
             if getattr(term, "_extends", False):
@@ -339,6 +360,7 @@ class _Solver:
                 )
         self.maxiter = int(maxiter)
         self.cclambda = float(cclambda)
+        self.precond = precond
 
     @property
     def _foreign(self) -> list:
@@ -399,6 +421,7 @@ class _Solver:
             self.regularizers,
             maxiter=self.maxiter,
             cclambda=self.cclambda,
+            precond=self.precond,
             **self._settings(),
         )
 
@@ -456,8 +479,9 @@ class CG(_Solver):
         maxiter: int = 30,
         tol: float = 0.0,
         cclambda: float = 0.0,
+        precond=None,
     ):
-        super().__init__(L2(lambda_) if lambda_ else None, maxiter, cclambda)
+        super().__init__(L2(lambda_) if lambda_ else None, maxiter, cclambda, precond)
         self.lambda_ = float(lambda_)
         self.terms = _as_quadratics(terms)
         self.tol = float(tol)
@@ -489,6 +513,7 @@ class CG(_Solver):
             self.regularizers,
             maxiter=self.maxiter,
             cclambda=self.cclambda,
+            precond=self.precond,
             steps=steps,
             **self._settings(),
         )
@@ -537,8 +562,9 @@ class IST(_Solver):
         eigen: bool = False,
         hogwild: bool = False,
         cclambda: float = 0.0,
+        precond=None,
     ):
-        super().__init__(regularizers, maxiter, cclambda)
+        super().__init__(regularizers, maxiter, cclambda, precond)
         if 1 != len(self.regularizers):
             # `iter2_ist` and `iter2_fista` assert one, and an assertion in
             # the library takes the process rather than coming back as an
@@ -646,6 +672,7 @@ class FISTA(IST):
         hogwild: bool = False,
         pqr: tuple[float, float, float] | None = None,
         cclambda: float = 0.0,
+        precond=None,
     ):
         super().__init__(
             regularizers,
@@ -653,6 +680,7 @@ class FISTA(IST):
             step=step,
             eigen=eigen,
             hogwild=hogwild,
+            precond=precond,
             cclambda=cclambda,
         )
         self.pqr = None if pqr is None else tuple(float(v) for v in pqr)
@@ -766,8 +794,9 @@ class ADMM(_Solver):
         abstol: float = 0.0,
         reltol: float = 0.0,
         cg_maxiter_first: int | None = None,
+        precond=None,
     ):
-        super().__init__(regularizers, maxiter, cclambda)
+        super().__init__(regularizers, maxiter, cclambda, precond)
         self.rho = float(rho)
         self.cg_maxiter = int(cg_maxiter)
         self.hogwild = bool(hogwild)
@@ -913,8 +942,9 @@ class PRIDU(_Solver):
         eigen: bool = False,
         hogwild: bool = False,
         cclambda: float = 0.0,
+        precond=None,
     ):
-        super().__init__(regularizers, maxiter, cclambda)
+        super().__init__(regularizers, maxiter, cclambda, precond)
         self.step = float(step)
         self.sigma_tau_ratio = float(sigma_tau_ratio)
         self.adaptive_step = bool(adaptive_step)
@@ -997,8 +1027,15 @@ class NIHT(_Solver):
 
     _algorithm = "niht"
 
-    def __init__(self, regularizers: Regularizers, *, maxiter: int = 30, cclambda: float = 0.0):
-        super().__init__(regularizers, maxiter, cclambda)
+    def __init__(
+        self,
+        regularizers: Regularizers,
+        *,
+        maxiter: int = 30,
+        cclambda: float = 0.0,
+        precond=None,
+    ):
+        super().__init__(regularizers, maxiter, cclambda, precond)
         for term in self.regularizers:
             if term.kind not in ("H", "N"):
                 raise TypeError(f"NIHT takes WaveletNIHT and ImageNIHT terms, not {term!r}")
@@ -1032,10 +1069,32 @@ class EulerMaruyama(_Solver):
         maxiter: int = 30,
         eigen: bool = False,
         cclambda: float = 0.0,
+        precond=None,
+        sampler_precond=None,
+        sampler_precond_diag: float = 0.0,
+        sampler_precond_tol: float = 0.0,
+        sampler_precond_maxiter: int = 10,
     ):
-        super().__init__(regularizers, maxiter, cclambda)
+        super().__init__(regularizers, maxiter, cclambda, precond)
         self.step = float(step)
         self.eigen = bool(eigen)
+        self.sampler_precond = sampler_precond
+        self.sampler_precond_diag = float(sampler_precond_diag)
+        self.sampler_precond_tol = float(sampler_precond_tol)
+        self.sampler_precond_maxiter = int(sampler_precond_maxiter)
+        if sampler_precond is not None and 0.0 >= self.sampler_precond_diag:
+            raise ValueError(
+                "the sampler's preconditioner is used only when its diagonal is "
+                "positive; BART reads the diagonal first and leaves the plain "
+                "iteration when it is zero"
+            )
 
     def _settings(self) -> dict:
-        return {"step": self.step, "eigen": self.eigen}
+        return {
+            "step": self.step,
+            "eigen": self.eigen,
+            "sampler_precond": self.sampler_precond,
+            "sampler_precond_diag": self.sampler_precond_diag,
+            "sampler_precond_tol": self.sampler_precond_tol,
+            "sampler_precond_maxiter": self.sampler_precond_maxiter,
+        }
