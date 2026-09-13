@@ -58,6 +58,44 @@ def _index(i: int, n: int, what: str) -> int:
     return at
 
 
+def _rank(op: NonlinearOperator, at: int, output: bool) -> int:
+    """The rank BART holds one of ``op``'s arguments at.
+
+    Not the same as the length of the shape recorded here.  BART builds each
+    of its own operators at whatever rank it needs -- the Gauss-Newton step's
+    state is two long -- while one defined in Python through the callbacks is
+    built at DIMS, and an ``iovec`` carries its rank.
+    """
+    lib = library()
+    query = lib.bartorch_nlop_output_codomain if output else lib.bartorch_nlop_input_domain
+    vector = _marshal.wide_dim_vector()
+    rank = query(op._h.ptr, at, DIMS + 1, vector)
+    if rank < 0:
+        raise BartError("BART would not report the rank of one of its arguments")
+    return rank
+
+
+def _agree(a: NonlinearOperator, output: int, b: NonlinearOperator, input: int):  # noqa: A002
+    """``a`` and ``b`` with the argument they meet on written at the same rank.
+
+    ``nlop_chain2`` and ``nlop_link`` compare ``iovec``s, so two arguments of
+    the same shape refuse to meet when one of them is held at DIMS and the
+    other at the two axes it actually uses.  Padding a shape with ones is not
+    a change to it -- a run of singletons changes no strides -- so the shorter
+    side is written out to match, and nothing else about either operator
+    moves.
+    """
+    here, there = _rank(a, output, True), _rank(b, input, False)
+    if here == there:
+        return a, b
+
+    shape = a.oshapes[output]
+    padded = (1,) * (max(here, there) - len(shape)) + tuple(shape)
+    if here < there:
+        return a.reshape_output(output, padded), b
+    return a, b.reshape_input(input, padded)
+
+
 def _bart_axis(axis: int, shape: Shape) -> int:
     """The BART dimension a C-order axis of ``shape`` is."""
     at = axis + len(shape) if axis < 0 else axis
@@ -295,6 +333,23 @@ class NonlinearOperator(Operator):
         """
         return _Link(self, output, input)
 
+    def reshape_input(self, input: int, shape: Shape) -> NonlinearOperator:  # noqa: A002
+        """This operator with one input's shape written differently.
+
+        ``nlop_reshape_in``.  The number of entries has to be the same; what
+        changes is how BART reads them, which is what lets two arguments of
+        the same shape but different rank meet in :func:`chain` or
+        :meth:`link`.  Those two do it for you.
+        """
+        return _Reshape(self, input, shape, output=False)
+
+    def reshape_output(self, output: int, shape: Shape) -> NonlinearOperator:
+        """This operator with one output's shape written differently.
+
+        ``nlop_reshape_out``.  See :meth:`reshape_input`.
+        """
+        return _Reshape(self, output, shape, output=True)
+
     def dup(self, a: int = 0, b: int = 1) -> NonlinearOperator:
         """Make two inputs of the same shape one input, kept at ``a``.
 
@@ -505,6 +560,7 @@ class _Chain2(_Binary):
                 f"output {self.output} is {a.oshapes[self.output]} and input {self.input} "
                 f"is {b.ishapes[self.input]}; a chain needs them to agree"
             )
+        a, b = _agree(a, self.output, b, self.input)
         super().__init__(a, b)
 
     def _create(self) -> Built:
@@ -554,6 +610,49 @@ class _Unary(NonlinearOperator):
         super().__init__()
 
 
+class _Reshape(_Unary):
+    """``nlop_reshape_in``/``nlop_reshape_out``: one argument written at another rank."""
+
+    def __init__(self, x, at: int, shape: Shape, *, output: bool):
+        self.output = bool(output)
+        shapes = x.oshapes if self.output else x.ishapes
+        self.at = _index(at, len(shapes), "output" if self.output else "input")
+        self.shape = tuple(shape)
+        was = shapes[self.at]
+        if math.prod(was) != math.prod(self.shape):
+            raise ValueError(
+                f"{'output' if self.output else 'input'} {self.at} holds "
+                f"{math.prod(was)} entries as {was}, not {math.prod(self.shape)} as "
+                f"{self.shape}; a reshape rearranges them and does not add or drop any"
+            )
+        super().__init__(x)
+
+    def _create(self) -> Built:
+        lib = library()
+        ptr = self._under_lock(
+            lib.bartorch_nlop_reshape_out if self.output else lib.bartorch_nlop_reshape_in,
+            self.x._h.ptr,
+            self.at,
+            len(self.shape),
+            _marshal.longs(list(self.shape)[::-1]),
+            device=self.x.device,
+        )
+        ishapes, oshapes = list(self.x.ishapes), list(self.x.oshapes)
+        (oshapes if self.output else ishapes)[self.at] = self.shape
+        return _built(ptr, tuple(ishapes), tuple(oshapes), keep=(self.x,), device=self.x.device)
+
+    @cached_property
+    def _stages(self):
+        # A reshape rearranges no evaluation: whatever ran first still does.
+        # Losing this would make a link over a combination look as though its
+        # producer and its consumer ran together, and be refused.
+        return self.x._stages
+
+    def __repr__(self) -> str:
+        which = "reshape_output" if self.output else "reshape_input"
+        return f"{self.x!r}.{which}({self.at}, {self.shape})"
+
+
 class _Link(_Unary):
     """``nlop_link``: an output tied back into an input."""
 
@@ -564,6 +663,15 @@ class _Link(_Unary):
             raise ValueError(
                 f"output {self.output} is {x.oshapes[self.output]} and input {self.input} "
                 f"is {x.ishapes[self.input]}; a link needs them to agree"
+            )
+        here, there = _rank(x, self.output, True), _rank(x, self.input, False)
+        if here != there:
+            shape = x.oshapes[self.output]
+            padded = (1,) * (max(here, there) - len(shape)) + tuple(shape)
+            x = (
+                x.reshape_output(self.output, padded)
+                if here < there
+                else x.reshape_input(self.input, padded)
             )
         produced, consumed = x._stages[0][self.output], x._stages[1][self.input]
         if produced >= consumed:

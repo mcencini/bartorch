@@ -450,6 +450,17 @@ BARTORCH_API bartorch_linop* bartorch_nlop_derivative_linop(const bartorch_nlop*
  * side by side, an output tied back to an input, two inputs made one, and the
  * reorderings that make those usable.  Each returns a handle the caller owns,
  * or NULL. */
+/* The same operator with one argument's shape written at a different rank.
+ *
+ * `nlop_chain2` and `nlop_link` compare iovecs, and an iovec carries its rank:
+ * BART builds each of its own operators at whatever rank it needs -- the
+ * Gauss-Newton step's state is two long -- while an operator defined through
+ * the callbacks above is built at DIMS.  So two arguments of the same shape
+ * can still refuse to meet.  Padding a shape with ones is not a change to it,
+ * and this is how that is said. */
+BARTORCH_API bartorch_nlop* bartorch_nlop_reshape_in(const bartorch_nlop* a, int i, int N, const long* dims);
+BARTORCH_API bartorch_nlop* bartorch_nlop_reshape_out(const bartorch_nlop* a, int o, int N, const long* dims);
+
 BARTORCH_API bartorch_nlop* bartorch_nlop_chain2(const bartorch_nlop* a, int o, const bartorch_nlop* b, int i);
 BARTORCH_API bartorch_nlop* bartorch_nlop_combine(const bartorch_nlop* a, const bartorch_nlop* b);
 BARTORCH_API bartorch_nlop* bartorch_nlop_link(const bartorch_nlop* x, int oo, int ii);

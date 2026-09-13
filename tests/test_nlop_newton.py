@@ -282,3 +282,101 @@ def test_no_steps_at_all_is_refused():
 def test_an_empty_batch_is_refused():
     with pytest.raises(ValueError, match="batch is at least one"):
         nlop.GaussNewton((COILS, 8, 8), batch=0)
+
+
+# --- an unrolled network as one BART operator -----------------------------------
+
+
+def _cells(n: int = 2):
+    return [nlop.GaussNewton((COILS, N, N), iterations=1, sobolev=_HOLDS) for _ in range(n)]
+
+
+def test_two_cells_chain_into_one_operator(problem):
+    """The step's state is held at rank two and a Python operator at DIMS, so
+    this is also what the rank bridging in :func:`bartorch.nlop.chain` is for.
+    """
+    _, _, kspace = problem
+    first, second = _cells()
+    ya, yb = first.prepare()(kspace, _ones()), second.prepare()(kspace, _ones())
+    x0 = first.start()
+
+    whole = nlop.chain(first, second, output=0, input=1)
+    made = whole(yb, x0, second.weight(0.5), ya, x0, x0, first.weight(1.0))
+    torch.testing.assert_close(made, second(yb, first(ya, x0, x0, 1.0), x0, 0.5), rtol=0, atol=0)
+
+
+def test_a_torch_denoiser_goes_between_them_inside_the_one_operator(problem):
+    """NLINV-Net with the prior in Python and everything else in C.
+
+    What comes out is a single ``nlop``: BART drives the whole unrolled
+    network and crosses into Python once a step, for the denoiser alone.
+    """
+    _, _, kspace = problem
+    first, second = _cells()
+    ya, yb = first.prepare()(kspace, _ones()), second.prepare()(kspace, _ones())
+    x0 = first.start()
+    state = first.state_shape
+
+    crossings = []
+
+    def denoise(x):
+        crossings.append(1)
+        return 0.9 * x
+
+    prior = nlop.FromTorch(denoise, state, state)
+    whole = nlop.chain(nlop.chain(first, prior, output=0, input=0), second, output=0, input=1)
+
+    crossings.clear()
+    made = whole(yb, x0, second.weight(0.5), ya, x0, x0, first.weight(1.0))
+    assert 1 == len(crossings), "the prior should be reached once per application"
+    torch.testing.assert_close(
+        made, second(yb, 0.9 * first(ya, x0, x0, 1.0), x0, 0.5), rtol=0, atol=0
+    )
+
+
+@pytest.mark.parametrize("at", [0, 1, 2, 3])
+def test_the_composed_network_differentiates_by_its_own_arguments(problem, at):
+    _, _, kspace = problem
+    first, second = _cells()
+    ya, yb = first.prepare()(kspace, _ones()), second.prepare()(kspace, _ones())
+    x0 = first.start()
+    state = first.state_shape
+
+    prior = nlop.FromTorch(lambda x: 0.9 * x, state, state)
+    whole = nlop.chain(nlop.chain(first, prior, output=0, input=0), second, output=0, input=1)
+
+    xs = [yb, x0, second.weight(0.5), ya, x0, x0, first.weight(1.0)]
+    tracked = xs[at].clone().requires_grad_(True)
+    xs[at] = tracked
+    whole(*xs).abs().square().sum().backward()
+    assert tracked.grad is not None
+    assert torch.isfinite(tracked.grad).all()
+    assert torch.any(tracked.grad != 0)
+
+
+def test_a_weight_the_prior_closed_over_does_not_train_through_the_one_operator(problem):
+    """Worth knowing before building a network this way.
+
+    Composed into one ``nlop``, the network is BART's to apply, and
+    :class:`~bartorch.nlop.FromTorch` answers for the derivative by its
+    *input* -- ``torch.func``'s jvp and vjp of the function it was given.  A
+    weight the function closed over is not an argument of anything BART knows
+    about, so no gradient reaches it.  Keeping the loop in Python is what
+    trains a denoiser; composing is what makes the network one operator.
+    """
+    _, _, kspace = problem
+    first, second = _cells()
+    ya, yb = first.prepare()(kspace, _ones()), second.prepare()(kspace, _ones())
+    x0 = first.start()
+    state = first.state_shape
+
+    weight = torch.nn.Parameter(torch.tensor(0.9))
+    prior = nlop.FromTorch(lambda x: weight * x, state, state)
+    whole = nlop.chain(nlop.chain(first, prior, output=0, input=0), second, output=0, input=1)
+    made = whole(yb, x0, second.weight(0.5), ya, x0, x0, first.weight(1.0))
+    assert made.grad_fn is None
+
+    # The same network written as a loop does train it.
+    loop = second(yb, weight * first(ya, x0, x0, 1.0), x0, 0.5)
+    loop.abs().square().sum().backward()
+    assert weight.grad is not None and 0.0 != weight.grad

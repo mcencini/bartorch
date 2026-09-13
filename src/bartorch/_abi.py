@@ -184,6 +184,8 @@ SYMBOLS = (
     "bartorch_nlop_output_codomain",
     "bartorch_nlop_apply_generic",
     "bartorch_nlop_derivative_linop",
+    "bartorch_nlop_reshape_in",
+    "bartorch_nlop_reshape_out",
     "bartorch_nlop_chain2",
     "bartorch_nlop_combine",
     "bartorch_nlop_link",
@@ -818,6 +820,20 @@ def bind(lib: ctypes.CDLL) -> ctypes.CDLL:
     ]
     lib.bartorch_nlop_derivative_linop.restype = ctypes.c_void_p
     lib.bartorch_nlop_derivative_linop.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
+    lib.bartorch_nlop_reshape_in.restype = ctypes.c_void_p
+    lib.bartorch_nlop_reshape_in.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_long),
+    ]
+    lib.bartorch_nlop_reshape_out.restype = ctypes.c_void_p
+    lib.bartorch_nlop_reshape_out.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_long),
+    ]
     lib.bartorch_nlop_chain2.restype = ctypes.c_void_p
     lib.bartorch_nlop_chain2.argtypes = [
         ctypes.c_void_p,
