@@ -125,6 +125,75 @@ do not.
    Bloch
 ```
 
+## A Gauss-Newton step, which BART already differentiates
+
+`noir/model_net.c` builds one iteration of `nlinv` as an `nlop`,
+
+$$x_{n+1} = x_n + (DF^H DF + \alpha)^{-1}\left[DF^H (y - F(x_n)) - \alpha (x_n - x_0)\right]$$
+
+and it builds it out of `nlop`s throughout: the forward model, the derivative
+*as a function of the linearisation point*, the adjoint, and `norm_inv`'s
+implicitly differentiated inverse of the normal operator.  So the step has a
+derivative of its own -- by the data, the iterate, the regularisation centre
+and the weight, second-order terms included -- and {class}`GaussNewton` is
+that operator rather than a reimplementation of it.  BART reconstructs with
+it in `networks/nlinvnet.c`; a denoiser between two of these is NLINV-Net.
+
+```{eval-rst}
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   GaussNewton
+```
+
+Three things are worth knowing before using it.
+
+**The model has no sampling pattern until it is given one, and it is given one
+as a side effect of the gridding.** `noir_adjoint_fft_fun` calls
+`linop_gdiag_set_diag(model->lop_pattern, ...)` on its way past, and off the
+grid `noir_adjoint_nufft_fun` calls `nufft_update_traj`. So `prepare()` has to
+be applied to *this* operator before a step is, and two operators do not share
+a model. A step applied to a model that never got a pattern reads a diagonal
+nothing has written, which is a segmentation fault rather than an error, so
+the operator refuses instead.
+
+It follows that the pattern is state. An operator carries whichever pattern
+its last `prepare()` set, so in a training loop `prepare()` belongs in the
+forward pass beside the step, not once at the start -- and the operator must
+not be prepared elsewhere between a forward pass and its backward pass, for
+the same reason a nonlinear operator must not be evaluated there.
+
+**The batch is BART's own.** Everywhere else here a leading axis is applied
+item by item from Python; this is the one operator that stacks a batch inside
+the library, because `nlinvnet` needed it. `batch=` says how many independent
+copies of the model to build, and that count is the leading axis of every
+argument.
+
+**The shapes are BART's sixteen axes, written short.** The operator records
+what BART reports, because that is what the arity check holds it to; what a
+caller passes and what comes back is `shapes` and `output_shapes`, which are
+the same tuples without the run of empty axes between the batch and the image.
+A run of singletons changes no strides, so moving between the two is a reshape
+and not a copy.
+
+The iterate is the image and the coil coefficients laid end to end; `start()`
+makes the one BART starts from, `split()` and `join()` take it apart and put it
+back, and `decompose()` takes it apart *through* the model's transforms, so
+what comes back is coil profiles rather than the coefficients that were fitted.
+
+**One thing to know before reading a gradient.** BART weights the coil half of
+the state by $(1 + a|k|^2)^{-b/2}$, and its default $b = 32$ is a sixteenth
+power: over the state of a small fit the gradient of that half spans tens of
+decades, and its tail runs below float32's smallest normal number. Below that
+edge the arithmetic belongs to the platform rather than to the library -- a
+right-hand side whose norm is no longer a normal number is one BART's
+`checkeps` declines to iterate on, and the solve comes back untouched, with
+`Warning: data corrupted` in the log and a gradient of zeros. Forward none of
+this matters, and the default is what `nlinv` reconstructs with. A *gradient*
+that has to mean something in the coil coefficients wants a gentler weighting:
+`sobolev=(220.0, 8.0)`.
+
 ## Python-defined operators
 
 ```{eval-rst}
