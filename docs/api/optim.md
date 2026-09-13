@@ -109,6 +109,54 @@ nothing to differentiate through; one written out can be, and `optim_builder`
 takes these straight into `BaseOptim` with `unfold=True` or `DEQ`.  The cost
 is a few axpys on an image per step, which is nothing beside a transform.
 
+### The solvers as networks
+
+`unrolled` builds a network of `maxiter` steps and `fixed_point` a
+deep-equilibrium model of the same step, each a `torch.nn.Module` taking
+`(y, physics)`:
+
+```python
+net = optim.FISTA(denoiser, maxiter=10, step=0.9).unrolled(
+    (1, 256, 256), trainable=["stepsize"]
+)
+optimizer = torch.optim.Adam(net.parameters(), lr=1e-3)
+image = net(kspace[None], bartorch.to_deepinv(A))
+```
+
+A network is not built around an encoding -- it is handed one per call -- so
+the one thing it has to be told is the shape its terms are configured for.
+`trainable` names the parameters to learn, one value per step: `"stepsize"`
+for the proximal-gradient solvers, `"rho"` for the alternating directions,
+`"sigma"` and `"tau"` for the primal-dual. `net.parameters()` reaches those
+*and* the weights of whatever stands where a term goes, which is what there is
+to train.
+
+With nothing trainable in it a network answers with the solver's bits, batch
+or no batch -- so what an unrolled network here is, is BART's iteration with a
+denoiser in the threshold's place, and not an architecture that resembles one.
+Two things make that hold. It starts at zero, where BART starts, rather than
+at $A^Hy$ where `deepinv` starts an optimizer; `custom_init=None` restores the
+other start, which is usually what a network about to be trained wants. And a
+batch is the solver run once per item, the conjugate gradients inside an
+alternating-direction step included -- one solve over the stack would be the
+same operator, since it is block diagonal, but not the same iteration, because
+it would stop on the whole stack's residual and let the items steer each
+other's stopping.
+
+A *learned* parameter is a tensor, and an iteration with one in it works its
+scalars out in single precision throughout rather than in a double rounded at
+the end. So a trained network does not answer with the library's bits, and
+could not: the numbers in it are no longer the library's.
+
+Two solvers refuse a fixed point, because a step has to be the same map every
+time for one to mean anything. FISTA's momentum carries the iteration number,
+`t <- (p + sqrt(q + r t^2)) / 2`; `optim.IST` is the same iteration without the
+ravine and takes `fixed_point`. And an alternating-direction step's fixed
+point is in $(x, z, u)$ rather than in the image: its x-update reaches the
+previous image only as the warm start of the inner solve, which carries no
+gradient, so a model built on the image alone would be differentiating a map
+that does not depend on its argument.
+
 ### What differentiates, and what does not
 
 Every operator a step applies is recorded, so an unrolled iteration is a torch

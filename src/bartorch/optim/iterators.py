@@ -173,7 +173,7 @@ def _term_prior() -> type:
 def _as_term() -> type:
     _, Prior, _ = _classes()
 
-    class AsTerm:
+    class AsTerm(torch.nn.Module):
         """A ``deepinv`` prior or denoiser where a :mod:`bartorch.prox` term goes.
 
         The iterations here ask a term for four things: the transform in front
@@ -201,6 +201,10 @@ def _as_term() -> type:
         """
 
         def __init__(self, prior, g_param: float | None = None, *, batched: bool = False):
+            # A module, so that a denoiser with weights in it is registered:
+            # `net.parameters()` has to reach them or there is nothing for an
+            # optimizer to train.
+            super().__init__()
             if not hasattr(prior, "prox"):
                 if not callable(prior):
                     raise TypeError(
@@ -357,7 +361,17 @@ def _single(value: float) -> float:
     where the library would have rounded it; a scalar worked out in a double
     and rounded once at the end is a different number, which is what made the
     ravine's coefficients diverge at the thirteenth iteration.
+
+    A tensor passes through untouched.  That is what a *learned* parameter is
+    -- a step size or a weight an unrolled network trains -- and it is already
+    single precision, so there is no double to round away; what there is
+    instead is a graph, and ``float()`` would drop it.  A run with one of
+    these in it works the arithmetic out in single precision throughout rather
+    than in a double and rounded at the end, so it is not the library's bits.
+    It could not be: the numbers are no longer the library's either.
     """
+    if isinstance(value, torch.Tensor):
+        return value
     return float(np.float32(value))
 
 
@@ -502,6 +516,13 @@ def _admm() -> type:
             kwargs.setdefault("has_cost", False)
             super().__init__(**kwargs)
             self.terms = list(terms)
+            # A term that is a module -- a denoiser standing where one goes --
+            # has to be registered or `net.parameters()` will not reach its
+            # weights and there will be nothing for an optimizer to train.
+            # The list above keeps the same objects; this only names them.
+            self.trainable_terms = torch.nn.ModuleList(
+                [t for t in self.terms if isinstance(t, torch.nn.Module)]
+            )
             self.image_shape = tuple(image_shape)
             self.biases = list(biases) if biases is not None else [None] * len(self.terms)
             if len(self.biases) != len(self.terms):
@@ -509,15 +530,36 @@ def _admm() -> type:
             self._invokes = 0
 
         # --- the pieces of a term ---------------------------------------------
+        #
+        # Each over a leading batch axis when there is one, because BART
+        # builds a term's operator for one image and a batch is not one of its
+        # axes.  A solve has no batch; a network has one.
 
         def _forward(self, term, x):
-            return term.apply_transform(x, self.image_shape)
+            return _batched(
+                lambda item: term.apply_transform(item, self.image_shape), x, self.image_shape
+            )
 
         def _adjoint(self, term, v):
-            return term.apply_transform(v, self.image_shape, mode="adjoint")
+            return _batched(
+                lambda item: term.apply_transform(item, self.image_shape, mode="adjoint"),
+                v,
+                self._shape(term),
+            )
 
         def _normal(self, term, x):
-            return term.apply_transform(x, self.image_shape, mode="normal")
+            return _batched(
+                lambda item: term.apply_transform(item, self.image_shape, mode="normal"),
+                x,
+                self.image_shape,
+            )
+
+        def _prox(self, term, w, gamma):
+            return _batched(
+                lambda item: term.prox(item, gamma, image_shape=self.image_shape),
+                w,
+                self._shape(term),
+            )
 
         def _shape(self, term):
             return term.prox_shape(self.image_shape)
@@ -531,7 +573,25 @@ def _admm() -> type:
             the same stopping rule -- ``cg_eps`` times the norm of the right
             hand side.  It counts the applications as it goes, because that
             is the budget ``maxiter`` actually is.
+
+            A batch is solved one image at a time.  One solve over the stack
+            would be the same operator -- it is block diagonal -- but not the
+            same iteration: conjugate gradients stops on the norm of the whole
+            residual, so the items would steer each other's stopping and no
+            one of them would be what the solver answers.  What a shared loop
+            cannot avoid is the count: `nr_invokes` takes the worst item's,
+            because there is one budget and one loop.
             """
+            if x.ndim == len(self.image_shape) + 1:
+                spent = self._invokes
+                worst, made = spent, []
+                for item, side in zip(x, rhs):
+                    self._invokes = spent
+                    made.append(self._solve_x(item, side, rho, physics, params, first))
+                    worst = max(worst, self._invokes)
+                self._invokes = worst
+                return torch.stack(made)
+
             from bartorch.linop import Callback, Identity
             from bartorch.linop.base import _WithNormal
             from bartorch.optim.linear import CG
@@ -633,7 +693,7 @@ def _admm() -> type:
                 if bias is not None:
                     w = w - bias
 
-                z[j] = term.prox(w, lam / rho, image_shape=self.image_shape) if rho else w
+                z[j] = self._prox(term, w, lam / rho) if rho else w
                 u[j] = w - z[j]
 
                 if not fast:
@@ -804,13 +864,47 @@ def _pridu() -> type:
             kwargs.setdefault("has_cost", False)
             super().__init__(**kwargs)
             self.terms = list(terms)
+            # A term that is a module -- a denoiser standing where one goes --
+            # has to be registered or `net.parameters()` will not reach its
+            # weights and there will be nothing for an optimizer to train.
+            # The list above keeps the same objects; this only names them.
+            self.trainable_terms = torch.nn.ModuleList(
+                [t for t in self.terms if isinstance(t, torch.nn.Module)]
+            )
             self.primal = primal
             self.image_shape = tuple(image_shape)
+
+        # Each of these goes over a leading batch axis when there is one, for
+        # the reason `ADMMIteration`'s do: BART builds a term's operator for
+        # one image, and a batch is not one of its axes.
 
         def _prox2(self, x, gamma):
             if self.primal is None:
                 return x
-            return self.primal.prox(x, gamma, image_shape=self.image_shape)
+            return _batched(
+                lambda item: self.primal.prox(item, gamma, image_shape=self.image_shape),
+                x,
+                self.image_shape,
+            )
+
+        def _forward(self, term, x):
+            return _batched(
+                lambda item: term.apply_transform(item, self.image_shape), x, self.image_shape
+            )
+
+        def _adjoint(self, term, v):
+            return _batched(
+                lambda item: term.apply_transform(item, self.image_shape, mode="adjoint"),
+                v,
+                term.prox_shape(self.image_shape),
+            )
+
+        def _prox(self, term, w, gamma):
+            return _batched(
+                lambda item: term.prox(item, gamma, image_shape=self.image_shape),
+                w,
+                term.prox_shape(self.image_shape),
+            )
 
         def forward(self, X, cur_data_fidelity, cur_prior, cur_params, y, physics, *a, **kw):
             x = X["est"][0]
@@ -856,8 +950,8 @@ def _pridu() -> type:
                 # `axpy(u_old, 1. / sigma, u[j])`: the reciprocal is worked
                 # out once, in a double, and rounded to the float the vector
                 # is scaled by -- not a division of the vector.
-                over = term.apply_transform(avg, self.image_shape) + _single(1.0 / sigma) * duals[j]
-                thresholded = term.prox(over, alpha / sigma, image_shape=self.image_shape)
+                over = self._forward(term, avg) + _single(1.0 / sigma) * duals[j]
+                thresholded = self._prox(term, over, alpha / sigma)
                 fresh_j = sigma * over - sigma * thresholded
                 was = duals[j]
                 duals[j] = lam * fresh_j + (1.0 - lam) * was
@@ -868,7 +962,7 @@ def _pridu() -> type:
             previous_x = x
             x = x - tau * adjoint_dual
             for j, term in enumerate(self.terms):
-                x = x - tau * term.apply_transform(duals[j], self.image_shape, mode="adjoint")
+                x = x - tau * self._adjoint(term, duals[j])
             x = lam * self._prox2(x, tau * alpha) + (1.0 - lam) * previous_x
 
             # `res2` is measured against the step `tau` had before the
@@ -909,7 +1003,7 @@ def _pridu() -> type:
             # number; with a dual and the data term they are not.
             squared = 0.0
             for term in self.terms:
-                moved = term.apply_transform(delta, self.image_shape)
+                moved = self._forward(term, delta)
                 squared = _single(squared + _norm(moved) ** 2)
             normal = cur_data_fidelity.normal(delta, physics)
             squared = _single(squared + _dot(normal, delta))
