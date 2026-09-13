@@ -98,6 +98,33 @@ runs, so a fit driven from here is the same arithmetic -- and
    CoilSense
 ```
 
+## Signal models
+
+A model-based reconstruction is a signal model under an encoding, and the
+model is the part that changes with the sequence.  {class}`FromTorchSim`
+turns any [TorchSim](https://github.com/FiRMLAB-Pisa/torchsim) simulator into
+a BART operator -- its value, its Jacobian-vector product and its adjoint
+product, which is exactly the three things `nlop_s` asks for, and none of
+which ever builds a Jacobian.
+
+{func}`InversionRecovery`, {func}`MultiEcho` and {func}`Bloch` are `moba`'s
+families written on TorchSim's own simulators.  They are not BART's models:
+`moba` writes each one out in C with its own parameterisation.  Where the two
+agree on the physics they agree on the numbers -- the multi-echo decay matches
+`bart signal -S` to single precision -- and where `moba` reparameterises they
+do not.
+
+```{eval-rst}
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   FromTorchSim
+   InversionRecovery
+   MultiEcho
+   Bloch
+```
+
 ## Python-defined operators
 
 ```{eval-rst}

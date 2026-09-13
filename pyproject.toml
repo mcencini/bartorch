@@ -43,6 +43,16 @@ dependencies = [
     # natsort on top of what is here already.  Weighed and accepted, as
     # mri-nufft was: the proximal solvers are the common case, not a corner.
     "deepinv>=0.2",
+    # TorchSim is the signal model.  `nlop.FromTorchSim` turns any of its
+    # simulators into a BART nonlinear operator -- value, Jacobian-vector
+    # product and adjoint product, which is exactly what `nlop_s` asks for --
+    # and `nlop.InversionRecovery`, `nlop.MultiEcho` and `nlop.Bloch` are
+    # `moba`'s families written on it.  Every quantitative reconstruction here
+    # goes through it, so it is not an extra.
+    #
+    # It asks for numpy, scipy and torch, all of which are here already, and
+    # nothing else.
+    "torchsim>=0.0.5",
     # FINUFFT is the NUFFT.  Every non-Cartesian transform BART makes goes
     # through the substitution under `nufft_create`, and nothing reaches BART's
     # own gridder without having been sent there, so a bartorch without FINUFFT
