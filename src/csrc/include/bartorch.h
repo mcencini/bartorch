@@ -413,6 +413,71 @@ BARTORCH_API int bartorch_nlop_codomain(const bartorch_nlop* h, int N, long* dim
 BARTORCH_API int bartorch_nlop_apply(const bartorch_nlop* h, void* dst, const void* src);
 BARTORCH_API int bartorch_nlop_derivative(const bartorch_nlop* h, void* dst, const void* src);
 BARTORCH_API int bartorch_nlop_adjoint(const bartorch_nlop* h, void* dst, const void* src);
+/* How many arguments the operator takes, and the shape of each.
+ *
+ * BART's `nlop_s` is many inputs to many outputs -- the model `nlinv` inverts
+ * has two inputs, the image and the coil profiles -- and these are what make
+ * that arity reachable.  Arguments are counted BART's way: outputs first,
+ * then inputs, which is the order `bartorch_nlop_apply_generic` reads them.
+ * The domain and codomain calls return the rank, or a negative code.
+ */
+BARTORCH_API int bartorch_nlop_inputs(const bartorch_nlop* h);
+BARTORCH_API int bartorch_nlop_outputs(const bartorch_nlop* h);
+BARTORCH_API int bartorch_nlop_input_domain(const bartorch_nlop* h, int i, int N, long* dims);
+BARTORCH_API int bartorch_nlop_output_codomain(const bartorch_nlop* h, int o, int N, long* dims);
+/* Apply an operator of any arity; `args` is outputs then inputs.  Fixes the
+ * point every derivative is taken at, as the one-argument apply does. */
+BARTORCH_API int bartorch_nlop_apply_generic(const bartorch_nlop* h, int nargs, void** args);
+/* The derivative of one output by one input, as a linear operator, at
+ * wherever the last application left the point.  `nlop_get_derivative` hands
+ * back a `linop_s`, so the whole linear surface applies to it -- which is how
+ * `noir/recon2.c` builds the inner problem of a Gauss-Newton step. */
+BARTORCH_API bartorch_linop* bartorch_nlop_derivative_linop(const bartorch_nlop* h, int o, int i);
+
+/* The algebra of `nlops/chain.h`: one output into one input, two operators
+ * side by side, an output tied back to an input, two inputs made one, and the
+ * reorderings that make those usable.  Each returns a handle the caller owns,
+ * or NULL. */
+BARTORCH_API bartorch_nlop* bartorch_nlop_chain2(const bartorch_nlop* a, int o, const bartorch_nlop* b, int i);
+BARTORCH_API bartorch_nlop* bartorch_nlop_combine(const bartorch_nlop* a, const bartorch_nlop* b);
+BARTORCH_API bartorch_nlop* bartorch_nlop_link(const bartorch_nlop* x, int oo, int ii);
+BARTORCH_API bartorch_nlop* bartorch_nlop_dup(const bartorch_nlop* x, int a, int b);
+BARTORCH_API bartorch_nlop* bartorch_nlop_stack_inputs(const bartorch_nlop* x, int a, int b, int dim);
+BARTORCH_API bartorch_nlop* bartorch_nlop_stack_outputs(const bartorch_nlop* x, int a, int b, int dim);
+/* `outputs` non-zero permutes the outputs, zero the inputs. */
+BARTORCH_API bartorch_nlop* bartorch_nlop_permute(const bartorch_nlop* x, int outputs, int n, const int* perm);
+BARTORCH_API bartorch_nlop* bartorch_nlop_del_out(const bartorch_nlop* x, int o);
+
+/* The basic nonlinear operators: the tensor product and the elementwise maps.
+ *
+ * `tenmul` is the pointwise product of two inputs, broadcast over the axes
+ * where one of them is one -- the model `nlinv` inverts is an image times
+ * coil profiles -- and is what makes the algebra above worth having.  The
+ * rest take one input and return one output of the same shape; `eps`, where
+ * it appears, picks BART's regularised variant when it is positive.
+ *
+ * `zphsr` is not here: BART builds it out of `zabs` and `zdiv` and finishes
+ * with `nlop_dup(x, 0, 0)`, which trips its own `a < b` assertion, so the
+ * constructor cannot be called at all.  The same operator is built out of
+ * the two pieces on the Python side, where the indices are right.
+ */
+BARTORCH_API bartorch_nlop* bartorch_nlop_tenmul(int N, const long* odims, const long* idims1, const long* idims2);
+BARTORCH_API bartorch_nlop* bartorch_nlop_zdiv(int N, const long* dims, float eps);
+BARTORCH_API bartorch_nlop* bartorch_nlop_zaxpbz(int N, const long* dims, float a, float b);
+BARTORCH_API bartorch_nlop* bartorch_nlop_zexp(int N, const long* dims);
+BARTORCH_API bartorch_nlop* bartorch_nlop_zlog(int N, const long* dims);
+BARTORCH_API bartorch_nlop* bartorch_nlop_zinv(int N, const long* dims, float eps);
+BARTORCH_API bartorch_nlop* bartorch_nlop_zsqrt(int N, const long* dims);
+BARTORCH_API bartorch_nlop* bartorch_nlop_zspow(int N, const long* dims, float re, float im);
+BARTORCH_API bartorch_nlop* bartorch_nlop_zsadd(int N, const long* dims, float re, float im);
+BARTORCH_API bartorch_nlop* bartorch_nlop_zabs(int N, const long* dims);
+BARTORCH_API bartorch_nlop* bartorch_nlop_smo_abs(int N, const long* dims, float eps);
+BARTORCH_API bartorch_nlop* bartorch_nlop_zrss(int N, const long* dims, unsigned long flags, float eps);
+BARTORCH_API bartorch_nlop* bartorch_nlop_zss(int N, const long* dims, unsigned long flags);
+/* An operator of no inputs, and pinning one input of an operator to a value. */
+BARTORCH_API bartorch_nlop* bartorch_nlop_const(int N, const long* dims, const void* val);
+BARTORCH_API bartorch_nlop* bartorch_nlop_set_input_const(const bartorch_nlop* a, int i, int N, const long* dims, const void* val);
+
 BARTORCH_API void bartorch_nlop_free(bartorch_nlop* h);
 
 /* Iteratively regularised Gauss-Newton: x starts at its initial value and returns the solution. */

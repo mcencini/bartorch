@@ -34,7 +34,12 @@
 
 #include "nlops/cast.h"
 #include "nlops/chain.h"
+#include "nlops/const.h"
 #include "nlops/nlop.h"
+#include "nlops/someops.h"
+#include "nlops/stack.h"
+#include "nlops/tenmul.h"
+#include "nlops/zexp.h"
 
 #include "iter/iter.h"
 #include "iter/iter2.h"
@@ -1169,6 +1174,560 @@ int bartorch_nlop_adjoint(const bartorch_nlop* h, void* dst, const void* src)
 	struct nlop_apply_args a = { h, dst, src, 2 };
 	return guarded(nlop_apply_worker, &a);
 }
+
+/* --- how many arguments, and what shape each one is ------------------------
+ *
+ * BART's `nlop_s` is many inputs to many outputs; the wrapper started with
+ * the one-in one-out case because that is what `bartorch_irgnm` needed.  The
+ * model `nlinv` inverts is two inputs -- the image and the coil profiles --
+ * so the arity has to be reachable before any of it can be expressed here.
+ *
+ * Arguments are counted BART's way throughout: outputs first, then inputs,
+ * which is the order `nlop_generic_apply_unchecked` reads them in.
+ */
+int bartorch_nlop_inputs(const bartorch_nlop* h)
+{
+	return (NULL == h) ? -1 : nlop_get_nr_in_args(h->op);
+}
+
+int bartorch_nlop_outputs(const bartorch_nlop* h)
+{
+	return (NULL == h) ? -1 : nlop_get_nr_out_args(h->op);
+}
+
+int bartorch_nlop_input_domain(const bartorch_nlop* h, int i, int N, long* dims)
+{
+	if ((NULL == h) || (NULL == dims) || (0 > i) || (i >= nlop_get_nr_in_args(h->op)))
+		return -1;
+
+	const struct iovec_s* iov = nlop_generic_domain(h->op, i);
+
+	if (iov->N > N)
+		return -8;
+
+	copy_dims(iov, N, dims);
+
+	return iov->N;
+}
+
+int bartorch_nlop_output_codomain(const bartorch_nlop* h, int o, int N, long* dims)
+{
+	if ((NULL == h) || (NULL == dims) || (0 > o) || (o >= nlop_get_nr_out_args(h->op)))
+		return -1;
+
+	const struct iovec_s* iov = nlop_generic_codomain(h->op, o);
+
+	if (iov->N > N)
+		return -8;
+
+	copy_dims(iov, N, dims);
+
+	return iov->N;
+}
+
+/* Apply an operator of any arity.
+ *
+ * `args` is outputs then inputs, each a buffer the caller owns, which is what
+ * `nlop_generic_apply_unchecked` takes.  It also fixes the point every
+ * derivative is taken at, exactly as the one-argument `bartorch_nlop_apply`
+ * does.
+ */
+struct nlop_generic_args { const bartorch_nlop* h; int nargs; void** args; };
+
+static int nlop_generic_worker(void* p)
+{
+	struct nlop_generic_args* a = p;
+	nlop_generic_apply_unchecked(a->h->op, a->nargs, a->args);
+	return 0;
+}
+
+int bartorch_nlop_apply_generic(const bartorch_nlop* h, int nargs, void** args)
+{
+	if ((NULL == h) || (NULL == args))
+		return -1;
+
+	if (nargs != nlop_get_nr_in_args(h->op) + nlop_get_nr_out_args(h->op))
+		return -1;
+
+	struct nlop_generic_args a = { h, nargs, args };
+
+	return guarded(nlop_generic_worker, &a);
+}
+
+/* The derivative of one output by one input, as a linear operator.
+ *
+ * `nlop_get_derivative` hands back a `linop_s`, so the whole linear surface --
+ * its adjoint, its normal, a solve over it -- applies to it unchanged.  That
+ * is how `noir/recon2.c` builds the inner problem of its Gauss-Newton steps,
+ * and it is how one gets built here.
+ *
+ * The point is wherever the last application left it.
+ */
+struct nlop_derivative_args { const bartorch_nlop* h; int o; int i; bartorch_linop* result; };
+
+static int nlop_derivative_linop_worker(void* p)
+{
+	struct nlop_derivative_args* a = p;
+	a->result = bartorch_linop_wrap(linop_clone(nlop_get_derivative(a->h->op, a->o, a->i)));
+	return 0;
+}
+
+bartorch_linop* bartorch_nlop_derivative_linop(const bartorch_nlop* h, int o, int i)
+{
+	if ((NULL == h)
+	    || (0 > o) || (o >= nlop_get_nr_out_args(h->op))
+	    || (0 > i) || (i >= nlop_get_nr_in_args(h->op)))
+		return NULL;
+
+	struct nlop_derivative_args a = { h, o, i, NULL };
+
+	return (0 == guarded(nlop_derivative_linop_worker, &a)) ? a.result : NULL;
+}
+
+/* --- the algebra ----------------------------------------------------------
+ *
+ * `chain` was the whole of it, and it only says "all of a into all of b".
+ * These are the rest of `nlops/chain.h`: one output into one input, two
+ * operators side by side, an output tied back to an input, two inputs made
+ * one, and the reorderings that make those usable.
+ */
+struct nlop_chain2_args { const bartorch_nlop* a; int o; const bartorch_nlop* b; int i; bartorch_nlop* result; };
+
+static int nlop_chain2_worker(void* p)
+{
+	struct nlop_chain2_args* a = p;
+	a->result = wrap_nlop(nlop_chain2(a->a->op, a->o, a->b->op, a->i));
+	return 0;
+}
+
+bartorch_nlop* bartorch_nlop_chain2(const bartorch_nlop* a, int o, const bartorch_nlop* b, int i)
+{
+	if ((NULL == a) || (NULL == b))
+		return NULL;
+
+	struct nlop_chain2_args args = { a, o, b, i, NULL };
+
+	return (0 == guarded(nlop_chain2_worker, &args)) ? args.result : NULL;
+}
+
+static int nlop_combine_worker(void* p)
+{
+	struct nlop_pair_args* a = p;
+	a->result = wrap_nlop(nlop_combine(a->a->op, a->b->op));
+	return 0;
+}
+
+bartorch_nlop* bartorch_nlop_combine(const bartorch_nlop* a, const bartorch_nlop* b)
+{
+	if ((NULL == a) || (NULL == b))
+		return NULL;
+
+	struct nlop_pair_args args = { a, b, NULL };
+
+	return (0 == guarded(nlop_combine_worker, &args)) ? args.result : NULL;
+}
+
+struct nlop_index2_args { const bartorch_nlop* x; int a; int b; int c; bartorch_nlop* result; };
+
+static int nlop_link_worker(void* p)
+{
+	struct nlop_index2_args* v = p;
+	v->result = wrap_nlop(nlop_link(v->x->op, v->a, v->b));
+	return 0;
+}
+
+bartorch_nlop* bartorch_nlop_link(const bartorch_nlop* x, int oo, int ii)
+{
+	if (NULL == x)
+		return NULL;
+
+	struct nlop_index2_args v = { x, oo, ii, 0, NULL };
+
+	return (0 == guarded(nlop_link_worker, &v)) ? v.result : NULL;
+}
+
+static int nlop_dup_worker(void* p)
+{
+	struct nlop_index2_args* v = p;
+	v->result = wrap_nlop(nlop_dup(v->x->op, v->a, v->b));
+	return 0;
+}
+
+bartorch_nlop* bartorch_nlop_dup(const bartorch_nlop* x, int a, int b)
+{
+	if (NULL == x)
+		return NULL;
+
+	struct nlop_index2_args v = { x, a, b, 0, NULL };
+
+	return (0 == guarded(nlop_dup_worker, &v)) ? v.result : NULL;
+}
+
+static int nlop_stack_inputs_worker(void* p)
+{
+	struct nlop_index2_args* v = p;
+	v->result = wrap_nlop(nlop_stack_inputs(v->x->op, v->a, v->b, v->c));
+	return 0;
+}
+
+bartorch_nlop* bartorch_nlop_stack_inputs(const bartorch_nlop* x, int a, int b, int dim)
+{
+	if (NULL == x)
+		return NULL;
+
+	struct nlop_index2_args v = { x, a, b, dim, NULL };
+
+	return (0 == guarded(nlop_stack_inputs_worker, &v)) ? v.result : NULL;
+}
+
+static int nlop_stack_outputs_worker(void* p)
+{
+	struct nlop_index2_args* v = p;
+	v->result = wrap_nlop(nlop_stack_outputs(v->x->op, v->a, v->b, v->c));
+	return 0;
+}
+
+bartorch_nlop* bartorch_nlop_stack_outputs(const bartorch_nlop* x, int a, int b, int dim)
+{
+	if (NULL == x)
+		return NULL;
+
+	struct nlop_index2_args v = { x, a, b, dim, NULL };
+
+	return (0 == guarded(nlop_stack_outputs_worker, &v)) ? v.result : NULL;
+}
+
+struct nlop_permute_args { const bartorch_nlop* x; int n; const int* perm; int outputs; bartorch_nlop* result; };
+
+static int nlop_permute_worker(void* p)
+{
+	struct nlop_permute_args* v = p;
+	v->result = wrap_nlop(v->outputs
+			? nlop_permute_outputs(v->x->op, v->n, v->perm)
+			: nlop_permute_inputs(v->x->op, v->n, v->perm));
+	return 0;
+}
+
+bartorch_nlop* bartorch_nlop_permute(const bartorch_nlop* x, int outputs, int n, const int* perm)
+{
+	if ((NULL == x) || (NULL == perm))
+		return NULL;
+
+	struct nlop_permute_args v = { x, n, perm, outputs, NULL };
+
+	return (0 == guarded(nlop_permute_worker, &v)) ? v.result : NULL;
+}
+
+struct nlop_index1_args { const bartorch_nlop* x; int i; bartorch_nlop* result; };
+
+static int nlop_del_out_worker(void* p)
+{
+	struct nlop_index1_args* v = p;
+	v->result = wrap_nlop(nlop_del_out(v->x->op, v->i));
+	return 0;
+}
+
+bartorch_nlop* bartorch_nlop_del_out(const bartorch_nlop* x, int o)
+{
+	if (NULL == x)
+		return NULL;
+
+	struct nlop_index1_args v = { x, o, NULL };
+
+	return (0 == guarded(nlop_del_out_worker, &v)) ? v.result : NULL;
+}
+
+/* --- the basic nonlinear operators ----------------------------------------
+ *
+ * The elementwise maps and the tensor product, which are what the algebra
+ * above is for: `nlinv`'s model is a product of an image with coil profiles,
+ * and every model BART fits to a relaxation curve is an exponential of
+ * something.  A `long` dimension vector and BART's own flags throughout, as
+ * everywhere else in this wrapper.
+ */
+struct nlop_dims_args {
+
+	int N;
+	const long* dims;
+	const long* dims2;
+	const long* dims3;
+	float a;
+	float b;
+	unsigned long flags;
+	bartorch_nlop* result;
+};
+
+static int nlop_tenmul_worker(void* p)
+{
+	struct nlop_dims_args* v = p;
+	v->result = wrap_nlop(nlop_tenmul_create(v->N, v->dims, v->dims2, v->dims3));
+	return 0;
+}
+
+bartorch_nlop* bartorch_nlop_tenmul(int N, const long* odims, const long* idims1, const long* idims2)
+{
+	if ((NULL == odims) || (NULL == idims1) || (NULL == idims2))
+		return NULL;
+
+	struct nlop_dims_args v = { N, odims, idims1, idims2, 0., 0., 0ul, NULL };
+
+	return (0 == guarded(nlop_tenmul_worker, &v)) ? v.result : NULL;
+}
+
+static int nlop_zdiv_worker(void* p)
+{
+	struct nlop_dims_args* v = p;
+	v->result = wrap_nlop((0. < v->a)
+			? nlop_zdiv_reg_create(v->N, v->dims, v->a)
+			: nlop_zdiv_create(v->N, v->dims));
+	return 0;
+}
+
+bartorch_nlop* bartorch_nlop_zdiv(int N, const long* dims, float eps)
+{
+	if (NULL == dims)
+		return NULL;
+
+	struct nlop_dims_args v = { N, dims, NULL, NULL, eps, 0., 0ul, NULL };
+
+	return (0 == guarded(nlop_zdiv_worker, &v)) ? v.result : NULL;
+}
+
+static int nlop_zaxpbz_worker(void* p)
+{
+	struct nlop_dims_args* v = p;
+	v->result = wrap_nlop(nlop_zaxpbz2_create(v->N, v->dims, v->flags, v->a, v->flags, v->b));
+	return 0;
+}
+
+bartorch_nlop* bartorch_nlop_zaxpbz(int N, const long* dims, float a, float b)
+{
+	if (NULL == dims)
+		return NULL;
+
+	struct nlop_dims_args v = { N, dims, NULL, NULL, a, b, ~0ul, NULL };
+
+	return (0 == guarded(nlop_zaxpbz_worker, &v)) ? v.result : NULL;
+}
+
+static int nlop_zexp_worker(void* p)
+{
+	struct nlop_dims_args* v = p;
+	v->result = wrap_nlop(nlop_zexp_create(v->N, v->dims));
+	return 0;
+}
+
+bartorch_nlop* bartorch_nlop_zexp(int N, const long* dims)
+{
+	if (NULL == dims)
+		return NULL;
+
+	struct nlop_dims_args v = { N, dims, NULL, NULL, 0., 0., 0ul, NULL };
+
+	return (0 == guarded(nlop_zexp_worker, &v)) ? v.result : NULL;
+}
+
+static int nlop_zlog_worker(void* p)
+{
+	struct nlop_dims_args* v = p;
+	v->result = wrap_nlop(nlop_zlog_create(v->N, v->dims));
+	return 0;
+}
+
+bartorch_nlop* bartorch_nlop_zlog(int N, const long* dims)
+{
+	if (NULL == dims)
+		return NULL;
+
+	struct nlop_dims_args v = { N, dims, NULL, NULL, 0., 0., 0ul, NULL };
+
+	return (0 == guarded(nlop_zlog_worker, &v)) ? v.result : NULL;
+}
+
+static int nlop_zinv_worker(void* p)
+{
+	struct nlop_dims_args* v = p;
+	v->result = wrap_nlop((0. < v->a)
+			? nlop_zinv_reg_create(v->N, v->dims, v->a)
+			: nlop_zinv_create(v->N, v->dims));
+	return 0;
+}
+
+bartorch_nlop* bartorch_nlop_zinv(int N, const long* dims, float eps)
+{
+	if (NULL == dims)
+		return NULL;
+
+	struct nlop_dims_args v = { N, dims, NULL, NULL, eps, 0., 0ul, NULL };
+
+	return (0 == guarded(nlop_zinv_worker, &v)) ? v.result : NULL;
+}
+
+static int nlop_zsqrt_worker(void* p)
+{
+	struct nlop_dims_args* v = p;
+	v->result = wrap_nlop(nlop_zsqrt_create(v->N, v->dims));
+	return 0;
+}
+
+bartorch_nlop* bartorch_nlop_zsqrt(int N, const long* dims)
+{
+	if (NULL == dims)
+		return NULL;
+
+	struct nlop_dims_args v = { N, dims, NULL, NULL, 0., 0., 0ul, NULL };
+
+	return (0 == guarded(nlop_zsqrt_worker, &v)) ? v.result : NULL;
+}
+
+static int nlop_zspow_worker(void* p)
+{
+	struct nlop_dims_args* v = p;
+	v->result = wrap_nlop(nlop_zspow_create(v->N, v->dims, v->a + v->b * 1.i));
+	return 0;
+}
+
+bartorch_nlop* bartorch_nlop_zspow(int N, const long* dims, float re, float im)
+{
+	if (NULL == dims)
+		return NULL;
+
+	struct nlop_dims_args v = { N, dims, NULL, NULL, re, im, 0ul, NULL };
+
+	return (0 == guarded(nlop_zspow_worker, &v)) ? v.result : NULL;
+}
+
+static int nlop_zsadd_worker(void* p)
+{
+	struct nlop_dims_args* v = p;
+	v->result = wrap_nlop(nlop_zsadd_create(v->N, v->dims, v->a + v->b * 1.i));
+	return 0;
+}
+
+bartorch_nlop* bartorch_nlop_zsadd(int N, const long* dims, float re, float im)
+{
+	if (NULL == dims)
+		return NULL;
+
+	struct nlop_dims_args v = { N, dims, NULL, NULL, re, im, 0ul, NULL };
+
+	return (0 == guarded(nlop_zsadd_worker, &v)) ? v.result : NULL;
+}
+
+static int nlop_zabs_worker(void* p)
+{
+	struct nlop_dims_args* v = p;
+	v->result = wrap_nlop(nlop_zabs_create(v->N, v->dims));
+	return 0;
+}
+
+bartorch_nlop* bartorch_nlop_zabs(int N, const long* dims)
+{
+	if (NULL == dims)
+		return NULL;
+
+	struct nlop_dims_args v = { N, dims, NULL, NULL, 0., 0., 0ul, NULL };
+
+	return (0 == guarded(nlop_zabs_worker, &v)) ? v.result : NULL;
+}
+
+static int nlop_smo_abs_worker(void* p)
+{
+	struct nlop_dims_args* v = p;
+	v->result = wrap_nlop(nlop_smo_abs_create(v->N, v->dims, v->a));
+	return 0;
+}
+
+bartorch_nlop* bartorch_nlop_smo_abs(int N, const long* dims, float eps)
+{
+	if (NULL == dims)
+		return NULL;
+
+	struct nlop_dims_args v = { N, dims, NULL, NULL, eps, 0., 0ul, NULL };
+
+	return (0 == guarded(nlop_smo_abs_worker, &v)) ? v.result : NULL;
+}
+
+static int nlop_zrss_worker(void* p)
+{
+	struct nlop_dims_args* v = p;
+	v->result = wrap_nlop((0. < v->a)
+			? nlop_zrss_reg_create(v->N, v->dims, v->flags, v->a)
+			: nlop_zrss_create(v->N, v->dims, v->flags));
+	return 0;
+}
+
+bartorch_nlop* bartorch_nlop_zrss(int N, const long* dims, unsigned long flags, float eps)
+{
+	if (NULL == dims)
+		return NULL;
+
+	struct nlop_dims_args v = { N, dims, NULL, NULL, eps, 0., flags, NULL };
+
+	return (0 == guarded(nlop_zrss_worker, &v)) ? v.result : NULL;
+}
+
+static int nlop_zss_worker(void* p)
+{
+	struct nlop_dims_args* v = p;
+	v->result = wrap_nlop(nlop_zss_create(v->N, v->dims, v->flags));
+	return 0;
+}
+
+bartorch_nlop* bartorch_nlop_zss(int N, const long* dims, unsigned long flags)
+{
+	if (NULL == dims)
+		return NULL;
+
+	struct nlop_dims_args v = { N, dims, NULL, NULL, 0., 0., flags, NULL };
+
+	return (0 == guarded(nlop_zss_worker, &v)) ? v.result : NULL;
+}
+
+/* An operator of no inputs at all: it returns the tensor it was built with.
+ *
+ * `nlop_const_create` copies, so the caller's buffer is free after the call.
+ * Combined and linked, this is how an input is pinned to a value.
+ */
+struct nlop_const_args { int N; const long* dims; const void* val; bartorch_nlop* result; };
+
+static int nlop_const_worker(void* p)
+{
+	struct nlop_const_args* v = p;
+	v->result = wrap_nlop(nlop_const_create(v->N, v->dims, true, v->val));
+	return 0;
+}
+
+bartorch_nlop* bartorch_nlop_const(int N, const long* dims, const void* val)
+{
+	if ((NULL == dims) || (NULL == val))
+		return NULL;
+
+	struct nlop_const_args v = { N, dims, val, NULL };
+
+	return (0 == guarded(nlop_const_worker, &v)) ? v.result : NULL;
+}
+
+struct nlop_set_const_args { const bartorch_nlop* a; int i; int N; const long* dims; const void* val; bartorch_nlop* result; };
+
+static int nlop_set_input_const_worker(void* p)
+{
+	struct nlop_set_const_args* v = p;
+	v->result = wrap_nlop(nlop_set_input_const(v->a->op, v->i, v->N, v->dims, true, v->val));
+	return 0;
+}
+
+bartorch_nlop* bartorch_nlop_set_input_const(const bartorch_nlop* a, int i, int N, const long* dims, const void* val)
+{
+	if ((NULL == a) || (NULL == dims) || (NULL == val)
+	    || (0 > i) || (i >= nlop_get_nr_in_args(a->op)))
+		return NULL;
+
+	struct nlop_set_const_args v = { a, i, N, dims, val, NULL };
+
+	return (0 == guarded(nlop_set_input_const_worker, &v)) ? v.result : NULL;
+}
+
 
 void bartorch_nlop_free(bartorch_nlop* h)
 {
