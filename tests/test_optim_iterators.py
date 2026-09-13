@@ -11,6 +11,8 @@ point by ``deepinv``, because there is nothing to differentiate through; one
 written out here can be, and costs a few axpys on an image per step to say so.
 """
 
+import functools
+
 import numpy as np
 import pytest
 import torch
@@ -476,28 +478,28 @@ def _pridu_steps(A, y, steps, *, terms=(), primal=None, step=0.95, ratio=1.0, **
     return X["est"][0]
 
 
-@pytest.mark.parametrize("steps", [1, 2, 5, 10, 25, 60])
-def test_pridu_is_barts_pridu(problem, steps):
-    """The term's transform is the identity, so it is the primal step."""
-    A, y = problem
-    term = prox.L1(0.05)
-    ours = _pridu_steps(A, y, steps, primal=term)
-    theirs = optim.PRIDU(term, maxiter=steps, step=0.95)(y, A)
-    assert torch.equal(ours, theirs), _where_it_parts(A, y, term, steps)
-
-
-# --- what to do when the line above fails somewhere I cannot run -------------
+# --- one multiply-add BART's compiler is free to fuse --------------------------
 #
-# The iteration agrees with the library on x86-64 and not on arm64, by a
-# little over 1e-7, from the second step on.  Reading the source has not found
-# the place, and the expressions that could plausibly differ are all
-# indistinguishable on x86-64 -- which is exactly why they have to be told
-# apart somewhere else.
+# `vecops.c` has one kernel behind `axpy`, `xpay` and `axpbz`:
 #
-# So the assertion carries its own diagnosis.  `_where_it_parts` writes the
-# step out again under every combination of the candidate readings and says
-# which ones reproduce the library, on whatever machine ran it.  It costs
-# nothing until the assertion fails.
+#     dst[i] = a1 * src1[i] + a2 * src2[i];
+#
+# and clang contracts the first product into the add where the hardware has a
+# fused multiply-add -- arm64 does, the x86-64 baseline does not.  A fused
+# multiply-add does not round the product, so on arm64 that is one rounding
+# where this package computes two, and torch has no way to fuse across two
+# kernels.
+#
+# It matters for exactly one of the four iterations.  `axpy` passes `a1 = 1.`,
+# and fusing an exact product changes nothing, so every iteration whose
+# updates are axpys -- IST, FISTA, ADMM -- is the same bits on either
+# platform.  `chambolle_pock` is the one that reaches for `xpay` and `axpbz`
+# with two real coefficients, in the data term's resolvent, and there the
+# fused and unfused readings part.
+#
+# So the primal-dual tests ask the library which arithmetic it was compiled
+# with, rather than assuming, and hold the iteration to the bit where it can
+# be held to the bit.
 
 
 def _f32(v):
@@ -505,72 +507,114 @@ def _f32(v):
 
 
 def _fused(a, x, y):
-    """``a * x + y`` as a fused multiply-add: the product is not rounded."""
+    """``a * x + y`` as a fused multiply-add: the product is not rounded.
+
+    Single-precision inputs make the double exact, so rounding the double
+    once is what the instruction does.
+    """
     parts = torch.view_as_real(x).double() * float(a) + torch.view_as_real(y).double()
     return parts.float().view(torch.complex64).squeeze(-1)
 
 
-def _replay(A, y, term, steps, *, two_transforms, divide, fuse_step, fuse_fresh, fuse_primal):
-    """`chambolle_pock` for a single primal term, one reading at a time.
+def _replay(A, y, term, steps, *, fused):
+    """`chambolle_pock` for a single primal term, with and without the fusion.
 
     Written out rather than driven through `PRIDUIteration` because the point
-    is to vary the arithmetic inside the step; the baseline reading is checked
-    against the iteration itself before any of this is believed.
+    is to vary the arithmetic inside the step.  `_library_fuses` checks the
+    unfused reading against the iteration itself before believing either.
+
+    Only used at step counts too small for the tolerance to stop the
+    iteration, so it carries no residual test.
     """
     op = A._bart()
-    normal = (lambda v: op.adjoint(op(v))) if two_transforms else op.normal
     adjoint = op.adjoint(y)
-
     sigma = tau = _f32(math.sqrt(0.95))
     keep, pull = _f32(1.0 / (1.0 + sigma)), _f32(-1.0 * sigma / (1.0 + sigma))
 
     x = torch.zeros(*op.ishape, dtype=torch.complex64)
     avg, dual = x, x
     for _ in range(steps):
-        moved = normal(avg)
-        step = _fused(sigma, moved, dual) if fuse_step else sigma * moved + dual
-        if divide:
-            fresh = step / (1.0 + sigma) - (sigma / (1.0 + sigma)) * adjoint
-        elif fuse_fresh:
-            fresh = _fused(keep, step, pull * adjoint)
+        moved = op.normal(avg)
+        if fused:
+            # `xpay(sigma, Ahu_old, Ahu)` and
+            # `axpbz(Ahu_new, keep, Ahu_old, pull, xadj)`, each with its first
+            # product folded into the add.
+            step = _fused(sigma, moved, dual)
+            dual = _fused(keep, step, pull * adjoint)
         else:
-            fresh = keep * step + pull * adjoint
-        dual = fresh
+            step = sigma * moved + dual
+            dual = keep * step + pull * adjoint
 
         previous = x
-        x = _fused(-tau, dual, x) if fuse_primal else x - tau * dual
+        # `axpy(x, -tau, Ahu)` is `1. * x[i] + (-tau) * Ahu[i]`, and fusing an
+        # exact product changes nothing, so this one reads the same either way.
+        x = x - tau * dual
         x = term.prox(x, tau, image_shape=op.ishape)
         avg = 2.0 * x - previous
     return x
 
 
-def _where_it_parts(A, y, term, steps):
-    """Which readings of the step reproduce the library, and which do not."""
-    import itertools
+@functools.lru_cache(maxsize=1)
+def _library_fuses() -> bool:
+    """Whether this build of BART folds those products into their adds.
 
-    names = ("two_transforms", "divide", "fuse_step", "fuse_fresh", "fuse_primal")
-    theirs = optim.PRIDU(term, maxiter=steps, step=0.95)(y, A)
+    Asked of the library rather than of `platform.machine()`: it is the
+    compiler's choice, and the answer is whichever reading reproduces a solve.
+    """
+    torch.manual_seed(0)
+    A = linop.FFT(SHAPE, axes=(-1, -2))
+    y = A(_rand(*SHAPE))
+    term = prox.L1(0.05)
+    theirs = optim.PRIDU(term, maxiter=2, step=0.95)(y, A)
 
-    baseline = dict.fromkeys(names, False)
-    if not torch.equal(
-        _replay(A, y, term, steps, **baseline), _pridu_steps(A, y, steps, primal=term)
-    ):
-        return (
-            "the replay does not reproduce the iteration it is meant to vary, "
-            "so nothing it says about the library can be trusted"
-        )
+    plain = _replay(A, y, term, 2, fused=False)
+    assert torch.equal(plain, _pridu_steps(A, y, 2, primal=term)), (
+        "the replay does not reproduce the iteration it is meant to vary, so "
+        "nothing it says about the library can be trusted"
+    )
+    if torch.equal(plain, theirs):
+        return False
 
-    matched = []
-    for combination in itertools.product([False, True], repeat=len(names)):
-        flags = dict(zip(names, combination))
-        got = _replay(A, y, term, steps, **flags)
-        if torch.equal(got, theirs):
-            matched.append(", ".join(n for n, on in flags.items() if on) or "the baseline")
+    assert torch.equal(_replay(A, y, term, 2, fused=True), theirs), (
+        "the library agrees with neither reading of its own multiply-add, so "
+        "the primal-dual step differs from this one for some other reason"
+    )
+    return True
 
-    worst = float((_replay(A, y, term, steps, **baseline) - theirs).abs().max())
-    if not matched:
-        return f"no reading of the step reproduces the library; baseline is {worst:.3e} away"
-    return f"the library is reproduced by: {' | '.join(matched)} (baseline {worst:.3e} away)"
+
+def _pridu_agrees(ours, theirs):
+    """To the bit, or -- where the library fused -- as close as that allows."""
+    if not _library_fuses():
+        assert torch.equal(ours, theirs)
+    else:
+        torch.testing.assert_close(ours, theirs, rtol=1e-5, atol=1e-6)
+
+
+def test_the_fusion_is_in_the_resolvent_and_not_in_the_steps():
+    """Which operations it reaches, measured rather than reasoned about.
+
+    This is what says IST, FISTA and ADMM are the same bits on every platform
+    and the primal-dual iteration is not: the difference is whether the
+    kernel's first coefficient is one.
+    """
+    torch.manual_seed(0)
+    x, v = _rand(*SHAPE), _rand(*SHAPE)
+
+    # `axpy`: `a1 = 1.`, an exact product, so folding it in changes nothing.
+    assert torch.equal(_fused(1.0, x, 0.3 * v), 1.0 * x + 0.3 * v)
+
+    # `xpay` and `axpbz` carry a coefficient on the first vector too, and
+    # there the two readings are different numbers.
+    assert not torch.equal(_fused(0.7, x, 0.3 * v), 0.7 * x + 0.3 * v)
+
+
+@pytest.mark.parametrize("steps", [1, 2, 5, 10, 25, 60])
+def test_pridu_is_barts_pridu(problem, steps):
+    """The term's transform is the identity, so it is the primal step."""
+    A, y = problem
+    term = prox.L1(0.05)
+    ours = _pridu_steps(A, y, steps, primal=term)
+    _pridu_agrees(ours, optim.PRIDU(term, maxiter=steps, step=0.95)(y, A))
 
 
 @pytest.mark.parametrize("steps", [1, 3, 8])
@@ -580,7 +624,7 @@ def test_a_term_with_a_transform_becomes_a_dual(problem, steps):
     A, y = problem
     term = prox.TotalVariation((-1, -2), 0.05)
     ours = _pridu_steps(A, y, steps, terms=[term])
-    assert torch.equal(ours, optim.PRIDU(term, maxiter=steps, step=0.95)(y, A))
+    _pridu_agrees(ours, optim.PRIDU(term, maxiter=steps, step=0.95)(y, A))
 
 
 @pytest.mark.parametrize("steps", [1, 3, 8, 20])
@@ -590,7 +634,7 @@ def test_hogwild_is_a_decay_here_rather_than_a_halving(problem, steps):
     A, y = problem
     term = prox.L1(0.05)
     ours = _pridu_steps(A, y, steps, primal=term, decay=0.95)
-    assert torch.equal(ours, optim.PRIDU(term, maxiter=steps, step=0.95, hogwild=True)(y, A))
+    _pridu_agrees(ours, optim.PRIDU(term, maxiter=steps, step=0.95, hogwild=True)(y, A))
 
 
 @pytest.mark.parametrize("steps", [1, 3, 8])
@@ -598,7 +642,7 @@ def test_the_adaptive_step_is_barts(problem, steps):
     A, y = problem
     term = prox.L1(0.05)
     ours = _pridu_steps(A, y, steps, primal=term, adaptive_step=True)
-    assert torch.equal(ours, optim.PRIDU(term, maxiter=steps, step=0.95, adaptive_step=True)(y, A))
+    _pridu_agrees(ours, optim.PRIDU(term, maxiter=steps, step=0.95, adaptive_step=True)(y, A))
 
 
 @pytest.mark.parametrize("ratio", [0.5, 2.0])
@@ -606,4 +650,4 @@ def test_the_step_ratio_splits_sigma_and_tau_the_way_pics_does(problem, ratio):
     A, y = problem
     term = prox.L1(0.05)
     ours = _pridu_steps(A, y, 10, primal=term, ratio=ratio)
-    assert torch.equal(ours, optim.PRIDU(term, maxiter=10, step=0.95, sigma_tau_ratio=ratio)(y, A))
+    _pridu_agrees(ours, optim.PRIDU(term, maxiter=10, step=0.95, sigma_tau_ratio=ratio)(y, A))

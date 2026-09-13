@@ -625,6 +625,22 @@ def _pridu() -> type:
         a term whose transform is the identity becomes the primal ``prox2``
         and the rest become duals.  Without such a term ``prox2`` is the
         identity, which is what ``prox_zero_create`` is.
+
+        Notes
+        -----
+        This is the one iteration here whose answer depends on how BART was
+        compiled.  ``vecops.c`` has a single kernel behind ``axpy``, ``xpay``
+        and ``axpbz``, ``dst[i] = a1 * src1[i] + a2 * src2[i]``, and clang
+        folds the first product into the add where the hardware has a fused
+        multiply-add -- arm64 does, the x86-64 baseline does not.  A fused
+        multiply-add does not round the product, and torch cannot fuse across
+        two kernels.
+
+        Every other iteration escapes it because its updates are ``axpy``,
+        whose ``a1`` is one: folding an exact product in changes nothing.  The
+        data term's resolvent here is an ``xpay`` and an ``axpbz`` with two
+        real coefficients, so on a platform that folds them this iteration is
+        within a few times 1e-7 of the library rather than the same bits.
         """
 
         def __init__(self, terms, image_shape, primal=None, **kwargs):
