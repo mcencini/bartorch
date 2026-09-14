@@ -8,7 +8,9 @@ Where the iteration has been written out in `bartorch.optim.iterators` --
 `IST`, `FISTA`, `ADMM` and `PRIDU` -- the loop runs here and each step calls
 the library; `CG`, `NIHT` and `EulerMaruyama` are one call into it.  Either
 way the answer is the same bits, and `solver.in_library(y, A)` runs BART's own
-loop when that is what is wanted.
+loop when that is what is wanted.  A term that adds unknowns to the
+optimization is the one exception: `ADMM` and `PRIDU` take those, but the
+larger vector is laid out inside the library, so the solve goes there.
 
 ```{eval-rst}
 .. currentmodule:: bartorch.optim
@@ -208,6 +210,7 @@ same reason and on its own, which is the data-consistency layer of a MoDL.
    PRIDUIteration
    NormalEquations
    TermPrior
+   AsTerm
 ```
 
 `NormalEquations` differentiates $\tfrac12\|Ax-y\|^2$ as $A^H A x - A^H y$
@@ -318,10 +321,10 @@ double, and rounds each to a float.  Dividing the tensor instead agrees while
 `sigma` is where `pics` starts it, and stops agreeing once the adaptive step
 has moved it.
 
-`TermPrior` puts a {mod}`bartorch.prox` term where `deepinv` expects a prior,
-and a `deepinv` denoiser goes in the same place -- wrapped in
-`to_complex_denoiser`, since an image here is complex and most denoisers are
-not.
+`TermPrior` puts a {mod}`bartorch.prox` term where `deepinv` expects a prior;
+`AsTerm` is the other direction, a prior or a bare denoiser where a term goes.
+Either way a complex image needs `to_complex_denoiser` around a denoiser that
+is not complex-capable, which neither wrapper does for you.
 
 ```{eval-rst}
 .. currentmodule:: bartorch.optim
@@ -388,8 +391,8 @@ any solver here:
 
 ```python
 optim.IRGNM(inner="cg")                                     # iter4_irgnm2, to the bit
-optim.IRGNM(inner=optim.FISTA(prox.Wavelet(0.001)))         # moba -l1's shape
-optim.IRGNM(inner=optim.ADMM([prox.Wavelet(w), prox.TotalVariation(v)]))
+optim.IRGNM(inner=optim.FISTA(prox.Wavelet(axes, 0.001)))   # moba -l1's shape
+optim.IRGNM(inner=optim.ADMM([prox.Wavelet(axes, w), prox.TotalVariation(axes, v)]))
 ```
 
 ```{eval-rst}

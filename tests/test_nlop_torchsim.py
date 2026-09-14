@@ -1,9 +1,11 @@
 """TorchSim signal models as BART nonlinear operators.
 
-The bridge has to hold three things: that the physics agrees with BART's own
+The bridge has to hold four things: that the physics agrees with BART's own
 (``bart signal`` computes the same closed forms), that the derivative and its
-adjoint are what they claim to be, and that what comes out reaches BART's
-solvers and the operator algebra like anything else.
+adjoint are what they claim to be, that what comes out reaches BART's solvers
+and the operator algebra like anything else, and that a fit driven through one
+of these models lands where ``bart mobafit``'s pixel-wise fit of the same
+measurements does.
 """
 
 import math
@@ -239,3 +241,125 @@ def test_a_model_operator_can_be_handed_over_directly():
     M = nlop.FromTorchSim(model, (2, 2))
     assert M.ishape == (3, 2, 2) and M.oshape == (2, 2, 2)
     assert "MultiEchoSimulator" in repr(M)
+
+
+# --- held against BART's own fitter -----------------------------------------
+#
+# `bart signal` says the two libraries agree on a *curve*.  `bart mobafit` is
+# the other half: the same measurements handed to BART's pixel-wise
+# Gauss-Newton and to one driven through a TorchSim model here, and the
+# parameters each recovers.  The tolerances are on the two fits against each
+# other, not on either against the truth, because that is what a difference in
+# the models rather than in the data would show up as.
+
+
+def _mobafit(enc, values, shape, coefficients, **flags):
+    """``values`` repeated over ``shape``, fitted pixel-wise by ``bart mobafit``.
+
+    ``enc`` and the data carry the contrasts on BART's ``TE_DIM``, its sixth,
+    and the coefficients come back on ``COEFF_DIM``, its seventh.
+    """
+    n = len(values)
+    images = values.reshape(n, 1, 1, 1, 1, 1).expand(n, 1, 1, 1, *shape).contiguous()
+    grid = enc.reshape(n, 1, 1, 1, 1, 1)
+    return bt.mobafit(grid, images, **flags).reshape(coefficients, *shape)
+
+
+def _irgnm(M, values, shape, **start):
+    """``values`` repeated over ``shape``, fitted through ``M`` by Gauss-Newton."""
+    data = values.reshape(len(values), 1, 1).expand(len(values), *shape).contiguous()
+    first = M.initial(**start)
+    fitted = optim.IRGNM(iterations=16, alpha=1.0, redu=2.0, cg_maxiter=60)(
+        data, M, x0=first.clone(), xref=first
+    )
+    return M.split(fitted)
+
+
+#: An echo train BART simulates and both fitters are given, and the T2 in it.
+_TE_STEP_S, _T2_S, _ECHOES = 0.0016, 0.020, 8
+
+
+def _decay(**extra):
+    """``bart signal -G``'s multi-echo decay, off-resonance switched off.
+
+    BART's default is 20 Hz, which is a phase ramp on the samples.  ``mobafit
+    -m3`` fits one as its ``fB0`` coefficient and TorchSim's multi-echo model
+    has nowhere to put it -- its ``offset`` is an additive baseline, not a
+    frequency -- so the comparison is made without one.
+    """
+    return bt.signal(
+        G=True,
+        n=_ECHOES,
+        e=_TE_STEP_S,
+        **{"0": (0.0, 0.0, 1), "1": (3.0, 3.0, 1), "2": (_T2_S, _T2_S, 1), **extra},
+    ).reshape(-1)
+
+
+def _echo_times():
+    return tuple(1000.0 * _TE_STEP_S * k for k in range(_ECHOES))
+
+
+def test_both_fitters_recover_the_relaxation_time_bart_simulated():
+    """Neither is inverting its own forward model: the data is ``bart signal``'s."""
+    TE = _echo_times()
+    curve = _decay()
+    shape = (2, 2)
+
+    theirs = _mobafit(torch.tensor(TE, dtype=torch.complex64), curve, shape, 3, G=True, m=3, i=14)
+    ours = _irgnm(nlop.MultiEcho(TE, shape), curve, shape, T2=60.0)
+
+    # `mobafit -m3` is (rho, R2s, fB0) with R2s in inverse milliseconds,
+    # because its encoding is the echo times in milliseconds.
+    assert 1.0 / theirs[1, 0, 0].real.item() == pytest.approx(1000.0 * _T2_S, rel=1e-3)
+    assert ours["T2"][0, 0].item() == pytest.approx(1000.0 * _T2_S, rel=1e-3)
+
+
+def test_the_two_fits_move_together_under_noise():
+    """On data neither can fit exactly, the question is whether they land in
+    the same place rather than whether either lands on the truth."""
+    torch.manual_seed(0)
+    TE = _echo_times()
+    noise = (torch.randn(_ECHOES) + 1j * torch.randn(_ECHOES)).to(torch.complex64) * 0.01
+    curve = _decay() + noise
+    shape = (2, 2)
+
+    theirs = _mobafit(torch.tensor(TE, dtype=torch.complex64), curve, shape, 3, G=True, m=3, i=14)
+    ours = _irgnm(nlop.MultiEcho(TE, shape), curve, shape, T2=60.0)
+
+    t2_theirs = 1.0 / theirs[1, 0, 0].real.item()
+    t2_ours = ours["T2"][0, 0].item()
+    assert t2_theirs != pytest.approx(1000.0 * _T2_S, rel=1e-3), "the noise has to bite"
+    assert t2_ours == pytest.approx(t2_theirs, rel=5e-3)
+
+
+def test_bart_fits_the_inversion_recovery_this_package_simulates():
+    """``mobafit -I`` fits ``M0 (1 - exp(-t R1 + c))`` and TorchSim's model
+    solves for ``T1`` and an amplitude.  The two parameterisations describe the
+    same curve exactly when ``c`` comes out as ``ln 2``, which is what a
+    recovery from full inversion is."""
+    TI = (35.0, 75.0, 150.0, 250.0, 500.0, 1000.0, 1500.0, 2500.0, 4000.0)  # ms
+    shape = (2, 2)
+    t1 = 800.0
+
+    M = nlop.InversionRecovery(TI, shape)
+    curve = M(M.initial(T1=t1)).reshape(len(TI), *shape)[:, 0, 0].contiguous()
+
+    # `mobafit -I` takes its encoding in seconds, so R1 comes back in 1/s.
+    seconds = torch.tensor(TI, dtype=torch.complex64) / 1000.0
+    theirs = _mobafit(seconds, curve, shape, 3, I=True, i=15, init=(1, 1, 1))
+
+    assert theirs[0, 0, 0].real.item() == pytest.approx(1.0, rel=1e-3)
+    assert 1000.0 / theirs[1, 0, 0].real.item() == pytest.approx(t1, rel=1e-3)
+    assert theirs[2, 0, 0].real.item() == pytest.approx(math.log(2.0), rel=1e-3)
+
+    ours = _irgnm(M, curve, shape, T1=300.0)
+    assert ours["T1"][0, 0].item() == pytest.approx(1000.0 / theirs[1, 0, 0].real.item(), rel=1e-3)
+
+
+def test_the_multi_echo_offset_is_a_baseline_and_not_a_frequency():
+    """Which is why the comparison above switches BART's off-resonance off:
+    ``mobafit``'s ``fB0`` has no counterpart here."""
+    M = nlop.MultiEcho((0.0, 5.0), (1, 1), unknown=("T2", "offset"), bounds={"T2": (1.0, 500.0)})
+    flat = M(M.initial(T2=50.0, offset=0.0))[:, 0, 0]
+    raised = M(M.initial(T2=50.0, offset=20.0))[:, 0, 0]
+    torch.testing.assert_close(raised - flat, torch.full((2,), 20.0 + 0j), rtol=1e-5, atol=1e-4)

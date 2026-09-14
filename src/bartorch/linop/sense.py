@@ -61,9 +61,9 @@ class NoncartesianSense(LinearOperator):
     Memory held -- and the doubled grid the Toeplitz normal convolves on --
     scales with ``coil_batch`` rather than with the number of coils.
 
-    A trajectory is what this operator is for.  On a grid the operator is
-    :func:`~bartorch.linop.CartesianSense`, which is this one's own Cartesian
-    path under the name that says so.
+    On a grid the operator to use is
+    :func:`~bartorch.linop.CartesianSense`, which is this one's Cartesian path
+    under the name that says so.
 
     Parameters
     ----------
@@ -283,14 +283,14 @@ class Coils(LinearOperator):
     """Coil sensitivities, without the transform that usually follows them.
 
     The multiply on its own: an image to coil images, and the conjugate
-    sensitivities summed over the coils on the way back.  Held as maps it is
-    what :class:`~bartorch.linop.MultiplySum` builds, and with ``coil_batch=0``
-    it *is* that operator.  Held as kernels, or walked a slab at a time, the
-    bank is inflated or fetched a slab at a time and never resident whole,
-    which is the arrangement :class:`NoncartesianSense` uses and the reason
-    this exists: an encoding whose transform is not a Fourier transform cannot
-    be a SENSE operator, and chaining the coils onto it should not cost the
-    whole bank.
+    sensitivities summed over the coils on the way back.  For an encoding
+    whose transform is not a Fourier transform, and which therefore cannot be
+    a SENSE operator.
+
+    Held as maps it is what :class:`~bartorch.linop.MultiplySum` builds, and
+    with ``coil_batch=0`` it *is* that operator.  Held as kernels, or walked a
+    slab at a time, the bank is never resident whole -- the arrangement
+    :class:`NoncartesianSense` uses.
 
     Parameters
     ----------

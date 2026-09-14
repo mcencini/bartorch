@@ -1,20 +1,13 @@
 """Nonlinear inverse problems by BART's iteratively regularized Gauss-Newton.
 
-BART has the method in two forms.  ``irgnm`` solves the linearized problem
-with its own conjugate gradients and nothing else; ``irgnm2`` pays an extra
-application of the derivative and hands that problem to a *generic* regularized
-least-squares solver, which is how a regularized ``nlinv`` or ``moba`` works --
-``noir/recon2.c`` and ``moba/iter_l1.c`` build the inner solver with
-``iter2_fista``, ``iter2_admm`` or ``iter2_chambolle_pock`` over
-``nlop_get_derivative`` and pass it in.
-
-:class:`IRGNM` is both.  Without an inner solver it is the first form, run
-entirely inside the library, which is what ``nlinv`` runs.  With one it is the
-second, with the outer loop written out here so that the inner problem can go
-to any of the solvers in :mod:`bartorch.optim` -- conjugate gradients, IST,
-FISTA, ADMM, the primal-dual iteration -- each of which is BART's own to the
-bit.  The outer loop is held against ``iter4_irgnm2`` by the suite: the two
-answer with the same bits.
+BART has the method in two forms, and :class:`IRGNM` is both.  ``irgnm``
+solves each linearized problem with its own conjugate gradients and nothing
+else, which is what ``nlinv`` runs and what ``IRGNM`` does without an inner
+solver.  ``irgnm2`` pays an extra application of the derivative and hands the
+problem to a generic regularized least-squares solver, which is how a
+regularized ``nlinv`` or ``moba`` works; ``inner=`` is that form, with the
+outer loop written out here so any solver in :mod:`bartorch.optim` can take
+it.
 """
 
 from __future__ import annotations
@@ -126,13 +119,17 @@ class IRGNM:
 
     Wavelet-regularized, which is what ``moba -l1`` runs:
 
-    >>> IRGNM(inner=optim.FISTA(prox.Wavelet(0.001), maxiter=30))(kspace, F, x0=start)
+    >>> IRGNM(inner=optim.FISTA(prox.Wavelet((-1, -2), 0.001), maxiter=30))(
+    ...     kspace, F, x0=start
+    ... )
 
     Several terms at once, which is ADMM's job:
 
-    >>> IRGNM(inner=optim.ADMM([prox.Wavelet(0.001), prox.TotalVariation(0.01)]))(
-    ...     kspace, F, x0=start
-    ... )
+    >>> IRGNM(
+    ...     inner=optim.ADMM(
+    ...         [prox.Wavelet((-1, -2), 0.001), prox.TotalVariation((-1, -2), 0.01)]
+    ...     )
+    ... )(kspace, F, x0=start)
 
     Notes
     -----

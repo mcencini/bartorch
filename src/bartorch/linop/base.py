@@ -91,9 +91,7 @@ class LinearOperator(Operator):
 
     #: Whether BART's closed-form pseudo-inverse for this operator has been
     #: checked against the damped normal equations it claims to solve.  BART
-    #: offering one is necessary and not sufficient: `linop_sum_create` carries
-    #: one written for a differently scaled operator, so a subclass opts in
-    #: only once a test holds the two answers together.  See :meth:`pinv`.
+    #: offering one is not enough; see :meth:`pinv`.
     _exact_pinv: bool = False
 
     _free_name = "bartorch_linop_free"
@@ -170,8 +168,7 @@ class LinearOperator(Operator):
         """``c * self`` for a real or complex number ``c``.
 
         Composition is ``@``, not ``*``: an operator on either side is
-        refused, so that ``A * B`` cannot quietly mean one thing here and the
-        other thing in the library it was copied from.
+        refused rather than taken as composition.
         """
         if isinstance(other, LinearOperator):
             raise TypeError("compose operators with @, not *")
@@ -307,10 +304,8 @@ class LinearOperator(Operator):
     # LinearPhysics.  ishape and oshape stay the ones this library uses.
     #
     # There is deliberately no flat ``.shape``: an operator here maps a shape
-    # to a shape, not a vector of length N to one of length M, and pyxu took
-    # its own ``.shape`` out for that reason rather than keep a number whose
-    # meaning depended on which library the reader came from.  What that
-    # number was is ``codim_size`` and ``dim_size``.
+    # to a shape, not a vector of length N to one of length M.  The flat sizes
+    # are ``dim_size`` and ``codim_size``.
 
     @property
     def dim_shape(self) -> tuple[int, ...]:
@@ -352,19 +347,17 @@ class LinearOperator(Operator):
         """``(A^H A + damp I)^-1 A^H y``, the damped least-squares solution.
 
         Solved in closed form where BART has one that has been checked, and by
-        :class:`bartorch.optim.CG` otherwise -- the same quantity either way,
-        exact rather than iterative when it can be.
+        :class:`bartorch.optim.CG` otherwise; the same quantity either way.
 
-        A constructor offers the closed form by giving BART a ``norm_inv``,
-        and in BART that is only `linops/sum.c`.  Offering one is necessary
-        and not sufficient: the routine there divides by a count that
-        `linop_sum_create` overwrites after the fact, so it answers for a
-        differently scaled operator than the one it is attached to.  So a
-        class opts in through :attr:`_exact_pinv`, and only
-        :class:`~bartorch.linop.ScaledSum` does, where a test holds the closed
-        form and the solver to the same answer.  Everything else -- including
-        any chain, sum or adjoint, which drop the ``norm_inv`` regardless --
-        takes the solver.
+        BART offers the closed form through a ``norm_inv``, which only
+        `linops/sum.c` carries, and that routine divides by a count
+        `linop_sum_create` overwrites afterwards -- so it answers for a
+        differently scaled operator than the one it is attached to.  A class
+        therefore opts in through :attr:`_exact_pinv` once a test holds the
+        closed form and the solver to the same answer, and only
+        :class:`~bartorch.linop.ScaledSum` does.  Everything else takes the
+        solver, chains, sums and adjoints included, since those drop the
+        ``norm_inv`` regardless.
 
         Parameters
         ----------
@@ -416,11 +409,8 @@ class LinearOperator(Operator):
         """``A^H A x``, under ``deepinv``'s name, recorded for autograd.
 
         The recording entry point for :meth:`normal`, which is the raw one.
-        It matters where the normal operator stands inside a loop that is
-        being differentiated -- the gradient step of an unrolled network --
-        because ``A^H A`` is what that step applies, and taking it as a
-        constant would leave the step looking like a plain move towards the
-        prior.
+        A gradient step inside an unrolled network applies ``A^H A``, so
+        calling ``normal`` there would leave the data term out of the graph.
         """
         if _tracking(x):
             from bartorch.linop.autograd import apply_normal

@@ -28,8 +28,9 @@ def phantom(
     Parameters
     ----------
     shape : int or tuple of int, optional
-        The image's spatial size (``-x``), square unless a tuple is given.
-        Without one, BART's own default size.
+        The image's spatial size (``-x``).  BART's phantom is square or
+        cubic, so a tuple must have one size repeated; three of them ask for
+        the three-dimensional phantom.  Without one, BART's default size.
     kspace : bool
         Return the analytical k-space rather than the image (``-k``).
     coils : int, optional

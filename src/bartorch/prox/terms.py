@@ -245,17 +245,12 @@ _FFT_FLAGS = 7
 def _both_kinds_of_axis(term, ndim: int | None) -> None:
     """Refuse an infimal convolution that has no axis of each kind.
 
-    `ictv_reg` and `ictgv_reg` (``iter/tgv.c``) each open with
-
-    .. code-block:: c
-
-        assert(0 != (flags & FFT_FLAGS));
-        assert(0 != (flags & ~FFT_FLAGS));
-
-    -- the infimal convolution splits the image into a part that is smooth
-    over one set of axes and a part that is smooth over the other, so it
-    needs both to exist.  Plain total generalized variation asserts neither.
-    An assertion aborts the process, so the same question is asked here.
+    ``ictv_reg`` and ``ictgv_reg`` (``iter/tgv.c``) each assert
+    ``flags & FFT_FLAGS`` and ``flags & ~FFT_FLAGS``: the convolution splits
+    the image into a part smooth over the spatial axes and a part smooth over
+    the rest, so both must exist.  An assertion aborts the process, so the
+    same question is asked here.  Plain total generalized variation asserts
+    neither.
     """
     xflags, _ = term._flags(ndim)
     if 0 != (xflags & _FFT_FLAGS) and 0 != (xflags & ~_FFT_FLAGS):

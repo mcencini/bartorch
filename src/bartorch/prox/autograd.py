@@ -1,17 +1,10 @@
 """A term's transform as a torch autograd function; the backward pass is its transpose.
 
 The transform is the linear map BART puts in front of a term's proximal
-operator -- a wavelet transform, a finite difference, the identity.  An
-alternating-direction or primal-dual step applies it to the iterate, so an
-unrolled network differentiates through it, and the three modes are each
-other's transposes: ``forward`` and ``adjoint`` swap, and ``normal`` is its
-own.
-
-The proximal operator itself is not here.  BART's are ``operator_p_s``, which
-carries no derivative -- ``operator_p_fun_t`` is ``(data, mu, dst, src)`` and
-there is nowhere for one to live -- so a term's threshold is a constant in the
-graph.  That is what the denoiser slot is for: whatever stands where a term
-goes differentiates on its own terms, and the iteration around it is recorded.
+operator.  Its three modes are each other's transposes: ``forward`` and
+``adjoint`` swap, and ``normal`` is its own.  The proximal operator itself is
+not recorded -- BART's carry no derivative -- so a term's threshold is a
+constant in the graph.
 """
 
 from __future__ import annotations

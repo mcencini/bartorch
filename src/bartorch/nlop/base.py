@@ -1,13 +1,8 @@
-"""The nonlinear operator base class and composition.
+"""The nonlinear operator base class and the composition algebra of ``nlops/chain.h``.
 
-BART's ``nlop_s`` is a map from many inputs to many outputs, and the algebra
-in ``nlops/chain.h`` is what puts several of them together: an output into an
-input, two operators side by side, an output tied back to an input, two
-inputs made one.  The model ``nlinv`` inverts is two inputs, the image and
-the coil profiles, so none of it is reachable from a one-in one-out wrapper.
-
-Arguments are counted BART's way throughout -- outputs first, then inputs --
-which is the order every index below and every buffer handed to BART is in.
+BART's ``nlop_s`` maps many inputs to many outputs.  Arguments are counted
+BART's way throughout -- outputs first, then inputs -- which is the order of
+every index below and of every buffer handed to BART.
 """
 
 from __future__ import annotations
@@ -339,7 +334,7 @@ class NonlinearOperator(Operator):
         ``nlop_reshape_in``.  The number of entries has to be the same; what
         changes is how BART reads them, which is what lets two arguments of
         the same shape but different rank meet in :func:`chain` or
-        :meth:`link`.  Those two do it for you.
+        :meth:`link`, both of which apply it themselves.
         """
         return _Reshape(self, input, shape, output=False)
 

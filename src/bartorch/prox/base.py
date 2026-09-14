@@ -87,7 +87,7 @@ class Regularizer(abc.ABC):
         """The C-order shape this term's proximal operator works on.
 
         The image's, for a term that carries its own transform inside the
-        proximal operator -- which is most of them, wavelets included.  A term
+        proximal operator, a wavelet term included.  A term
         whose transform is in front instead answers with the transform's
         codomain: total variation thresholds the components of a gradient, and
         those are an axis of their own.
@@ -291,8 +291,7 @@ class Regularizer(abc.ABC):
         tool builds a fresh operator per run; a term here is kept, so a solve
         rewinds it and a reused term answers as the tool does.  Every solver
         does this before it iterates, whether the loop is BART's or written
-        out here; a term with no such generator is left alone, which is most
-        of them.
+        out here; a term with no such generator is left alone.
         """
         handle = self.build(tuple(image_shape))
         with _lock:
@@ -535,13 +534,11 @@ def frozen(term: Regularizer) -> Regularizer:
     :meth:`Regularizer.prox` refuses a tensor that is being differentiated
     rather than quietly contributing a wrong gradient -- soft thresholding is
     not the constant map, and treating it as one zeroes the whole path through
-    the prior.  This is how to say that the refusal is not what you want: the
-    term thresholds as it always did, and the gradient is the one the
-    iteration has with this term held fixed.
+    the prior.  Wrapping a term here accepts that: it thresholds as it always
+    did, and the gradient is the one the iteration has with it held fixed.
 
-    What it is for is the mixed solve -- a denoiser in one slot and a term of
-    BART's own in another -- where the gradient is meant to reach the denoiser
-    and the other term is furniture.
+    For the mixed solve -- a denoiser in one slot and a term of BART's own in
+    another -- where the gradient is meant to reach the denoiser.
 
     Examples
     --------

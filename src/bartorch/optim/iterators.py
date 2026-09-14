@@ -1,21 +1,12 @@
 """BART's proximal iterations, written as ``deepinv`` optimizers.
 
-The iterations are BART's, step for step: what is here is the same arithmetic
-in the same order, with every operator still the library's -- the normal
-operator, and the proximal operator of each :mod:`bartorch.prox` term.  What
-is left for torch is a handful of axpys on an image per step, which is nothing
-beside a transform, and the tests hold each iteration against the library's own
-to the bit.
+The same arithmetic in the same order, with every operator still the library's
+-- which is what lets a solver here be unrolled into a network or driven to a
+fixed point, and what the suite holds against the library's own answer to the
+bit.
 
-What that buys is the shape.  A ``deepinv.optim.optim_iterators.OptimIterator``
-goes into ``deepinv.optim.optim_builder``, and so into ``BaseOptim`` with
-``unfold=True`` for an unrolled network or ``DEQ`` for a deep-equilibrium fixed
-point -- neither of which an iteration running inside the library can be part
-of, because there is nothing to differentiate through.
-
-``deepinv`` is imported on first use rather than at import time -- it is a
-dependency, but importing it is not free, and a script that only builds
-operators should not pay for it.
+``deepinv`` is imported on first use rather than at import time, so a script
+that only builds operators does not pay for it.
 """
 
 from __future__ import annotations
@@ -79,8 +70,7 @@ def _normal_equations() -> type:
         ``A^H (A x - y)`` it is one application of the operator's own normal,
         which for an encoding built with ``toeplitz=True`` is a convolution
         with a point spread function rather than a transform and its adjoint.
-        That is the difference the whole encoding was built for, and it would
-        be lost by taking the obvious route.
+        The obvious route would lose that.
 
         ``A^H y`` does not change during a solve, so it is computed once and
         kept, keyed by the tensor it came from.  A physics that is not one of
@@ -191,10 +181,9 @@ def _as_term() -> type:
         ----------
         prior : deepinv.optim.Prior
             Or anything with a ``prox(x, *args, gamma=...)``.  A bare
-            denoiser is wrapped in ``deepinv.optim.PnP``; a complex image
-            needs ``deepinv.models.to_complex_denoiser`` around it first,
-            which this does not do for you, because whether a denoiser is
-            complex-capable is not something to guess at.
+            denoiser is wrapped in ``deepinv.optim.PnP``.  A complex image
+            needs ``deepinv.models.to_complex_denoiser`` around a denoiser
+            that is not complex-capable; this does not apply it.
         g_param : float, optional
             The prior's own parameter -- a denoiser's noise level, say --
             passed as ``deepinv`` passes it, before ``gamma``.
@@ -359,16 +348,13 @@ def _single(value: float) -> float:
     a ``double`` -- which it does for the residual accumulators in ``admm``
     and nowhere else.  Python has only doubles, so each scalar is rounded
     where the library would have rounded it; a scalar worked out in a double
-    and rounded once at the end is a different number, which is what made the
-    ravine's coefficients diverge at the thirteenth iteration.
+    and rounded once at the end is a different number.
 
-    A tensor passes through untouched.  That is what a *learned* parameter is
-    -- a step size or a weight an unrolled network trains -- and it is already
-    single precision, so there is no double to round away; what there is
-    instead is a graph, and ``float()`` would drop it.  A run with one of
-    these in it works the arithmetic out in single precision throughout rather
-    than in a double and rounded at the end, so it is not the library's bits.
-    It could not be: the numbers are no longer the library's either.
+    A tensor passes through untouched: a *learned* parameter -- a step size an
+    unrolled network trains -- is already single precision, and ``float()``
+    would drop its graph.  A run with one of these in it therefore works its
+    scalars out in single precision throughout rather than in a double rounded
+    at the end, and so does not answer with the library's bits.
     """
     if isinstance(value, torch.Tensor):
         return value
@@ -395,12 +381,10 @@ def _norm(x: torch.Tensor) -> float:
     which is what the primal-dual step adaptation does to it -- it is not, and
     it reaches the iterate.
 
-    The iterate is detached first.  These norms are read by the step and
-    weight adaptations and by the stopping test -- BART's schedule for the
-    iteration, not part of the model it solves -- and an unrolled network
-    differentiates through the iterate and not through the schedule that
-    steered it.  ``float()`` would drop the graph anyway; saying so here is
-    what stops torch warning about it once a step.
+    The iterate is detached first.  These norms steer the step and weight
+    adaptations and the stopping test -- BART's schedule for the iteration,
+    not part of the model it solves -- so an unrolled network differentiates
+    through the iterate and not through the schedule.
     """
     x = x.detach()
     parts = torch.view_as_real(x) if x.is_complex() else x
@@ -412,9 +396,8 @@ def _ravine(told: float, t: float) -> tuple[float, float]:
 
     ``(1.f - tfo) / ft - 1.f`` is three single-precision operations in C, and
     working the same expression out in a double and rounding once at the end
-    is not the same number.  It takes thirteen iterations for the difference
-    to reach the answer, which is the sort of thing that only a comparison
-    against the library finds.
+    is not the same number; the difference reaches the answer by the
+    thirteenth iteration.
     """
     one = np.float32(1.0)
     t32, told32 = np.float32(t), np.float32(told)
@@ -750,8 +733,7 @@ def _admm() -> type:
         def _spent(self, params, X) -> bool:
             """Whether BART would stop here, budget-wise.
 
-            Two limits, not one, and missing the second is what made this hard
-            to read off the source: `admm`'s own loop runs at most `maxiter`
+            Two limits, not one: `admm`'s own loop runs at most `maxiter`
             times, *and* it breaks when `nr_invokes > maxiter`, where
             `nr_invokes` is the conjugate-gradient iterations across the whole
             run.  Whichever comes first.

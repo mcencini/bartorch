@@ -1,41 +1,9 @@
-"""BART's Gauss-Newton step, which is already an operator with a derivative.
+"""BART's Gauss-Newton step of ``nlinv``, as an operator carrying its own derivative.
 
-``noir/model_net.c`` builds one iteration of ``nlinv`` as an ``nlop``:
-
-    x_{n+1} = x_n + (DF^H DF + alpha)^-1 [ DF^H (y - F(x_n)) - alpha (x_n - x_0) ]
-
-and it builds it out of ``nlop``s throughout -- the forward model, the
-*derivative as a function of the linearisation point*, the adjoint, and
-``norm_inv``'s implicitly differentiated inverse of the normal operator.  So
-the step has a derivative of its own, with respect to the data, the iterate,
-the regularisation centre and the weight, second-order terms included.  That
-is the cell an unrolled NLINV is made of, and BART reconstructs with it in
-``networks/nlinvnet.c``.
-
-What is here is that operator, not a reimplementation of it.  The arithmetic
-is the library's; so is the gradient checkpointing inside the unrolled form,
-which is what keeps a long unroll's memory down.
-
-The model is the one :class:`~bartorch.nlop.NonlinearSense` wraps, built for a
-network instead: a batch of independent copies, and the sampling pattern and
-trajectory handed over per call rather than held.  ``bartorch`` has no other
-operator whose batch is BART's own -- everywhere else a leading axis is
-applied item by item from Python -- and here it is, because ``nlinvnet``
-needed it.
-
-Examples
---------
-One step, differentiated to the data:
-
->>> newton = nlop.GaussNewton((coils, 256, 256), batch=4)
->>> y = newton.prepare()(kspace, pattern)
->>> x0 = newton.start(batch=4)
->>> x1 = newton(y, x0, x0, 1.0)
-
-The whole of ``nlinv``, as one operator that trains:
-
->>> newton = nlop.GaussNewton((coils, 256, 256), iterations=8, redu=2.0)
->>> image, coils = newton.decompose()(newton(y, x0, x0, 1.0))
+``noir/model_net.c`` assembles one iteration of ``nlinv`` out of ``nlop``s
+throughout, so the step differentiates by its data, its iterate, its
+regularisation centre and its weight.  :class:`GaussNewton` is that operator;
+nothing here reimplements it.
 """
 
 from __future__ import annotations
@@ -61,12 +29,10 @@ _FFT_FLAGS = 7
 def _trim(shape: Shape) -> Shape:
     """A rank-sixteen BART shape as the rest of this library writes one.
 
-    Everything here carries BART's batch axis, which is its *last* and so the
-    leading one in C order; that stays whatever it is, one included, or a
-    batch of one and a batch of four would be different ranks.  What goes is
-    the run of singletons behind it, down to the first axis that holds
-    something -- the same trimming :class:`~bartorch.nlop.NonlinearSense`
-    does by writing its shapes out.
+    The leading axis is BART's batch -- its last, and so the first in C order
+    -- and is kept whatever it is, one included, so that a batch of one and a
+    batch of four have the same rank.  The run of singletons behind it is
+    dropped, down to the first axis that holds something.
     """
     batch, rest = shape[0], list(shape[1:])
     while 1 < len(rest) and 1 == rest[0]:
@@ -101,16 +67,12 @@ def _arity(ptr: int) -> tuple[tuple[Shape, ...], tuple[Shape, ...]]:
 class _Noir(NonlinearOperator):
     """BART's sixteen axes inside, and the shapes this library writes outside.
 
-    These operators are stacked over BART's *batch* axis, which is its last
-    and so the leading one in C order.  The axes between it and the image are
-    empty, and writing them out is the difference between ``(4, 2, 1, 8, 8)``
-    and a tuple with eleven ones in the middle of it -- the same memory
-    either way, since a run of singletons changes no strides, so moving
-    between the two is a reshape and not a copy.
-
-    What BART reports stays the recorded shape, because that is what the
-    arity check holds the operator to.  What a caller passes and what comes
-    back is the short form, and :attr:`shapes` says what it is.
+    :attr:`ishapes` and :attr:`oshapes` stay what BART reports, because that
+    is what the arity check holds the operator to; :attr:`shapes` and
+    :attr:`output_shapes` are the same tuples without the empty axes between
+    the batch and the image, and are what a caller passes and gets back.  A
+    run of singletons changes no strides, so converting between the two is a
+    reshape rather than a copy.
     """
 
     @property
@@ -191,9 +153,8 @@ class GaussNewton(_Noir):
         step and never taken below ``alpha_min``, which is what
         :class:`~bartorch.optim.IRGNM` does.
 
-    Every one of those carries a gradient, which is what makes this an
-    unrolled network's cell rather than a solver's inside.  A denoiser between
-    two of these -- or a term in the regularisation centre -- is NLINV-Net.
+    Every one of those carries a gradient, so the step is a cell an unrolled
+    network can be built out of rather than a solver's inside.
 
     Parameters
     ----------
@@ -219,13 +180,19 @@ class GaussNewton(_Noir):
     cg_maxiter, cg_tol, cg_lambda : int, float, float
         The conjugate gradients inside each step: ``iter_conjgrad_conf``'s
         ``maxiter``, ``tol`` and ``l2lambda``.
+    kspace_shape, coil_shape : tuple of int, optional
+        What the model takes and what it holds the coils at, when they are
+        not the coil-image shape -- off the grid the k-space shape is read
+        from the trajectory.
     weights, basis, mask : tensor, optional
         As :class:`~bartorch.nlop.NonlinearSense` takes them.  These *are*
         held by the model.
     sobolev : tuple of float
-        ``(a, b)`` of the coil weighting ``(1 + a |k|^2)^(-b/2)``.
+        ``(a, b)`` of the coil weighting ``c (1 + a |k|^2)^(-b/2)``.
+    c : float
+        The scale on that weighting, BART's ``1``.
     real : bool
-        Constrain the image to be real (``nlinv -R``).
+        Constrain the image to be real (``nlinv -c``).
     sos : bool
         Normalise the coils by their root sum of squares.
     toeplitz : bool
@@ -233,25 +200,36 @@ class GaussNewton(_Noir):
 
     Notes
     -----
-    The step is the library's, and so is what it costs.  Each one runs a
-    conjugate-gradient solve whose backward pass is another, by
-    ``norm_inv``'s implicit differentiation rather than by unrolling --
-    ``norm_inv_der_src`` and ``norm_inv_adj_src`` in ``nlops/norm_inv.c``.
-    So the memory of a K-step unroll is K cells and not K times the inner
-    iterations, and BART's ``nlop_checkpoint_create_F`` takes it down further.
+    Each step runs a conjugate-gradient solve whose backward pass is another,
+    by ``norm_inv``'s implicit differentiation rather than by unrolling, so a
+    K-step unroll costs K cells of memory and not K times the inner iteration
+    count; ``iterations`` above one wraps the steps in BART's own gradient
+    checkpointing.
 
-    The coil weighting is worth knowing about before reading a gradient.  BART
-    weights the coil half of the state by ``(1 + a |k|^2)^(-b/2)``, and its
-    default ``b = 32`` is a sixteenth power: over the state of a small fit the
-    gradient of that half spans tens of decades and its tail runs below
-    float32's smallest normal number.  Below that edge the arithmetic is the
-    platform's business rather than the library's -- a right-hand side whose
-    norm is no longer a normal number is one BART's ``checkeps`` declines to
-    iterate on, and the solve comes back untouched, with ``Warning: data
-    corrupted`` in the log and a gradient of zeros.  Forward, none of this
-    matters and the default is what ``nlinv`` reconstructs with; a *gradient*
-    that has to be meaningful in the coil coefficients wants a gentler
-    weighting, which is what ``sobolev=(220.0, 8.0)`` is.
+    The default coil weighting makes gradients in the coil half of the state
+    unreliable.  ``b = 32`` is a sixteenth power, so over a small fit that
+    gradient spans tens of decades and its tail falls below float32's smallest
+    normal number; BART's ``checkeps`` then declines to iterate on a
+    right-hand side whose norm is not a normal number, and the solve comes
+    back untouched, with ``Warning: data corrupted`` logged and a gradient of
+    zeros.  The forward pass is unaffected and the default is what ``nlinv``
+    reconstructs with; a gradient that has to mean something there wants
+    ``sobolev=(220.0, 8.0)``.
+
+    Examples
+    --------
+    One step, differentiated to the data.  :meth:`prepare` has to be applied
+    before the step, and to this operator:
+
+    >>> newton = nlop.GaussNewton((coils, 256, 256), batch=4)
+    >>> y = newton.prepare()(kspace, pattern)
+    >>> x0 = newton.start(batch=4)
+    >>> x1 = newton(y, x0, x0, 1.0)
+
+    The whole of ``nlinv`` as one operator, and the iterate read back:
+
+    >>> newton = nlop.GaussNewton((coils, 256, 256), iterations=8, redu=2.0)
+    >>> image, coils = newton.decompose()(newton(y, x0, x0, 1.0))
     """
 
     def __init__(
@@ -453,6 +431,10 @@ class GaussNewton(_Noir):
 
         On the grid this is the adjoint transform with the pattern applied;
         off it, the adjoint NUFFT, and the pattern is the sampling weights.
+
+        Applying the returned operator is also what gives this operator's
+        model its pattern, which BART writes in as a side effect of the
+        gridding.  Until then a step refuses to run.
         """
         return _Companion(self, library().bartorch_noir_net_adjoint, "prepare")
 

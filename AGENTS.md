@@ -816,8 +816,8 @@ array rather than a number -- `pics(kspace, maps, t=traj)`, `-p` for a
 sampling pattern, `-B` for a basis -- and is registered and copied like any
 other input. BART's `fft` tool is
 unnormalised unless asked for the unitary form; the `linop.FFT`
-operator is unitary. `nufft` output is scaled by one over the grid side per
-transformed axis pair, with a negative exponent.
+operator is unitary. `nufft` output is scaled by one over the
+square root of the image's voxel count, with a negative exponent.
 
 Write for someone reading the code as it is now. No text about what the code
 used to be. Docstrings follow *Documentation and docstrings* below.
@@ -829,6 +829,14 @@ resize, transpose, sum, finite differences, wavelets, exponentials and the rest
 in `linops/` and `nlops/` -- which would let an application assembled here stay
 one BART operator.  `ictv`, which fails inside BART for every input
 (`ictv.c:97` reshapes the wrong side of an operator).
+
+`signal -C` is guarded rather than fixed.  `ir_multi_grad_echo_model`
+(`simu/signals.c:461-467`) fills `(N / NE) * NE` entries of the `N`-entry
+stack array `signal.c:234` leaves uninitialized, and `get_signal` averages all
+`N` of them into the output; without `-m` at all, `NE` is BART's `-1` and none
+of it is written.  What comes back is finite stack memory.  `_call`'s
+`_PRECONDITIONS` refuses those combinations before the command runs, which is
+where any further "BART does not define this" case belongs.
 
 Windows is not on this list because it is not a target: BART does not build
 there, and WSL2 is a Linux install like any other.
