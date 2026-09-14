@@ -463,177 +463,23 @@ bartorch_linop* bartorch_linop_reshaped(const bartorch_linop* op, int N, const l
 	return (0 == guarded(linop_reshaped_worker, &a)) ? a.result : NULL;
 }
 
-/* Sensitivities, either as maps or as the kernels they band-limit to. */
-extern const struct linop_s* bartorch_sense_operator(const long max_dims[DIMS], const long sens_dims[DIMS],
-		const _Complex float* sens, int kernels, const long ksp_dims[DIMS],
-		const long traj_dims[DIMS], const _Complex float* traj,
-		const long wgh_dims[DIMS], const _Complex float* weights,
-		const long bas_dims[DIMS], const _Complex float* basis,
-		const struct nufft_conf_s* conf, int modulated);
+/* One MRI encoding, from the form the planner lowered a composition into. */
+extern const struct linop_s* bartorch_encoding_operator(const struct bartorch_encoding* form);
 
-struct linop_sense_args {
+struct linop_encoding_args { const struct bartorch_encoding* form; bartorch_linop* result; };
 
-	const long* max_dims; const long* ksp_dims;
-	const long* sens_dims; const void* sens; int kernels;
-	const long* traj_dims; const void* traj;
-	const long* wgh_dims; const void* weights;
-	const long* bas_dims; const void* basis;
-	int toeplitz; int modulated;
-	bartorch_linop* result;
-};
-
-static int linop_sense_worker(void* p)
+static int linop_encoding_worker(void* p)
 {
-	struct linop_sense_args* a = p;
+	struct linop_encoding_args* a = p;
 
-	struct nufft_conf_s conf = nufft_conf_defaults;
-	conf.toeplitz = (0 != a->toeplitz);
-	conf.os = 0.;
-	conf.width = 0.;
-
-	a->result = wrap_linop(bartorch_sense_operator(a->max_dims, a->sens_dims, a->sens, a->kernels,
-				a->ksp_dims, a->traj_dims, a->traj,
-				a->wgh_dims, a->weights, a->bas_dims, a->basis, &conf, a->modulated));
+	a->result = wrap_linop(bartorch_encoding_operator(a->form));
 	return 0;
 }
 
-bartorch_linop* bartorch_linop_sense(const long* max_dims, const long* ksp_dims,
-		const long* sens_dims, const void* sens, int kernels,
-		const long* traj_dims, const void* traj,
-		const long* wgh_dims, const void* weights,
-		const long* bas_dims, const void* basis, int toeplitz, int modulated)
+bartorch_linop* bartorch_linop_encoding(const struct bartorch_encoding* form)
 {
-	struct linop_sense_args a = { max_dims, ksp_dims, sens_dims, sens, kernels,
-		traj_dims, traj, wgh_dims, weights, bas_dims, basis, toeplitz, modulated, NULL };
-	return (0 == guarded(linop_sense_worker, &a)) ? a.result : NULL;
-}
-
-/* The Cartesian encoding, pattern and basis in the coil loop. */
-extern const struct linop_s* bartorch_cartesian_operator(const long max_dims[DIMS], const long sens_dims[DIMS],
-		const _Complex float* sens, int kernels,
-		const long pat_dims[DIMS], const _Complex float* pattern,
-		const long bas_dims[DIMS], const _Complex float* basis, int toeplitz);
-
-struct linop_cartesian_args {
-
-	const long* max_dims; const long* sens_dims; const void* sens; int kernels;
-	const long* pat_dims; const void* pattern;
-	const long* bas_dims; const void* basis; int toeplitz;
-	bartorch_linop* result;
-};
-
-static int linop_cartesian_worker(void* p)
-{
-	struct linop_cartesian_args* a = p;
-
-	a->result = wrap_linop(bartorch_cartesian_operator(a->max_dims, a->sens_dims, a->sens, a->kernels,
-				a->pat_dims, a->pattern, a->bas_dims, a->basis, a->toeplitz));
-	return 0;
-}
-
-bartorch_linop* bartorch_linop_cartesian(const long* max_dims, const long* sens_dims,
-		const void* sens, int kernels,
-		const long* pat_dims, const void* pattern,
-		const long* bas_dims, const void* basis, int toeplitz)
-{
-	struct linop_cartesian_args a = { max_dims, sens_dims, sens, kernels,
-		pat_dims, pattern, bas_dims, basis, toeplitz, NULL };
-	return (0 == guarded(linop_cartesian_worker, &a)) ? a.result : NULL;
-}
-
-/* The Cartesian encoding over sampled-only k-space. */
-extern const struct linop_s* bartorch_cartesian_sampled_operator(const long max_dims[DIMS], const long sens_dims[DIMS],
-		const _Complex float* sens, int kernels, long frames, long shots, int components, const long* positions,
-		const long bas_dims[DIMS], const _Complex float* basis, int kspace_readout, int toeplitz);
-
-struct linop_cartesian_sampled_args {
-
-	const long* max_dims; const long* sens_dims; const void* sens; int kernels;
-	long frames; long shots; int components; const void* positions;
-	const long* bas_dims; const void* basis; int kspace_readout; int toeplitz;
-	bartorch_linop* result;
-};
-
-static int linop_cartesian_sampled_worker(void* p)
-{
-	struct linop_cartesian_sampled_args* a = p;
-
-	a->result = wrap_linop(bartorch_cartesian_sampled_operator(a->max_dims, a->sens_dims, a->sens, a->kernels,
-				a->frames, a->shots, a->components, (const long*)a->positions, a->bas_dims, a->basis,
-				a->kspace_readout, a->toeplitz));
-	return 0;
-}
-
-bartorch_linop* bartorch_linop_cartesian_sampled(const long* max_dims, const long* sens_dims,
-		const void* sens, int kernels, long frames, long shots, int components, const void* positions,
-		const long* bas_dims, const void* basis, int kspace_readout, int toeplitz)
-{
-	struct linop_cartesian_sampled_args a = { max_dims, sens_dims, sens, kernels, frames, shots, components,
-		positions, bas_dims, basis, kspace_readout, toeplitz, NULL };
-	return (0 == guarded(linop_cartesian_sampled_worker, &a)) ? a.result : NULL;
-}
-
-/* The wave encoding, dense or over sampled-only k-space, in the coil loop. */
-extern const struct linop_s* bartorch_wave_operator(const long max_dims[DIMS], const long sens_dims[DIMS],
-		const _Complex float* sens, int kernels, long wx, const _Complex float* psf, int centred,
-		const long pat_dims[DIMS], const _Complex float* pattern,
-		long frames, long shots, int components, const long* positions,
-		const long bas_dims[DIMS], const _Complex float* basis, int toeplitz);
-
-struct linop_wave_args {
-
-	const long* max_dims; const long* sens_dims; const void* sens; int kernels;
-	long readout; const void* psf; int centred;
-	const long* pat_dims; const void* pattern;
-	long frames; long shots; int components; const void* positions;
-	const long* bas_dims; const void* basis; int toeplitz;
-	bartorch_linop* result;
-};
-
-static int linop_wave_worker(void* p)
-{
-	struct linop_wave_args* a = p;
-
-	a->result = wrap_linop(bartorch_wave_operator(a->max_dims, a->sens_dims, a->sens, a->kernels,
-				a->readout, a->psf, a->centred, a->pat_dims, a->pattern,
-				a->frames, a->shots, a->components, (const long*)a->positions,
-				a->bas_dims, a->basis, a->toeplitz));
-	return 0;
-}
-
-bartorch_linop* bartorch_linop_wave(const long* max_dims, const long* sens_dims,
-		const void* sens, int kernels, long readout, const void* psf, int centred,
-		const long* pat_dims, const void* pattern,
-		long frames, long shots, int components, const void* positions,
-		const long* bas_dims, const void* basis, int toeplitz)
-{
-	struct linop_wave_args a = { max_dims, sens_dims, sens, kernels, readout, psf, centred,
-		pat_dims, pattern, frames, shots, components, positions, bas_dims, basis, toeplitz, NULL };
-	return (0 == guarded(linop_wave_worker, &a)) ? a.result : NULL;
-}
-
-/* The coil multiply alone, over sensitivities held as maps or as kernels. */
-extern const struct linop_s* bartorch_coils_operator(const long max_dims[DIMS], const long sens_dims[DIMS],
-		const _Complex float* sens, int kernels);
-
-struct linop_coils_args {
-
-	const long* max_dims; const long* sens_dims; const void* sens; int kernels;
-	bartorch_linop* result;
-};
-
-static int linop_coils_worker(void* p)
-{
-	struct linop_coils_args* a = p;
-
-	a->result = wrap_linop(bartorch_coils_operator(a->max_dims, a->sens_dims, a->sens, a->kernels));
-	return 0;
-}
-
-bartorch_linop* bartorch_linop_coils(const long* max_dims, const long* sens_dims, const void* sens, int kernels)
-{
-	struct linop_coils_args a = { max_dims, sens_dims, sens, kernels, NULL };
-	return (0 == guarded(linop_coils_worker, &a)) ? a.result : NULL;
+	struct linop_encoding_args a = { form, NULL };
+	return (0 == guarded(linop_encoding_worker, &a)) ? a.result : NULL;
 }
 
 struct linop_pair_args { const bartorch_linop* a; const bartorch_linop* b; bartorch_linop* result; };

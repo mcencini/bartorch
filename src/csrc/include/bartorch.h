@@ -235,58 +235,127 @@ BARTORCH_API bartorch_linop* bartorch_linop_blocks(const bartorch_linop* block, 
  * copied.  The operator is referenced, so the caller still frees it. */
 BARTORCH_API bartorch_linop* bartorch_linop_reshaped(const bartorch_linop* op, int N,
 		const long* odims, const long* idims);
-BARTORCH_API bartorch_linop* bartorch_linop_sense(const long* max_dims, const long* ksp_dims,
-		const long* sens_dims, const void* sens, int kernels,
-		const long* traj_dims, const void* traj,
-		const long* wgh_dims, const void* weights,
-		const long* bas_dims, const void* basis, int toeplitz, int modulated);
-/* The Cartesian SENSE encoding with its pattern and subspace basis inside the
- * coil loop, and a normal that transforms only the axes the pattern varies
- * along.  `pattern` and `basis` may each be NULL.  Without `toeplitz` the
- * normal is the two applications. */
-BARTORCH_API bartorch_linop* bartorch_linop_cartesian(const long* max_dims, const long* sens_dims,
-		const void* sens, int kernels,
-		const long* pat_dims, const void* pattern,
-		const long* bas_dims, const void* basis, int toeplitz);
-/* Off-resonance by time segmentation for the next Cartesian or wave encoding
- * built: `count` segments, each a weight over one coil's samples laid out as
- * `sample_dims` and a weight over one coil image laid out as `image_dims`,
- * contiguous one segment after another.  The encoding is then
- * sum_l diag(sample_l) E diag(image_l), in its coil loop.  Zero clears it. */
-BARTORCH_API void bartorch_sense_set_segments(long count, const long* sample_dims, const void* sample,
-		const long* image_dims, const void* image);
-/* The Cartesian SENSE encoding over sampled-only k-space: `frames` x `shots`
- * phase-encode positions of `components` indices each -- (y) for a 2D image,
- * (z, y) for a 3D one, -1 for padding -- with the whole readout along each,
- * in k-space when `kspace_readout` and transformed back along it otherwise.
- * `basis` may be NULL, with one frame.  Without `toeplitz` the normal is the
- * two applications. */
-BARTORCH_API bartorch_linop* bartorch_linop_cartesian_sampled(const long* max_dims, const long* sens_dims,
-		const void* sens, int kernels, long frames, long shots, int components, const void* positions,
-		const long* bas_dims, const void* basis, int kspace_readout, int toeplitz);
-/* The wave encoding in the coil loop: coil images zero-filled along the
- * readout to `readout` about its centre, transformed along it (centred and
- * unitary, or BART's uncentred transform), multiplied by `psf` over (readout,
- * y, z), and transformed along the phase encodes.  With `positions` NULL the
- * samples are dense, with `pattern` if any; otherwise a table of `frames` x
- * `shots` phase encodes of `components` indices each, as for
- * bartorch_linop_cartesian_sampled, with the readout along each.  `basis`
- * may be NULL.  The closed-form normal needs a pattern the same along the
- * readout; without it, or without `toeplitz`, the normal is the two
- * applications. */
-BARTORCH_API bartorch_linop* bartorch_linop_wave(const long* max_dims, const long* sens_dims,
-		const void* sens, int kernels, long readout, const void* psf, int centred,
-		const long* pat_dims, const void* pattern,
-		long frames, long shots, int components, const void* positions,
-		const long* bas_dims, const void* basis, int toeplitz);
+/*
+ * The MRI encoding form.  Every encoding this library builds reduces to
+ *
+ *	y[c, t, k] = sum_a O[a, t](k) . T_t( I[c, a, t](r) . x[a](r) )(k)
+ *
+ * and one executor runs all of them: the transform T, the image-side factor
+ * I, the k-space factor O, and the contraction over a.  What a caller
+ * composes in Python is matched against this form and lowered into one of
+ * these records; the executor is parameterised by the record rather than
+ * written once per encoding.
+ */
+enum bartorch_encoding_transform {
+
+	/* The coil multiply with no transform after it. */
+	BARTORCH_ENCODING_NONE = 0,
+	/* A Fourier transform on the grid the image lies on. */
+	BARTORCH_ENCODING_FFT = 1,
+	/* A NUFFT over a trajectory. */
+	BARTORCH_ENCODING_NUFFT = 2,
+	/* Readout transform, point spread function, phase-encode transform. */
+	BARTORCH_ENCODING_WAVE = 3,
+};
+
+struct bartorch_encoding {
+
+	/* Which transform, from bartorch_encoding_transform. */
+	int transform;
+
+	/* The whole operator's dimensions -- spatial axes, coils, sets of
+	 * maps, coefficients -- and one coil's samples with the coefficients
+	 * a basis contracts still on them. */
+	const long* max_dims;
+	const long* ksp_dims;
+
+	/* The image-side factor: coil sensitivities as maps, or as the
+	 * k-space kernels they band-limit to, inflated a slab at a time. */
+	const long* sens_dims;
+	const void* sens;
+	int kernels;
+
+	/* The k-space factors.  Each pointer may be NULL, and its dimensions
+	 * are then not read. */
+	const long* pat_dims;
+	const void* pattern;
+	const long* bas_dims;
+	const void* basis;
+	const long* wgh_dims;
+	const void* weights;
+
+	/* A NUFFT's trajectory, in grid units. */
+	const long* traj_dims;
+	const void* traj;
+
+	/* A table of the phase encodes that were sampled, instead of a dense
+	 * pattern: `frames` x `shots` places of `components` long indices
+	 * each -- (y) for a 2D image, (z, y) for a 3D one, -1 for padding --
+	 * with the whole readout along each.  `kspace_readout` says the
+	 * samples are in k-space along the readout rather than transformed
+	 * back along it.  NULL `positions` is dense samples. */
+	long frames;
+	long shots;
+	int components;
+	const long* positions;
+	int kspace_readout;
+
+	/* A wave: the oversampled readout the coil images are zero-filled to,
+	 * the point spread function over it, and whether its two transforms
+	 * are centred and unitary rather than BART's own. */
+	long readout;
+	const void* psf;
+	int centred;
+
+	/* The contraction over `segments` terms, sum_l diag(sample_l) E
+	 * diag(image_l): off-resonance by time segmentation.  Each weight is
+	 * laid out on its own dimensions, the terms contiguous one after
+	 * another.  Zero segments is no contraction. */
+	long segments;
+	const long* segment_sample_dims;
+	const void* segment_sample;
+	const long* segment_image_dims;
+	const void* segment_image;
+
+	/* The closed-form normal rather than the two applications. */
+	int toeplitz;
+	/* BART's own sample convention rather than the centred one; a grid
+	 * transform's to answer, and refused off one. */
+	int modulated;
+	/* Coils in a slab, and whether the sensitivities are applied inside
+	 * the transform of the normal.  Zero coils leaves BART its own
+	 * operator over every coil at once. */
+	int coil_batch;
+	int fold_maps;
+};
+
+/* The encoding this form describes, as one BART operator. */
+BARTORCH_API bartorch_linop* bartorch_linop_encoding(const struct bartorch_encoding* form);
+/* What the slab executor has built and run since the last reset, so that a
+ * test can say which path was taken rather than infer it from timing.  The
+ * first three are the counts bartorch_sense_counter reports, over the same
+ * storage; bartorch_encoding_reset_counters and bartorch_sense_reset_counters
+ * both clear all of them. */
+enum bartorch_encoding_count {
+
+	/* Forms built into the slab loop, and forms the loop could not take
+	 * and which BART's plain chain of operators answers instead. */
+	BARTORCH_ENCODING_BUILT = 0,
+	BARTORCH_ENCODING_CHAINED = 1,
+	/* Normals applied with the sensitivities inside the transform. */
+	BARTORCH_ENCODING_FOLDED = 2,
+	/* Applications of the slab loop. */
+	BARTORCH_ENCODING_FORWARD = 3,
+	BARTORCH_ENCODING_ADJOINT = 4,
+	BARTORCH_ENCODING_NORMAL = 5,
+	/* Forms built with a contraction over segments. */
+	BARTORCH_ENCODING_SEGMENTED = 6,
+};
+BARTORCH_API long bartorch_encoding_counter(int which);
+BARTORCH_API void bartorch_encoding_reset_counters(void);
 /* Normals of a Cartesian encoding applied through cuFFT's callbacks since the
  * library was loaded; the rest were applied as BART's chain of operators. */
 BARTORCH_API long bartorch_grid_fused(void);
-/* The coil multiply on its own, over sensitivities held as maps or as kernels,
- * walking the coils a slab at a time.  For an encoding whose transform is not
- * a Fourier transform and so cannot be a SENSE operator. */
-BARTORCH_API bartorch_linop* bartorch_linop_coils(const long* max_dims, const long* sens_dims,
-		const void* sens, int kernels);
 /* `a`, answering `normal` when it is asked for A^H A, rather than the adjoint
  * chained onto the forward. */
 BARTORCH_API bartorch_linop* bartorch_linop_with_normal(const bartorch_linop* a, const bartorch_linop* normal);

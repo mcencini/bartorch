@@ -113,10 +113,17 @@ int bartorch_sense_fold_maps(void)
 	return fold_maps;
 }
 
-/* Operators built since the last reset: with the coil loop, and as BART's own
- * chain because this could not serve them. */
-enum { SN_FUSED, SN_CHAINED, SN_FOLDED };
-static long sense_counters[3];
+/* What the executor has built and run, by the header's own names
+ * (bartorch_encoding_count).  bartorch_sense_counter is the first three of
+ * them under the slab loop's own name. */
+enum { SN_COUNTS = BARTORCH_ENCODING_SEGMENTED + 1 };
+static long sense_counters[SN_COUNTS];
+
+static void counted(int which)
+{
+#pragma omp atomic
+	sense_counters[which]++;
+}
 
 void bartorch_sense_set_coil_batch(int coils)
 {
@@ -128,16 +135,26 @@ int bartorch_sense_coil_batch(void)
 	return coil_batch;
 }
 
+long bartorch_encoding_counter(int which)
+{
+	return ((0 <= which) && (which < SN_COUNTS)) ? sense_counters[which] : 0;
+}
+
+void bartorch_encoding_reset_counters(void)
+{
+	for (int i = 0; i < SN_COUNTS; i++)
+		sense_counters[i] = 0;
+}
+
 long bartorch_sense_counter(int which)
 {
-	return sense_counters[((SN_FUSED == which) || (SN_FOLDED == which)) ? which : SN_CHAINED];
+	return bartorch_encoding_counter(((BARTORCH_ENCODING_BUILT == which) || (BARTORCH_ENCODING_FOLDED == which))
+			? which : BARTORCH_ENCODING_CHAINED);
 }
 
 void bartorch_sense_reset_counters(void)
 {
-	sense_counters[SN_FUSED] = 0;
-	sense_counters[SN_CHAINED] = 0;
-	sense_counters[SN_FOLDED] = 0;
+	bartorch_encoding_reset_counters();
 }
 
 struct sense_s {
@@ -711,6 +728,8 @@ static void sense_forward(const linop_data_t* _d, complex float* dst, const comp
 {
 	const auto d = CAST_DOWN(sense_s, _d);
 
+	counted(BARTORCH_ENCODING_FORWARD);
+
 	complex float* src_on = onto_card(d->img_dims, src, true);
 
 	/* A sampled-only Cartesian transform folds the sensitivity into its
@@ -743,6 +762,8 @@ static void sense_forward(const linop_data_t* _d, complex float* dst, const comp
 static void sense_adjoint(const linop_data_t* _d, complex float* dst, const complex float* src)
 {
 	const auto d = CAST_DOWN(sense_s, _d);
+
+	counted(BARTORCH_ENCODING_ADJOINT);
 
 	complex float* dst_on = onto_card(d->img_dims, dst, false);
 
@@ -784,6 +805,8 @@ static void sense_normal(const linop_data_t* _d, complex float* dst, const compl
 {
 	const auto d = CAST_DOWN(sense_s, _d);
 
+	counted(BARTORCH_ENCODING_NORMAL);
+
 	/* A function held off the card crosses once for each set that is used.
 	 * With the coils outside and the sets inside, every coil brings the
 	 * whole of it over again; with the sets outside it crosses once for the
@@ -797,8 +820,7 @@ static void sense_normal(const linop_data_t* _d, complex float* dst, const compl
 			&& (1 == d->slab_dims[MAPS_DIM]) && d->fold;
 
 	if (folds)
-#pragma omp atomic
-		sense_counters[SN_FOLDED]++;
+		counted(BARTORCH_ENCODING_FOLDED);
 
 	complex float* src_on = onto_card(d->img_dims, src, true);
 	complex float* dst_on = onto_card(d->img_dims, dst, false);
@@ -884,12 +906,12 @@ static void sense_del(const linop_data_t* _d)
  * They can when nothing else is laid out along them: a pattern or a basis
  * that varies across coils would have to be sliced with them, and the
  * sensitivities have to carry the coils the images do. */
-static bool sliceable(const long max_dims[DIMS], const long map_dims[DIMS], const long out_dims[DIMS],
+static bool sliceable(long batch, const long max_dims[DIMS], const long map_dims[DIMS], const long out_dims[DIMS],
 		unsigned long shared_img_flags)
 {
 	long coils = max_dims[COIL_DIM];
 
-	if ((0 == coil_batch) || (coils < 2))
+	if ((0 == batch) || (coils < 2))
 		return false;
 
 	if ((map_dims[COIL_DIM] != coils) || (out_dims[COIL_DIM] != coils))
@@ -921,16 +943,18 @@ static long slab_size(long coils, long want)
 	return 1;
 }
 
-/* The parts of the operator that do not depend on which transform it is. */
-static struct sense_s* sense_slabs(const long max_dims[DIMS], const long map_dims[DIMS],
+/* The parts of the operator that do not depend on which transform it is.
+ * `batch` and `fold` are the form's, so that nothing about one build is read
+ * from the settings BART's own tools leave behind. */
+static struct sense_s* sense_slabs(long batch, bool fold, const long max_dims[DIMS], const long map_dims[DIMS],
 		const long out_dims[DIMS], unsigned long shared_img_flags)
 {
 	PTR_ALLOC(struct sense_s, d);
 	SET_TYPEID(sense_s, d);
 
 	d->coils = max_dims[COIL_DIM];
-	d->batch = slab_size(d->coils, (long)coil_batch);
-	d->fold = (0 != fold_maps);
+	d->batch = slab_size(d->coils, batch);
+	d->fold = fold;
 	d->maps = NULL;
 	d->owned = NULL;
 	d->kernels = NULL;
@@ -1010,8 +1034,7 @@ static struct linop_s* sense_operator(struct sense_s* d)
 {
 	debug_printf(DP_DEBUG1, "SENSE over %ld coils, %ld at a time\n", d->coils, d->batch);
 
-#pragma omp atomic
-	sense_counters[SN_FUSED]++;
+	counted(BARTORCH_ENCODING_BUILT);
 
 	return linop_create(DIMS, d->full_out_dims, DIMS, d->img_dims, CAST_UP(d),
 			sense_forward, sense_adjoint, sense_normal, NULL, sense_del);
@@ -1019,8 +1042,7 @@ static struct linop_s* sense_operator(struct sense_s* d)
 
 static void chained(void)
 {
-#pragma omp atomic
-	sense_counters[SN_CHAINED]++;
+	counted(BARTORCH_ENCODING_CHAINED);
 }
 
 /* y = F S x, on a grid. */
@@ -1033,13 +1055,13 @@ struct linop_s* sense_init(unsigned long shared_img_flags, const long max_dims[D
 	md_select_dims(DIMS, sens_flags, map_dims, max_dims);
 	md_select_dims(DIMS, ~MAPS_FLAG, ksp_dims, max_dims);
 
-	if (!sliceable(max_dims, map_dims, ksp_dims, shared_img_flags)) {
+	if (!sliceable((long)coil_batch, max_dims, map_dims, ksp_dims, shared_img_flags)) {
 
 		chained();
 		return bart_sense_init(shared_img_flags, max_dims, sens_flags, sens);
 	}
 
-	struct sense_s* d = sense_slabs(max_dims, map_dims, ksp_dims, shared_img_flags);
+	struct sense_s* d = sense_slabs((long)coil_batch, 0 != fold_maps, max_dims, map_dims, ksp_dims, shared_img_flags);
 
 	/* The scaling and the modulation `maps_create` folds into the
 	 * sensitivities, kept here because the loop reads them many times. */
@@ -1070,7 +1092,7 @@ const struct linop_s* sense_nc_init(const long max_dims[DIMS], const long map_di
 	md_copy_dims(DIMS, ksp_dims2, ksp_dims);
 	ksp_dims2[COEFF_DIM] = max_dims[COEFF_DIM];
 
-	bool sliced = sliceable(max_dims, map_dims, ksp_dims2, shared_img_dims)
+	bool sliced = sliceable((long)coil_batch, max_dims, map_dims, ksp_dims2, shared_img_dims)
 		&& ((NULL == weights) || (1 == wgs_dims[COIL_DIM]))
 		&& ((NULL == basis) || (1 == basis_dims[COIL_DIM]));
 
@@ -1081,7 +1103,7 @@ const struct linop_s* sense_nc_init(const long max_dims[DIMS], const long map_di
 				wgs_dims, weights, basis_dims, basis, fft_opp, shared_img_dims);
 	}
 
-	struct sense_s* d = sense_slabs(max_dims, map_dims, ksp_dims2, shared_img_dims);
+	struct sense_s* d = sense_slabs((long)coil_batch, 0 != fold_maps, max_dims, map_dims, ksp_dims2, shared_img_dims);
 
 	long slab_ksp_dims[DIMS];
 	md_copy_dims(DIMS, slab_ksp_dims, ksp_dims2);
@@ -1131,195 +1153,54 @@ static void kernels_need_the_loop(void)
 		"them with bartorch.kernels_to_maps first\n");
 }
 
-/* A SENSE operator built here rather than by BART, from sensitivities held
- * either way.
- *
- * This is what a caller reaches when the bank itself is what will not fit:
- * kernels are a few kilobytes a coil against an image apiece, and the loop
- * inflates only the slab it is about to use.  BART's own tools hand over
- * dense maps and get the same operator over them.
- */
-const struct linop_s* bartorch_sense_operator(const long max_dims[DIMS], const long sens_dims[DIMS],
-		const complex float* sens, int kernels, const long ksp_dims[DIMS],
-		const long traj_dims[DIMS], const complex float* traj,
-		const long wgh_dims[DIMS], const complex float* weights,
-		const long bas_dims[DIMS], const complex float* basis,
-		const struct nufft_conf_s* conf, int modulated)
-{
-	if ((NULL != traj) && (0 != modulated))
-		error("bartorch: the modulated convention is the grid's; off it there is only one\n");
-
-	if ((NULL == traj) && ((NULL != weights) || (NULL != basis)))
-		error("bartorch: weights and a basis belong to a non-Cartesian transform\n");
-
-	long map_dims[DIMS];
-	md_select_dims(DIMS, FFT_FLAGS | COIL_FLAG | MAPS_FLAG, map_dims, max_dims);
-
-	/* The transform takes the coefficients the image carries and a basis
-	 * contracts them into the frames the samples have, so what it is asked
-	 * for carries both -- as `sense_nc_init` asks for it. */
-	long ksp_dims2[DIMS];
-	md_copy_dims(DIMS, ksp_dims2, ksp_dims);
-	ksp_dims2[COEFF_DIM] = max_dims[COEFF_DIM];
-
-	/* The same condition the tools' own entry points apply before they slice.
-	 * Without it a slab of no coils -- which is what `set_coil_batch(0)`
-	 * asks for, and what it means by leaving BART its own operator -- walks
-	 * the bank in steps of nothing. */
-	bool sliced = sliceable(max_dims, map_dims, ksp_dims2, 0UL)
-		&& ((NULL == weights) || (1 == wgh_dims[COIL_DIM]))
-		&& ((NULL == basis) || (1 == bas_dims[COIL_DIM]));
-
-	if (!sliced) {
-
-		if (0 != kernels)
-			kernels_need_the_loop();
-
-		chained();
-
-		if (NULL == traj) {
-
-			if (0 != modulated) {
-
-				/* The flags `pics` gives it, so that what comes
-				 * back is the operator the tool builds and not
-				 * one like it -- which is what a caller asking
-				 * for this convention is after. */
-				unsigned long map_flags = FFT_FLAGS | SENS_FLAGS
-					| md_nontriv_dims(DIMS, sens_dims);
-
-				return bart_sense_init(0UL, max_dims, map_flags, sens);
-			}
-
-			/* Centred, as every slab of this operator is.  BART's
-			 * own chain is the other convention, so it cannot
-			 * stand in here: the coils and the transform are put
-			 * together directly instead. */
-			long img_dims[DIMS];
-			md_select_dims(DIMS, ~COIL_FLAG, img_dims, max_dims);
-
-			long cim_dims[DIMS];
-			md_select_dims(DIMS, ~MAPS_FLAG, cim_dims, max_dims);
-
-			return linop_chain_FF(linop_fmac_dims_create(DIMS, cim_dims, img_dims, sens_dims, sens),
-					linop_fftc_create(DIMS, cim_dims, FFT_FLAGS));
-		}
-
-		return bart_sense_nc_init(max_dims, map_dims, sens, ksp_dims, traj_dims, traj, conf,
-				wgh_dims, weights, bas_dims, basis, NULL, 0UL);
-	}
-
-	struct sense_s* d = sense_slabs(max_dims, map_dims, ksp_dims2, 0UL);
-	sense_hold(d, sens_dims, sens, kernels);
-
-	long slab_ksp_dims[DIMS];
-	md_copy_dims(DIMS, slab_ksp_dims, ksp_dims2);
-	slab_ksp_dims[COIL_DIM] = d->batch;
-
-	/* Centred, which is what `bartorch.tools.fft` is and so what a caller
-	 * who chains this against one will expect.  BART's own SENSE operator
-	 * puts the same centring somewhere else -- a scale and a modulation
-	 * folded into the sensitivities, and the plain transform after them --
-	 * which leaves the samples modulated, and is what `pics` works in.
-	 * That convention is reached by asking for it, not by the slab. */
-	if (NULL == traj) {
-
-		if (0 == modulated) {
-
-			d->slab = linop_fftc_create(DIMS, slab_ksp_dims, FFT_FLAGS);
-
-		} else {
-
-			if (0 != kernels)
-				error("bartorch: the modulated convention folds a scale and a "
-					"modulation into the sensitivities, which is done on the "
-					"whole grid and so cannot be done to a kernel; ask for the "
-					"centred convention, or inflate the kernels first\n");
-
-			if (!md_check_equal_dims(DIMS, map_dims, sens_dims, ~0UL))
-				error("bartorch: the modulation folded into the sensitivities is "
-					"the grid's, so this convention needs a bank on the grid "
-					"rather than one broadcast onto it\n");
-
-			d->owned = md_alloc_sameplace(DIMS, map_dims, CFL_SIZE, sens);
-			fftscale(DIMS, map_dims, FFT_FLAGS, d->owned, sens);
-			fftmod(DIMS, map_dims, FFT_FLAGS, d->owned, d->owned);
-			d->maps = d->owned;
-
-			d->slab = linop_fft_create(DIMS, slab_ksp_dims, FFT_FLAGS);
-		}
-
-	} else
-		d->slab = nufft_create2(DIMS, slab_ksp_dims, d->cim_dims, traj_dims, traj,
-				(weights ? wgh_dims : NULL), weights,
-				(basis ? bas_dims : NULL), basis, *conf);
-
-	sense_output_from(d, true);
-
-	return sense_operator(d);
-}
-
-/* Provided by grid.c: a Cartesian slab's transform, pattern and basis, with
- * the normal that transforms only the axes the pattern varies along. */
+/* Provided by grid.c: the slab transforms on a grid -- the Cartesian one with
+ * its pattern and basis and the normal that transforms only the axes the
+ * pattern varies along, the same over a table of sampled phase encodes, and
+ * the wave in either arrangement. */
 extern const struct linop_s* grid_transform_create(const long cim_dims[DIMS],
 		const long pat_dims[DIMS], const complex float* pattern,
 		const long bas_dims[DIMS], const complex float* basis, int toeplitz);
+extern const struct linop_s* grid_sampled_create(const long cim_dims[DIMS], long T, long S, int components,
+		const long* positions, const long bas_dims[DIMS], const complex float* basis,
+		int kspace_readout, int toeplitz);
+extern const struct linop_s* wave_transform_create(const long dom_dims[DIMS], long wx, const complex float* psf,
+		int centred, const long pat_dims[DIMS], const complex float* pattern,
+		const long bas_dims[DIMS], const complex float* basis, int toeplitz);
+extern const struct linop_s* wave_sampled_create(const long dom_dims[DIMS], long wx, const complex float* psf,
+		int centred, long T, long S, int components, const long* positions,
+		const long bas_dims[DIMS], const complex float* basis, int toeplitz);
 
-/* Off-resonance by time segmentation, for the next Cartesian or wave encoding
- * built (linop.FieldCorrected): `count` segments, each a weight over one
- * coil's samples laid out as `sample_dims` and a weight over one coil image
- * laid out as `image_dims`, one segment after another.  Set under the lock
- * the build takes, as the coil batch is, and cleared after it. */
-static struct {
-
-	long count;
-	long sample_dims[DIMS];
-	const complex float* sample;
-	long image_dims[DIMS];
-	const complex float* image;
-
-} segments_setting = { 0 };
-
-void bartorch_sense_set_segments(long count, const long* sample_dims, const void* sample,
-		const long* image_dims, const void* image)
+/* `slab` with the form's contraction around it, sum_l diag(b_l) slab
+ * diag(c_l): each term a copy of the weights on the side they multiply, all
+ * of it BART's sum of chains, so it runs where a slab does.  `slab` itself
+ * where the form has no contraction. */
+static const struct linop_s* contracted(const struct bartorch_encoding* f, const struct linop_s* slab)
 {
-	segments_setting.count = (0 < count) ? count : 0;
-
-	if (0 == segments_setting.count)
-		return;
-
-	md_copy_dims(DIMS, segments_setting.sample_dims, sample_dims);
-	md_copy_dims(DIMS, segments_setting.image_dims, image_dims);
-	segments_setting.sample = sample;
-	segments_setting.image = image;
-}
-
-/* `slab` with the segments set around it, `sum_l diag(b_l) slab diag(c_l)`:
- * each a copy of the weights on the side they multiply, all of it BART's
- * sum of chains, so it runs where a slab does.  `slab` itself where none are
- * set. */
-static const struct linop_s* segmented(const struct linop_s* slab)
-{
-	if (0 == segments_setting.count)
+	if (0 == f->segments)
 		return slab;
+
+	counted(BARTORCH_ENCODING_SEGMENTED);
 
 	const struct iovec_s* dom = linop_domain(slab);
 	const struct iovec_s* cod = linop_codomain(slab);
 
-	long sample_step = md_calc_size(DIMS, segments_setting.sample_dims);
-	long image_step = md_calc_size(DIMS, segments_setting.image_dims);
+	const complex float* sample = f->segment_sample;
+	const complex float* image = f->segment_image;
 
-	unsigned long sample_flags = md_nontriv_dims(DIMS, segments_setting.sample_dims);
-	unsigned long image_flags = md_nontriv_dims(DIMS, segments_setting.image_dims);
+	long sample_step = md_calc_size(DIMS, f->segment_sample_dims);
+	long image_step = md_calc_size(DIMS, f->segment_image_dims);
+
+	unsigned long sample_flags = md_nontriv_dims(DIMS, f->segment_sample_dims);
+	unsigned long image_flags = md_nontriv_dims(DIMS, f->segment_image_dims);
 
 	const struct linop_s* sum = NULL;
 
-	for (long l = 0; l < segments_setting.count; l++) {
+	for (long l = 0; l < f->segments; l++) {
 
 		const struct linop_s* term = linop_chain_FF(linop_chain_FF(
-				linop_cdiag_create(DIMS, dom->dims, image_flags, segments_setting.image + l * image_step),
+				linop_cdiag_create(DIMS, dom->dims, image_flags, image + l * image_step),
 				linop_clone(slab)),
-				linop_cdiag_create(DIMS, cod->dims, sample_flags, segments_setting.sample + l * sample_step));
+				linop_cdiag_create(DIMS, cod->dims, sample_flags, sample + l * sample_step));
 
 		sum = (NULL == sum) ? term : linop_plus_FF(sum, term);
 	}
@@ -1329,201 +1210,197 @@ static const struct linop_s* segmented(const struct linop_s* slab)
 	return sum;
 }
 
-/* The Cartesian SENSE encoding with its pattern and subspace basis inside the
- * coil loop.
+/* The transform the form asks for, over the coil images `cim_dims`.
  *
- * Chained in Python, the pattern and the basis are operators of their own,
- * which run where their arrays are: for a caller whose arrays are on the host
- * the whole k-space crosses back for them, and the normal crosses it twice.
- * Here they are part of the transform a slab carries, so what crosses is the
- * image, once each way. */
-const struct linop_s* bartorch_cartesian_operator(const long max_dims[DIMS], const long sens_dims[DIMS],
-		const complex float* sens, int kernels,
-		const long pat_dims[DIMS], const complex float* pattern,
-		const long bas_dims[DIMS], const complex float* basis, int toeplitz)
-{
-	long map_dims[DIMS];
-	md_select_dims(DIMS, FFT_FLAGS | COIL_FLAG | MAPS_FLAG, map_dims, max_dims);
-
-	long cim_dims[DIMS];
-	md_select_dims(DIMS, ~MAPS_FLAG, cim_dims, max_dims);
-
-	if (!sliceable(max_dims, map_dims, cim_dims, 0UL)) {
-
-		if (0 != kernels)
-			kernels_need_the_loop();
-
-		chained();
-
-		long img_dims[DIMS];
-		md_select_dims(DIMS, ~COIL_FLAG, img_dims, max_dims);
-
-		return linop_chain_FF(linop_fmac_dims_create(DIMS, cim_dims, img_dims, sens_dims, sens),
-				segmented(grid_transform_create(cim_dims, pat_dims, pattern, bas_dims, basis, toeplitz)));
-	}
-
-	struct sense_s* d = sense_slabs(max_dims, map_dims, cim_dims, 0UL);
-	sense_hold(d, sens_dims, sens, kernels);
-
-	d->slab = segmented(grid_transform_create(d->cim_dims, pat_dims, pattern, bas_dims, basis, toeplitz));
-
-	sense_output_from(d, true);
-
-	return sense_operator(d);
-}
-
-/* Provided by grid.c: the slab transform over sampled-only k-space. */
-extern const struct linop_s* grid_sampled_create(const long cim_dims[DIMS], long T, long S, int components,
-		const long* positions, const long bas_dims[DIMS], const complex float* basis,
-		int kspace_readout, int toeplitz);
-
-/* The Cartesian SENSE encoding over sampled-only k-space: a table of phase
- * encodes per frame, with the whole readout along each, instead of k-space
- * over the whole plane.  On a card the forward and the adjoint fold the
- * sensitivity into the same cuFFT transforms the normal runs. */
-const struct linop_s* bartorch_cartesian_sampled_operator(const long max_dims[DIMS], const long sens_dims[DIMS],
-		const complex float* sens, int kernels, long frames, long shots, int components, const long* positions,
-		const long bas_dims[DIMS], const complex float* basis, int kspace_readout, int toeplitz)
-{
-	long map_dims[DIMS];
-	md_select_dims(DIMS, FFT_FLAGS | COIL_FLAG | MAPS_FLAG, map_dims, max_dims);
-
-	long cim_dims[DIMS];
-	md_select_dims(DIMS, ~MAPS_FLAG, cim_dims, max_dims);
-
-	if (!sliceable(max_dims, map_dims, cim_dims, 0UL)) {
-
-		if (0 != kernels)
-			kernels_need_the_loop();
-
-		chained();
-
-		long img_dims[DIMS];
-		md_select_dims(DIMS, ~COIL_FLAG, img_dims, max_dims);
-
-		return linop_chain_FF(linop_fmac_dims_create(DIMS, cim_dims, img_dims, sens_dims, sens),
-				grid_sampled_create(cim_dims, frames, shots, components, positions, bas_dims, basis,
-					kspace_readout, toeplitz));
-	}
-
-	struct sense_s* d = sense_slabs(max_dims, map_dims, cim_dims, 0UL);
-	sense_hold(d, sens_dims, sens, kernels);
-
-	d->slab = grid_sampled_create(d->cim_dims, frames, shots, components, positions, bas_dims, basis,
-			kspace_readout, toeplitz);
-
-	sense_output_from(d, true);
-
-	return sense_operator(d);
-}
-
-/* Provided by grid.c: the wave slab transform, dense or over sampled-only
- * k-space. */
-extern const struct linop_s* wave_transform_create(const long dom_dims[DIMS], long wx, const complex float* psf,
-		int centred, const long pat_dims[DIMS], const complex float* pattern,
-		const long bas_dims[DIMS], const complex float* basis, int toeplitz);
-extern const struct linop_s* wave_sampled_create(const long dom_dims[DIMS], long wx, const complex float* psf,
-		int centred, long T, long S, int components, const long* positions,
-		const long bas_dims[DIMS], const complex float* basis, int toeplitz);
-
-static const struct linop_s* wave_slab(const long cim_dims[DIMS], long wx, const complex float* psf, int centred,
-		const long pat_dims[DIMS], const complex float* pattern,
-		long frames, long shots, int components, const long* positions,
-		const long bas_dims[DIMS], const complex float* basis, int toeplitz)
-{
-	if (NULL != positions)
-		return wave_sampled_create(cim_dims, wx, psf, centred, frames, shots, components, positions,
-				bas_dims, basis, toeplitz);
-
-	return wave_transform_create(cim_dims, wx, psf, centred, pat_dims, pattern, bas_dims, basis, toeplitz);
-}
-
-/* The wave encoding with everything after the coils in the coil loop: the
- * zero-fill, the readout transform, the point spread function and the
- * phase-encode transform on the card a slab at a time, and on a card the
- * normal -- and a table's forward and adjoint -- through cuFFT's callbacks.
- * `positions` NULL is dense samples, with `pattern` if any. */
-const struct linop_s* bartorch_wave_operator(const long max_dims[DIMS], const long sens_dims[DIMS],
-		const complex float* sens, int kernels, long wx, const complex float* psf, int centred,
-		const long pat_dims[DIMS], const complex float* pattern,
-		long frames, long shots, int components, const long* positions,
-		const long bas_dims[DIMS], const complex float* basis, int toeplitz)
-{
-	long map_dims[DIMS];
-	md_select_dims(DIMS, FFT_FLAGS | COIL_FLAG | MAPS_FLAG, map_dims, max_dims);
-
-	long cim_dims[DIMS];
-	md_select_dims(DIMS, ~MAPS_FLAG, cim_dims, max_dims);
-
-	if (!sliceable(max_dims, map_dims, cim_dims, 0UL)) {
-
-		if (0 != kernels)
-			kernels_need_the_loop();
-
-		chained();
-
-		long img_dims[DIMS];
-		md_select_dims(DIMS, ~COIL_FLAG, img_dims, max_dims);
-
-		return linop_chain_FF(linop_fmac_dims_create(DIMS, cim_dims, img_dims, sens_dims, sens),
-				segmented(wave_slab(cim_dims, wx, psf, centred, pat_dims, pattern, frames, shots, components, positions,
-					bas_dims, basis, toeplitz)));
-	}
-
-	struct sense_s* d = sense_slabs(max_dims, map_dims, cim_dims, 0UL);
-	sense_hold(d, sens_dims, sens, kernels);
-
-	d->slab = segmented(wave_slab(d->cim_dims, wx, psf, centred, pat_dims, pattern, frames, shots, components,
-			positions, bas_dims, basis, toeplitz));
-
-	sense_output_from(d, true);
-
-	return sense_operator(d);
-}
-
-/* The coil multiply on its own: the same slab loop with nothing after it.
- *
- * What a caller wants when the transform beside the coils is not a Fourier
- * transform.  The wave encoding's is a chain of four -- a resize, a readout
- * transform, the point spread diagonal and the phase-encode transforms -- and
- * chaining that onto BART's own `fmac` would hold the whole bank; chaining it
- * onto this one holds a slab of it.
- *
- * Without slicing this is `linop_fmac` and nothing else, which is the operator
- * `linop.MultiplySum` builds, so the two answer alike and a test can say so.
- * With slicing it is that operator with the bank read, or inflated, a slab at
- * a time.
+ * This is the whole of what the four encodings differ by: everything around
+ * it -- the coils, the slab loop, the streaming, the contraction -- is the
+ * same code whichever transform it is.
  */
-const struct linop_s* bartorch_coils_operator(const long max_dims[DIMS], const long sens_dims[DIMS],
-		const complex float* sens, int kernels)
+static const struct linop_s* form_transform(const struct bartorch_encoding* f, const long cim_dims[DIMS],
+		const struct nufft_conf_s* conf)
 {
+	switch (f->transform) {
+
+	case BARTORCH_ENCODING_NONE:
+
+		/* Nothing after the multiply, so what a slab answers with is
+		 * the slab of coil images itself. */
+		return linop_identity_create(DIMS, cim_dims);
+
+	case BARTORCH_ENCODING_FFT:
+
+		if (NULL != f->positions)
+			return grid_sampled_create(cim_dims, f->frames, f->shots, f->components, f->positions,
+					f->bas_dims, f->basis, f->kspace_readout, f->toeplitz);
+
+		/* With no k-space factor the transform is the whole of it:
+		 * centred, which is what `bartorch.tools.fft` is and so what a
+		 * caller who chains this against one will expect, or BART's own
+		 * unnormalized transform where the form asks for the convention
+		 * `pics` works in. */
+		if ((NULL == f->pattern) && (NULL == f->basis))
+			return (0 != f->modulated) ? linop_fft_create(DIMS, cim_dims, FFT_FLAGS)
+						   : linop_fftc_create(DIMS, cim_dims, FFT_FLAGS);
+
+		return grid_transform_create(cim_dims, f->pat_dims, f->pattern, f->bas_dims, f->basis, f->toeplitz);
+
+	case BARTORCH_ENCODING_WAVE:
+
+		if (NULL != f->positions)
+			return wave_sampled_create(cim_dims, f->readout, f->psf, f->centred,
+					f->frames, f->shots, f->components, f->positions,
+					f->bas_dims, f->basis, f->toeplitz);
+
+		return wave_transform_create(cim_dims, f->readout, f->psf, f->centred,
+				f->pat_dims, f->pattern, f->bas_dims, f->basis, f->toeplitz);
+
+	case BARTORCH_ENCODING_NUFFT:
+
+		return nufft_create2(DIMS, f->ksp_dims, cim_dims, f->traj_dims, f->traj,
+				(f->weights ? f->wgh_dims : NULL), f->weights,
+				(f->basis ? f->bas_dims : NULL), f->basis, *conf);
+	}
+
+	error("bartorch: %d is not one of this library's encoding transforms\n", f->transform);
+}
+
+/* A form the slab loop cannot take, as BART's plain chain of operators.
+ *
+ * Nothing is streamed here: the whole bank is resident and the transform runs
+ * over every coil at once.  It is what answers a form whose factors lie along
+ * the coils, or one whose coils the loop cannot slice, and the counter says
+ * so rather than leaving it to be guessed from a timing.
+ */
+static const struct linop_s* form_chain(const struct bartorch_encoding* f, const long max_dims[DIMS],
+		const long map_dims[DIMS], const long cim_dims[DIMS], const struct nufft_conf_s* conf)
+{
+	if (0 != f->kernels)
+		kernels_need_the_loop();
+
+	chained();
+
+	if (BARTORCH_ENCODING_NUFFT == f->transform)
+		return bart_sense_nc_init(max_dims, map_dims, f->sens, f->ksp_dims, f->traj_dims, f->traj, conf,
+				f->wgh_dims, f->weights, f->bas_dims, f->basis, NULL, 0UL);
+
+	if (0 != f->modulated) {
+
+		/* The flags `pics` gives it, so that what comes back is the
+		 * operator the tool builds and not one like it -- which is
+		 * what a caller asking for this convention is after. */
+		unsigned long map_flags = FFT_FLAGS | SENS_FLAGS | md_nontriv_dims(DIMS, f->sens_dims);
+
+		return bart_sense_init(0UL, max_dims, map_flags, f->sens);
+	}
+
+	long img_dims[DIMS];
+	md_select_dims(DIMS, ~COIL_FLAG, img_dims, max_dims);
+
+	struct linop_s* coils = linop_fmac_dims_create(DIMS, cim_dims, img_dims,
+			(BARTORCH_ENCODING_NONE == f->transform) ? map_dims : f->sens_dims, f->sens);
+
+	if (BARTORCH_ENCODING_NONE == f->transform)
+		return coils;
+
+	return linop_chain_FF(coils, (struct linop_s*)contracted(f, form_transform(f, cim_dims, conf)));
+}
+
+/* One encoding, from the form the planner lowered a composition into.
+ *
+ * Every MRI encoding this library builds comes through here: the coils, the
+ * slab loop, the streaming of a bank held as kernels, and the contraction
+ * over segments are this function's, and the transform is the form's.  What
+ * a caller reaches it for is that loop -- kernels are a few kilobytes a coil
+ * against an image apiece, and only the slab about to be used is inflated --
+ * and a form the loop cannot serve is answered as BART's plain chain instead,
+ * counted so that a test can tell the two apart.
+ */
+const struct linop_s* bartorch_encoding_operator(const struct bartorch_encoding* f)
+{
+	const long* max_dims = f->max_dims;
+
+	if ((BARTORCH_ENCODING_FFT != f->transform) && (0 != f->modulated))
+		error("bartorch: the modulated convention is a grid transform's; "
+			"elsewhere there is only one\n");
+
+	if ((0 != f->modulated) && ((NULL != f->pattern) || (NULL != f->basis) || (NULL != f->positions)))
+		error("bartorch: the modulated convention is the plain transform's; a pattern, a basis "
+			"or a table of positions is chained onto it rather than folded in\n");
+
+	if ((BARTORCH_ENCODING_NUFFT != f->transform) && ((NULL != f->weights) || (NULL != f->traj)))
+		error("bartorch: weights and a trajectory belong to a non-Cartesian transform\n");
+
+	struct nufft_conf_s conf = nufft_conf_defaults;
+	conf.toeplitz = (0 != f->toeplitz);
+	conf.os = 0.;
+	conf.width = 0.;
+
 	long map_dims[DIMS];
 	md_select_dims(DIMS, FFT_FLAGS | COIL_FLAG | MAPS_FLAG, map_dims, max_dims);
 
-	/* The coil images the multiply answers with: every axis the operator
-	 * has except the one the sets of maps are summed over. */
-	long cim_dims[DIMS];
-	md_select_dims(DIMS, ~MAPS_FLAG, cim_dims, max_dims);
+	/* What the transform is asked for.  Off a grid the samples are the
+	 * form's own, with the coefficients a basis contracts still on them;
+	 * on one they are the image's axes without the sets. */
+	long out_dims[DIMS];
 
-	if (!sliceable(max_dims, map_dims, cim_dims, 0UL)) {
+	if (BARTORCH_ENCODING_NUFFT == f->transform) {
 
-		if (0 != kernels)
-			kernels_need_the_loop();
+		md_copy_dims(DIMS, out_dims, f->ksp_dims);
+		out_dims[COEFF_DIM] = max_dims[COEFF_DIM];
 
-		chained();
+	} else {
 
-		long img_dims[DIMS];
-		md_select_dims(DIMS, ~COIL_FLAG, img_dims, max_dims);
-
-		return linop_fmac_dims_create(DIMS, cim_dims, img_dims, map_dims, sens);
+		md_select_dims(DIMS, ~MAPS_FLAG, out_dims, max_dims);
 	}
 
-	struct sense_s* d = sense_slabs(max_dims, map_dims, cim_dims, 0UL);
-	sense_hold(d, sens_dims, sens, kernels);
+	/* A k-space factor laid out along the coils would have to be sliced
+	 * with them, which the loop cannot do. */
+	bool sliced = sliceable((long)f->coil_batch, max_dims, map_dims, out_dims, 0UL)
+		&& ((NULL == f->weights) || (1 == f->wgh_dims[COIL_DIM]))
+		&& ((NULL == f->basis) || (1 == f->bas_dims[COIL_DIM]));
 
-	/* Nothing after the multiply, so a slab's transform is the identity and
-	 * what it answers with is the slab of coil images itself. */
-	d->slab = linop_identity_create(DIMS, d->cim_dims);
+	if (!sliced)
+		return form_chain(f, max_dims, map_dims, out_dims, &conf);
+
+	struct sense_s* d = sense_slabs((long)f->coil_batch, 0 != f->fold_maps,
+			max_dims, map_dims, out_dims, 0UL);
+
+	sense_hold(d, f->sens_dims, f->sens, f->kernels);
+
+	if (0 != f->modulated) {
+
+		/* BART's own convention is a scale and a modulation folded into
+		 * the sensitivities with the plain transform after them, which
+		 * is the whole grid's and not a slab's: a bank broadcast onto
+		 * the grid, or held as kernels, cannot carry it. */
+		if (0 != f->kernels)
+			error("bartorch: the modulated convention folds a scale and a modulation into "
+				"the sensitivities, which is done on the whole grid and so cannot be "
+				"done to a kernel; ask for the centred convention, or inflate the "
+				"kernels first\n");
+
+		if (!md_check_equal_dims(DIMS, map_dims, f->sens_dims, ~0UL))
+			error("bartorch: the modulation folded into the sensitivities is the grid's, so "
+				"this convention needs a bank on the grid rather than one broadcast "
+				"onto it\n");
+
+		d->owned = md_alloc_sameplace(DIMS, map_dims, CFL_SIZE, f->sens);
+		fftscale(DIMS, map_dims, FFT_FLAGS, d->owned, f->sens);
+		fftmod(DIMS, map_dims, FFT_FLAGS, d->owned, d->owned);
+		d->maps = d->owned;
+	}
+
+	/* Off a grid the transform is asked for a slab of samples; on one it
+	 * works from the slab of coil images and says for itself what comes
+	 * back, because a basis contracts its coefficients away. */
+	long slab_ksp_dims[DIMS];
+	md_copy_dims(DIMS, slab_ksp_dims, out_dims);
+	slab_ksp_dims[COIL_DIM] = d->batch;
+
+	struct bartorch_encoding slab = *f;
+	slab.ksp_dims = slab_ksp_dims;
+
+	d->slab = contracted(f, form_transform(&slab, d->cim_dims, &conf));
 
 	sense_output_from(d, true);
 

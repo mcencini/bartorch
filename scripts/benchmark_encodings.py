@@ -8,8 +8,9 @@ field_wave3d.  Host arrays, the operator on the card: build, then forward,
 adjoint and normal (the 3D subspace cases over a dense pattern time the normal
 alone, their dense k-space not fitting in host memory), each after one warm-up
 and repeated with a reused output where the operator takes ``out=``.  Prints
-min-max times, the device peak of each phase, the device memory at rest and
-the host peak.  Run one case per process, so that the peaks are the case's.
+the plan the encoding was lowered into, min-max times, the device peak of each
+phase, the device memory at rest and the host peak.  Run one case per process,
+so that the peaks are the case's.
 """
 
 import math, resource, sys, threading, time
@@ -159,6 +160,11 @@ def timed(label, fn, shape, reps):
 parts = []
 try:
     phase[0] = "build"; t0 = time.time(); op = make(); sync(); parts.append(f"build {time.time() - t0:5.2f} s")
+    # A case that fell back to BART's plain chain is timing something else, so
+    # the plan is printed beside the times rather than left to be inferred.
+    plan = op.plan
+    parts.append(f"plan {plan.transform}/{plan.contraction}/{plan.normal}/{plan.executor}"
+                 + ("" if plan.fused else " NOT FUSED"))
     rest = held()
     x = torch.randn(*op.ishape, dtype=C64)
     if not normal_only:

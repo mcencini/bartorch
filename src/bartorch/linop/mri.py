@@ -1,24 +1,26 @@
-"""MRI encoding operators, each a chain of BART's own.
+"""The MRI encodings on a grid, and off-resonance over any of them.
 
-Built with ``linop_chain``, so what a solver drives is one BART operator
-rather than a Python object walked per iteration.
-:class:`~bartorch.linop.NoncartesianSense` is BART's own operator with the
-coil loop in it; :func:`CartesianSense` and :func:`WaveSense` are that loop
-over a Cartesian or a wave transform.
+Each is lowered into one :class:`~bartorch.linop.form.Form` and built by the
+library's single encoding entry point, so what a solver drives is one BART
+operator and each application is one call.  :func:`CartesianSense` and
+:func:`WaveSense` are :class:`~bartorch.linop.NoncartesianSense`'s coil loop
+over a Cartesian or a wave transform; :func:`FieldCorrected` hands the
+planner a contraction over segments and takes what it lowers.
 """
 
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 
 import torch
 
 from bartorch import _layout
-from bartorch._dispatch import _lock
 from bartorch._lib import DIMS, library
 from bartorch._operator import Built, Shape, as_operand, dims
 from bartorch.linop.base import LinearOperator, _WithNormal
 from bartorch.linop.basic import Diagonal, MultiplySum, Sampling
+from bartorch.linop.form import Array, Contraction, Factor, Form
 from bartorch.linop.sense import NoncartesianSense
 
 __all__ = ["CartesianSense", "FieldCorrected", "WaveSense"]
@@ -57,9 +59,7 @@ def _flat_along(t: torch.Tensor, axes) -> torch.Tensor | None:
 
 
 def _segment_layout(encoding, b, c, sample_dims, image_dims):
-    """The segments as a coil loop takes them, or ``None``.
-
-    ``(count, sample vector, sample weights, image vector, image weights)``.
+    """The segments as the form's contraction, or ``None``.
 
     The sample weights may vary along one coil's samples and the spatial ones
     along the image's spatial axes; weights the same along the batches, the
@@ -83,40 +83,22 @@ def _segment_layout(encoding, b, c, sample_dims, image_dims):
     image = as_operand(image, tuple(image.shape), "spatial weights")
     sample_vector = _layout.vector({d: int(n) for d, n in zip(sample_dims, samples.shape[1:])})
     image_vector = _layout.vector({d: int(n) for d, n in zip(image_dims, image.shape[1:])})
-    return count, sample_vector, samples, image_vector, image
-
-
-def _set_segments(lib, layout) -> None:
-    """Hand the next build its segments, or clear them."""
-    from bartorch.linop.sense import _vector
-
-    if layout is None:
-        lib.bartorch_sense_set_segments(0, None, None, None, None)
-        return
-    count, sample_vector, samples, image_vector, image = layout
-    lib.bartorch_sense_set_segments(
-        count, _vector(sample_vector), samples.data_ptr(), _vector(image_vector), image.data_ptr()
-    )
+    return Contraction(count, Array(samples, sample_vector), Array(image, image_vector))
 
 
 class _Segmentable:
-    """A grid encoding :func:`FieldCorrected` can put its segments in the coil loop of."""
+    """A grid encoding whose coil loop a contraction over terms can go inside.
+
+    The axes each side's weights are laid out on: the image's spatial ones,
+    and one coil's samples, which carry the frames as well where a basis
+    contracts them.
+    """
 
     def _image_dims(self):
         return (2, 1, 0) if self.ndim == 3 else (1, 0)
 
     def _sample_dims(self):
         return ((5,) if self._grid_basis is not None else ()) + self._image_dims()
-
-    def _segmented(self, b, c):
-        """This encoding as ``sum_l diag(b_l) E diag(c_l)`` in its coil loop, or ``None``."""
-        if self._segments is not None:
-            return None
-        layout = _segment_layout(self, b, c, self._sample_dims(), self._image_dims())
-        if layout is None:
-            return None
-        args, kwargs = self._args
-        return type(self)(*args, **{**kwargs, "segments": layout})
 
 
 class _CartesianNative(_Segmentable, _GridSense):
@@ -130,14 +112,7 @@ class _CartesianNative(_Segmentable, _GridSense):
     the spatial axes and the samples its frames in front of them.
     """
 
-    def __init__(
-        self, sensitivities, image_shape, pattern, basis, toeplitz=True, segments=None, **kwargs
-    ):
-        self._args = (
-            (sensitivities, image_shape, pattern, basis),
-            {"toeplitz": toeplitz, **kwargs},
-        )
-        self._segments = segments
+    def __init__(self, sensitivities, image_shape, pattern, basis, toeplitz=True, **kwargs):
         self._grid_pattern = (
             None if pattern is None else as_operand(pattern, tuple(pattern.shape), "pattern")
         )
@@ -166,11 +141,9 @@ class _CartesianNative(_Segmentable, _GridSense):
     def _has_basis(self):
         return self._grid_basis is not None
 
-    def _create(self) -> Built:
+    def _form(self) -> Form:
         from bartorch._layout import vector
-        from bartorch.linop.sense import _vector, sets_order, wrap_item
 
-        lib = library()
         p, b = self._grid_pattern, self._grid_basis
         pvec = bvec = None
         if p is not None:
@@ -183,41 +156,26 @@ class _CartesianNative(_Segmentable, _GridSense):
             pvec = vector(placed)
         if b is not None:
             bvec = vector({5: b.shape[1], 6: b.shape[0]})
-        with _lock:
-            was = lib.bartorch_sense_coil_batch(), lib.bartorch_sense_fold_maps()
-            lib.bartorch_sense_set_coil_batch(self.coil_batch)
-            lib.bartorch_sense_set_fold_maps(int(self.fold_maps))
-            try:
-                _set_segments(lib, self._segments)
-                item = self._under_lock(
-                    lib.bartorch_linop_cartesian,
-                    _vector(self._max_vector()),
-                    _vector(self._sens_vector()),
-                    self.sensitivities.data_ptr(),
-                    int(self.kernels),
-                    None if p is None else _vector(pvec),
-                    None if p is None else p.data_ptr(),
-                    None if b is None else _vector(bvec),
-                    None if b is None else b.data_ptr(),
-                    int(self._grid_toeplitz),
-                    device=self.device,
-                )
-            finally:
-                _set_segments(lib, None)
-                lib.bartorch_sense_set_coil_batch(was[0])
-                lib.bartorch_sense_set_fold_maps(was[1])
-            ptr = wrap_item(
-                self,
-                lib,
-                item,
-                self.kspace_shape,
-                self.image_shape,
-                self.batches,
-                self.device,
-                sets_order(self.batches, self.sets, self.image_encoding, self.ndim),
-            )
-        keep = tuple(t for t in (self.sensitivities, p, b) if t is not None)
-        return Built(ptr, self.image_shape, self.kspace_shape, keep=keep, device=self.device)
+        return Form(
+            transform="fft",
+            max_vector=self._max_vector(),
+            kspace_vector=self._kspace_vector(),
+            sensitivities=Array(self.sensitivities, self._sens_vector()),
+            kernels=self.kernels,
+            pattern=None if p is None else Array(p, pvec),
+            basis=None if b is None else Array(b, bvec),
+            toeplitz=self._grid_toeplitz,
+            coil_batch=self.coil_batch,
+            fold_maps=self.fold_maps,
+            coils=self.coils,
+            sets=self.sets,
+            coeffs=1 if b is None else int(b.shape[0]),
+        )
+
+    def _create(self) -> Built:
+        from bartorch.linop.sense import build_form
+
+        return build_form(self, self._form())
 
 
 def _checked_positions(positions, frames, encodes) -> torch.Tensor:
@@ -305,50 +263,33 @@ class _CartesianSampled(_GridSense):
         base = {1: self.spatial[-1], 2: int(self._positions.shape[-2]), _layout.COIL: self.coils}
         return self._encoding_vector(base, self.encoding)
 
-    def _create(self) -> Built:
-        from bartorch.linop.sense import _vector, sets_order, wrap_item
-
-        lib = library()
+    def _form(self) -> Form:
         b, pos = self._grid_basis, self._positions
-        frames = 1 if b is None else int(b.shape[1])
         bvec = None if b is None else _layout.vector({5: b.shape[1], 6: b.shape[0]})
-        with _lock:
-            was = lib.bartorch_sense_coil_batch(), lib.bartorch_sense_fold_maps()
-            lib.bartorch_sense_set_coil_batch(self.coil_batch)
-            lib.bartorch_sense_set_fold_maps(int(self.fold_maps))
-            try:
-                item = self._under_lock(
-                    lib.bartorch_linop_cartesian_sampled,
-                    _vector(self._max_vector()),
-                    _vector(self._sens_vector()),
-                    self.sensitivities.data_ptr(),
-                    int(self.kernels),
-                    frames,
-                    int(pos.shape[-2]),
-                    int(pos.shape[-1]),
-                    pos.data_ptr(),
-                    None if b is None else _vector(bvec),
-                    None if b is None else b.data_ptr(),
-                    int(self._kspace_readout),
-                    int(self._grid_toeplitz),
-                    device=self.device,
-                )
-            finally:
-                _set_segments(lib, None)
-                lib.bartorch_sense_set_coil_batch(was[0])
-                lib.bartorch_sense_set_fold_maps(was[1])
-            ptr = wrap_item(
-                self,
-                lib,
-                item,
-                self.kspace_shape,
-                self.image_shape,
-                self.batches,
-                self.device,
-                sets_order(self.batches, self.sets, self.image_encoding, self.ndim),
-            )
-        keep = tuple(t for t in (self.sensitivities, pos, b) if t is not None)
-        return Built(ptr, self.image_shape, self.kspace_shape, keep=keep, device=self.device)
+        return Form(
+            transform="fft",
+            max_vector=self._max_vector(),
+            kspace_vector=self._kspace_vector(),
+            sensitivities=Array(self.sensitivities, self._sens_vector()),
+            kernels=self.kernels,
+            basis=None if b is None else Array(b, bvec),
+            positions=pos,
+            frames=1 if b is None else int(b.shape[1]),
+            shots=int(pos.shape[-2]),
+            components=int(pos.shape[-1]),
+            kspace_readout=self._kspace_readout,
+            toeplitz=self._grid_toeplitz,
+            coil_batch=self.coil_batch,
+            fold_maps=self.fold_maps,
+            coils=self.coils,
+            sets=self.sets,
+            coeffs=1 if b is None else int(b.shape[0]),
+        )
+
+    def _create(self) -> Built:
+        from bartorch.linop.sense import build_form
+
+        return build_form(self, self._form())
 
 
 class _WaveNative(_Segmentable, _GridSense):
@@ -372,26 +313,9 @@ class _WaveNative(_Segmentable, _GridSense):
         basis,
         centred,
         toeplitz,
-        segments=None,
         **kwargs,
     ):
         from bartorch.linop.sense import _grid_ndim
-
-        self._args = (
-            (
-                sensitivities,
-                psf,
-                image_shape,
-                readout,
-                pattern,
-                positions,
-                basis,
-                centred,
-                toeplitz,
-            ),
-            dict(kwargs),
-        )
-        self._segments = segments
 
         image_shape = tuple(image_shape)
         self._wave_readout = int(readout)
@@ -465,12 +389,8 @@ class _WaveNative(_Segmentable, _GridSense):
             base = {0: self._wave_readout, 1: y, 2: z, _layout.COIL: self.coils}
         return self._encoding_vector(base, self.encoding)
 
-    def _create(self) -> Built:
-        from bartorch.linop.sense import _vector, sets_order, wrap_item
-
-        lib = library()
+    def _form(self) -> Form:
         w, p, b, pos = self._psf, self._grid_pattern, self._grid_basis, self._positions
-        frames = 1 if b is None else int(b.shape[1])
         pvec = bvec = None
         if p is not None:
             shape = tuple(p.shape)
@@ -482,48 +402,33 @@ class _WaveNative(_Segmentable, _GridSense):
             pvec = _layout.vector(placed)
         if b is not None:
             bvec = _layout.vector({5: b.shape[1], 6: b.shape[0]})
-        with _lock:
-            was = lib.bartorch_sense_coil_batch(), lib.bartorch_sense_fold_maps()
-            lib.bartorch_sense_set_coil_batch(self.coil_batch)
-            lib.bartorch_sense_set_fold_maps(int(self.fold_maps))
-            try:
-                _set_segments(lib, self._segments)
-                item = self._under_lock(
-                    lib.bartorch_linop_wave,
-                    _vector(self._max_vector()),
-                    _vector(self._sens_vector()),
-                    self.sensitivities.data_ptr(),
-                    int(self.kernels),
-                    self._wave_readout,
-                    w.data_ptr(),
-                    int(self._wave_centred),
-                    None if p is None else _vector(pvec),
-                    None if p is None else p.data_ptr(),
-                    frames,
-                    0 if pos is None else int(pos.shape[-2]),
-                    0 if pos is None else int(pos.shape[-1]),
-                    None if pos is None else pos.data_ptr(),
-                    None if b is None else _vector(bvec),
-                    None if b is None else b.data_ptr(),
-                    int(self._grid_toeplitz),
-                    device=self.device,
-                )
-            finally:
-                _set_segments(lib, None)
-                lib.bartorch_sense_set_coil_batch(was[0])
-                lib.bartorch_sense_set_fold_maps(was[1])
-            ptr = wrap_item(
-                self,
-                lib,
-                item,
-                self.kspace_shape,
-                self.image_shape,
-                self.batches,
-                self.device,
-                sets_order(self.batches, self.sets, self.image_encoding, self.ndim),
-            )
-        keep = tuple(t for t in (self.sensitivities, w, p, pos, b) if t is not None)
-        return Built(ptr, self.image_shape, self.kspace_shape, keep=keep, device=self.device)
+        return Form(
+            transform="wave",
+            max_vector=self._max_vector(),
+            kspace_vector=self._kspace_vector(),
+            sensitivities=Array(self.sensitivities, self._sens_vector()),
+            kernels=self.kernels,
+            pattern=None if p is None else Array(p, pvec),
+            basis=None if b is None else Array(b, bvec),
+            positions=pos,
+            frames=1 if b is None else int(b.shape[1]),
+            shots=0 if pos is None else int(pos.shape[-2]),
+            components=0 if pos is None else int(pos.shape[-1]),
+            readout=self._wave_readout,
+            psf=w,
+            centred=self._wave_centred,
+            toeplitz=self._grid_toeplitz,
+            coil_batch=self.coil_batch,
+            fold_maps=self.fold_maps,
+            coils=self.coils,
+            sets=self.sets,
+            coeffs=1 if b is None else int(b.shape[0]),
+        )
+
+    def _create(self) -> Built:
+        from bartorch.linop.sense import build_form
+
+        return build_form(self, self._form())
 
 
 class _Relabel(LinearOperator):
@@ -603,18 +508,61 @@ def _per_segment(values: torch.Tensor, shape: tuple[int, ...], what: str) -> tor
     return values.reshape(values.shape[0], *one.shape)
 
 
-def _segmented_nufft(encoding, b: torch.Tensor, c: torch.Tensor) -> LinearOperator | None:
-    """The time-segmented encoding over a NUFFT as one subspace operator, or ``None``.
+def contracted(encoding, b: torch.Tensor, c: torch.Tensor) -> LinearOperator | None:
+    """``sum_l diag(b_l) E diag(c_l)`` as one encoding, or ``None``.
 
-    ``sum_l diag(b_l) E diag(c_l)`` is the spatial weights fanning the image
-    out into segment images, then ``E`` through the basis ``b`` over the
-    samples.  It is taken where the encoding is a plain non-Cartesian SENSE
-    operator with no basis, sets or encoding axes of its own, and where the
-    sample weights vary along the shots and the readout alone.
+    What the planner reaches for a sum of chains sharing an encoding.  On a
+    grid the contraction goes inside the coil loop, around the transform each
+    slab carries, and the normal is the two applications: the closed form
+    would save no transform there.  Over a NUFFT it becomes a subspace basis
+    along the samples, whose Toeplitz normal is a point spread function per
+    pair of terms rather than two transforms per term per coil.
+
+    ``None`` says the factors do not fit the form -- weights that vary along
+    the batches, the coils, the sets or the coefficients, or an encoding that
+    already carries a contraction -- and the sum of chains stands instead.
     """
+    if isinstance(encoding, _Segmentable):
+        return _grid_contraction(encoding, b, c)
+    return _nufft_contraction(encoding, b, c)
+
+
+def _grid_contraction(encoding, b: torch.Tensor, c: torch.Tensor) -> LinearOperator | None:
+    """The contraction in the coil loop of a grid encoding, or ``None``."""
+    from bartorch.linop.sense import _Encoded
+
+    form = encoding._form()
+    if form.contraction is not None:
+        return None
+    layout = _segment_layout(encoding, b, c, encoding._sample_dims(), encoding._image_dims())
+    if layout is None:
+        return None
+    return _Encoded(encoding, form.with_contraction(layout))
+
+
+def _nufft_contraction(encoding, b: torch.Tensor, c: torch.Tensor) -> LinearOperator | None:
+    """The contraction over a NUFFT as one subspace operator, or ``None``.
+
+    The spatial weights fan the image out into one image per term, and the
+    terms' sample weights are a basis over the samples.  Taken where the
+    encoding is a plain non-Cartesian SENSE operator with no basis, sets or
+    encoding axes of its own, and where the sample weights vary along the
+    shots and the readout alone.
+
+    A basis along the samples is a transform only the substitution computes:
+    BART's own gridder asserts that the basis is trivial over the sample axes
+    (``nufft_set_traj`` in ``noncart/nufft.c``).  So where the gridder is what
+    answers -- ``_finufft.barts_own_gridder()`` and ``use_in_tools(False)``,
+    which are the agreement check and the tests -- there is no such operator,
+    and the sum of chains is what the planner falls back to.
+    """
+    from bartorch import _finufft
+
     if type(encoding) is not NoncartesianSense:
         return None
     if encoding.basis is not None or encoding.sets > 1 or encoding.encoding:
+        return None
+    if not _finufft.serves(encoding.device.type == "cuda"):
         return None
 
     segments = int(b.shape[0])
@@ -632,7 +580,15 @@ def _segmented_nufft(encoding, b: torch.Tensor, c: torch.Tensor) -> LinearOperat
     C = _Relabel(MultiplySum(fan, lifted, fanned), fanned, ishape)
 
     E = _SegmentedSense(encoding, basis)
-    return _WithNormal(E @ C, C.H @ E.gram() @ C)
+    out = _WithNormal(E @ C, C.H @ E.gram() @ C)
+
+    # The fan is an image-side factor of the composition rather than of the
+    # encoding, so the plan reports it beside the sensitivities.
+    out._plan = replace(
+        E.plan,
+        image=(*E.plan.image, Factor("segment weights", tuple(fan.shape), ("terms", "voxels"))),
+    )
+    return out
 
 
 #: The gyromagnetic ratio of hydrogen, in Hz per Gauss, as BART's ``wavepsf`` has it.
@@ -1127,26 +1083,11 @@ def FieldCorrected(  # noqa: N802  (it is a constructor)
         if b.shape[0] != c.shape[0]:
             raise ValueError(f"{b.shape[0]} sample weights against {c.shape[0]} spatial ones")
 
-    if isinstance(encoding, _Segmentable):
-        native = encoding._segmented(b, c)
-        if native is not None:
-            return native
+    from bartorch.linop import plan
 
-    native = _segmented_nufft(encoding, b, c)
-    if native is not None:
-        return native
-
-    terms = [
-        Diagonal(_broadcastable(b[ell], encoding.oshape, "sample weights"), encoding.oshape)
-        @ encoding
-        @ Diagonal(_broadcastable(c[ell], encoding.ishape, "spatial weights"), encoding.ishape)
-        for ell in range(b.shape[0])
-    ]
-
-    out = terms[0]
-    for term in terms[1:]:
-        out = out + term
-    return out
+    samples = _per_segment(b, encoding.oshape, "sample weights")
+    voxels = _per_segment(c, encoding.ishape, "spatial weights")
+    return plan.build(plan.Contract(encoding, samples, voxels))
 
 
 def _fit_coefficients(encoding, field_map, readout_time, mask, segments, method):

@@ -15,6 +15,7 @@ from bartorch._dispatch import _lock
 from bartorch._lib import DIMS, library
 from bartorch._operator import Built, Shape, as_operand, dims
 from bartorch.linop.base import LinearOperator
+from bartorch.linop.form import Array, Form
 
 __all__ = ["Coils", "NoncartesianSense"]
 
@@ -122,6 +123,55 @@ def wrap_item(
     if order is None or not ptr:
         return ptr
     return _behind_permutation(owner, lib, ptr, ishape, order, device)
+
+
+def build_form(owner, form: Form, image_shape=None, kspace_shape=None, encoding=None) -> Built:
+    """One encoding built from its form, over every batch item.
+
+    The form is lowered and built by the library's single encoding entry
+    point; what comes back is the operator for one batch item, which
+    :func:`wrap_item` spreads over the batches.  ``owner.plan`` is left saying
+    which executor path took it.
+    """
+    image_shape = owner.image_shape if image_shape is None else image_shape
+    kspace_shape = owner.kspace_shape if kspace_shape is None else kspace_shape
+    encoding = owner.image_encoding if encoding is None else encoding
+
+    lib = library()
+    with _lock:
+        item, executor = form.build(owner, owner.device)
+        owner._plan = form.plan(executor)
+        ptr = wrap_item(
+            owner,
+            lib,
+            item,
+            kspace_shape,
+            image_shape,
+            owner.batches,
+            owner.device,
+            sets_order(owner.batches, owner.sets, encoding, owner.ndim),
+        )
+    return Built(ptr, image_shape, kspace_shape, keep=form.keep(), device=owner.device)
+
+
+class _Encoded(LinearOperator):
+    """One encoding built from a form the planner lowered, rather than from arguments.
+
+    It carries the shapes and the layout of the encoding it was matched
+    against; what differs is the form, which has the element-wise factors the
+    composition put on either side of the transform folded into it.
+    """
+
+    def __init__(self, source: LinearOperator, form: Form):
+        self._form = form
+        self._segments = form.contraction
+        for name in ("image_shape", "kspace_shape", "batches", "sets", "ndim", "image_encoding"):
+            setattr(self, name, getattr(source, name))
+        self.ishape, self.oshape, self.device = source.ishape, source.oshape, source.device
+        super().__init__()
+
+    def _create(self) -> Built:
+        return build_form(self, self._form)
 
 
 def _behind_permutation(owner, lib, ptr: int, ishape: Shape, order, device) -> int:
@@ -440,34 +490,7 @@ class NoncartesianSense(LinearOperator):
     # --- building ------------------------------------------------------------
 
     def _create(self) -> Built:
-        lib = library()
-        # The library reads both settings from process-wide state when it builds
-        # an operator, so they are set for this build and restored after it.
-        with _lock:
-            was = lib.bartorch_sense_coil_batch(), lib.bartorch_sense_fold_maps()
-            lib.bartorch_sense_set_coil_batch(self.coil_batch)
-            lib.bartorch_sense_set_fold_maps(int(self.fold_maps))
-            try:
-                item = self._build_item(lib)
-            finally:
-                lib.bartorch_sense_set_coil_batch(was[0])
-                lib.bartorch_sense_set_fold_maps(was[1])
-            ptr = wrap_item(
-                self,
-                lib,
-                item,
-                self.kspace_shape,
-                self.image_shape,
-                self.batches,
-                self.device,
-                sets_order(self.batches, self.sets, self.image_encoding, self.ndim),
-            )
-        keep = tuple(
-            x
-            for x in (self.sensitivities, self.traj, self.weights, self._basis_layout()[0])
-            if x is not None
-        )
-        return Built(ptr, self.image_shape, self.kspace_shape, keep=keep, device=self.device)
+        return build_form(self, self._form())
 
     def _basis_layout(self):
         """``(basis, vector)``: the basis the item is built with and its BART dimensions.
@@ -479,7 +502,8 @@ class NoncartesianSense(LinearOperator):
             return None, None
         return b, _layout.vector({_layout.TE: b.shape[1], _layout.COEFF: b.shape[0]})
 
-    def _build_item(self, lib) -> int:
+    def _form(self) -> Form:
+        """This encoding as the form the library's one executor takes."""
         t, w = self.traj, self.weights
         b, bvec = self._basis_layout()
         tvec = wvec = None
@@ -490,22 +514,22 @@ class NoncartesianSense(LinearOperator):
             wshape = tuple(w.shape)
             base = {1: wshape[-1], 2: wshape[-2]} if t is not None else {}
             wvec = self._encoding_vector(base, wshape[: len(self.encoding)])
-        return self._under_lock(
-            lib.bartorch_linop_sense,
-            _vector(self._max_vector()),
-            _vector(self._kspace_vector()),
-            _vector(self._sens_vector()),
-            self.sensitivities.data_ptr(),
-            int(self.kernels),
-            None if t is None else _vector(tvec),
-            None if t is None else t.data_ptr(),
-            None if w is None else _vector(wvec),
-            None if w is None else w.data_ptr(),
-            None if b is None else _vector(bvec),
-            None if b is None else b.data_ptr(),
-            int(self.toeplitz),
-            int(self.modulated),
-            device=self.device,
+        return Form(
+            transform="nufft" if t is not None else "fft",
+            max_vector=self._max_vector(),
+            kspace_vector=self._kspace_vector(),
+            sensitivities=Array(self.sensitivities, self._sens_vector()),
+            kernels=self.kernels,
+            basis=None if b is None else Array(b, bvec),
+            weights=None if w is None else Array(w, wvec),
+            traj=None if t is None else Array(t, tvec),
+            toeplitz=self.toeplitz,
+            modulated=self.modulated,
+            coil_batch=self.coil_batch,
+            fold_maps=self.fold_maps,
+            coils=self.coils,
+            sets=self.sets,
+            coeffs=1 if b is None else int(b.shape[0]),
         )
 
 
@@ -593,7 +617,6 @@ class Coils(LinearOperator):
         super().__init__()
 
     def _create(self) -> Built:
-        lib = library()
         z, y, x = self.spatial if self.ndim == 3 else (1, *self.spatial)
         maxv = _layout.vector(
             {
@@ -615,24 +638,20 @@ class Coils(LinearOperator):
                 _layout.MAPS: self.sets,
             }
         )
-        # As in NoncartesianSense: the slab size is read from process-wide
-        # state when the operator is built, so it is set for this build alone.
-        with _lock:
-            was = lib.bartorch_sense_coil_batch()
-            lib.bartorch_sense_set_coil_batch(self.coil_batch)
-            try:
-                item = self._under_lock(
-                    lib.bartorch_linop_coils,
-                    _vector(maxv),
-                    _vector(sensv),
-                    self.sensitivities.data_ptr(),
-                    int(self.kernels),
-                    device=self.device,
-                )
-            finally:
-                lib.bartorch_sense_set_coil_batch(was)
-            order = sets_order(self.batches, self.sets, self.encoding, self.ndim)
-            ptr = wrap_item(
-                self, lib, item, self.oshape, self.ishape, self.batches, self.device, order
-            )
-        return Built(ptr, self.ishape, self.oshape, keep=(self.sensitivities,), device=self.device)
+        return build_form(
+            self,
+            Form(
+                transform="none",
+                max_vector=maxv,
+                kspace_vector=maxv,
+                sensitivities=Array(self.sensitivities, sensv),
+                kernels=self.kernels,
+                coil_batch=self.coil_batch,
+                coils=self.coils,
+                sets=self.sets,
+                coeffs=self.coeffs,
+            ),
+            image_shape=self.ishape,
+            kspace_shape=self.oshape,
+            encoding=self.encoding,
+        )

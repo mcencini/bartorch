@@ -307,6 +307,28 @@ def used_in_tools() -> bool:
     return bool(library().bartorch_finufft_usable())
 
 
+def serves(device: bool = False) -> bool:
+    """Whether the substitution answers ``nufft_create`` on this side.
+
+    The condition ``nufft_finufft.c`` applies before it takes an operator at
+    all: the host table, and the cuFINUFFT one as well for a transform BART
+    would run on a card.  What a caller needs it for is a transform only the
+    substitution can compute, so that the answer where it declines is a route
+    BART's own gridder does have rather than an error.
+
+    The substitution is installed first if nothing has needed one yet, so this
+    answers what would happen and not merely what has happened.
+    """
+    from bartorch._lib import library
+
+    install_once()
+
+    lib = library()
+    if not lib.bartorch_finufft_usable_on(0):
+        return False
+    return (not device) or bool(lib.bartorch_finufft_usable_on(1))
+
+
 def stream_psf(enable: bool = True) -> None:
     """Stream the Toeplitz point spread function to the card one set of frequencies at a time.
 

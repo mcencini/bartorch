@@ -24,6 +24,58 @@ LOG_LEVELS = {
     "trace": 7,
 }
 
+#: The header's own enumerators, by their own names.
+BARTORCH_ENCODING_NONE = 0
+BARTORCH_ENCODING_FFT = 1
+BARTORCH_ENCODING_NUFFT = 2
+BARTORCH_ENCODING_WAVE = 3
+BARTORCH_ENCODING_BUILT = 0
+BARTORCH_ENCODING_CHAINED = 1
+BARTORCH_ENCODING_FOLDED = 2
+BARTORCH_ENCODING_FORWARD = 3
+BARTORCH_ENCODING_ADJOINT = 4
+BARTORCH_ENCODING_NORMAL = 5
+BARTORCH_ENCODING_SEGMENTED = 6
+
+
+class Encoding(ctypes.Structure):
+    """``struct bartorch_encoding``, field for field."""
+
+    _fields_ = [
+        ("transform", ctypes.c_int),
+        ("max_dims", ctypes.c_void_p),
+        ("ksp_dims", ctypes.c_void_p),
+        ("sens_dims", ctypes.c_void_p),
+        ("sens", ctypes.c_void_p),
+        ("kernels", ctypes.c_int),
+        ("pat_dims", ctypes.c_void_p),
+        ("pattern", ctypes.c_void_p),
+        ("bas_dims", ctypes.c_void_p),
+        ("basis", ctypes.c_void_p),
+        ("wgh_dims", ctypes.c_void_p),
+        ("weights", ctypes.c_void_p),
+        ("traj_dims", ctypes.c_void_p),
+        ("traj", ctypes.c_void_p),
+        ("frames", ctypes.c_long),
+        ("shots", ctypes.c_long),
+        ("components", ctypes.c_int),
+        ("positions", ctypes.c_void_p),
+        ("kspace_readout", ctypes.c_int),
+        ("readout", ctypes.c_long),
+        ("psf", ctypes.c_void_p),
+        ("centred", ctypes.c_int),
+        ("segments", ctypes.c_long),
+        ("segment_sample_dims", ctypes.c_void_p),
+        ("segment_sample", ctypes.c_void_p),
+        ("segment_image_dims", ctypes.c_void_p),
+        ("segment_image", ctypes.c_void_p),
+        ("toeplitz", ctypes.c_int),
+        ("modulated", ctypes.c_int),
+        ("coil_batch", ctypes.c_int),
+        ("fold_maps", ctypes.c_int),
+    ]
+
+
 ALLOC_FN = ctypes.CFUNCTYPE(
     ctypes.c_void_p,
     ctypes.c_void_p,
@@ -134,13 +186,10 @@ SYMBOLS = (
     "bartorch_linop_nufft",
     "bartorch_linop_blocks",
     "bartorch_linop_reshaped",
-    "bartorch_linop_sense",
-    "bartorch_linop_cartesian",
-    "bartorch_sense_set_segments",
-    "bartorch_linop_cartesian_sampled",
-    "bartorch_linop_wave",
+    "bartorch_linop_encoding",
+    "bartorch_encoding_counter",
+    "bartorch_encoding_reset_counters",
     "bartorch_grid_fused",
-    "bartorch_linop_coils",
     "bartorch_linop_with_normal",
     "bartorch_linop_chain",
     "bartorch_linop_plus",
@@ -494,85 +543,14 @@ def bind(lib: ctypes.CDLL) -> ctypes.CDLL:
         ctypes.POINTER(ctypes.c_long),
         ctypes.POINTER(ctypes.c_long),
     ]
-    lib.bartorch_linop_sense.restype = ctypes.c_void_p
-    lib.bartorch_linop_sense.argtypes = [
-        ctypes.POINTER(ctypes.c_long),
-        ctypes.POINTER(ctypes.c_long),
-        ctypes.POINTER(ctypes.c_long),
-        ctypes.c_void_p,
-        ctypes.c_int,
-        ctypes.POINTER(ctypes.c_long),
-        ctypes.c_void_p,
-        ctypes.POINTER(ctypes.c_long),
-        ctypes.c_void_p,
-        ctypes.POINTER(ctypes.c_long),
-        ctypes.c_void_p,
-        ctypes.c_int,
-        ctypes.c_int,
-    ]
-    lib.bartorch_linop_cartesian.restype = ctypes.c_void_p
-    lib.bartorch_linop_cartesian.argtypes = [
-        ctypes.POINTER(ctypes.c_long),
-        ctypes.POINTER(ctypes.c_long),
-        ctypes.c_void_p,
-        ctypes.c_int,
-        ctypes.POINTER(ctypes.c_long),
-        ctypes.c_void_p,
-        ctypes.POINTER(ctypes.c_long),
-        ctypes.c_void_p,
-        ctypes.c_int,
-    ]
-    lib.bartorch_sense_set_segments.restype = None
-    lib.bartorch_sense_set_segments.argtypes = [
-        ctypes.c_long,
-        ctypes.POINTER(ctypes.c_long),
-        ctypes.c_void_p,
-        ctypes.POINTER(ctypes.c_long),
-        ctypes.c_void_p,
-    ]
-    lib.bartorch_linop_cartesian_sampled.restype = ctypes.c_void_p
-    lib.bartorch_linop_cartesian_sampled.argtypes = [
-        ctypes.POINTER(ctypes.c_long),
-        ctypes.POINTER(ctypes.c_long),
-        ctypes.c_void_p,
-        ctypes.c_int,
-        ctypes.c_long,
-        ctypes.c_long,
-        ctypes.c_int,
-        ctypes.c_void_p,
-        ctypes.POINTER(ctypes.c_long),
-        ctypes.c_void_p,
-        ctypes.c_int,
-        ctypes.c_int,
-    ]
-    lib.bartorch_linop_wave.restype = ctypes.c_void_p
-    lib.bartorch_linop_wave.argtypes = [
-        ctypes.POINTER(ctypes.c_long),
-        ctypes.POINTER(ctypes.c_long),
-        ctypes.c_void_p,
-        ctypes.c_int,
-        ctypes.c_long,
-        ctypes.c_void_p,
-        ctypes.c_int,
-        ctypes.POINTER(ctypes.c_long),
-        ctypes.c_void_p,
-        ctypes.c_long,
-        ctypes.c_long,
-        ctypes.c_int,
-        ctypes.c_void_p,
-        ctypes.POINTER(ctypes.c_long),
-        ctypes.c_void_p,
-        ctypes.c_int,
-    ]
+    lib.bartorch_linop_encoding.restype = ctypes.c_void_p
+    lib.bartorch_linop_encoding.argtypes = [ctypes.POINTER(Encoding)]
+    lib.bartorch_encoding_counter.restype = ctypes.c_long
+    lib.bartorch_encoding_counter.argtypes = [ctypes.c_int]
+    lib.bartorch_encoding_reset_counters.restype = None
+    lib.bartorch_encoding_reset_counters.argtypes = []
     lib.bartorch_grid_fused.restype = ctypes.c_long
     lib.bartorch_grid_fused.argtypes = []
-    lib.bartorch_linop_coils.restype = ctypes.c_void_p
-    lib.bartorch_linop_coils.argtypes = [
-        ctypes.POINTER(ctypes.c_long),
-        ctypes.POINTER(ctypes.c_long),
-        ctypes.c_void_p,
-        ctypes.c_int,
-    ]
     lib.bartorch_linop_with_normal.restype = ctypes.c_void_p
     lib.bartorch_linop_with_normal.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
     lib.bartorch_linop_chain.restype = ctypes.c_void_p

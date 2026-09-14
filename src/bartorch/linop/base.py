@@ -136,6 +136,30 @@ class LinearOperator(Operator):
 
         return Callback(self.oshape, self.ishape, self.forward, self.adjoint, self.normal)
 
+    @property
+    def plan(self):
+        """The encoding form this operator was lowered into, or ``None``.
+
+        An MRI encoding reports what the planner chose for it -- the
+        transform, the element-wise factors on each side of it, the
+        contraction, what is streamed, how the normal is applied, and which
+        executor path ran it.  The algebra carries the plan through, so a
+        composition with one encoding in it reports that encoding's plan;
+        anything else has none.
+        """
+        own = getattr(self, "_plan", None)
+        if own is not None:
+            return own
+        # By value rather than by part: an adjoint and a normal each hold the
+        # operator twice, once as it was given and once as the handle, and two
+        # references to one encoding are still one plan.
+        found = {
+            part.plan
+            for part in (getattr(self, name, None) for name in ("a", "b", "op", "source"))
+            if isinstance(part, LinearOperator) and part.plan is not None
+        }
+        return found.pop() if len(found) == 1 else None
+
     # --- operator algebra ---------------------------------------------------
     #
     # Every one of these is a BART constructor applied to BART operators, so
