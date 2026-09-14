@@ -179,9 +179,11 @@ prints what it saw.
 `KMP_DUPLICATE_LIB_OK=TRUE` is not this: the flag tells one runtime to
 tolerate a second live copy and is documented by its own authors as unsafe;
 here there is one copy, and torch and FINUFFT share its pool.  The macOS CI
-job runs the script before the suite so that a failure lands there rather than
-inside a test.  Linux is not asked: its loader resolves the duplicate instead
-of dying on it.
+job reads the pair with `diagnose`, brings the library up -- which is where
+`ensure()` runs, as it would on anyone's machine -- and then checks with
+`verify` that the loader agrees, all before the suite, so a repair that did
+not work lands there rather than inside a test.  Linux is not asked: its
+loader resolves the duplicate instead of dying on it.
 
 The requirement carries no marker, and that is a decision about which wheels
 exist rather than an oversight. FINUFFT ships none for Linux on aarch64 -- it

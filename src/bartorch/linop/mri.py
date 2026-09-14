@@ -551,10 +551,10 @@ def _nufft_contraction(encoding, b: torch.Tensor, c: torch.Tensor) -> LinearOper
 
     A basis along the samples is a transform only the substitution computes:
     BART's own gridder asserts that the basis is trivial over the sample axes
-    (``nufft_set_traj`` in ``noncart/nufft.c``).  So where FINUFFT is not
-    answering -- a macOS process, where the OpenMP collision makes the
-    substitution decline -- there is no such operator, and the sum of chains
-    is what the planner falls back to.
+    (``nufft_set_traj`` in ``noncart/nufft.c``).  So where the gridder is what
+    answers -- ``_finufft.barts_own_gridder()`` and ``use_in_tools(False)``,
+    which are the agreement check and the tests -- there is no such operator,
+    and the sum of chains is what the planner falls back to.
     """
     from bartorch import _finufft
 
