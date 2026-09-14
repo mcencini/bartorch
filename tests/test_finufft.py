@@ -1877,3 +1877,29 @@ def test_the_contraction_kernel_is_barts_contraction(in_tools):
         _finufft._contraction_kernel(True)
 
     assert float((ours - barts).abs().max() / barts.abs().max()) < 1e-5
+
+
+@requires_finufft
+def test_a_complex_basis_has_the_toeplitz_normal_of_the_two_applications():
+    """A subspace function is the basis's Gram at every frequency.
+
+    The Gram is Hermitian whatever the basis, since the weights are real where
+    the gridding kernel is, and its upper triangle is what is kept; a real
+    basis's is also real, and is kept as real numbers.  Either way the Toeplitz
+    normal is the two applications of the transform, to FINUFFT's tolerance.
+    """
+    n, shots, frames, coeffs = 16, 10, 3, 2
+    torch.manual_seed(0)
+    per_frame = [bt.traj(x=n, y=shots, r=True, G=True).reshape(shots, n, 3) * (1 - 0.1 * f) for f in range(frames)]
+    traj = torch.stack(per_frame).reshape(frames, 1, 1, shots, n, 3)
+    image, kspace = (coeffs, 1, 1, 1, 1, n, n), (frames, 1, 1, shots, n, 1)
+
+    real = torch.randn(coeffs, frames, dtype=torch.float64).to(torch.complex64)
+    complex_ = torch.randn(coeffs, frames, dtype=torch.complex64)
+    for basis in (real, complex_):
+        b = basis.reshape(coeffs, frames, 1, 1, 1, 1, 1)
+        applied = linop.NUFFT(traj, image, kspace, basis=b, toeplitz=False)
+        collapsed = linop.NUFFT(traj, image, kspace, basis=b, toeplitz=True)
+        x = torch.randn(*applied.ishape, dtype=torch.complex64)
+        want = applied.adjoint(applied(x))
+        assert (collapsed.normal(x) - want).abs().max() / want.abs().max() < 2e-2

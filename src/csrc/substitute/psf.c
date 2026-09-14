@@ -76,7 +76,18 @@ static complex float* square_basis(bool upper_triag, int N, long sqr_bas_dims[N]
 	sqr_bas_dims[5] = ksp_dims[5];
 
 	complex float* sqr = md_alloc_sameplace(N, sqr_bas_dims, CFL_SIZE, basis);
-	md_ztenmulc(N, sqr_bas_dims, sqr, bas_dims, basis, bas_dimsT, basis);
+	/* The square is conj(B[k']) B[k] summed over the frames, which is
+	 * Hermitian at every frequency whatever the basis: the weights are real
+	 * where the gridding kernel is.  Packed into its upper triangle, it is
+	 * read back by `md_ztenmul_upper_triag2` with the conjugate on the other
+	 * side from the one `compute_square_basis` builds it with, so a packed
+	 * square is built the other way round.  Whole, BART's way reads right; a
+	 * complex basis packed BART's way gave a normal a third off the two
+	 * applications of the transform.  A real basis is the same either way. */
+	if (upper_triag)
+		md_ztenmulc(N, sqr_bas_dims, sqr, bas_dimsT, basis, bas_dims, basis);
+	else
+		md_ztenmulc(N, sqr_bas_dims, sqr, bas_dims, basis, bas_dimsT, basis);
 
 	sqr_bas_dims[6] *= sqr_bas_dims[6];
 	sqr_bas_dims[7] = 1;
