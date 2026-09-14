@@ -207,6 +207,25 @@ def test_a_composition_the_planner_matches_is_one_encoding(maps, pattern):
         assert (built(x) - want).abs().max() / want.abs().max() < 1e-5
 
 
+def test_a_fused_contraction_costs_one_application_and_a_chained_one_costs_a_term_each(
+    maps, pattern
+):
+    """What composing has to cost nothing means, counted rather than timed."""
+    torch.manual_seed(17)
+    A = linop.CartesianSense(maps, (Y, X), pattern=pattern)
+    described = planner.Contract(A, _rand(3, 1, Y, X), _rand(3, Y, X))
+    fused, chained = planner.lower(described), planner.materialise(described)
+    x = _rand(Y, X)
+
+    library().bartorch_encoding_reset_counters()
+    fused(x)
+    assert _counter(_abi.BARTORCH_ENCODING_FORWARD) == 1
+
+    library().bartorch_encoding_reset_counters()
+    chained(x)
+    assert _counter(_abi.BARTORCH_ENCODING_FORWARD) == 3
+
+
 def test_terms_that_do_not_share_an_encoding_are_not_a_contraction(maps, pattern):
     A = linop.CartesianSense(maps, (Y, X), pattern=pattern)
     B = linop.CartesianSense(maps, (Y, X), pattern=pattern)
