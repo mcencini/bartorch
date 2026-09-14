@@ -242,11 +242,12 @@ BARTORCH_API bartorch_linop* bartorch_linop_sense(const long* max_dims, const lo
 		const long* bas_dims, const void* basis, int toeplitz, int modulated);
 /* The Cartesian SENSE encoding with its pattern and subspace basis inside the
  * coil loop, and a normal that transforms only the axes the pattern varies
- * along.  `pattern` and `basis` may each be NULL. */
+ * along.  `pattern` and `basis` may each be NULL.  Without `toeplitz` the
+ * normal is the two applications. */
 BARTORCH_API bartorch_linop* bartorch_linop_cartesian(const long* max_dims, const long* sens_dims,
 		const void* sens, int kernels,
 		const long* pat_dims, const void* pattern,
-		const long* bas_dims, const void* basis);
+		const long* bas_dims, const void* basis, int toeplitz);
 /* Normals of a Cartesian encoding applied through cuFFT's callbacks since the
  * library was loaded; the rest were applied as BART's chain of operators. */
 BARTORCH_API long bartorch_grid_fused(void);

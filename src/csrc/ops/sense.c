@@ -164,6 +164,15 @@ struct sense_s {
 	long out_slab_offset;
 	long map_slab_offset;
 
+	/* Where the coils lie in the samples.  BART's tools keep them on
+	 * COIL_DIM, so a slab is a stride along it; the torch layout puts them
+	 * slowest, so the whole is one coil's samples, contiguous, one block
+	 * after another. */
+	bool coils_slowest;
+	long block_dims[DIMS];
+	long block_strs[DIMS];
+	long block_size;
+
 	/* The sensitivities, and whether they are ours to free: the Cartesian
 	 * operator scales and modulates a copy, the non-Cartesian one reads
 	 * the caller's array in place. */
@@ -554,8 +563,19 @@ static void forward_slab(const struct sense_s* d, long coil, const complex float
 
 	linop_forward(d->slab, DIMS, d->out_dims, c->out, DIMS, d->cim_dims, c->cim);
 
-	md_copy2(DIMS, d->out_dims, d->full_out_strs, c->dst + slab_at(d->out_slab_offset, coil),
-			d->out_strs, c->out, CFL_SIZE);
+	if (!d->coils_slowest) {
+
+		md_copy2(DIMS, d->out_dims, d->full_out_strs, c->dst + slab_at(d->out_slab_offset, coil),
+				d->out_strs, c->out, CFL_SIZE);
+		return;
+	}
+
+	/* The slab's coils one after another, each into its block of the whole. */
+	long coil_step = d->out_strs[COIL_DIM] / (long)CFL_SIZE;
+
+	for (long b = 0; b < d->batch; b++)
+		md_copy2(DIMS, d->block_dims, d->block_strs, c->dst + (coil + b) * d->block_size,
+				d->out_strs, c->out + b * coil_step, CFL_SIZE);
 }
 
 static void adjoint_slab(const struct sense_s* d, long coil, const complex float* map,
@@ -564,8 +584,19 @@ static void adjoint_slab(const struct sense_s* d, long coil, const complex float
 	(void)last;
 	struct slab_ctx* c = _c;
 
-	md_copy2(DIMS, d->out_dims, d->out_strs, c->out,
-			d->full_out_strs, c->src + slab_at(d->out_slab_offset, coil), CFL_SIZE);
+	if (!d->coils_slowest) {
+
+		md_copy2(DIMS, d->out_dims, d->out_strs, c->out,
+				d->full_out_strs, c->src + slab_at(d->out_slab_offset, coil), CFL_SIZE);
+
+	} else {
+
+		long coil_step = d->out_strs[COIL_DIM] / (long)CFL_SIZE;
+
+		for (long b = 0; b < d->batch; b++)
+			md_copy2(DIMS, d->block_dims, d->out_strs, c->out + b * coil_step,
+					d->block_strs, c->src + (coil + b) * d->block_size, CFL_SIZE);
+	}
 
 	linop_adjoint(d->slab, DIMS, d->cim_dims, c->cim, DIMS, d->out_dims, c->out);
 
@@ -881,19 +912,46 @@ static struct sense_s* sense_slabs(const long max_dims[DIMS], const long map_dim
 /* What a slab answers with is the transform's to say, not this: a subspace
  * basis contracts its coefficients away on the k-space side, so the samples
  * that come back are not the dimensions the operator was asked for.  The
- * whole is that shape with every coil in it. */
-static void sense_output_from(struct sense_s* d)
+ * whole is that shape with every coil in it: on COIL_DIM for BART's tools,
+ * slowest for the torch layout. */
+static void sense_output_from(struct sense_s* d, bool coils_slowest)
 {
 	auto cod = linop_codomain(d->slab);
 
 	md_copy_dims(DIMS, d->out_dims, cod->dims);
 	md_calc_strides(DIMS, d->out_strs, d->out_dims, CFL_SIZE);
 
-	md_copy_dims(DIMS, d->full_out_dims, d->out_dims);
-	d->full_out_dims[COIL_DIM] = d->coils;
-	md_calc_strides(DIMS, d->full_out_strs, d->full_out_dims, CFL_SIZE);
+	d->coils_slowest = coils_slowest;
 
-	d->out_slab_offset = d->full_out_strs[COIL_DIM];
+	if (!coils_slowest) {
+
+		md_copy_dims(DIMS, d->full_out_dims, d->out_dims);
+		d->full_out_dims[COIL_DIM] = d->coils;
+		md_calc_strides(DIMS, d->full_out_strs, d->full_out_dims, CFL_SIZE);
+		d->out_slab_offset = d->full_out_strs[COIL_DIM];
+		return;
+	}
+
+	md_copy_dims(DIMS, d->block_dims, d->out_dims);
+	d->block_dims[COIL_DIM] = 1;
+	md_calc_strides(DIMS, d->block_strs, d->block_dims, CFL_SIZE);
+	d->block_size = md_calc_size(DIMS, d->block_dims);
+
+	/* The whole is the blocks one coil after another, so the coils go on the
+	 * first axis past everything a block has: BART's own coil axis where a
+	 * block has nothing beyond it, a later one where encoding axes lie there. */
+	int last = DIMS - 1;
+
+	while ((last > 0) && (1 == d->block_dims[last]))
+		last--;
+
+	int coil_axis = (last < COIL_DIM) ? COIL_DIM : last + 1;
+
+	if (coil_axis >= DIMS)
+		error("bartorch: the samples leave no axis for the coils\n");
+
+	md_copy_dims(DIMS, d->full_out_dims, d->block_dims);
+	d->full_out_dims[coil_axis] = d->coils;
 }
 
 static struct linop_s* sense_operator(struct sense_s* d)
@@ -943,7 +1001,7 @@ struct linop_s* sense_init(unsigned long shared_img_flags, const long max_dims[D
 	slab_ksp_dims[COIL_DIM] = d->batch;
 
 	d->slab = linop_fft_create(DIMS, slab_ksp_dims, FFT_FLAGS);
-	sense_output_from(d);
+	sense_output_from(d, false);
 
 	return sense_operator(d);
 }
@@ -982,7 +1040,7 @@ const struct linop_s* sense_nc_init(const long max_dims[DIMS], const long map_di
 			(weights ? wgs_dims : NULL), weights,
 			(basis ? basis_dims : NULL), basis, *_conf);
 
-	sense_output_from(d);
+	sense_output_from(d, false);
 
 	/* The caller reads the point spread function off this and imports one
 	 * into it; a slab's transform carries the same one, because a point
@@ -1144,7 +1202,7 @@ const struct linop_s* bartorch_sense_operator(const long max_dims[DIMS], const l
 				(weights ? wgh_dims : NULL), weights,
 				(basis ? bas_dims : NULL), basis, *conf);
 
-	sense_output_from(d);
+	sense_output_from(d, true);
 
 	return sense_operator(d);
 }
@@ -1153,7 +1211,7 @@ const struct linop_s* bartorch_sense_operator(const long max_dims[DIMS], const l
  * the normal that transforms only the axes the pattern varies along. */
 extern const struct linop_s* grid_transform_create(const long cim_dims[DIMS],
 		const long pat_dims[DIMS], const complex float* pattern,
-		const long bas_dims[DIMS], const complex float* basis);
+		const long bas_dims[DIMS], const complex float* basis, int toeplitz);
 
 /* The Cartesian SENSE encoding with its pattern and subspace basis inside the
  * coil loop.
@@ -1166,7 +1224,7 @@ extern const struct linop_s* grid_transform_create(const long cim_dims[DIMS],
 const struct linop_s* bartorch_cartesian_operator(const long max_dims[DIMS], const long sens_dims[DIMS],
 		const complex float* sens, int kernels,
 		const long pat_dims[DIMS], const complex float* pattern,
-		const long bas_dims[DIMS], const complex float* basis)
+		const long bas_dims[DIMS], const complex float* basis, int toeplitz)
 {
 	long map_dims[DIMS];
 	md_select_dims(DIMS, FFT_FLAGS | COIL_FLAG | MAPS_FLAG, map_dims, max_dims);
@@ -1185,15 +1243,15 @@ const struct linop_s* bartorch_cartesian_operator(const long max_dims[DIMS], con
 		md_select_dims(DIMS, ~COIL_FLAG, img_dims, max_dims);
 
 		return linop_chain_FF(linop_fmac_dims_create(DIMS, cim_dims, img_dims, sens_dims, sens),
-				grid_transform_create(cim_dims, pat_dims, pattern, bas_dims, basis));
+				grid_transform_create(cim_dims, pat_dims, pattern, bas_dims, basis, toeplitz));
 	}
 
 	struct sense_s* d = sense_slabs(max_dims, map_dims, cim_dims, 0UL);
 	sense_hold(d, sens_dims, sens, kernels);
 
-	d->slab = grid_transform_create(d->cim_dims, pat_dims, pattern, bas_dims, basis);
+	d->slab = grid_transform_create(d->cim_dims, pat_dims, pattern, bas_dims, basis, toeplitz);
 
-	sense_output_from(d);
+	sense_output_from(d, true);
 
 	return sense_operator(d);
 }
@@ -1242,7 +1300,7 @@ const struct linop_s* bartorch_coils_operator(const long max_dims[DIMS], const l
 	 * what it answers with is the slab of coil images itself. */
 	d->slab = linop_identity_create(DIMS, d->cim_dims);
 
-	sense_output_from(d);
+	sense_output_from(d, true);
 
 	return sense_operator(d);
 }

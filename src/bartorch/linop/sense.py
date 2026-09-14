@@ -1,58 +1,161 @@
-"""The non-Cartesian SENSE encoding, applied a slab of coils at a time."""
+"""The SENSE encodings, applied a slab of coils at a time, in the torch layout.
+
+An image is ``(*batches, [sets,] *encoding, [z,] y, x)`` and its samples
+``(*batches, coils, *encoding, shots, samples)`` off a grid, or
+``(*batches, coils, *encoding, [z,] y, x)`` on one.  Sensitivities are
+``([sets,] coils, [z,] y, x)``.
+"""
 
 from __future__ import annotations
 
 import torch
 
+from bartorch import _layout
 from bartorch._dispatch import _lock
-from bartorch._lib import library
+from bartorch._lib import DIMS, library
 from bartorch._operator import Built, Shape, as_operand, dims
 from bartorch.linop.base import LinearOperator
 
 __all__ = ["Coils", "NoncartesianSense"]
 
 
-def _without_maps(shape: tuple[int, ...]) -> tuple[int, ...]:
-    """``shape`` with BART's MAPS axis set to one.
+def _vector(v):
+    """A BART dimension vector as the C entry points take it.
 
-    The operator sums the sets of maps on the way out, so the samples never
-    carry them.  In the arrangement here -- ``(coeffs, te, maps, coils,
-    *spatial)`` -- that axis is the third; a shape short enough not to have
-    one has no sets to drop.
+    ``dims`` reverses a C-order shape into BART's order, so a vector already in
+    BART's order goes through reversed.
     """
-    return (*shape[:2], 1, *shape[3:]) if len(shape) > 4 else shape
+    return dims(tuple(v)[::-1])
 
 
-def _bank(sensitivities: torch.Tensor, coils: int, spatial: tuple[int, ...]):
-    """``(bank, sets, sens_spatial)`` from sensitivities held either way.
+def _bank(sensitivities: torch.Tensor, ndim: int):
+    """``(bank, has_sets, sets, coils, spatial)`` from ``([sets,] coils, *spatial)``.
 
-    A bank is ``(coils, *spatial)`` for the one set a single-map calibration
-    gives, and ``(sets, coils, *spatial)`` for the several that ESPIRiT's
-    second map and ENLIVE's relaxed model give -- which is the shape
-    :func:`bartorch.tools.ecalib` and :func:`bartorch.tools.nlinv` return for
-    ``maps > 1``, with the spatial axes written out.
-
-    Writing them out is what tells the two apart: a bank of one set is at most
-    ``(coils, z, y, x)``, so anything with an axis beyond that and the coils in
-    second place is carrying sets.  A two-dimensional bank may still leave
-    BART's third spatial axis out, and then it is one set by construction.
+    ``spatial`` is the bank's own three spatial axes -- a kernel's extent for
+    kernels -- with a two-dimensional bank's z written out as one.
     """
     s = as_operand(sensitivities, tuple(sensitivities.shape), "sensitivities")
-    shape = tuple(s.shape)
-
-    if len(shape) == len(spatial) + 2 and shape[1] == coils:
-        sets, sens_spatial = shape[0], shape[2:]
-    elif shape[0] == coils:
-        sets, sens_spatial = 1, shape[1:]
-        if len(sens_spatial) == 2:
-            sens_spatial = (1, *sens_spatial)
+    lead = s.ndim - ndim
+    if lead == 1:
+        has_sets, sets, coils = False, 1, int(s.shape[0])
+    elif lead == 2:
+        has_sets, sets, coils = True, int(s.shape[0]), int(s.shape[1])
     else:
         raise ValueError(
-            f"sensitivities of {shape} are neither (coils, *spatial) nor "
-            f"(sets, coils, *spatial) for {coils} coils"
+            f"sensitivities of {tuple(s.shape)} are neither (coils, *spatial) nor "
+            f"(sets, coils, *spatial) for {ndim} spatial axes"
         )
+    spatial = tuple(int(n) for n in s.shape[-ndim:])
+    return s, has_sets, sets, coils, (spatial if ndim == 3 else (1, *spatial))
 
-    return s.reshape(sets, coils, *sens_spatial), sets, tuple(sens_spatial)
+
+def _grid_ndim(sensitivities: torch.Tensor, image_shape: Shape, kernels: bool, ndim) -> int:
+    """How many spatial axes a transform on a grid has.
+
+    Given, it is given.  Sensitivities held as maps share the image's spatial
+    axes, so the longer match says it.  Kernels share only their number, and a
+    bank of four axes is either three spatial ones behind the coils or two
+    behind sets and coils: that is what ``ndim`` is for.
+    """
+    if ndim is not None:
+        if int(ndim) not in (2, 3):
+            raise ValueError(f"a transform has two or three spatial axes, not {ndim}")
+        return int(ndim)
+    shape, image = tuple(sensitivities.shape), tuple(image_shape)
+    if not kernels:
+        if len(shape) >= 4 and len(image) >= 3 and shape[-3:] == image[-3:]:
+            return 3
+        if len(shape) >= 3 and len(image) >= 2 and shape[-2:] == image[-2:]:
+            return 2
+        raise ValueError(f"sensitivities of {shape} share no spatial axes with an image of {image}")
+    if len(shape) == 3:
+        return 2
+    if len(shape) == 5:
+        return 3
+    raise ValueError(
+        f"kernels of {shape} are three spatial axes behind the coils or two behind sets "
+        "and coils; say which with ndim=3 or ndim=2"
+    )
+
+
+def sets_order(batches: Shape, sets: int, encoding: Shape, ndim: int):
+    """The image's axes with the sets moved behind the encoding axes, or ``None``.
+
+    BART holds several sets of maps on a lower dimension than any encoding
+    axis, so in memory they vary faster than the encoding does: the reverse
+    of the torch layout.  Where both are nontrivial the image is permuted
+    into BART's order in front of the operator.
+    """
+    if sets < 2 or all(n == 1 for n in encoding):
+        return None
+    nb, ne = len(batches), len(encoding)
+    return (*range(nb), *range(nb + 1, nb + 1 + ne), nb, *range(nb + 1 + ne, nb + 1 + ne + ndim))
+
+
+def wrap_item(
+    owner, lib, item: int, oshape: Shape, ishape: Shape, batches: Shape, device, order=None
+) -> int:
+    """The operator over every batch item, from one built for a single one.
+
+    The item's operator is described over the plain reversal of the torch
+    shapes, applied to each batch item in turn where there is more than one,
+    and freed: the wrapper holds its own reference.  With ``order`` the item
+    takes the image permuted that way (see :func:`sets_order`), and the
+    permutation is put in front of it.
+    """
+    if not item:
+        return 0
+    inner = ishape if order is None else tuple(ishape[o] for o in order)
+    try:
+        n = _layout.count(batches)
+        if n == 1:
+            ptr = owner._under_lock(
+                lib.bartorch_linop_reshaped, item, DIMS, dims(oshape), dims(inner), device=device
+            )
+        else:
+            ptr = owner._under_lock(
+                lib.bartorch_linop_blocks, item, DIMS, dims(oshape), dims(inner), n, device=device
+            )
+    finally:
+        with _lock:
+            lib.bartorch_linop_free(item)
+    if order is None or not ptr:
+        return ptr
+    return _behind_permutation(owner, lib, ptr, ishape, order, device)
+
+
+def _behind_permutation(owner, lib, ptr: int, ishape: Shape, order, device) -> int:
+    """``ptr`` applied to the image permuted by ``order``, its own normal kept.
+
+    The normal is ``P^H N P`` with ``N`` the operator's normal, so a Toeplitz
+    normal stays one.  ``ptr`` is freed.
+    """
+    from bartorch.linop.shape import Permute
+
+    permute = Permute(ishape, order)._bart()
+    p = permute._h.ptr
+    made = [ptr]
+    try:
+        forward = owner._under_lock(lib.bartorch_linop_chain, p, ptr, device=device)
+        normal = owner._under_lock(lib.bartorch_linop_normal_op, ptr, device=device)
+        back = owner._under_lock(lib.bartorch_linop_adjoint_op, p, device=device)
+        made += [forward, normal, back]
+        if not (forward and normal and back):
+            return 0
+        permuted = owner._under_lock(lib.bartorch_linop_chain, p, normal, device=device)
+        made.append(permuted)
+        if not permuted:
+            return 0
+        full = owner._under_lock(lib.bartorch_linop_chain, permuted, back, device=device)
+        made.append(full)
+        if not full:
+            return 0
+        return owner._under_lock(lib.bartorch_linop_with_normal, forward, full, device=device)
+    finally:
+        with _lock:
+            for h in made:
+                if h:
+                    lib.bartorch_linop_free(h)
 
 
 class NoncartesianSense(LinearOperator):
@@ -68,22 +171,26 @@ class NoncartesianSense(LinearOperator):
     Parameters
     ----------
     sensitivities : tensor
-        Coil sensitivities of shape ``(coils, *image_shape[1:])``, or their
-        k-space kernels when ``kernels`` is set.  A bank on the host while the
-        transform is on a card is transferred a slab at a time.
+        Coil sensitivities ``(coils, [z,] y, x)``, or their k-space kernels when
+        ``kernels`` is set.  A bank on the host while the transform is on a
+        card is transferred a slab at a time.
 
         Several sets of maps -- ESPIRiT's second, ENLIVE's relaxed model --
-        are ``(sets, coils, *spatial)``, which is what
+        are ``(sets, coils, [z,] y, x)``, which is what
         :func:`bartorch.tools.ecalib` and :func:`bartorch.tools.nlinv` return
         for ``maps > 1``.  The image then carries the sets and the samples do
-        not: the encoding is ``y[c] = sum_m S[m, c] x[m]``, summed in BART's
-        own ``md_ztenmul`` rather than by anything here.
+        not: the encoding is ``y[c] = sum_m S[m, c] x[m]``.
     image_shape : tuple of int
-        Coil-image shape, C order, for instance ``(coils, y, x)``.
+        Image shape ``(*batches, [sets,] *encoding, [z,] y, x)``: the batches
+        first, then the sets where the sensitivities carry them, then the
+        trajectory's encoding axes -- with a basis, its coefficients in place of
+        the last -- then the spatial axes the trajectory has.
     traj : tensor
-        Trajectory in grid units, as :func:`bartorch.tools.traj` produces.
+        Trajectory ``(*encoding, shots, samples, 3)`` in grid units, as
+        :func:`bartorch.tools.traj` produces.
     kspace_shape : tuple of int, optional
-        Sample shape; by default the trajectory's, or the image's on a grid.
+        Sample shape; by default ``(*batches, coils, *encoding, shots,
+        samples)``, and on a grid ``(*batches, coils, *encoding, [z,] y, x)``.
     kernels : bool
         Read ``sensitivities`` as k-space kernels, zero-padded to the image grid
         and transformed a slab at a time.  The operator then applies the maps
@@ -107,11 +214,10 @@ class NoncartesianSense(LinearOperator):
         with ``kernels``, because the modulation is the whole grid's and a
         kernel cannot carry it.
     weights : tensor, optional
-        Diagonal in k-space, as :class:`~bartorch.linop.NUFFT` takes it.
+        Diagonal in k-space, broadcast over ``(*encoding, shots, samples)``.
     basis : tensor, optional
-        Subspace basis ``(coeffs, frames, 1, 1, 1, 1, 1)``, as
-        :class:`~bartorch.linop.NUFFT` takes it.  The image then has shape
-        ``(coeffs, 1, 1, 1, *spatial)`` and the samples one set per frame.
+        Subspace basis ``(coeffs, frames)`` over the last encoding axis, as
+        :class:`~bartorch.linop.NUFFT` takes it.
     device : device, optional
         Where the operator is built and does its arithmetic; by default where the
         trajectory is, or the sensitivities for a Cartesian operator.  With a card
@@ -119,11 +225,12 @@ class NoncartesianSense(LinearOperator):
         application, the samples a slab at a time, and between applications the
         card holds the operator only.
     coil_batch : int
-        Coils applied at once; 0 uses BART's own operator over all coils.  A
-        larger batch is faster and holds proportionally more.  A single-coil
-        operator is always BART's own.  A batch that does not divide the coils
-        is cut down to one that does, because the loop steps by the slab and
-        the transform is built for a slab.
+        Coils applied at once; 0 uses BART's own operator over all coils, which
+        lays the samples out BART's way and so is refused where they have
+        encoding axes.  A larger batch is faster and holds proportionally more.
+        A single-coil operator is always BART's own.  A batch that does not
+        divide the coils is cut down to one that does, because the loop steps
+        by the slab and the transform is built for a slab.
 
         What it changes is residency, not arithmetic.  The sample convention
         is ``modulated``'s to say and not this one's.
@@ -132,17 +239,14 @@ class NoncartesianSense(LinearOperator):
         two coil images per batch.  Takes effect only where the transform works
         one coefficient at a time, the gathered arrangement of a compressed
         Toeplitz function.
+    ndim : int, optional
+        Spatial axes of a transform on a grid, where the sensitivities and the
+        image do not say; off a grid the trajectory says.
     """
 
     #: Whether a trajectory is required.  The Cartesian encoding is the same
     #: operator over BART's own FFT, and reaches it by clearing this.
     _needs_traj = True
-
-    #: How many subspace coefficients the image carries when no basis is handed
-    #: to BART.  A basis says this for itself; the grid encoding sets it,
-    #: because on a grid the contraction is chained on afterwards rather than
-    #: folded into the transform -- which is how ``grecon/model.c`` builds it.
-    _coeff_count = 1
 
     def __init__(
         self,
@@ -158,60 +262,96 @@ class NoncartesianSense(LinearOperator):
         device: torch.device | str | None = None,
         coil_batch: int = 1,
         fold_maps: bool = True,
+        ndim: int | None = None,
     ):
         image_shape = tuple(image_shape)
-        if len(image_shape) < 3:
-            raise ValueError("image_shape is (coils, *spatial), for instance (coils, y, x)")
         if traj is None and self._needs_traj:
             raise ValueError("this is the encoding off a grid; CartesianSense is the one on it")
         if traj is None and (weights is not None or basis is not None):
             raise ValueError("weights and a basis belong to a non-Cartesian transform")
         if traj is not None and modulated:
             raise ValueError("the modulated convention is the grid's; off it there is only one")
+        if coil_batch < 0:
+            raise ValueError(f"coil_batch is a number of coils, not {coil_batch}")
 
-        # BART reads the coils off a dimension of their own, which sits after
-        # the three spatial ones, so a two-dimensional problem carries the
-        # third as a singleton.  The caller need not write it out.
-        coils, spatial = image_shape[0], image_shape[1:]
-        if len(spatial) == 2:
-            spatial = (1, *spatial)
-
-        s, sets, sens_spatial = _bank(sensitivities, coils, spatial)
-
-        self.sensitivities = s
-        self.sets = sets
-        self.image_shape = image_shape
         self.kernels = bool(kernels)
         self.toeplitz = bool(toeplitz)
         self.modulated = bool(modulated)
-        self.traj = None if traj is None else as_operand(traj, tuple(traj.shape), "traj")
-        self.weights = (
-            None if weights is None else as_operand(weights, tuple(weights.shape), "weights")
-        )
-        self.basis = None if basis is None else as_operand(basis, tuple(basis.shape), "basis")
-        self._sens_shape = (sets, coils, *sens_spatial)
-        if coil_batch < 0:
-            raise ValueError(f"coil_batch is a number of coils, not {coil_batch}")
         self.coil_batch = int(coil_batch)
         self.fold_maps = bool(fold_maps)
 
-        # A basis puts the coefficients on BART's COEFF axis, three past the
-        # coils, and sets of maps on its MAPS axis, which is the one between.
-        # The image carries both where the coils do not; the samples carry
-        # neither the maps, which the operator sums over, nor -- behind a
-        # basis -- the coefficients, which it contracts.
-        b = self.basis
-        coeffs = self._coeff_count if b is None else int(b.shape[0])
-        if b is None and 1 == coeffs and 1 == sets:
-            self._max_shape = (coils, *spatial)
-            self.ishape = spatial
-        else:
-            self._max_shape = (coeffs, 1, sets, coils, *spatial)
-            self.ishape = (coeffs, 1, sets, 1, *spatial)
+        self.traj = None if traj is None else as_operand(traj, tuple(traj.shape), "traj")
+        if self.traj is not None:
+            from bartorch import _finufft
 
-        self.kspace_shape = tuple(
-            self._default_kspace(coils) if kspace_shape is None else kspace_shape
+            if self.traj.ndim < 3:
+                raise ValueError(
+                    f"a trajectory is (*encoding, shots, samples, 3), not {tuple(self.traj.shape)}"
+                )
+            self.ndim = _finufft.spatial_ndim(self.traj)
+            self.encoding = tuple(int(n) for n in self.traj.shape[:-3])
+        else:
+            self.ndim = _grid_ndim(sensitivities, image_shape, self.kernels, ndim)
+            self.encoding = self._grid_encoding()
+
+        s, self.has_sets, self.sets, self.coils, self.sens_spatial = _bank(sensitivities, self.ndim)
+        self.sensitivities = s
+
+        self.basis = None
+        self.coeffs = None
+        if basis is not None:
+            b = as_operand(basis, tuple(basis.shape), "basis")
+            if b.ndim < 2 or any(n != 1 for n in b.shape[2:]):
+                raise ValueError(f"a basis is (coeffs, frames), not {tuple(b.shape)}")
+            if not self.encoding:
+                raise ValueError("a basis contracts an encoding axis, and the trajectory has none")
+            coeffs, frames = int(b.shape[0]), int(b.shape[1])
+            if frames != self.encoding[-1]:
+                raise ValueError(
+                    f"the basis has {frames} frames and the last encoding axis {self.encoding[-1]}"
+                )
+            self.basis = b.reshape(coeffs, frames)
+            self.coeffs = coeffs
+
+        self.image_encoding = self._image_encoding()
+        lead = (1 if self.has_sets else 0) + len(self.image_encoding) + self.ndim
+        batches, rest = _layout.split(image_shape, lead, "the image")
+        spatial = tuple(rest[len(rest) - self.ndim :])
+        want = (
+            *((self.sets,) if self.has_sets else ()),
+            *self.image_encoding,
+            *spatial,
         )
+        if tuple(rest) != want:
+            raise ValueError(
+                f"the image {image_shape} does not end in "
+                f"{'(sets, ' if self.has_sets else '('}*encoding {self.image_encoding}, "
+                f"{self.ndim} spatial axes)"
+            )
+        self.batches = tuple(batches)
+        self.spatial = spatial
+        self.image_shape = image_shape
+
+        if self.coil_batch == 0 and any(n > 1 for n in self.encoding):
+            raise ValueError(
+                "coil_batch=0 is BART's own operator, which lays samples out with the coils "
+                "before the encoding axes; use a coil batch of one or more"
+            )
+
+        self.weights = None
+        if weights is not None:
+            per_coil = self._kspace_tail()
+            w = as_operand(weights, tuple(weights.shape), "weights")
+            got = (1,) * (len(per_coil) - w.ndim) + tuple(w.shape)
+            if len(got) != len(per_coil) or any(g not in (1, f) for g, f in zip(got, per_coil)):
+                raise ValueError(f"weights of {tuple(w.shape)} do not broadcast over {per_coil}")
+            self.weights = w.reshape(got)
+
+        default = (*self.batches, self.coils, *self._kspace_tail())
+        self.kspace_shape = default if kspace_shape is None else tuple(kspace_shape)
+        if self.kspace_shape != default:
+            raise ValueError(f"the samples of this encoding are {default}, not {self.kspace_shape}")
+        self.ishape = image_shape
 
         # Where the operator is built follows the transform's own data, not
         # the sensitivities: a bank left on the host is the point.  Named, it
@@ -226,24 +366,78 @@ class NoncartesianSense(LinearOperator):
 
         super().__init__()
 
-    def _default_kspace(self, coils: int) -> Shape:
+    # --- the layout ----------------------------------------------------------
+
+    def _grid_encoding(self) -> tuple[int, ...]:
+        """The encoding axes of the samples on a grid; none for the plain encoding."""
+        return ()
+
+    def _has_basis(self) -> bool:
+        """Whether a basis contracts the last encoding axis."""
+        return self.coeffs is not None
+
+    def _image_encoding(self) -> tuple[int, ...]:
+        """The image's encoding axes: the samples', with coefficients in place of frames."""
+        if self.coeffs is None:
+            return self.encoding
+        return (*self.encoding[:-1], self.coeffs)
+
+    def _kspace_tail(self) -> tuple[int, ...]:
+        """One coil's samples."""
         if self.traj is None:
-            # The samples do not carry the sets of maps: the operator sums
-            # over them on the way out and hands them back on the way in.
-            return _without_maps(self._max_shape)
-        # BART lays non-Cartesian samples out as the trajectory is, with the
-        # coordinate axis a singleton and the coils on the axis after the
-        # spokes -- which is where the sensitivities have them, rather than
-        # the one that carries sets of maps.
-        bart = [1, *list(self.traj.shape)[::-1][1:]]
-        bart += [1] * max(0, 4 - len(bart))
-        if bart[3] != 1:
-            raise ValueError("the trajectory already has an axis where the coils go")
-        bart[3] = coils
-        return tuple(bart[::-1])
+            return (*self.encoding, *self.spatial)
+        return tuple(int(n) for n in self.traj.shape[:-1])
+
+    def _spatial3(self) -> tuple[int, int, int]:
+        return self.spatial if self.ndim == 3 else (1, *self.spatial)
+
+    def _max_vector(self):
+        """The image of one batch item, with the coils BART counts beside it."""
+        z, y, x = self._spatial3()
+        v = {
+            _layout.READ: x,
+            _layout.PHS1: y,
+            _layout.PHS2: z,
+            _layout.COIL: self.coils,
+            _layout.MAPS: self.sets,
+        }
+        _, idims = _layout.encoding_dims(len(self.encoding), self._has_basis())
+        for dim, n in zip(idims, self.image_encoding):
+            v[dim] = n
+        return _layout.vector(v)
+
+    def _sens_vector(self):
+        z, y, x = self.sens_spatial
+        return _layout.vector(
+            {
+                _layout.READ: x,
+                _layout.PHS1: y,
+                _layout.PHS2: z,
+                _layout.COIL: self.coils,
+                _layout.MAPS: self.sets,
+            }
+        )
+
+    def _encoding_vector(self, base: dict, sizes) -> tuple[int, ...]:
+        kdims, _ = _layout.encoding_dims(len(self.encoding), self._has_basis())
+        v = dict(base)
+        for dim, n in zip(kdims, sizes):
+            v[dim] = n
+        return _layout.vector(v)
+
+    def _kspace_vector(self):
+        if self.traj is None:
+            z, y, x = self._spatial3()
+            base = {_layout.READ: x, _layout.PHS1: y, _layout.PHS2: z, _layout.COIL: self.coils}
+            return self._encoding_vector(base, self.encoding)
+        shots, samples = int(self.traj.shape[-3]), int(self.traj.shape[-2])
+        return self._encoding_vector(
+            {1: samples, 2: shots, _layout.COIL: self.coils}, self.encoding
+        )
+
+    # --- building ------------------------------------------------------------
 
     def _create(self) -> Built:
-        t, w, b = self.traj, self.weights, self.basis
         lib = library()
         # The library reads both settings from process-wide state when it builds
         # an operator, so they are set for this build and restored after it.
@@ -252,26 +446,49 @@ class NoncartesianSense(LinearOperator):
             lib.bartorch_sense_set_coil_batch(self.coil_batch)
             lib.bartorch_sense_set_fold_maps(int(self.fold_maps))
             try:
-                ptr = self._build_sense(lib, t, w, b)
+                item = self._build_item(lib)
             finally:
                 lib.bartorch_sense_set_coil_batch(was[0])
                 lib.bartorch_sense_set_fold_maps(was[1])
-        keep = tuple(x for x in (self.sensitivities, t, w, b) if x is not None)
-        return Built(ptr, self.ishape, self.kspace_shape, keep=keep, device=self.device)
+            ptr = wrap_item(
+                self,
+                lib,
+                item,
+                self.kspace_shape,
+                self.image_shape,
+                self.batches,
+                self.device,
+                sets_order(self.batches, self.sets, self.image_encoding, self.ndim),
+            )
+        keep = tuple(
+            x for x in (self.sensitivities, self.traj, self.weights, self.basis) if x is not None
+        )
+        return Built(ptr, self.image_shape, self.kspace_shape, keep=keep, device=self.device)
 
-    def _build_sense(self, lib, t, w, b) -> int:
+    def _build_item(self, lib) -> int:
+        t, w, b = self.traj, self.weights, self.basis
+        tvec = wvec = bvec = None
+        if t is not None:
+            shots, samples, d = (int(n) for n in t.shape[-3:])
+            tvec = self._encoding_vector({0: d, 1: samples, 2: shots}, self.encoding)
+        if w is not None:
+            wshape = tuple(w.shape)
+            base = {1: wshape[-1], 2: wshape[-2]} if t is not None else {}
+            wvec = self._encoding_vector(base, wshape[: len(self.encoding)])
+        if b is not None:
+            bvec = _layout.vector({_layout.TE: b.shape[1], _layout.COEFF: b.shape[0]})
         return self._under_lock(
             lib.bartorch_linop_sense,
-            dims(self._max_shape),
-            dims(self.kspace_shape),
-            dims(self._sens_shape),
+            _vector(self._max_vector()),
+            _vector(self._kspace_vector()),
+            _vector(self._sens_vector()),
             self.sensitivities.data_ptr(),
             int(self.kernels),
-            None if t is None else dims(tuple(t.shape)),
+            None if t is None else _vector(tvec),
             None if t is None else t.data_ptr(),
-            None if w is None else dims(tuple(w.shape)),
+            None if w is None else _vector(wvec),
             None if w is None else w.data_ptr(),
-            None if b is None else dims(tuple(b.shape)),
+            None if b is None else _vector(bvec),
             None if b is None else b.data_ptr(),
             int(self.toeplitz),
             int(self.modulated),
@@ -295,11 +512,11 @@ class Coils(LinearOperator):
     Parameters
     ----------
     sensitivities : tensor
-        Coil sensitivities of shape ``(coils, *image_shape[1:])``, or their
-        k-space kernels when ``kernels`` is set.  Several sets of maps are
-        ``(sets, coils, *spatial)``, as :class:`NoncartesianSense` takes them.
+        Coil sensitivities ``([sets,] coils, [z,] y, x)``, or their k-space
+        kernels when ``kernels`` is set.
     image_shape : tuple of int
-        Coil-image shape, C order, for instance ``(coils, y, x)``.
+        Image shape ``(*batches, [sets,] [coeffs,] [z,] y, x)``.  The coil
+        images are ``(*batches, coils, [coeffs,] [z,] y, x)``.
     kernels : bool
         Read ``sensitivities`` as k-space kernels, zero-padded to the image
         grid and transformed a slab at a time, as :class:`NoncartesianSense`
@@ -310,14 +527,15 @@ class Coils(LinearOperator):
     coil_batch : int
         Coils applied at once; 0 uses BART's own ``fmac`` over all of them.
     coeffs : int
-        Subspace coefficients the image carries.  With more than one the
-        domain is ``(coeffs, 1, 1, 1, *spatial)`` and the codomain
-        ``(coeffs, 1, 1, coils, *spatial)``: the sensitivities are the same for
-        every coefficient, so nothing about the multiply changes.
+        Subspace coefficients the image carries, on an axis of their own in
+        front of the spatial ones: the sensitivities are the same for every
+        coefficient, so nothing about the multiply changes.
+    ndim : int, optional
+        Spatial axes, where the sensitivities and the image do not say.
 
     Examples
     --------
-    >>> S = Coils(kernels, (coils, y, x), kernels=True)
+    >>> S = Coils(kernels, (y, x), kernels=True, ndim=2)
     >>> A = FFT(S.oshape, axes=(-2, -1)) @ S
     """
 
@@ -329,59 +547,79 @@ class Coils(LinearOperator):
         device: torch.device | str | None = None,
         coil_batch: int = 1,
         coeffs: int = 1,
+        ndim: int | None = None,
     ):
         image_shape = tuple(image_shape)
-        if len(image_shape) < 3:
-            raise ValueError("image_shape is (coils, *spatial), for instance (coils, y, x)")
         if coeffs < 1:
             raise ValueError(f"coeffs is a number of coefficients, not {coeffs}")
-
-        coils, spatial = image_shape[0], image_shape[1:]
-        if len(spatial) == 2:
-            spatial = (1, *spatial)
-
-        s, sets, sens_spatial = _bank(sensitivities, coils, spatial)
-
         if coil_batch < 0:
             raise ValueError(f"coil_batch is a number of coils, not {coil_batch}")
 
-        self.sensitivities = s
-        self.image_shape = image_shape
         self.kernels = bool(kernels)
         self.coil_batch = int(coil_batch)
         self.coeffs = int(coeffs)
-        self.sets = sets
-        if 1 == self.coeffs and 1 == sets:
-            self._max_shape = (coils, *spatial)
-            self.ishape = spatial
-        else:
-            # The coefficients ride on BART's COEFF axis, three past the
-            # coils, and sets of maps on its MAPS axis, the one between.
-            self._max_shape = (self.coeffs, 1, sets, coils, *spatial)
-            self.ishape = (self.coeffs, 1, sets, 1, *spatial)
-        # The coil images are summed over the sets, so they do not carry them.
-        self.oshape = _without_maps(self._max_shape)
-        self._sens_shape = (sets, coils, *sens_spatial)
+        self.ndim = _grid_ndim(sensitivities, image_shape, self.kernels, ndim)
+        s, self.has_sets, self.sets, self.coils, self.sens_spatial = _bank(sensitivities, self.ndim)
+        self.sensitivities = s
+
+        encoding = (self.coeffs,) if self.coeffs > 1 else ()
+        lead = (1 if self.has_sets else 0) + len(encoding) + self.ndim
+        batches, rest = _layout.split(image_shape, lead, "the image")
+        spatial = tuple(rest[len(rest) - self.ndim :])
+        want = (*((self.sets,) if self.has_sets else ()), *encoding, *spatial)
+        if tuple(rest) != want:
+            raise ValueError(f"the image {image_shape} does not end in {want}")
+        self.batches = tuple(batches)
+        self.spatial = spatial
+        self.image_shape = image_shape
+        self.encoding = encoding
+        self.ishape = image_shape
+        self.oshape = (*self.batches, self.coils, *encoding, *spatial)
         self.device = torch.device(device) if device is not None else s.device
 
         super().__init__()
 
     def _create(self) -> Built:
         lib = library()
+        z, y, x = self.spatial if self.ndim == 3 else (1, *self.spatial)
+        maxv = _layout.vector(
+            {
+                _layout.READ: x,
+                _layout.PHS1: y,
+                _layout.PHS2: z,
+                _layout.COIL: self.coils,
+                _layout.MAPS: self.sets,
+                _layout.COEFF: self.coeffs,
+            }
+        )
+        sz, sy, sx = self.sens_spatial
+        sensv = _layout.vector(
+            {
+                _layout.READ: sx,
+                _layout.PHS1: sy,
+                _layout.PHS2: sz,
+                _layout.COIL: self.coils,
+                _layout.MAPS: self.sets,
+            }
+        )
         # As in NoncartesianSense: the slab size is read from process-wide
         # state when the operator is built, so it is set for this build alone.
         with _lock:
             was = lib.bartorch_sense_coil_batch()
             lib.bartorch_sense_set_coil_batch(self.coil_batch)
             try:
-                ptr = self._under_lock(
+                item = self._under_lock(
                     lib.bartorch_linop_coils,
-                    dims(self._max_shape),
-                    dims(self._sens_shape),
+                    _vector(maxv),
+                    _vector(sensv),
                     self.sensitivities.data_ptr(),
                     int(self.kernels),
                     device=self.device,
                 )
             finally:
                 lib.bartorch_sense_set_coil_batch(was)
+            order = sets_order(self.batches, self.sets, self.encoding, self.ndim)
+            ptr = wrap_item(
+                self, lib, item, self.oshape, self.ishape, self.batches, self.device, order
+            )
         return Built(ptr, self.ishape, self.oshape, keep=(self.sensitivities,), device=self.device)

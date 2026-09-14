@@ -517,6 +517,7 @@ def bind(lib: ctypes.CDLL) -> ctypes.CDLL:
         ctypes.c_void_p,
         ctypes.POINTER(ctypes.c_long),
         ctypes.c_void_p,
+        ctypes.c_int,
     ]
     lib.bartorch_grid_fused.restype = ctypes.c_long
     lib.bartorch_grid_fused.argtypes = []

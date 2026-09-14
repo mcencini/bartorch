@@ -76,7 +76,9 @@ def _resize_centre(x: torch.Tensor, spatial) -> torch.Tensor:
     return out
 
 
-def maps_to_kernels(maps: torch.Tensor, size: int | tuple[int, ...]) -> torch.Tensor:
+def maps_to_kernels(
+    maps: torch.Tensor, size: int | tuple[int, ...], ndim: int | None = None
+) -> torch.Tensor:
     """Coil sensitivities as k-space kernels: the centre of each map's unitary spectrum.
 
     What :class:`bartorch.linop.NoncartesianSense` takes with ``kernels=True``.  Content
@@ -86,18 +88,23 @@ def maps_to_kernels(maps: torch.Tensor, size: int | tuple[int, ...]) -> torch.Te
     Parameters
     ----------
     maps : torch.Tensor
-        Sensitivities of shape ``(coils, *spatial)``.
+        Sensitivities ``([sets,] coils, *spatial)``.
     size : int or tuple of int
         Kernel size per spatial axis, or one size for all.
+    ndim : int, optional
+        Spatial axes, for a single ``size`` over a bank with sets.  By default
+        the length of ``size``, or every axis after the first.
 
     Returns
     -------
     torch.Tensor
-        Kernels of shape ``(coils, *size)``.
+        Kernels ``([sets,] coils, *size)``.
     """
     from bartorch.fourier import fft
 
-    spatial = tuple(maps.shape[1:])
+    if ndim is None:
+        ndim = maps.ndim - 1 if isinstance(size, int) else len(tuple(size))
+    spatial = tuple(maps.shape[maps.ndim - ndim :])
     size = (size,) * len(spatial) if isinstance(size, int) else tuple(size)
     if len(size) != len(spatial):
         raise ValueError(f"kernel size {size} does not match the map's {spatial} spatial axes")

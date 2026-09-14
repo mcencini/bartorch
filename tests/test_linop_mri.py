@@ -38,41 +38,41 @@ def maps():
 
 def test_without_a_pattern_it_is_barts_own_operator(maps):
     """There is nothing to add, so nothing is added."""
-    A = linop.CartesianSense(maps, (COILS, Y, X))
+    A = linop.CartesianSense(maps, (Y, X))
     assert isinstance(A, linop.NoncartesianSense)
 
 
 def test_a_pattern_keeps_the_samples_that_were_taken(maps):
     """Checked against the encoding alone, which this composes rather than replaces."""
-    mask = (torch.rand(1, 1, Y, 1) > 0.5).to(torch.complex64)
-    S = linop.CartesianSense(maps, (COILS, Y, X))
-    A = linop.CartesianSense(maps, (COILS, Y, X), pattern=mask)
+    mask = (torch.rand(Y, 1) > 0.5).to(torch.complex64)
+    S = linop.CartesianSense(maps, (Y, X))
+    A = linop.CartesianSense(maps, (Y, X), pattern=mask)
     x = _rand(*S.ishape)
     torch.testing.assert_close(A(x), mask * S(x), rtol=1e-4, atol=1e-4)
 
 
 def test_it_keeps_the_shapes_sense_uses(maps):
     """So one can be swapped for the other without reshaping anything."""
-    mask = (torch.rand(1, 1, Y, 1) > 0.5).to(torch.complex64)
-    S = linop.CartesianSense(maps, (COILS, Y, X))
-    A = linop.CartesianSense(maps, (COILS, Y, X), pattern=mask)
+    mask = (torch.rand(Y, 1) > 0.5).to(torch.complex64)
+    S = linop.CartesianSense(maps, (Y, X))
+    A = linop.CartesianSense(maps, (Y, X), pattern=mask)
     assert (A.ishape, A.oshape) == (S.ishape, S.oshape)
 
 
 def test_a_trajectory_is_refused_here(maps):
     with pytest.raises(ValueError, match="use NoncartesianSense for that"):
-        linop.CartesianSense(maps, (COILS, Y, X), traj=_rand(3, 8, 16))
+        linop.CartesianSense(maps, (Y, X), traj=_rand(8, 16, 3))
 
 
 def test_the_noncartesian_encoding_wants_a_trajectory(maps):
     """The names say which is which, so neither stands in for the other."""
     with pytest.raises(ValueError, match="CartesianSense is the one on it"):
-        linop.NoncartesianSense(maps, (COILS, Y, X))
+        linop.NoncartesianSense(maps, (Y, X))
 
 
 def test_a_fully_sampled_encoding_inverts_back_to_the_image(maps):
-    mask = torch.ones(1, 1, Y, 1, dtype=torch.complex64)
-    A = linop.CartesianSense(maps, (COILS, Y, X), pattern=mask)
+    mask = torch.ones(Y, 1, dtype=torch.complex64)
+    A = linop.CartesianSense(maps, (Y, X), pattern=mask)
     x = _rand(*A.ishape)
     got = CG(0.0, maxiter=60, tol=1e-8)(A(x), A, None)
     torch.testing.assert_close(got, x, rtol=1e-2, atol=1e-2)
@@ -81,7 +81,7 @@ def test_a_fully_sampled_encoding_inverts_back_to_the_image(maps):
 # --- wave --------------------------------------------------------------------
 
 Z, SX, WX = 1, 6, 12
-SHAPE = (COILS, Z, 5, SX)
+SHAPE = (Z, 5, SX)
 
 
 @pytest.fixture
@@ -150,10 +150,11 @@ def test_a_readout_shorter_than_the_image_is_refused(wave_parts):
         linop.WaveSense(maps, psf, SHAPE, readout=SX - 1, pattern=mask)
 
 
-def test_the_wrong_number_of_sensitivities_is_refused(wave_parts):
+def test_a_bank_that_is_neither_coils_nor_sets_of_them_is_refused(wave_parts):
+    """The coils are the bank's to say, so what can be wrong with it is its rank."""
     _, psf, mask = wave_parts
     with pytest.raises(ValueError, match="are neither"):
-        linop.WaveSense(_rand(2, Z, 5, SX), psf, SHAPE, readout=WX, pattern=mask)
+        linop.WaveSense(_rand(2, 2, COILS, Z, 5, SX), psf, SHAPE, readout=WX, pattern=mask)
 
 
 # --- what both have to hold --------------------------------------------------
@@ -162,12 +163,12 @@ def test_the_wrong_number_of_sensitivities_is_refused(wave_parts):
 def _encodings():
     torch.manual_seed(0)
     maps2d = _rand(COILS, Y, X)
-    mask2d = (torch.rand(1, 1, Y, 1) > 0.5).to(torch.complex64)
+    mask2d = (torch.rand(Y, 1) > 0.5).to(torch.complex64)
     maps3d = _rand(COILS, Z, 5, SX)
     psf = _rand(1, Z, 5, WX)
     mask = (torch.rand(1, Z, 5, WX) > 0.4).to(torch.complex64)
     return [
-        linop.CartesianSense(maps2d, (COILS, Y, X), pattern=mask2d),
+        linop.CartesianSense(maps2d, (Y, X), pattern=mask2d),
         linop.WaveSense(maps3d, psf, SHAPE, readout=WX, pattern=mask),
         linop.WaveSense(maps3d, psf, SHAPE, readout=WX, centred=True),
     ]
@@ -261,11 +262,9 @@ def test_a_field_map_with_one_value_says_what_is_wrong(one_dimensional):
 
 def test_it_wraps_any_encoding(maps):
     """Cartesian here; the same wrapper over NoncartesianSense is what mirtorch calls Gmri."""
-    E = linop.CartesianSense(
-        maps, (COILS, Y, X), pattern=torch.ones(1, 1, Y, 1).to(torch.complex64)
-    )
-    fmap = torch.linspace(-80.0, 80.0, Y * X).reshape(1, Y, X)
-    times = torch.linspace(0.0, 3e-3, Y * X).reshape(1, 1, Y, X).expand(COILS, 1, Y, X)
+    E = linop.CartesianSense(maps, (Y, X), pattern=torch.ones(Y, 1).to(torch.complex64))
+    fmap = torch.linspace(-80.0, 80.0, Y * X).reshape(Y, X)
+    times = torch.linspace(0.0, 3e-3, Y * X).reshape(1, Y, X).expand(COILS, Y, X)
     A = linop.FieldCorrected(E, fmap, times, segments=3)
     assert A.ishape == E.ishape and A.oshape == E.oshape
     assert A._native, "the sum of chains left BART"
@@ -315,31 +314,30 @@ FRAMES, COEFFS = 8, 2
 @pytest.fixture
 def basis():
     torch.manual_seed(1)
-    return _rand(COEFFS, FRAMES).reshape(COEFFS, FRAMES, 1, 1, 1, 1, 1)
+    return _rand(COEFFS, FRAMES)
 
 
 @pytest.fixture
 def frame_pattern():
     torch.manual_seed(2)
-    return (torch.rand(1, FRAMES, 1, 1, 1, Y, 1) > 0.4).to(torch.complex64)
+    return (torch.rand(FRAMES, Y, 1) > 0.4).to(torch.complex64)
 
 
 def _explicit_subspace(maps, basis, pattern, x):
     """The model written out: coils, transform, basis, pattern."""
     import bartorch
 
-    b = basis.reshape(COEFFS, FRAMES)
     coil_images = maps.reshape(1, COILS, Y, X) * x.reshape(COEFFS, 1, Y, X)
     ksp = bartorch.fft(coil_images, axes=(-2, -1), unitary=True)
-    frames = torch.einsum("kt,kcyx->tcyx", b, ksp)
-    return frames.reshape(1, FRAMES, 1, COILS, 1, Y, X) * pattern
+    frames = torch.einsum("kt,kcyx->ctyx", basis, ksp)
+    return frames * pattern
 
 
 def test_a_subspace_encoding_is_the_model_written_out(maps, basis, frame_pattern):
-    A = linop.CartesianSense(maps, (COILS, Y, X), pattern=frame_pattern, basis=basis)
+    A = linop.CartesianSense(maps, (COEFFS, Y, X), pattern=frame_pattern, basis=basis)
 
-    assert A.ishape == (COEFFS, 1, 1, 1, 1, Y, X)
-    assert A.oshape == (1, FRAMES, 1, COILS, 1, Y, X)
+    assert A.ishape == (COEFFS, Y, X)
+    assert A.oshape == (COILS, FRAMES, Y, X)
 
     torch.manual_seed(0)
     x = _rand(*A.ishape)
@@ -348,17 +346,17 @@ def test_a_subspace_encoding_is_the_model_written_out(maps, basis, frame_pattern
 
 
 def test_a_subspace_encoding_has_the_adjoint_it_claims(maps, basis, frame_pattern):
-    A = linop.CartesianSense(maps, (COILS, Y, X), pattern=frame_pattern, basis=basis)
+    A = linop.CartesianSense(maps, (COEFFS, Y, X), pattern=frame_pattern, basis=basis)
     assert _adjointness(A) < 1e-5
 
 
 def test_the_collapsed_normal_is_the_two_applications(maps, basis, frame_pattern):
     """Which is the whole claim: one kernel instead of the frames."""
     fast = linop.CartesianSense(
-        maps, (COILS, Y, X), pattern=frame_pattern, basis=basis, toeplitz=True
+        maps, (COEFFS, Y, X), pattern=frame_pattern, basis=basis, toeplitz=True
     )
     slow = linop.CartesianSense(
-        maps, (COILS, Y, X), pattern=frame_pattern, basis=basis, toeplitz=False
+        maps, (COEFFS, Y, X), pattern=frame_pattern, basis=basis, toeplitz=False
     )
 
     torch.manual_seed(0)
@@ -371,26 +369,35 @@ def test_the_collapsed_normal_is_the_two_applications(maps, basis, frame_pattern
     assert (got - want).abs().max() / want.abs().max() < 1e-5
 
 
-def test_the_collapsed_normal_does_not_grow_with_the_frames(maps, basis):
+def test_the_collapsed_normal_does_not_grow_with_the_frames(maps):
     """The kernel is coefficients by coefficients, whatever the echo train.
 
     Sixty-four frames and two coefficients is the same four numbers per voxel
     as eight frames would be, which is why an iteration costs what it does.
+    The operator's normal is held against that kernel applied between the
+    encoding and its adjoint, at echo trains up to thirty-two times longer.
     """
-    from bartorch.linop.mri import _subspace_kernel
-
     for frames in (8, 64, 256):
         torch.manual_seed(3)
         b = _rand(COEFFS, frames)
-        pattern = (torch.rand(1, frames, 1, 1, 1, Y, 1) > 0.4).to(torch.complex64)
-        kernel = _subspace_kernel(b, pattern, (1, frames, 1, COILS, 1, Y, X))
-        assert kernel.shape == (COEFFS, COEFFS, 1, 1, 1, Y, 1)
+        pattern = (torch.rand(frames, Y, 1) > 0.4).to(torch.complex64)
+        A = linop.CartesianSense(maps, (COEFFS, Y, X), pattern=pattern, basis=b)
+
+        # sum_t P[t] conj(B[k', t]) B[k, t], over the axes the pattern varies on.
+        kernel = torch.einsum("ty,jt,kt->jky", pattern[..., 0], b.conj(), b)[..., None]
+        assert kernel.shape == (COEFFS, COEFFS, Y, 1)
+
+        x = _rand(*A.ishape)
+        k = _fftc(maps[None] * x[:, None], (-2, -1))
+        back = (kernel[:, :, None] * k[None]).sum(1)
+        want = (maps.conj()[None] * _ifftc(back, (-2, -1))).sum(1)
+        assert (A.normal(x) - want).abs().max() / want.abs().max() < 1e-5
 
 
 def test_a_subspace_normal_without_a_pattern_is_the_basis_gram(maps, basis):
     """Every sample taken, so what is left of the sum is the basis alone."""
-    A = linop.CartesianSense(maps, (COILS, Y, X), basis=basis, toeplitz=True)
-    B = linop.CartesianSense(maps, (COILS, Y, X), basis=basis, toeplitz=False)
+    A = linop.CartesianSense(maps, (COEFFS, Y, X), basis=basis, toeplitz=True)
+    B = linop.CartesianSense(maps, (COEFFS, Y, X), basis=basis, toeplitz=False)
 
     torch.manual_seed(0)
     x = _rand(*A.ishape)
@@ -400,7 +407,7 @@ def test_a_subspace_normal_without_a_pattern_is_the_basis_gram(maps, basis):
 
 def test_a_subspace_encoding_solves(maps, basis, frame_pattern):
     """And the solver drives the collapsed normal, which is what CG asks for."""
-    A = linop.CartesianSense(maps, (COILS, Y, X), pattern=frame_pattern, basis=basis)
+    A = linop.CartesianSense(maps, (COEFFS, Y, X), pattern=frame_pattern, basis=basis)
     torch.manual_seed(0)
     x = _rand(*A.ishape)
     got = CG(maxiter=40)(A(x), A)
@@ -409,7 +416,7 @@ def test_a_subspace_encoding_solves(maps, basis, frame_pattern):
 
 def test_a_basis_that_is_not_one_is_refused(maps):
     with pytest.raises(ValueError, match=r"a basis is \(coeffs, frames"):
-        linop.CartesianSense(maps, (COILS, Y, X), basis=_rand(COEFFS, FRAMES, 3))
+        linop.CartesianSense(maps, (COEFFS, Y, X), basis=_rand(COEFFS, FRAMES, 3))
 
 
 # --- wave, on the coil loop ---------------------------------------------------
@@ -425,7 +432,7 @@ def test_wave_takes_the_kernels_nlinv_produces(wave_parts):
     dense = bartorch.kernels_to_maps(kernels, (Z, 5, SX))
 
     a = linop.WaveSense(dense, psf, SHAPE, readout=WX, pattern=mask)
-    b = linop.WaveSense(kernels, psf, SHAPE, readout=WX, pattern=mask, kernels=True)
+    b = linop.WaveSense(kernels, psf, SHAPE, readout=WX, pattern=mask, kernels=True, ndim=3)
 
     x = _rand(*a.ishape)
     torch.testing.assert_close(b(x), a(x), rtol=1e-4, atol=1e-4)
@@ -444,11 +451,11 @@ def test_the_wave_coil_slab_changes_nothing(wave_parts, batch):
 
 def test_wave_shuffling_is_wave_read_through_a_subspace(wave_parts, basis):
     maps, psf, _ = wave_parts
-    A = linop.WaveSense(maps, psf, SHAPE, readout=WX, basis=basis)
+    A = linop.WaveSense(maps, psf, (COEFFS, *SHAPE), readout=WX, basis=basis)
     plain = linop.WaveSense(maps, psf, SHAPE, readout=WX)
 
-    assert A.ishape == (COEFFS, 1, 1, 1, *plain.ishape)
-    assert A.oshape == (1, FRAMES, 1, *plain.oshape)
+    assert A.ishape == (COEFFS, *plain.ishape)
+    assert A.oshape == (COILS, FRAMES, *plain.oshape[1:])
     assert _adjointness(A) < 1e-5
 
 
@@ -456,11 +463,11 @@ def test_the_collapsed_normal_carries_to_wave(wave_parts, basis):
     """The kernel goes where the sampling goes, and it is the same kernel."""
     maps, psf, _ = wave_parts
     torch.manual_seed(5)
-    pattern = (torch.rand(1, FRAMES, 1, 1, Z, 5, 1) > 0.4).to(torch.complex64)
+    pattern = (torch.rand(FRAMES, Z, 5, 1) > 0.4).to(torch.complex64)
 
-    fast = linop.WaveSense(maps, psf, SHAPE, readout=WX, pattern=pattern, basis=basis)
+    fast = linop.WaveSense(maps, psf, (COEFFS, *SHAPE), readout=WX, pattern=pattern, basis=basis)
     slow = linop.WaveSense(
-        maps, psf, SHAPE, readout=WX, pattern=pattern, basis=basis, toeplitz=False
+        maps, psf, (COEFFS, *SHAPE), readout=WX, pattern=pattern, basis=basis, toeplitz=False
     )
 
     x = _rand(*fast.ishape)
@@ -472,7 +479,7 @@ def test_the_collapsed_normal_carries_to_wave(wave_parts, basis):
 
 def test_a_collapsed_subspace_encoding_is_still_one_bart_operator(maps, basis, frame_pattern):
     """The normal is composed from operators, so both sides stay BART's."""
-    A = linop.CartesianSense(maps, (COILS, Y, X), pattern=frame_pattern, basis=basis)
+    A = linop.CartesianSense(maps, (COEFFS, Y, X), pattern=frame_pattern, basis=basis)
     assert A._native
     assert hasattr(A._bart(), "_h")
     assert A.gram()._native
@@ -493,20 +500,25 @@ SETS = 2
 @pytest.fixture
 def bank():
     torch.manual_seed(9)
-    return _rand(SETS, COILS, 1, Y, X)
+    return _rand(SETS, COILS, Y, X)
 
 
 def test_espirit_hands_its_second_map_over_as_it_stands():
-    """No reshaping between the calibration and the encoding."""
+    """No reshaping between the calibration and the encoding.
+
+    ``ecalib`` returns ``(sets, coils, 1, y, x)``, which is a bank over three
+    spatial axes with one slice, so the encoding is the three-dimensional one
+    over an image with a z of one.
+    """
     import bartorch.tools as bt
 
     kspace = bt.phantom([Y, Y], coils=COILS, kspace=True)
     maps = bt.ecalib(kspace, maps=SETS)
     assert maps.shape == (SETS, COILS, 1, Y, Y)
 
-    A = linop.CartesianSense(maps, (COILS, Y, Y))
-    assert A.ishape == (1, 1, SETS, 1, 1, Y, Y)
-    assert A.oshape == (1, 1, 1, COILS, 1, Y, Y)
+    A = linop.CartesianSense(maps, (SETS, 1, Y, Y))
+    assert A.ishape == (SETS, 1, Y, Y)
+    assert A.oshape == (COILS, 1, Y, Y)
 
 
 def test_a_two_map_reconstruction_fits_the_data_it_was_given():
@@ -519,7 +531,7 @@ def test_a_two_map_reconstruction_fits_the_data_it_was_given():
     kspace = bt.phantom([Y, Y], coils=COILS, kspace=True)
     maps = bt.ecalib(kspace, maps=SETS)
 
-    A = linop.CartesianSense(maps, (COILS, Y, Y))
+    A = linop.CartesianSense(maps, (SETS, 1, Y, Y))
     torch.manual_seed(0)
     y = A(_rand(*A.ishape))
     got = CG(maxiter=80)(y, A)
@@ -527,28 +539,28 @@ def test_a_two_map_reconstruction_fits_the_data_it_was_given():
 
 
 def test_a_cartesian_encoding_over_sets_is_the_sum_of_the_one_set_ones(bank):
-    A = linop.CartesianSense(bank, (COILS, Y, X))
+    A = linop.CartesianSense(bank, (SETS, Y, X))
     torch.manual_seed(0)
     x = _rand(*A.ishape)
 
-    want = sum(linop.CartesianSense(bank[m], (COILS, Y, X))(x[0, 0, m, 0]) for m in range(SETS))
-    torch.testing.assert_close(A(x).reshape(want.shape), want, rtol=1e-4, atol=1e-5)
+    want = sum(linop.CartesianSense(bank[m], (Y, X))(x[m]) for m in range(SETS))
+    torch.testing.assert_close(A(x), want, rtol=1e-4, atol=1e-5)
 
 
 def test_a_pattern_and_several_sets_go_together(bank):
-    mask = (torch.rand(1, 1, 1, 1, 1, Y, 1) > 0.4).to(torch.complex64)
-    A = linop.CartesianSense(bank, (COILS, Y, X), pattern=mask)
+    mask = (torch.rand(Y, 1) > 0.4).to(torch.complex64)
+    A = linop.CartesianSense(bank, (SETS, Y, X), pattern=mask)
     assert _adjointness(A) < 1e-5
 
 
 def test_a_subspace_and_several_sets_go_together(bank, basis, frame_pattern):
-    A = linop.CartesianSense(bank, (COILS, Y, X), pattern=frame_pattern, basis=basis)
+    A = linop.CartesianSense(bank, (SETS, COEFFS, Y, X), pattern=frame_pattern, basis=basis)
     slow = linop.CartesianSense(
-        bank, (COILS, Y, X), pattern=frame_pattern, basis=basis, toeplitz=False
+        bank, (SETS, COEFFS, Y, X), pattern=frame_pattern, basis=basis, toeplitz=False
     )
 
-    assert A.ishape == (COEFFS, 1, SETS, 1, 1, Y, X)
-    assert A.oshape == (1, FRAMES, 1, COILS, 1, Y, X)
+    assert A.ishape == (SETS, COEFFS, Y, X)
+    assert A.oshape == (COILS, FRAMES, Y, X)
     assert _adjointness(A) < 1e-5
 
     torch.manual_seed(0)
@@ -562,9 +574,9 @@ def test_wave_carries_several_sets_too(wave_parts):
     torch.manual_seed(10)
     sets_bank = _rand(SETS, COILS, Z, 5, SX)
 
-    A = linop.WaveSense(sets_bank, psf, SHAPE, readout=WX, pattern=mask)
-    assert A.ishape == (1, 1, SETS, 1, Z, 5, SX)
-    assert A.oshape == (1, 1, 1, COILS, Z, 5, WX)
+    A = linop.WaveSense(sets_bank, psf, (SETS, *SHAPE), readout=WX, pattern=mask)
+    assert A.ishape == (SETS, Z, 5, SX)
+    assert A.oshape == (COILS, Z, 5, WX)
     assert _adjointness(A) < 1e-5
 
 
@@ -577,20 +589,25 @@ def test_wave_carries_several_sets_too(wave_parts):
 
 def _fftc(t, axes):
     """The centred unitary transform, in torch."""
-    return torch.fft.fftshift(torch.fft.fftn(torch.fft.ifftshift(t, dim=axes), dim=axes, norm="ortho"), dim=axes)
+    return torch.fft.fftshift(
+        torch.fft.fftn(torch.fft.ifftshift(t, dim=axes), dim=axes, norm="ortho"), dim=axes
+    )
 
 
 def _ifftc(t, axes):
-    return torch.fft.fftshift(torch.fft.ifftn(torch.fft.ifftshift(t, dim=axes), dim=axes, norm="ortho"), dim=axes)
+    return torch.fft.fftshift(
+        torch.fft.ifftn(torch.fft.ifftshift(t, dim=axes), dim=axes, norm="ortho"), dim=axes
+    )
 
 
 def test_a_pattern_or_a_basis_builds_the_native_operator(maps, basis, frame_pattern):
     from bartorch.linop.mri import _CartesianNative
 
-    mask = (torch.rand(1, 1, Y, 1) > 0.5).to(torch.complex64)
-    assert isinstance(linop.CartesianSense(maps, (COILS, Y, X), pattern=mask), _CartesianNative)
+    mask = (torch.rand(Y, 1) > 0.5).to(torch.complex64)
+    assert isinstance(linop.CartesianSense(maps, (Y, X), pattern=mask), _CartesianNative)
     assert isinstance(
-        linop.CartesianSense(maps, (COILS, Y, X), pattern=frame_pattern, basis=basis), _CartesianNative
+        linop.CartesianSense(maps, (COEFFS, Y, X), pattern=frame_pattern, basis=basis),
+        _CartesianNative,
     )
 
 
@@ -599,8 +616,8 @@ def test_the_native_normal_with_a_pattern_is_the_model_written_out():
     torch.manual_seed(6)
     coils, z, y, x = 3, 6, 8, 10
     maps = _rand(coils, z, y, x)
-    mask = (torch.rand(1, z, y, 1) > 0.5).to(torch.complex64)
-    A = linop.CartesianSense(maps, (coils, z, y, x), pattern=mask)
+    mask = (torch.rand(z, y, 1) > 0.5).to(torch.complex64)
+    A = linop.CartesianSense(maps, (z, y, x), pattern=mask)
 
     image = _rand(z, y, x)
     k = _fftc(maps * image, (-3, -2, -1)) * mask
@@ -617,12 +634,7 @@ def test_the_native_subspace_normal_is_the_model_written_out():
     maps = _rand(coils, z, y, x)
     b = _rand(coeffs, frames)
     pattern = (torch.rand(frames, z, y, 1) > 0.5).to(torch.complex64)
-    A = linop.CartesianSense(
-        maps,
-        (coils, z, y, x),
-        pattern=pattern.reshape(1, frames, 1, 1, z, y, 1),
-        basis=b.reshape(coeffs, frames, 1, 1, 1, 1, 1),
-    )
+    A = linop.CartesianSense(maps, (coeffs, z, y, x), pattern=pattern, basis=b)
 
     image = _rand(*A.ishape)
     coeff_images = image.reshape(coeffs, 1, z, y, x)
@@ -656,8 +668,8 @@ def test_on_a_card_the_normal_runs_through_cufft_and_is_the_model_written_out(sh
     coils = 3
     z, y, x = shape
     maps = _rand(coils, z, y, x)
-    mask = (torch.rand(1, 1, y, 1) > 0.5).to(torch.complex64)
-    A = linop.CartesianSense(maps, (coils, z, y, x), pattern=mask, device="cuda")
+    mask = (torch.rand(1, y, 1) > 0.5).to(torch.complex64)
+    A = linop.CartesianSense(maps, (z, y, x), pattern=mask, device="cuda")
 
     image = _rand(z, y, x)
     before = library().bartorch_grid_fused()
@@ -676,13 +688,7 @@ def test_on_a_card_the_subspace_normal_runs_through_cufft_and_is_the_model_writt
     maps = _rand(coils, z, y, x)
     b = _rand(coeffs, frames)
     pattern = (torch.rand(frames, z, y, 1) > 0.5).to(torch.complex64)
-    A = linop.CartesianSense(
-        maps,
-        (coils, z, y, x),
-        pattern=pattern.reshape(1, frames, 1, 1, z, y, 1),
-        basis=b.reshape(coeffs, frames, 1, 1, 1, 1, 1),
-        device="cuda",
-    )
+    A = linop.CartesianSense(maps, (coeffs, z, y, x), pattern=pattern, basis=b, device="cuda")
 
     image = _rand(*A.ishape)
     before = library().bartorch_grid_fused()

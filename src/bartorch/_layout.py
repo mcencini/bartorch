@@ -78,7 +78,9 @@ def encoding_dims(count: int, basis: bool) -> tuple[list[int], list[int]]:
     return kspace, image
 
 
-def split(shape: tuple[int, ...], trailing: int, what: str) -> tuple[tuple[int, ...], tuple[int, ...]]:
+def split(
+    shape: tuple[int, ...], trailing: int, what: str
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
     """``(batches, rest)``: the leading axes of ``shape`` and its last ``trailing`` ones."""
     shape = tuple(shape)
     if len(shape) < trailing:

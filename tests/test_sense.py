@@ -115,10 +115,10 @@ def test_the_batch_is_the_operators_own(restore_batch):
     _dispatch.set_coil_batch(1)
 
     lib.bartorch_sense_reset_counters()
-    linop.CartesianSense(maps, (coils, n, n), coil_batch=0)
+    linop.CartesianSense(maps, (n, n), coil_batch=0)
     assert (lib.bartorch_sense_counter(0), lib.bartorch_sense_counter(1)) == (0, 1)
 
-    linop.CartesianSense(maps, (coils, n, n), coil_batch=2)
+    linop.CartesianSense(maps, (n, n), coil_batch=2)
     assert lib.bartorch_sense_counter(0) == 1
     assert _dispatch.coil_batch() == 1
 
@@ -159,10 +159,10 @@ def test_a_kernel_bank_applies_as_the_maps_it_stands_for():
     operator as the one over the whole bank."""
     n, coils = 32, 4
     kernels, maps = _smooth_bank(n=n, coils=coils)
-    x = bt.phantom([n, n]).reshape(1, n, n)
+    x = bt.phantom([n, n]).reshape(n, n)
 
-    dense = linop.CartesianSense(maps, (coils, n, n))
-    compact = linop.CartesianSense(kernels, (coils, n, n), kernels=True)
+    dense = linop.CartesianSense(maps, (n, n))
+    compact = linop.CartesianSense(kernels, (n, n), kernels=True)
 
     assert dense.ishape == compact.ishape
     assert dense.oshape == compact.oshape
@@ -176,34 +176,42 @@ def test_a_kernel_bank_applies_off_the_grid_too():
     n, coils = 32, 4
     kernels, maps = _smooth_bank(n=n, coils=coils)
     traj = bt.traj(x=n, y=48, r=True)
-    x = bt.phantom([n, n]).reshape(1, n, n)
+    x = bt.phantom([n, n]).reshape(n, n)
 
-    dense = linop.NoncartesianSense(maps, (coils, n, n), traj=traj)
-    compact = linop.NoncartesianSense(kernels, (coils, n, n), kernels=True, traj=traj)
+    dense = linop.NoncartesianSense(maps, (n, n), traj=traj)
+    compact = linop.NoncartesianSense(kernels, (n, n), kernels=True, traj=traj)
 
     torch.testing.assert_close(compact(x), dense(x), rtol=1e-3, atol=1e-4)
 
 
 def test_the_operator_is_the_sensitivities_and_the_transform():
-    """Held against the tools, which are not this operator."""
+    """Held against the transforms, which are not this operator.
+
+    ``bartorch.nufft`` answers in BART's layout, ``(coils, spokes, samples,
+    1)`` for an image of ``(coils, 1, y, x)``; the operator's samples are
+    ``(coils, spokes, samples)``.
+    """
     n, coils = 32, 4
     torch.manual_seed(0)
     maps = torch.randn(coils, n, n, dtype=torch.complex64)
-    x = bt.phantom([n, n]).reshape(1, n, n)
-    coil_images = (x * maps).reshape(coils, 1, n, n)
+    x = bt.phantom([n, n]).reshape(n, n)
+    coil_images = x * maps
 
-    grid = linop.CartesianSense(maps, (coils, n, n))
+    grid = linop.CartesianSense(maps, (n, n))
     torch.testing.assert_close(
-        grid(x).reshape(coils, 1, n, n),
+        grid(x),
         bartorch.fft(coil_images, axes=(-2, -1), unitary=True),
         rtol=1e-4,
         atol=1e-5,
     )
 
     traj = bt.traj(x=n, y=48, r=True)
-    off = linop.NoncartesianSense(maps, (coils, n, n), traj=traj)
+    off = linop.NoncartesianSense(maps, (n, n), traj=traj)
     torch.testing.assert_close(
-        off(x).reshape(coils, 48, n, 1), bartorch.nufft(coil_images, traj), rtol=1e-4, atol=1e-5
+        off(x),
+        bartorch.nufft(coil_images.reshape(coils, 1, n, n), traj).reshape(coils, 48, n),
+        rtol=1e-4,
+        atol=1e-5,
     )
 
 
@@ -222,10 +230,10 @@ def test_a_bank_left_on_the_host_is_brought_over_a_slab_at_a_time():
     torch.manual_seed(0)
     maps = torch.randn(coils, n, n, dtype=torch.complex64)
     traj = bt.traj(x=n, y=48, r=True)
-    x = bt.phantom([n, n]).reshape(1, n, n)
+    x = bt.phantom([n, n]).reshape(n, n)
 
-    resident = linop.NoncartesianSense(maps.cuda(), (coils, n, n), traj=traj.cuda())
-    staged = linop.NoncartesianSense(maps, (coils, n, n), traj=traj.cuda())
+    resident = linop.NoncartesianSense(maps.cuda(), (n, n), traj=traj.cuda())
+    staged = linop.NoncartesianSense(maps, (n, n), traj=traj.cuda())
 
     # A staged slab is dense where a resident one is a window on to the bank,
     # so the sum that ends the adjoint runs in a different order and the last
@@ -255,23 +263,36 @@ def test_fetching_a_slab_alongside_the_arithmetic_changes_nothing():
     torch.manual_seed(0)
     maps = torch.randn(coils, n, n, dtype=torch.complex64)
     traj = bt.traj(x=n, y=48, r=True).cuda()
-    x = bt.phantom([n, n]).reshape(1, n, n).cuda()
+    x = bt.phantom([n, n]).reshape(n, n).cuda()
 
     was = bartorch._cuda.streams()
     try:
-        resident = linop.NoncartesianSense(maps.cuda(), (coils, n, n), traj=traj)
+        resident = linop.NoncartesianSense(maps.cuda(), (n, n), traj=traj)
         reference = resident.normal(x)
 
         bartorch._cuda.set_streams(1)
-        one = linop.NoncartesianSense(maps, (coils, n, n), traj=traj).normal(x)
+        one = linop.NoncartesianSense(maps, (n, n), traj=traj).normal(x)
 
         bartorch._cuda.set_streams(2)
-        two = linop.NoncartesianSense(maps, (coils, n, n), traj=traj).normal(x)
+        two = linop.NoncartesianSense(maps, (n, n), traj=traj).normal(x)
     finally:
         bartorch._cuda.set_streams(was)
 
     torch.testing.assert_close(one, reference, rtol=1e-4, atol=1e-5)
     torch.testing.assert_close(two, one, rtol=1e-4, atol=1e-5)
+
+
+def _subspace_trajectory(n, spokes, frames):
+    """A radial trajectory split into frames, ``(frames, spokes, n, 3)``."""
+    return bt.traj(x=n, y=spokes * frames, r=True).reshape(frames, spokes, n, 3)
+
+
+def _linear_basis(coeffs, frames):
+    """A constant and a ramp over the frames, ``(coeffs, frames)``."""
+    basis = torch.zeros(coeffs, frames, dtype=torch.complex64)
+    basis[0] = 1.0
+    basis[1] = torch.linspace(-1, 1, frames)
+    return basis
 
 
 def test_a_kernel_bank_serves_a_subspace_operator_as_the_maps_it_stands_for():
@@ -284,15 +305,13 @@ def test_a_kernel_bank_serves_a_subspace_operator_as_the_maps_it_stands_for():
     which is what says the coefficients and frames land on the right axes.
     """
     n, spokes, frames, coeffs, coils = 16, 8, 4, 2, 4
-    traj = bt.traj(x=n, y=spokes * frames, r=True).reshape(frames, spokes, n, 3)[:, None, None]
-    basis = torch.zeros(coeffs, frames, 1, 1, 1, 1, 1, dtype=torch.complex64)
-    basis[0, :, 0, 0, 0, 0, 0] = 1.0
-    basis[1, :, 0, 0, 0, 0, 0] = torch.linspace(-1, 1, frames)
+    traj = _subspace_trajectory(n, spokes, frames)
+    basis = _linear_basis(coeffs, frames)
     kernels, maps = _smooth_bank(n=n, coils=coils)
 
-    dense = linop.NoncartesianSense(maps, (coils, n, n), traj=traj, basis=basis)
-    compact = linop.NoncartesianSense(kernels, (coils, n, n), traj=traj, basis=basis, kernels=True)
-    assert dense.ishape == (coeffs, 1, 1, 1, 1, n, n)
+    dense = linop.NoncartesianSense(maps, (coeffs, n, n), traj=traj, basis=basis)
+    compact = linop.NoncartesianSense(kernels, (coeffs, n, n), traj=traj, basis=basis, kernels=True)
+    assert dense.ishape == (coeffs, n, n)
 
     torch.manual_seed(0)
     x = torch.randn(dense.ishape, dtype=torch.complex64)
@@ -319,17 +338,15 @@ def test_an_operator_on_a_card_takes_and_returns_host_arrays():
     between two applications the card holds nothing of the solver's.
     """
     n, spokes, frames, coeffs, coils = 16, 8, 4, 2, 4
-    traj = bt.traj(x=n, y=spokes * frames, r=True).reshape(frames, spokes, n, 3)[:, None, None]
-    basis = torch.zeros(coeffs, frames, 1, 1, 1, 1, 1, dtype=torch.complex64)
-    basis[0, :, 0, 0, 0, 0, 0] = 1.0
-    basis[1, :, 0, 0, 0, 0, 0] = torch.linspace(-1, 1, frames)
+    traj = _subspace_trajectory(n, spokes, frames)
+    basis = _linear_basis(coeffs, frames)
     kernels, _ = _smooth_bank(n=n, coils=coils)
 
     on_card = linop.NoncartesianSense(
-        kernels.cuda(), (coils, n, n), traj=traj.cuda(), basis=basis.cuda(), kernels=True
+        kernels.cuda(), (coeffs, n, n), traj=traj.cuda(), basis=basis.cuda(), kernels=True
     )
     from_host = linop.NoncartesianSense(
-        kernels, (coils, n, n), traj=traj, basis=basis, kernels=True, device="cuda"
+        kernels, (coeffs, n, n), traj=traj, basis=basis, kernels=True, device="cuda"
     )
     assert from_host.device.type == "cuda"
 
@@ -367,15 +384,19 @@ def test_an_operator_on_a_card_takes_and_returns_host_arrays():
 
 
 def test_a_three_dimensional_kernel_bank_applies_as_the_maps_it_stands_for():
-    """Inflated an axis at a time, a kernel is the map it stands for in 3D too."""
+    """Inflated an axis at a time, a kernel is the map it stands for in 3D too.
+
+    A bank of four axes is (coils, z, y, x) or (sets, coils, y, x), so the
+    kernels say which with ``ndim``.
+    """
     n, coils, size = 16, 3, 6
     torch.manual_seed(0)
     kernels = torch.randn(coils, size, size, size, dtype=torch.complex64)
     maps = bartorch.kernels_to_maps(kernels, (n, n, n))
-    x = torch.randn(1, n, n, n, dtype=torch.complex64)
+    x = torch.randn(n, n, n, dtype=torch.complex64)
 
-    dense = linop.CartesianSense(maps, (coils, n, n, n))
-    compact = linop.CartesianSense(kernels, (coils, n, n, n), kernels=True)
+    dense = linop.CartesianSense(maps, (n, n, n))
+    compact = linop.CartesianSense(kernels, (n, n, n), kernels=True, ndim=3)
 
     torch.testing.assert_close(compact(x), dense(x), rtol=1e-4, atol=1e-5)
 
@@ -396,10 +417,10 @@ def test_a_kernel_bank_inflated_on_a_card_is_the_maps_it_stands_for(n, size):
     torch.manual_seed(0)
     kernels = torch.randn(coils, size, size, size, dtype=torch.complex64)
     maps = bartorch.kernels_to_maps(kernels, (n, n, n))
-    x = torch.randn(1, n, n, n, dtype=torch.complex64)
+    x = torch.randn(n, n, n, dtype=torch.complex64)
 
-    dense = linop.CartesianSense(maps, (coils, n, n, n))
-    compact = linop.CartesianSense(kernels.cuda(), (coils, n, n, n), kernels=True)
+    dense = linop.CartesianSense(maps, (n, n, n))
+    compact = linop.CartesianSense(kernels.cuda(), (n, n, n), kernels=True, ndim=3)
 
     y = dense(x)
     torch.testing.assert_close(compact(x.cuda()).cpu(), y, rtol=1e-4, atol=1e-5)
@@ -419,10 +440,10 @@ def test_the_coil_multiply_alone_is_barts_own_fmac():
     n, coils = 16, 4
     torch.manual_seed(0)
     maps = torch.randn(coils, n, n, dtype=torch.complex64)
-    x = torch.randn(1, n, n, dtype=torch.complex64)
+    x = torch.randn(n, n, dtype=torch.complex64)
 
-    fmac = linop.MultiplySum(maps.reshape(coils, 1, n, n), (1, n, n), (coils, 1, n, n))
-    coil = linop.Coils(maps, (coils, n, n), coil_batch=0)
+    fmac = linop.MultiplySum(maps, (n, n), (coils, n, n))
+    coil = linop.Coils(maps, (n, n), coil_batch=0)
 
     assert (coil.ishape, coil.oshape) == (fmac.ishape, fmac.oshape)
     torch.testing.assert_close(coil(x), fmac(x))
@@ -433,10 +454,10 @@ def test_the_slab_does_not_change_the_coil_multiply(batch):
     n, coils = 16, 4
     torch.manual_seed(0)
     maps = torch.randn(coils, n, n, dtype=torch.complex64)
-    x = torch.randn(1, n, n, dtype=torch.complex64)
+    x = torch.randn(n, n, dtype=torch.complex64)
 
-    whole = linop.Coils(maps, (coils, n, n), coil_batch=0)
-    sliced = linop.Coils(maps, (coils, n, n), coil_batch=batch)
+    whole = linop.Coils(maps, (n, n), coil_batch=0)
+    sliced = linop.Coils(maps, (n, n), coil_batch=batch)
 
     torch.testing.assert_close(sliced(x), whole(x))
     y = whole(x)
@@ -447,7 +468,7 @@ def test_the_coil_multiply_has_the_adjoint_it_claims():
     n, coils = 16, 3
     torch.manual_seed(0)
     maps = torch.randn(coils, n, n, dtype=torch.complex64)
-    A = linop.Coils(maps, (coils, n, n), coil_batch=2)
+    A = linop.Coils(maps, (n, n), coil_batch=2)
 
     x = torch.randn(*A.ishape, dtype=torch.complex64)
     y = torch.randn(*A.oshape, dtype=torch.complex64)
@@ -460,10 +481,10 @@ def test_the_coil_multiply_takes_kernels_as_the_maps_they_stand_for():
     """The point of it: the bank is inflated a slab at a time, never whole."""
     n, coils = 32, 4
     kernels, maps = _smooth_bank(n=n, coils=coils)
-    x = bt.phantom([n, n]).reshape(1, n, n)
+    x = bt.phantom([n, n]).reshape(n, n)
 
-    dense = linop.Coils(maps, (coils, n, n))
-    compact = linop.Coils(kernels, (coils, n, n), kernels=True)
+    dense = linop.Coils(maps, (n, n))
+    compact = linop.Coils(kernels, (n, n), kernels=True)
 
     torch.testing.assert_close(compact(x), dense(x), rtol=1e-4, atol=1e-5)
     y = dense(x)
@@ -480,10 +501,10 @@ def test_the_coil_multiply_and_an_fft_are_the_cartesian_encoding():
     """
     n, coils = 32, 4
     kernels, maps = _smooth_bank(n=n, coils=coils)
-    x = bt.phantom([n, n]).reshape(1, n, n)
+    x = bt.phantom([n, n]).reshape(n, n)
 
-    inside = linop.CartesianSense(maps, (coils, n, n))
-    outside = linop.FFT(inside.oshape, axes=(-2, -1)) @ linop.Coils(maps, (coils, n, n))
+    inside = linop.CartesianSense(maps, (n, n))
+    outside = linop.FFT(inside.oshape, axes=(-2, -1)) @ linop.Coils(maps, (n, n))
 
     assert (outside.ishape, outside.oshape) == (inside.ishape, inside.oshape)
     torch.testing.assert_close(outside(x), inside(x), rtol=0, atol=0)
@@ -505,15 +526,15 @@ def test_a_slab_that_does_not_divide_the_coils_is_not_walked_off_the_end(coils, 
     n = 16
     torch.manual_seed(0)
     maps = torch.randn(coils, n, n, dtype=torch.complex64)
-    x = torch.randn(1, n, n, dtype=torch.complex64)
+    x = torch.randn(n, n, dtype=torch.complex64)
 
-    A = linop.CartesianSense(maps, (coils, n, n), coil_batch=batch)
-    want = bartorch.fft(maps.reshape(coils, 1, n, n) * x, axes=(-2, -1), unitary=True)
+    A = linop.CartesianSense(maps, (n, n), coil_batch=batch)
+    want = bartorch.fft(maps * x, axes=(-2, -1), unitary=True)
 
     torch.testing.assert_close(A(x), want, rtol=1e-5, atol=1e-5)
 
     y = torch.randn(*A.oshape, dtype=torch.complex64)
-    conj = maps.reshape(coils, 1, n, n).conj()
+    conj = maps.conj()
     back = (bartorch.fft(y, axes=(-2, -1), unitary=True, inverse=True) * conj).sum(0)
     torch.testing.assert_close(A.adjoint(y), back, rtol=1e-5, atol=1e-5)
 
@@ -524,10 +545,10 @@ def test_an_uneven_slab_is_cut_down_off_the_grid_too(coils, batch):
     torch.manual_seed(0)
     maps = torch.randn(coils, n, n, dtype=torch.complex64)
     traj = bt.traj(x=n, y=24, r=True)
-    x = torch.randn(1, n, n, dtype=torch.complex64)
+    x = torch.randn(n, n, dtype=torch.complex64)
 
-    sliced = linop.NoncartesianSense(maps, (coils, n, n), traj=traj, coil_batch=batch)
-    whole = linop.NoncartesianSense(maps, (coils, n, n), traj=traj, coil_batch=0)
+    sliced = linop.NoncartesianSense(maps, (n, n), traj=traj, coil_batch=batch)
+    whole = linop.NoncartesianSense(maps, (n, n), traj=traj, coil_batch=0)
 
     torch.testing.assert_close(sliced(x), whole(x), rtol=1e-4, atol=1e-5)
 
@@ -545,36 +566,41 @@ SETS = 2
 
 def _sets_bank(n=16, coils=4, sets=SETS, seed=7):
     torch.manual_seed(seed)
-    return torch.randn(sets, coils, 1, n, n, dtype=torch.complex64)
+    return torch.randn(sets, coils, n, n, dtype=torch.complex64)
 
 
 def test_a_bank_of_one_set_is_read_either_way():
-    """Writing the axis out is allowed and means the same thing."""
+    """Writing the axis out is allowed and means the same thing.
+
+    Written out, the one set is an axis of one in front of the image; the
+    coil images are the same either way.
+    """
     n, coils = 16, 4
     torch.manual_seed(0)
-    bare = torch.randn(coils, 1, n, n, dtype=torch.complex64)
+    bare = torch.randn(coils, n, n, dtype=torch.complex64)
 
-    A = linop.Coils(bare, (coils, n, n))
-    B = linop.Coils(bare.reshape(1, coils, 1, n, n), (coils, n, n))
+    A = linop.Coils(bare, (n, n))
+    B = linop.Coils(bare.reshape(1, coils, n, n), (1, n, n))
 
-    assert A.ishape == B.ishape and A.oshape == B.oshape
+    assert B.ishape == (1, *A.ishape) and A.oshape == B.oshape
     x = torch.randn(*A.ishape, dtype=torch.complex64)
-    torch.testing.assert_close(B(x), A(x), rtol=0, atol=0)
+    torch.testing.assert_close(B(x.reshape(B.ishape)), A(x), rtol=0, atol=0)
 
 
 def test_a_bank_that_is_neither_shape_is_refused():
+    """A 2D bank with BART's singleton z still in it has an axis too many."""
     with pytest.raises(ValueError, match="neither .coils, .spatial. nor"):
-        linop.Coils(torch.ones(3, 1, 16, 16, dtype=torch.complex64), (4, 16, 16))
+        linop.Coils(torch.ones(2, 3, 1, 16, 16, dtype=torch.complex64), (2, 16, 16))
 
 
-def test_the_sets_ride_on_barts_maps_axis():
+def test_the_sets_lead_the_image_and_not_the_coil_images():
     n, coils = 16, 4
-    A = linop.Coils(_sets_bank(n, coils), (coils, n, n))
+    A = linop.Coils(_sets_bank(n, coils), (SETS, n, n))
 
-    # (coeffs, te, maps, coils, z, y, x): the image carries the sets, the coil
-    # images do not, because the operator has summed over them.
-    assert A.ishape == (1, 1, SETS, 1, 1, n, n)
-    assert A.oshape == (1, 1, 1, coils, 1, n, n)
+    # The image carries the sets, the coil images do not, because the operator
+    # has summed over them.
+    assert A.ishape == (SETS, n, n)
+    assert A.oshape == (coils, n, n)
 
 
 def test_several_sets_are_summed_the_way_enlive_means_it():
@@ -584,19 +610,17 @@ def test_several_sets_are_summed_the_way_enlive_means_it():
     tolerance is what says it."""
     n, coils = 16, 4
     bank = _sets_bank(n, coils)
-    A = linop.Coils(bank, (coils, n, n))
+    A = linop.Coils(bank, (SETS, n, n))
 
     torch.manual_seed(0)
     x = torch.randn(*A.ishape, dtype=torch.complex64)
-    want = (bank.reshape(1, 1, SETS, coils, 1, n, n) * x.reshape(1, 1, SETS, 1, 1, n, n)).sum(
-        2, keepdim=True
-    )
+    want = (bank * x.reshape(SETS, 1, n, n)).sum(0)
     torch.testing.assert_close(A(x), want, rtol=1e-5, atol=1e-5)
 
 
 def test_several_sets_have_the_adjoint_they_claim():
     n, coils = 16, 4
-    A = linop.Coils(_sets_bank(n, coils), (coils, n, n), coil_batch=2)
+    A = linop.Coils(_sets_bank(n, coils), (SETS, n, n), coil_batch=2)
 
     torch.manual_seed(0)
     x = torch.randn(*A.ishape, dtype=torch.complex64)
@@ -611,8 +635,8 @@ def test_the_slab_walks_the_coils_and_not_the_sets(batch):
     """The slab is a slab of coils; the sets are inside it whatever it is."""
     n, coils = 16, 4
     bank = _sets_bank(n, coils)
-    sliced = linop.Coils(bank, (coils, n, n), coil_batch=batch)
-    whole = linop.Coils(bank, (coils, n, n), coil_batch=0)
+    sliced = linop.Coils(bank, (SETS, n, n), coil_batch=batch)
+    whole = linop.Coils(bank, (SETS, n, n), coil_batch=0)
 
     torch.manual_seed(0)
     x = torch.randn(*sliced.ishape, dtype=torch.complex64)
@@ -627,33 +651,39 @@ def test_the_slab_walks_the_coils_and_not_the_sets(batch):
 # sit after the coils is the non-contiguous case `md_copy2` exists for.
 #
 # That is the argument; this is the evidence, over every encoding that takes a
-# bank and every arrangement of the loop.
+# bank and every arrangement of the loop.  A 2D bank of four axes is read as
+# sets and coils only when it is told it is 2D, so the encodings that take
+# ``ndim`` are given it.
 
 _KERNEL_CASES = {
-    "coils": lambda s, k, **o: linop.Coils(s, (COILS_K, N_K, N_K), kernels=k, **o),
-    "cartesian": lambda s, k, **o: linop.CartesianSense(s, (COILS_K, N_K, N_K), kernels=k, **o),
+    "coils": lambda s, k, **o: linop.Coils(s, _kernel_image(s), kernels=k, ndim=2, **o),
+    "cartesian": lambda s, k, **o: linop.CartesianSense(
+        s, _kernel_image(s), kernels=k, ndim=2, **o
+    ),
     "noncartesian": lambda s, k, **o: linop.NoncartesianSense(
-        s, (COILS_K, N_K, N_K), traj=_KERNEL_TRAJ(), kernels=k, **o
+        s, _kernel_image(s), traj=_KERNEL_TRAJ(), kernels=k, **o
     ),
     "wave": lambda s, k, **o: linop.WaveSense(
-        s, _KERNEL_PSF(), (COILS_K, N_K, N_K), readout=2 * N_K, kernels=k, **o
+        s, _KERNEL_PSF(), _kernel_image(s), readout=2 * N_K, kernels=k, ndim=2, **o
     ),
     "cartesian subspace": lambda s, k, **o: linop.CartesianSense(
         s,
-        (COILS_K, N_K, N_K),
+        _kernel_image(s, COEFFS_K),
         pattern=_KERNEL_MASK(),
         basis=_KERNEL_BASIS(),
         kernels=k,
+        ndim=2,
         **o,
     ),
     "wave subspace": lambda s, k, **o: linop.WaveSense(
         s,
         _KERNEL_PSF(),
-        (COILS_K, N_K, N_K),
+        _kernel_image(s, COEFFS_K),
         readout=2 * N_K,
         pattern=_KERNEL_MASK(),
         basis=_KERNEL_BASIS(),
         kernels=k,
+        ndim=2,
         **o,
     ),
 }
@@ -661,35 +691,39 @@ _KERNEL_CASES = {
 N_K, COILS_K, FRAMES_K, COEFFS_K = 24, 4, 6, 2
 
 
+def _kernel_image(bank, *encoding):
+    """The image a 2D bank ``([sets,] coils, y, x)`` serves: sets, ``encoding``, y and x."""
+    return (*bank.shape[:-3], *encoding, N_K, N_K)
+
+
 def _KERNEL_TRAJ():  # noqa: N802  (a fixture by another name)
     return bt.traj(x=N_K, y=32, r=True)
 
 
 def _KERNEL_PSF():  # noqa: N802
-    # Rank four, so it broadcasts against the plain wave shape and the wider
-    # one that sets of maps and a subspace give it alike.
+    # Over (y, readout) alone, so it broadcasts over the coil images whatever
+    # the bank has in front of them.
     torch.manual_seed(11)
-    return torch.randn(1, 1, N_K, 2 * N_K, dtype=torch.complex64)
+    return torch.randn(N_K, 2 * N_K, dtype=torch.complex64)
 
 
 def _KERNEL_BASIS():  # noqa: N802
     torch.manual_seed(12)
-    return torch.randn(COEFFS_K, FRAMES_K, dtype=torch.complex64).reshape(
-        COEFFS_K, FRAMES_K, 1, 1, 1, 1, 1
-    )
+    return torch.randn(COEFFS_K, FRAMES_K, dtype=torch.complex64)
 
 
 def _KERNEL_MASK():  # noqa: N802
+    # (frames, y, 1): a phase-encode mask per frame, over one coil's samples.
     torch.manual_seed(13)
-    return (torch.rand(1, FRAMES_K, 1, 1, 1, N_K, 1) > 0.4).to(torch.complex64)
+    return (torch.rand(FRAMES_K, N_K, 1) > 0.4).to(torch.complex64)
 
 
 def _kernel_bank(sets):
     torch.manual_seed(8)
-    kernels = torch.randn(sets, COILS_K, 1, 5, 5, dtype=torch.complex64)
+    kernels = torch.randn(sets, COILS_K, 5, 5, dtype=torch.complex64)
     if 1 == sets:
-        kernels = kernels.reshape(COILS_K, 1, 5, 5)
-    return kernels, bartorch.kernels_to_maps(kernels, (1, N_K, N_K))
+        kernels = kernels.reshape(COILS_K, 5, 5)
+    return kernels, bartorch.kernels_to_maps(kernels, (N_K, N_K))
 
 
 @pytest.mark.parametrize("case", sorted(_KERNEL_CASES))
@@ -717,8 +751,9 @@ def test_a_kernel_bank_is_the_maps_it_stands_for_however_many_sets(case, sets):
 def test_the_slab_does_not_change_a_kernel_bank_of_several_sets(batch):
     """The two features meet in the loop, so the loop is what is varied."""
     kernels, _ = _kernel_bank(SETS)
-    sliced = linop.Coils(kernels, (COILS_K, N_K, N_K), kernels=True, coil_batch=batch)
-    one = linop.Coils(kernels, (COILS_K, N_K, N_K), kernels=True, coil_batch=1)
+    image = (SETS, N_K, N_K)
+    sliced = linop.Coils(kernels, image, kernels=True, coil_batch=batch, ndim=2)
+    one = linop.Coils(kernels, image, kernels=True, coil_batch=1, ndim=2)
 
     torch.manual_seed(0)
     x = torch.randn(*one.ishape, dtype=torch.complex64)
@@ -726,20 +761,17 @@ def test_the_slab_does_not_change_a_kernel_bank_of_several_sets(batch):
 
 
 def test_several_sets_off_the_grid_are_the_sum_of_the_one_set_operators():
-    """Which is what summing over the maps axis means, said another way."""
+    """Which is what summing over the sets axis means, said another way."""
     n, coils = 16, 4
     bank = _sets_bank(n, coils)
     traj = bt.traj(x=n, y=24, r=True)
 
-    A = linop.NoncartesianSense(bank, (coils, n, n), traj=traj)
+    A = linop.NoncartesianSense(bank, (SETS, n, n), traj=traj)
     torch.manual_seed(0)
     x = torch.randn(*A.ishape, dtype=torch.complex64)
 
-    want = sum(
-        linop.NoncartesianSense(bank[m], (coils, n, n), traj=traj)(x[0, 0, m, 0])
-        for m in range(SETS)
-    )
-    torch.testing.assert_close(A(x).reshape(want.shape), want, rtol=1e-4, atol=1e-5)
+    want = sum(linop.NoncartesianSense(bank[m], (n, n), traj=traj)(x[m]) for m in range(SETS))
+    torch.testing.assert_close(A(x), want, rtol=1e-4, atol=1e-5)
 
 
 # --- which convention the samples come back in --------------------------------
@@ -750,14 +782,14 @@ def test_several_sets_off_the_grid_are_the_sum_of_the_one_set_operators():
 # written in.  This operator's slabs apply the centred transform instead, which
 # is what `bartorch.fft` produces.
 #
-# Both are wanted.  What is not wanted is `coil_batch` deciding between them,
-# which is what it used to do: a setting documented as changing residency
-# silently changed the answer by a checkerboard.
+# Both are wanted.  What is not wanted is `coil_batch` deciding between them:
+# a setting documented as changing residency must not change the answer by a
+# checkerboard.
 
 
 def _grid_bank(n=16, coils=4, seed=0):
     torch.manual_seed(seed)
-    return torch.randn(coils, 1, n, n, dtype=torch.complex64)
+    return torch.randn(coils, n, n, dtype=torch.complex64)
 
 
 @pytest.mark.parametrize("modulated", [False, True])
@@ -766,10 +798,10 @@ def test_the_slab_does_not_decide_the_convention(modulated, batch):
     """The regression this pins: `coil_batch` is residency and nothing else."""
     n, coils = 16, 4
     maps = _grid_bank(n, coils)
-    x = torch.randn(1, n, n, dtype=torch.complex64)
+    x = torch.randn(n, n, dtype=torch.complex64)
 
-    sliced = linop.CartesianSense(maps, (coils, n, n), coil_batch=batch, modulated=modulated)
-    one = linop.CartesianSense(maps, (coils, n, n), coil_batch=1, modulated=modulated)
+    sliced = linop.CartesianSense(maps, (n, n), coil_batch=batch, modulated=modulated)
+    one = linop.CartesianSense(maps, (n, n), coil_batch=1, modulated=modulated)
 
     torch.testing.assert_close(sliced(x), one(x), rtol=1e-6, atol=1e-6)
 
@@ -777,20 +809,20 @@ def test_the_slab_does_not_decide_the_convention(modulated, batch):
 def test_the_two_conventions_are_one_modulation_apart():
     n, coils = 16, 4
     maps = _grid_bank(n, coils)
-    x = torch.randn(1, n, n, dtype=torch.complex64)
+    x = torch.randn(n, n, dtype=torch.complex64)
 
-    centred = linop.CartesianSense(maps, (coils, n, n))
-    modulated = linop.CartesianSense(maps, (coils, n, n), modulated=True)
+    centred = linop.CartesianSense(maps, (n, n))
+    modulated = linop.CartesianSense(maps, (n, n), modulated=True)
 
     torch.testing.assert_close(
-        bartorch.fftmod(modulated(x), axes=(-1, -2, -3)), centred(x), rtol=1e-6, atol=1e-6
+        bartorch.fftmod(modulated(x), axes=(-1, -2)), centred(x), rtol=1e-6, atol=1e-6
     )
 
 
 @pytest.mark.parametrize("modulated", [False, True])
 def test_either_convention_has_the_adjoint_it_claims(modulated):
     n, coils = 16, 4
-    A = linop.CartesianSense(_grid_bank(n, coils), (coils, n, n), modulated=modulated, coil_batch=2)
+    A = linop.CartesianSense(_grid_bank(n, coils), (n, n), modulated=modulated, coil_batch=2)
 
     torch.manual_seed(1)
     x = torch.randn(*A.ishape, dtype=torch.complex64)
@@ -804,11 +836,11 @@ def test_the_modulated_convention_is_the_grids():
     n, coils = 16, 4
     traj = bt.traj(x=n, y=24, r=True)
     with pytest.raises(ValueError, match="only one"):
-        linop.NoncartesianSense(_grid_bank(n, coils), (coils, n, n), traj=traj, modulated=True)
+        linop.NoncartesianSense(_grid_bank(n, coils), (n, n), traj=traj, modulated=True)
 
 
 def test_a_kernel_cannot_carry_the_modulation():
     """It is the whole grid's, and a kernel is a few samples across."""
     kernels, _ = _kernel_bank(1)
     with pytest.raises(BartError, match="cannot be done to a kernel"):
-        linop.CartesianSense(kernels, (COILS_K, N_K, N_K), kernels=True, modulated=True)
+        linop.CartesianSense(kernels, (N_K, N_K), kernels=True, modulated=True)

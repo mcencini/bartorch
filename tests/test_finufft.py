@@ -1555,10 +1555,10 @@ def test_compressing_a_radial_function_costs_less_than_the_embedding_itself(in_t
 
     n, spokes, frames, coeffs, coils = 64, 256, 8, 4, 4
     traj = bt.traj(x=n, y=spokes * frames, r=True, flag_3=True)
-    traj = traj.reshape(frames, spokes, n, 3)[:, None, None].cuda()
-    basis = torch.zeros(coeffs, frames, 1, 1, 1, 1, 1, dtype=torch.complex64)
+    traj = traj.reshape(frames, spokes, n, 3).cuda()
+    basis = torch.zeros(coeffs, frames, dtype=torch.complex64)
     for c in range(coeffs):
-        basis[c, :, 0, 0, 0, 0, 0] = torch.cos(torch.pi * c * (torch.arange(frames) + 0.5) / frames)
+        basis[c] = torch.cos(torch.pi * c * (torch.arange(frames) + 0.5) / frames)
     basis = basis.cuda()
 
     torch.manual_seed(0)
@@ -1568,7 +1568,7 @@ def test_compressing_a_radial_function_costs_less_than_the_embedding_itself(in_t
     def build(compress, toeplitz):
         _finufft.compress_psf(compress)
         return linop.NoncartesianSense(
-            maps, (coils, n, n, n), traj=traj, basis=basis, toeplitz=toeplitz
+            maps, (coeffs, n, n, n), traj=traj, basis=basis, toeplitz=toeplitz
         )
 
     try:
@@ -1715,20 +1715,19 @@ def test_the_passes_inside_the_transforms_answer_as_the_passes_on_their_own(in_t
     n, spokes, frames, coeffs, coils = (32, 24, 4, 3, 2) if dims == 2 else (24, 48, 4, 3, 2)
     read = n // 2
     three = {"flag_3": True} if dims == 3 else {}
-    traj = bt.traj(x=read, y=spokes * frames, r=True, **three).reshape(frames, spokes, read, 3)[
-        :, None, None
-    ]
-    basis = torch.zeros(coeffs, frames, 1, 1, 1, 1, 1, dtype=torch.complex64)
+    traj = bt.traj(x=read, y=spokes * frames, r=True, **three).reshape(frames, spokes, read, 3)
+    basis = torch.zeros(coeffs, frames, dtype=torch.complex64)
     for c in range(coeffs):
-        basis[c, :, 0, 0, 0, 0, 0] = torch.cos(torch.pi * c * (torch.arange(frames) + 0.5) / frames)
+        basis[c] = torch.cos(torch.pi * c * (torch.arange(frames) + 0.5) / frames)
 
     torch.manual_seed(0)
-    shape = (coils,) + (n,) * dims
-    maps = torch.randn(shape, dtype=torch.complex64)
+    maps = torch.randn((coils,) + (n,) * dims, dtype=torch.complex64)
     maps = maps / maps.abs().pow(2).sum(0, keepdim=True).sqrt()
 
     compressed = _finufft.functions_compressed()
-    A = linop.NoncartesianSense(maps.cuda(), shape, traj=traj.cuda(), basis=basis.cuda())
+    A = linop.NoncartesianSense(
+        maps.cuda(), (coeffs,) + (n,) * dims, traj=traj.cuda(), basis=basis.cuda()
+    )
     assert _finufft.functions_compressed() > compressed, "the function was compressed"
 
     x = torch.randn(A.ishape, dtype=torch.complex64, device="cuda")
@@ -1764,17 +1763,15 @@ def test_sets_convolved_in_pairs_answer_as_sets_one_at_a_time(in_tools):
     from bartorch import linop
 
     n, read, spokes, frames, coeffs, coils = 32, 16, 48, 4, 4, 2
-    traj = bt.traj(x=read, y=spokes * frames, r=True, flag_3=True).reshape(frames, spokes, read, 3)[
-        :, None, None
-    ]
-    basis = torch.zeros(coeffs, frames, 1, 1, 1, 1, 1, dtype=torch.complex64)
+    traj = bt.traj(x=read, y=spokes * frames, r=True, flag_3=True).reshape(frames, spokes, read, 3)
+    basis = torch.zeros(coeffs, frames, dtype=torch.complex64)
     for c in range(coeffs):
-        basis[c, :, 0, 0, 0, 0, 0] = torch.cos(torch.pi * c * (torch.arange(frames) + 0.5) / frames)
+        basis[c] = torch.cos(torch.pi * c * (torch.arange(frames) + 0.5) / frames)
 
     torch.manual_seed(0)
     maps = torch.randn(coils, n, n, n, dtype=torch.complex64)
     maps = maps / maps.abs().pow(2).sum(0, keepdim=True).sqrt()
-    x = torch.randn(coeffs, 1, 1, 1, n, n, n, dtype=torch.complex64, device="cuda")
+    x = torch.randn(coeffs, n, n, n, dtype=torch.complex64, device="cuda")
     kept = x.clone()
 
     def normal(pair):
@@ -1782,7 +1779,7 @@ def test_sets_convolved_in_pairs_answer_as_sets_one_at_a_time(in_tools):
         _finufft.bfloat16_function(False)
         try:
             A = linop.NoncartesianSense(
-                maps.cuda(), (coils, n, n, n), traj=traj.cuda(), basis=basis.cuda()
+                maps.cuda(), (coeffs, n, n, n), traj=traj.cuda(), basis=basis.cuda()
             )
             before = _finufft.pairs_convolved()
             out = A.normal(x)
@@ -1816,24 +1813,22 @@ def test_a_function_kept_in_bfloat16_answers_as_one_kept_in_floats(in_tools):
     from bartorch import linop
 
     n, read, spokes, frames, coeffs, coils = 32, 16, 48, 4, 4, 2
-    traj = bt.traj(x=read, y=spokes * frames, r=True, flag_3=True).reshape(frames, spokes, read, 3)[
-        :, None, None
-    ]
-    basis = torch.zeros(coeffs, frames, 1, 1, 1, 1, 1, dtype=torch.complex64)
+    traj = bt.traj(x=read, y=spokes * frames, r=True, flag_3=True).reshape(frames, spokes, read, 3)
+    basis = torch.zeros(coeffs, frames, dtype=torch.complex64)
     for c in range(coeffs):
-        basis[c, :, 0, 0, 0, 0, 0] = torch.cos(torch.pi * c * (torch.arange(frames) + 0.5) / frames)
+        basis[c] = torch.cos(torch.pi * c * (torch.arange(frames) + 0.5) / frames)
 
     torch.manual_seed(0)
     maps = torch.randn(coils, n, n, n, dtype=torch.complex64)
     maps = maps / maps.abs().pow(2).sum(0, keepdim=True).sqrt()
-    x = torch.randn(coeffs, 1, 1, 1, n, n, n, dtype=torch.complex64, device="cuda")
+    x = torch.randn(coeffs, n, n, n, dtype=torch.complex64, device="cuda")
 
     def normal(bf16):
         _finufft.bfloat16_function(bf16)
         try:
             before = _finufft.functions_bfloat16()
             A = linop.NoncartesianSense(
-                maps.cuda(), (coils, n, n, n), traj=traj.cuda(), basis=basis.cuda()
+                maps.cuda(), (coeffs, n, n, n), traj=traj.cuda(), basis=basis.cuda()
             )
             return A.normal(x), _finufft.functions_bfloat16() - before
         finally:
@@ -1867,8 +1862,15 @@ def test_the_contraction_kernel_is_barts_contraction(in_tools):
     maps = torch.randn(coils, n, n, dtype=torch.complex64)
     maps = maps / maps.abs().pow(2).sum(0, keepdim=True).sqrt()
 
+    # The helper lays the trajectory and the basis out for the tools; the
+    # operator takes them as (frames, spokes, readout, 3) and (coeffs, frames).
     before = _finufft.functions_compressed()
-    A = linop.NoncartesianSense(maps.cuda(), (coils, n, n), traj=traj.cuda(), basis=basis.cuda())
+    A = linop.NoncartesianSense(
+        maps.cuda(),
+        (coeffs, n, n),
+        traj=traj.reshape(frames, spokes, read, 3).cuda(),
+        basis=basis.reshape(coeffs, frames).cuda(),
+    )
     assert _finufft.functions_compressed() > before, "the function was compressed"
 
     x = torch.randn(A.ishape, dtype=torch.complex64, device="cuda")
@@ -1922,7 +1924,10 @@ def test_encoding_axes_behind_a_batch_are_transformed_a_batch_item_at_a_time():
     n, spokes, frames, coeffs, coils = 16, 10, 3, 2, 4
     torch.manual_seed(0)
     traj = torch.stack(
-        [bt.traj(x=n, y=spokes, r=True, G=True).reshape(spokes, n, 3) * (1 - 0.1 * f) for f in range(frames)]
+        [
+            bt.traj(x=n, y=spokes, r=True, G=True).reshape(spokes, n, 3) * (1 - 0.1 * f)
+            for f in range(frames)
+        ]
     )
     basis = torch.randn(coeffs, frames, dtype=torch.complex64)
 

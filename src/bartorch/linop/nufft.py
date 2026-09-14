@@ -102,9 +102,7 @@ class NUFFT(LinearOperator):
             self.basis = b.reshape(coeffs, frames)
 
         image_encoding = self.encoding if coeffs is None else (*self.encoding[:-1], coeffs)
-        batches, rest = _layout.split(
-            self.image_shape, len(self.encoding) + self.ndim, "the image"
-        )
+        batches, rest = _layout.split(self.image_shape, len(self.encoding) + self.ndim, "the image")
         if tuple(rest[: len(self.encoding)]) != tuple(image_encoding):
             raise ValueError(
                 f"the image {self.image_shape} does not carry the encoding axes "
@@ -150,10 +148,11 @@ class NUFFT(LinearOperator):
         return not self.encoding
 
     def _block_vectors(self):
-        """BART dimension vectors of what one operator is built for: k-space, image, trajectory, weights, basis.
+        """BART dimension vectors one operator is built for.
 
-        That is every batch item on the coil axis where :meth:`_whole` says so,
-        and one batch item otherwise.
+        The operator holds every batch item on the coil axis where
+        :meth:`_whole` says so, and one batch item otherwise.  Returned as
+        k-space, image, trajectory, weights and basis.
         """
         shots, samples, d = (int(n) for n in self.traj.shape[-3:])
         kdims, idims = _layout.encoding_dims(len(self.encoding), self.basis is not None)
@@ -172,9 +171,13 @@ class NUFFT(LinearOperator):
             _layout.PHS2: spatial[0],
             _layout.COIL: batch,
         }
-        image_encoding = self.encoding if self.basis is None else (
-            *self.encoding[:-1],
-            int(self.basis.shape[0]),
+        image_encoding = (
+            self.encoding
+            if self.basis is None
+            else (
+                *self.encoding[:-1],
+                int(self.basis.shape[0]),
+            )
         )
         for dim, n in zip(idims, image_encoding):
             i[dim] = n
@@ -189,7 +192,9 @@ class NUFFT(LinearOperator):
 
         b = None
         if self.basis is not None:
-            b = _layout.vector({_layout.TE: self.basis.shape[1], _layout.COEFF: self.basis.shape[0]})
+            b = _layout.vector(
+                {_layout.TE: self.basis.shape[1], _layout.COEFF: self.basis.shape[0]}
+            )
 
         return _layout.vector(k), _layout.vector(i), _layout.vector(t), w, b
 

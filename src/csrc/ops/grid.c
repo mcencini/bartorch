@@ -465,10 +465,11 @@ void bartorch_grid_normal_sense(const struct linop_s* op, complex float* dst, co
 }
 
 /* The slab transform over coil images of `cim_dims`, or over every coil when
- * the loop does not run.  `pattern` and `basis` may each be NULL. */
+ * the loop does not run.  `pattern` and `basis` may each be NULL.  Without
+ * `toeplitz` the normal is the two applications, as BART derives it. */
 const struct linop_s* grid_transform_create(const long cim_dims[DIMS],
 		const long pat_dims[DIMS], const complex float* pattern,
-		const long bas_dims[DIMS], const complex float* basis)
+		const long bas_dims[DIMS], const complex float* basis, int toeplitz)
 {
 	unsigned long fft_flags = FFT_FLAGS & md_nontriv_dims(DIMS, cim_dims);
 
@@ -609,6 +610,9 @@ const struct linop_s* grid_transform_create(const long cim_dims[DIMS],
 		d->dmod[a] = NULL;
 	}
 
+	if (0 == toeplitz)
+		d->flags = 0UL;
+
 	struct linop_s* nrm = core;
 
 	if (0UL != d->flags) {
@@ -633,5 +637,5 @@ const struct linop_s* grid_transform_create(const long cim_dims[DIMS],
 	md_copy_dims(DIMS, out_dims, d->out_dims);
 
 	return linop_create(DIMS, out_dims, DIMS, cim_dims, CAST_UP(PTR_PASS(d)),
-			grid_forward, grid_adjoint, grid_normal, NULL, grid_del);
+			grid_forward, grid_adjoint, (0 != toeplitz) ? grid_normal : NULL, NULL, grid_del);
 }

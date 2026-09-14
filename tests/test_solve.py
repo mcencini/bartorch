@@ -27,9 +27,13 @@ def _unitary():
     return linop.FFT((8, 8), axes=(-1, -2))
 
 
-#: The coefficient axis of a subspace image, as an index into its shape:
+#: The coefficient axis of a subspace image as ``pics`` holds it:
 #: ``COEFF_DIM`` is BART's sixth, so it is the seventh from the end.
-_COEFFS = -7
+_BART_COEFFS = -7
+
+#: The coefficient axis of the subspace image an operator here takes,
+#: ``(coeffs, z, y, x)``: the one before the three spatial axes.
+_COEFFS = -4
 
 
 # --- the loop stays in C ----------------------------------------------------
@@ -92,8 +96,8 @@ def test_the_solve_builds_no_operator_of_its_own():
     traj = bt.traj(readout=n, spokes=24, radial=True)
     maps = _rand(2, n, n)
     maps = maps / maps.abs().square().sum(0, keepdim=True).sqrt()
-    A = linop.NoncartesianSense(maps, (2, n, n), traj=traj)
-    y = A(_rand(1, n, n))
+    A = linop.NoncartesianSense(maps, (n, n), traj=traj)
+    y = A(_rand(n, n))
     term = prox.Wavelet(axes=(-1, -2), weight=0.01)
     term.build(A.ishape)
 
@@ -278,29 +282,34 @@ def test_an_infimal_convolution_needs_an_axis_of_each_kind(term):
     "term,other,flag",
     [
         (
-            prox.TotalGeneralizedVariation((-1, -2), 0.01, alpha=(2.0, 0.5)),
-            prox.TotalGeneralizedVariation((-1, -2), 0.01),
+            lambda coeffs: prox.TotalGeneralizedVariation((-1, -2), 0.01, alpha=(2.0, 0.5)),
+            lambda coeffs: prox.TotalGeneralizedVariation((-1, -2), 0.01),
             {"alpha": (2.0, 0.5)},
         ),
         (
-            prox.InfimalConvolutionTV((-1, -2, _COEFFS), 0.01, gamma=(0.3, 2.0)),
-            prox.InfimalConvolutionTV((-1, -2, _COEFFS), 0.01),
+            lambda coeffs: prox.InfimalConvolutionTV((-1, -2, coeffs), 0.01, gamma=(0.3, 2.0)),
+            lambda coeffs: prox.InfimalConvolutionTV((-1, -2, coeffs), 0.01),
             {"gamma": (0.3, 2.0)},
         ),
     ],
     ids=["alpha", "gamma"],
 )
-def test_the_pairs_pics_takes_once_reach_the_solve(term, other, flag, _whole_coil_operator):
+def test_the_pairs_pics_takes_once_reach_the_solve(term, other, flag):
     """``--alpha`` and ``--gamma`` live on ``struct opt_reg_s`` and not on a
     term, so they travel beside the set rather than inside it.  Against the
-    tool given the same flag, and against the default, which they change."""
+    tool given the same flag, and against the default, which they change.
+
+    Each term is made for the layout it is handed: the coefficient axis is
+    ``_BART_COEFFS`` for the tool and ``_COEFFS`` for the operator."""
     kspace, maps, basis, A, y = _subspace_problem()
-    tool = bt.pics(kspace, maps, basis=basis, maxiter=20, regularizers=term, solver="admm")
-    assembled = optim.ADMM(term, maxiter=20)(y, A)
+    tool = bt.pics(
+        kspace, maps, basis=basis, maxiter=20, regularizers=term(_BART_COEFFS), solver="admm"
+    )
+    assembled = optim.ADMM(term(_COEFFS), maxiter=20)(y, A)
     assert torch.equal(assembled, tool.reshape(assembled.shape)), (
         f"maximum difference {float((assembled - tool.reshape(assembled.shape)).abs().max()):.3e}"
     )
-    assert not torch.equal(assembled, optim.ADMM(other, maxiter=20)(y, A))
+    assert not torch.equal(assembled, optim.ADMM(other(_COEFFS), maxiter=20)(y, A))
 
 
 def test_two_terms_cannot_ask_for_different_pairs():
@@ -486,8 +495,10 @@ def _pics_problem(size=24, coils=4, accel=2):
 
     # BART's own convention and BART's own operator: the k-space above is
     # modulated as `pics` modulates it, and `coil_batch=0` is the arithmetic
-    # the tool does rather than arithmetic that agrees with it.
-    S = linop.CartesianSense(maps.squeeze(1), (coils, size, size), coil_batch=0, modulated=True)
+    # the tool does rather than arithmetic that agrees with it.  The tool's
+    # arrays are (coils, z, y, x) with one partition, so dropping z leaves the
+    # operator's (coils, y, x) maps and k-space over a (y, x) image.
+    S = linop.CartesianSense(maps.squeeze(1), (size, size), coil_batch=0, modulated=True)
     A = linop.Sampling(pattern.squeeze(), S.oshape) @ S
     return kspace, maps, A, (y * (1.0 / scale)).squeeze(1), scale
 
@@ -602,10 +613,13 @@ def _subspace_problem(size=16, coils=4, frames=4, coeffs=2):
     """A ``pics -B`` problem, and the same problem assembled from this package.
 
     The image is the coefficients of a temporal subspace, which sit on BART's
-    ``COEFF_DIM`` -- an axis that is not one of the three spatial ones.  The
+    ``COEFF_DIM`` for the tool and before the three spatial axes for the
+    operator -- an axis that is not one of the three spatial ones.  The
     infimal convolutions need such an axis: they separate what is smooth over
     the spatial axes from what is smooth over the rest, and BART asserts that
-    both exist.
+    both exist.  So the operator keeps the tool's single partition as a z axis
+    of one: its image is ``(coeffs, z, y, x)`` and its k-space
+    ``(coils, frames, z, y, x)``, while the tool's arrays stay in BART's order.
     """
     base = bt.phantom(size, coils=coils, kspace=True)
     decay = torch.linspace(1.0, 0.5, frames).to(torch.complex64)
@@ -628,35 +642,41 @@ def _subspace_problem(size=16, coils=4, frames=4, coeffs=2):
 
     # `toeplitz=False` because the tool applies the encoding and its adjoint;
     # the closed-form normal is this package's shortcut and not BART's step.
+    # A coil batch of one, because BART's whole-coil operator lays the samples
+    # out with the frames before the coils and is refused with a frame axis.
     A = linop.CartesianSense(
-        maps.squeeze(1),
-        (coils, size, size),
-        pattern=pattern,
-        basis=basis,
+        maps.reshape(coils, 1, size, size),
+        (coeffs, 1, size, size),
+        pattern=pattern.reshape(frames, 1, size, size),
+        basis=basis.reshape(coeffs, frames),
         toeplitz=False,
-        coil_batch=0,
+        coil_batch=1,
         modulated=True,
     )
+    # BART's (1, frames, 1, coils, 1, y, x) to the operator's (coils, frames, z, y, x).
+    y = y.reshape(frames, coils, 1, size, size).transpose(0, 1).contiguous()
     return kspace, maps, basis, A, (y * (1.0 / scale)).reshape(A.oshape)
 
 
 @pytest.mark.parametrize(
     "term",
     [
-        prox.Wavelet((-1, -2), 0.01),
-        prox.TotalGeneralizedVariation((-1, -2), 0.01),
-        prox.InfimalConvolutionTV((-1, -2, _COEFFS), 0.01),
-        prox.InfimalConvolutionTGV((-1, -2, _COEFFS), 0.01),
+        lambda coeffs: prox.Wavelet((-1, -2), 0.01),
+        lambda coeffs: prox.TotalGeneralizedVariation((-1, -2), 0.01),
+        lambda coeffs: prox.InfimalConvolutionTV((-1, -2, coeffs), 0.01),
+        lambda coeffs: prox.InfimalConvolutionTGV((-1, -2, coeffs), 0.01),
     ],
     ids=["wavelet", "tgv", "ictv", "ictgv"],
 )
-def test_an_extending_term_over_a_subspace_is_the_tool_to_the_last_bit(term, _whole_coil_operator):
+def test_an_extending_term_over_a_subspace_is_the_tool_to_the_last_bit(term):
     """The terms that add unknowns, against ``pics -B`` itself.  A wavelet term
     is there as the baseline: it adds nothing, and if it drifted the assembly
     would be what drifted, not the enlarged variable."""
     kspace, maps, basis, A, y = _subspace_problem()
-    tool = bt.pics(kspace, maps, basis=basis, maxiter=20, regularizers=term, solver="admm")
-    assembled = optim.ADMM(term, maxiter=20)(y, A)
+    tool = bt.pics(
+        kspace, maps, basis=basis, maxiter=20, regularizers=term(_BART_COEFFS), solver="admm"
+    )
+    assembled = optim.ADMM(term(_COEFFS), maxiter=20)(y, A)
     tool = tool.reshape(assembled.shape)
     assert torch.equal(assembled, tool), (
         f"maximum difference {float((assembled - tool).abs().max()):.3e}"
@@ -678,8 +698,8 @@ def test_the_scaling_for_a_trajectory_is_the_other_branch():
     traj = bt.traj(readout=n, spokes=24, radial=True)
     maps = _rand(2, n, n)
     maps = maps / maps.abs().square().sum(0, keepdim=True).sqrt()
-    A = linop.NoncartesianSense(maps, (2, n, n), traj=traj)
-    y = A(_rand(1, n, n))
+    A = linop.NoncartesianSense(maps, (n, n), traj=traj)
+    y = A(_rand(n, n))
     scale = optim.data_scaling(y, A=A)
     assert scale > 0
     assert optim.data_scaling(y * 4.0, A=A) == pytest.approx(4 * scale, rel=1e-5)
@@ -758,8 +778,8 @@ def _normal_equations(A, y, terms, lambda_=0.0):
 @pytest.fixture
 def _small_encoding():
     torch.manual_seed(0)
-    maps = _rand(3, 1, 8, 8)
-    A = linop.CartesianSense(maps, (3, 8, 8))
+    maps = _rand(3, 8, 8)
+    A = linop.CartesianSense(maps, (8, 8))
     return A, _rand(*A.oshape)
 
 
@@ -815,9 +835,9 @@ def test_stacking_does_not_cost_the_encoding_its_own_normal():
 
     n, coils = 16, 4
     torch.manual_seed(0)
-    maps = _rand(coils, 1, n, n)
+    maps = _rand(coils, n, n)
     traj = bt.traj(x=n, y=24, r=True)
-    A = linop.NoncartesianSense(maps, (coils, n, n), traj=traj, toeplitz=True)
+    A = linop.NoncartesianSense(maps, (n, n), traj=traj, toeplitz=True)
     y = _rand(*A.oshape)
     G = linop.FFT(A.ishape, axes=(-2, -1))
 
