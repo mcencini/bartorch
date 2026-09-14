@@ -422,6 +422,20 @@ def test_a_fused_subspace_encoding_is_the_frames_written_out(maps, basis, patter
     assert (A(x) - want).abs().max() / want.abs().max() < 1e-5
 
 
+def test_the_algebra_carries_the_plan_through(maps, pattern):
+    """An adjoint, a normal and a chain are the same encoding, so they say so."""
+    A = linop.CartesianSense(maps, (Y, X), pattern=pattern)
+    for built in (A.H, A.gram(), A @ linop.Identity(A.ishape), 2.0 * A):
+        assert built.plan == A.plan
+
+
+def test_two_encodings_in_one_composition_have_no_single_plan(maps, pattern):
+    """The report is one encoding's; a composition of two is not one of them."""
+    A = linop.CartesianSense(maps, (Y, X), pattern=pattern)
+    B = linop.CartesianSense(maps, (Y, X), pattern=pattern, coil_batch=0)
+    assert (A.H @ B).plan is None
+
+
 def test_a_plan_reads_as_a_sentence(maps, pattern):
     """It is what a caller is shown, so it says the parts rather than the fields."""
     A = linop.CartesianSense(maps, (Y, X), pattern=pattern)

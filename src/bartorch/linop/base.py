@@ -150,14 +150,15 @@ class LinearOperator(Operator):
         own = getattr(self, "_plan", None)
         if own is not None:
             return own
-        found = [
-            plan
+        # By value rather than by part: an adjoint and a normal each hold the
+        # operator twice, once as it was given and once as the handle, and two
+        # references to one encoding are still one plan.
+        found = {
+            part.plan
             for part in (getattr(self, name, None) for name in ("a", "b", "op", "source"))
-            if isinstance(part, LinearOperator)
-            for plan in (part.plan,)
-            if plan is not None
-        ]
-        return found[0] if len(found) == 1 else None
+            if isinstance(part, LinearOperator) and part.plan is not None
+        }
+        return found.pop() if len(found) == 1 else None
 
     # --- operator algebra ---------------------------------------------------
     #
