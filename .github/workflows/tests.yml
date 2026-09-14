@@ -77,26 +77,23 @@ jobs:
         run: pip install -e ".${{ matrix.extras }}" --no-build-isolation -v
 
       # Both wheels carry their own copy of LLVM's OpenMP runtime, and the
-      # runtime ends the process rather than run beside a second copy, so
-      # without this the substitution declines and every non-Cartesian test
-      # on this platform runs on BART's own gridder instead.  Pointing
-      # FINUFFT at the copy torch carries leaves one runtime loaded and the
-      # substitution can be taken up.  `diagnose` first so the log says what
-      # the pair was before anything was changed.
-      - name: One OpenMP runtime for torch and FINUFFT (macOS)
+      # runtime ends the process rather than run beside a second copy.  The
+      # repair is bartorch's own, on the first NUFFT, so this reaches it the
+      # way an install does rather than patching ahead of it: the pair is
+      # read here while it is still two runtimes, the step below brings the
+      # library up and that is what repairs it, and `verify` after says the
+      # loader agrees and neither runtime aborts.
+      - name: The pair, before bartorch has repaired it (macOS)
         if: runner.os == 'macOS'
-        run: |
-          python scripts/macos_openmp.py diagnose
-          python scripts/macos_openmp.py patch
-          python scripts/macos_openmp.py verify
+        run: python scripts/macos_openmp.py diagnose
 
       # Before the suite, because the suite is where the information goes
       # missing: bringing the library up is what installs the FINUFFT
-      # substitution, and that probes itself by running `bart nufft` both
-      # ways.  When that aborts -- as it does on macOS -- pytest has stdout
-      # and stderr captured for collection and the process dies with the
-      # reason unprinted.  Run it once with the log going straight to the
-      # console, so a failure says what it was.
+      # substitution -- repairing the OpenMP pair on macOS, then probing
+      # itself by running `bart nufft` both ways -- and pytest has stdout and
+      # stderr captured for collection, so a process that dies there dies
+      # with the reason unprinted.  Run it once with the log going straight
+      # to the console, so a failure says what it was.
       - name: Report what the library came up with
         run: |
           python - <<'EOF'
@@ -115,6 +112,12 @@ jobs:
               # a name that moved should not.
               traceback.print_exc()
           EOF
+
+      # After the step above, which is what brought the library up: on macOS
+      # that is where `_macos_openmp.ensure()` ran, and this says it took.
+      - name: One OpenMP runtime, repaired by bartorch itself (macOS)
+        if: runner.os == 'macOS'
+        run: python scripts/macos_openmp.py verify
 
       - name: Run the test suite
         run: pytest tests/ -v

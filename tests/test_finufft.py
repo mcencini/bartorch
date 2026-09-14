@@ -2,6 +2,7 @@
 against an explicit discrete Fourier sum and against BART's own gridder.
 """
 
+import contextlib
 import logging
 import os
 
@@ -360,6 +361,63 @@ def test_barts_own_gridder_is_reachable_only_from_inside_the_package():
     bartorch.nufft(img, traj)
     assert _finufft.operators_built() == (1, 0), "the block put it back"
     assert not _finufft.fallback_allowed()
+
+
+@contextlib.contextmanager
+def _two_openmp_runtimes():
+    """A process that looks like an unpatched macOS one, which is the pair's own answer.
+
+    ``openmp_runtimes`` reads the loaded images and answers nothing but on
+    macOS, so the one case that matters is unreachable on any other host
+    without saying what it would have found.
+    """
+    was = _finufft.openmp_runtimes
+    _finufft.openmp_runtimes = lambda: ["/torch/lib/libomp.dylib", "/finufft/.dylibs/libomp.dylib"]
+    try:
+        yield
+    finally:
+        _finufft.openmp_runtimes = was
+
+
+@requires_finufft
+def test_two_openmp_runtimes_refuse_the_transforms_rather_than_grid_them():
+    """What an unpatched macOS gets: a refusal, not an answer from BART's gridder.
+
+    Calling FINUFFT with a second runtime loaded is what ends the process, so
+    the substitution stays off -- and an answer an order further from the
+    transform, arriving with nothing to say so, is worse than no answer, so
+    the fallback is not opened either.
+    """
+    with _two_openmp_runtimes(), pytest.raises(RuntimeError, match="more than one OpenMP runtime"):
+        _finufft.use_in_tools(True)
+
+    assert not _finufft.used_in_tools(), "the substitution is off"
+    assert not _finufft.fallback_allowed(), "and BART's gridder was not opened instead"
+
+    n = 32
+    traj = bt.traj(x=n, y=16, r=True)
+    img = bt.phantom([n, n]).reshape(1, n, n)
+    with pytest.raises(bartorch.BartError, match="FINUFFT cannot serve this NUFFT"):
+        bartorch.nufft(img, traj)
+
+
+@pytest.mark.parametrize(
+    ("repaired", "says"),
+    [
+        # Patched in this process: too late for the image already loaded.
+        ("patched", "start again"),
+        # Nothing to do, so the second runtime is not one of this pair's.
+        ("already", "some other package's"),
+        # Anything else is the reason it could not, carried through.
+        ("no install_name_tool on PATH", "no install_name_tool on PATH"),
+    ],
+)
+def test_the_refusal_says_what_to_do_about_each_way_it_got_here(repaired, says):
+    """A message with no remedy in it is one a caller cannot act on."""
+    remedy = _finufft._remedy(repaired)
+    assert says in remedy
+    if repaired != "patched":
+        assert "scripts/macos_openmp.py" in remedy
 
 
 @requires_finufft
