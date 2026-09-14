@@ -7,6 +7,9 @@ something outside BART, and the plan and the library's own counters against
 the path it was meant to take.
 """
 
+import subprocess
+import sys
+
 import pytest
 import torch
 
@@ -261,6 +264,25 @@ def test_a_nufft_contraction_becomes_a_subspace_over_the_samples(maps):
     assert A.plan.contraction == "subspace" and A.plan.terms == 3
     assert A.plan.normal == "kernel", "a kernel per pair of terms, not a transform each"
     assert A.plan.fused
+
+
+def test_the_substitution_answers_before_anything_has_needed_one():
+    """``serves()`` decides whether a test runs, so it must not answer "no" too early.
+
+    The substitution installs itself on first use, so read in a process that
+    has not built a NUFFT yet it would report that it does not serve -- and a
+    test gated on it would skip where it should run, which is the silent
+    fallback this file exists to catch.  It installs first.
+    """
+    if not _finufft.available():
+        pytest.skip("finufft is not installed")
+    fresh = subprocess.run(
+        [sys.executable, "-c", "from bartorch import _finufft; print(_finufft.serves())"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert fresh.stdout.strip() == "True", fresh.stderr
 
 
 def test_a_contraction_barts_gridder_cannot_serve_falls_back_to_the_sum(maps):

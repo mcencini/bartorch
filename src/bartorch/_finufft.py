@@ -276,8 +276,13 @@ def serves(device: bool = False) -> bool:
     would run on a card.  What a caller needs it for is a transform only the
     substitution can compute, so that the answer where it declines is a route
     BART's own gridder does have rather than an error.
+
+    The substitution is installed first if nothing has needed one yet, so this
+    answers what would happen and not merely what has happened.
     """
     from bartorch._lib import library
+
+    install_once()
 
     lib = library()
     if not lib.bartorch_finufft_usable_on(0):
