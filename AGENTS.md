@@ -699,6 +699,30 @@ of diagonals around an encoding back into chains and sums of them, `lower`
 folds the factors into the encoding's form, and `materialise` builds BART's
 plain sum of chains where they do not fit.
 
+So `@` and `+` build nothing.  A composition works its shapes out from its
+operands and defers, and the first thing that needs the handle -- an
+application, `.H`, a solve, reading `.plan` -- is what offers the whole
+description to the planner.  Lowering a product as it is written would see one
+factor at a time and a sum of lowered terms is no longer a sum of chains, so
+the deferral is what lets a caller write the terms themselves and get the
+encoding a fit's coefficients would have given them.  `materialise` builds with
+matching off, because it is the description's fallback.
+
+What is a composition rather than an operator: off-resonance by time
+segmentation, a phase per shot with the samples each shot took, and an echo
+phase with a subspace basis.  Each is `sum_l diag(b_l) E diag(c_l)` over the
+terms, written with `@` and `+`, and each lowers into one encoding whose
+contraction is those terms -- one transform per term inside the coil loop,
+which is what a per-frame image factor costs and all it costs.
+`tests/test_plan.py` holds each against its sum written out with torch's own
+transform, and against the plan it was meant to take.
+
+A weight that differs between sets is not one of these.  The slab contracts
+the sets away with `md_ztenmul2` before the contraction's image factor is
+reached, so such a weight is left to the sum of the terms and `plan.contraction`
+says `chained`.  Fusing it would be fusing a wrong answer, which is the one
+outcome worse than a slow one, and a test holds it chained.
+
 **The chosen plan is never silent.**  A fallback answers with the same numbers
 several times slower, so it is reported rather than left to a timing.  `A.plan`
 names the transform, the factors on each side, the contraction, what is

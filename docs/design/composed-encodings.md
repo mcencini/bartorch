@@ -167,6 +167,24 @@ One C slab executor runs every matched form. It is today's pieces parameterised 
    - Accept a batch axis on sensitivities (in front of a sets axis).
    - Remove `Coils` and `Sampling` from the exports.
    - Each is tested against its written-out sum and its plain chain, with the fused plan asserted.
+
+   Done: `@` and `+` defer, so the planner is offered the whole description
+   rather than one factor at a time, and field correction, multishot and echo
+   phase with a basis each lower into one encoding whose contraction is their
+   terms.  `Coils` and `Sampling` are off the exports.
+
+   **SMS does not fit the executor as phase 1 built it.** The form places the
+   contraction outside the transform with `O[a, t]` free to depend on `a`,
+   which is what SMS needs; the executor attaches the contraction around the
+   transform, over the *coil* images, and `md_ztenmul2` in `forward_slab` has
+   contracted the sets away before the image factor is reached. So a factor
+   that differs between sets cannot reach the place it belongs, and the
+   planner leaves such a sum chained rather than fusing a wrong answer.
+
+   The fix keeps MAPS through the transform where the form carries a k-space
+   factor along it, and sums after that factor with `linop_sum_create` --
+   one transform per slice, which is what the sum being outside the transform
+   costs. Still outstanding, with the batch axis on sensitivities.
 3. **Kernel stacks and Cartesian-aligned axes.**
    - Stacked kernels for per-item trajectories.
    - Detection of Cartesian-aligned trajectory axes, with fewer cosets and, for pure stacks, decoupling along the axis.

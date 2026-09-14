@@ -44,6 +44,37 @@ modelling choice; phase gauges and coil-space normalization matter when
 comparing maps.  See the
 {doc}`coil preparation example </auto_examples/01_tools/plot_02_coil_preparation>`.
 
+## Encodings written as compositions
+
+An encoding with an element-wise factor on either side of it, summed over
+terms, is one operator rather than a sum of them.  Write the terms with `@`
+and `+`; nothing is built until something needs the operator, and what is
+built is one encoding whose contraction is those terms.  `A.plan` says which
+happened -- `contraction=segments(n)` where the terms were folded in,
+`chained(n)` where the sum stands.
+
+```python
+A = None
+for term in range(len(b)):
+    built = linop.Diagonal(b[term], E.oshape) @ E @ linop.Diagonal(c[term], E.ishape)
+    A = built if A is None else A + built
+```
+
+| Model | `c_l` (image side) | `b_l` (k-space side) |
+| --- | --- | --- |
+| Off-resonance by time segmentation | spatial weights of the fit | the segment's sample weights |
+| Multishot with a known phase | the shot's phase | the samples that shot took |
+| Echo phase with a subspace basis | the frame's phase | the frame, picked out of the samples |
+
+{func}`bartorch.linop.FieldCorrected` is the first of these with the fit done
+for you; the others are the composition and nothing more.  Each costs one
+transform per term inside the coil loop, which is what an image-side factor
+that varies along the frames costs.
+
+Weights that differ between *sets* of maps are not one of these: the
+sensitivities contract the sets away before the image factor is reached, so
+the sum stands and the plan says `chained`.
+
 ## Beyond Cartesian and radial encoding
 
 These are mathematical decompositions for planning applications, not further
