@@ -36,18 +36,20 @@ would otherwise have been linked against.
 | `src/csrc/abi/cuda.c` | Device selection, stream ordering against the caller's stream, and BART's memory cache. Present in both builds; the CPU build reports that it has no CUDA. |
 | `src/csrc/abi/host_reads.c` | The entry points BART reads element by element, answered over a host copy when a tool is on a card. |
 | `src/csrc/ops/ops.c` | Operators: host callbacks as BART linops and nlops, BART's own operators as handles, least squares and Gauss-Newton. |
-| `src/csrc/ops/sense.c` | The SENSE operators, walking their coils a slab at a time, over maps or k-space kernels, with the CUDA kernels beside it that the streamed normal is made of. |
+| `src/csrc/ops/sense.c` | The one encoding executor, parameterised by the form: the coil slab loop, the streaming of a bank held as kernels, the contraction over terms, and `bartorch_encoding_operator` behind them, with the CUDA kernels beside it that the streamed normal is made of. |
+| `src/csrc/ops/grid.c`, `grid.cuh` | The transforms on a grid a slab carries: the pattern-and-basis kernel, a table of sampled phase encodes, the wave front, and the normal through cuFFT's callbacks. |
 | `src/csrc/ops/iter.c` | The solve `pics` runs -- `italgo_config`, `lsqr2` -- over an operator and terms the host assembled. |
 | `src/csrc/substitute/fft.cpp` | The FFTW guru interface BART plans with, executed by MKL where the process has it. |
 | `src/csrc/substitute/backend.[ch]`, `ref_blas.c`, `cblas_shim.c`, `lapacke_shim.c` | CBLAS and LAPACKE as BART calls them, forwarded to a table of Fortran-ABI routines with reference BLAS as the fallback. |
 | `src/csrc/substitute/finufft.c`, `nufft_finufft.c` | FINUFFT's and cuFINUFFT's entry points, and BART's NUFFT operator built out of a pair of their plans -- and the normal, which stores one of those in BART's operator through `noncart/nufft_priv.h` rather than letting it grid one. |
 | `src/csrc/substitute/psf.c` | The three `compute_psf*` entry points, so that the adjoint transform a point spread function is comes from the substitution. |
-| `src/bartorch/` | The package.  Public: the functions in `fourier.py`, `wavelet.py`, `thresh.py`, `util.py`, `interp.py`, `registration.py`, `metrics.py` and `_settings.py`, re-exported flat as `bartorch.*`; `linop/` and `nlop/` (a class per operator); `optim/` (a class per BART iteration); `prox/` (BART's regularization terms, and its denoisers); `tools/` (BART's applications, in four sections); `io.py` (CFL files).  Private: `_abi.py` (the ctypes signatures, generated from the header), `_lib.py` (finding and loading the library), `_marshal.py` (what an ABI argument looks like), `_backend.py` (which library serves BLAS and LAPACK), `_buffer.py` (a tensor over one of BART's buffers, host or device), `_dispatch.py` (running a command on tensors), `_operator.py` (what every operator shares), `_finufft.py` and `_cuda.py` (the substitution's and the card's controls), `_deepinv.py` (the adapter), `_catalogue.py` and `_options.py` (what BART declares, and what each option is called here), `_call.py` (the mark on a hand-written wrapper, and wrappers built from the catalogue), `_coverage.py` (where each command is exposed, or why not). |
+| `src/bartorch/` | The package.  Public: the functions in `fourier.py`, `wavelet.py`, `thresh.py`, `util.py`, `interp.py`, `registration.py`, `metrics.py` and `_settings.py`, re-exported flat as `bartorch.*`; `linop/` and `nlop/` (a class per operator); `optim/` (a class per BART iteration); `prox/` (BART's regularization terms, and its denoisers); `tools/` (BART's applications, in four sections); `io.py` (CFL files).  Private: `_abi.py` (the ctypes signatures, generated from the header), `_lib.py` (finding and loading the library), `_marshal.py` (what an ABI argument looks like), `_backend.py` (which library serves BLAS and LAPACK), `_buffer.py` (a tensor over one of BART's buffers, host or device), `_dispatch.py` (running a command on tensors), `_operator.py` (what every operator shares), `_finufft.py` and `_cuda.py` (the substitution's and the card's controls), `_deepinv.py` (the adapter), `_catalogue.py` and `_options.py` (what BART declares, and what each option is called here), `_call.py` (the mark on a hand-written wrapper, and wrappers built from the catalogue), `_coverage.py` (where each command is exposed, or why not); inside `linop/`, `form.py` (the encoding form and the plan it reports) and `plan.py` (matching a composition against that form). |
 | `scripts/gen_abi.py` | Generates `_abi.py` from `src/csrc/include/bartorch.h`. Run after changing the header; `tests/test_abi.py` fails when the checked-in file is not what it writes. |
 | `scripts/gen_catalogue.py` | Generates `_catalogue.py` from the BART sources: every command, its arguments, and every option with both spellings. Run after a submodule bump. |
 | `scripts/run_tests.sh` | Builds whatever changed on the C side, then runs the suite against `src/`, without installing. |
 | `scripts/sources.py` | What the library is built from, in one place, so the script and `tests/test_build.py` cannot disagree about it. |
 | `scripts/lint.sh` | Ruff over `src/` and `tests/`, which is what the lint workflow runs; `--fix` writes. |
+| `scripts/benchmark_encodings.py` | The encoding timings `docs/design/composed-encodings.md` records, one case per process, each printing the plan it was lowered into beside its times. |
 | `scripts/build_docs.sh` | Builds the reference the way the workflow does. |
 | `scripts/check_device.py` | Everything a card can answer that a host cannot, in dependency order. |
 | `cmake/embed.cmake` | Writes a file's bytes into a C array, for the LTO-IR the CUDA build links. |
@@ -628,11 +630,52 @@ constructor, so `Adjoint` is the operator read the other way round rather than
 a second handle, and applying it costs what `adjoint` costs. Only composing it
 needs a handle, and only then is one made.
 
-`NoncartesianSense` takes `coil_batch` and `fold_maps`.  The library reads both
-from process-wide state when it builds a SENSE operator, and the operator keeps
-its own copy of each, so it sets them for its build and restores them; the
-process-wide values (`_dispatch.set_coil_batch`, `_dispatch.set_fold_maps`)
-remain the defaults for the SENSE operators BART's tools build.
+`NoncartesianSense` takes `coil_batch` and `fold_maps`, and each is a field of
+the form the operator is built from, so a build reads nothing from process-wide
+state.  The process-wide values (`_dispatch.set_coil_batch`,
+`_dispatch.set_fold_maps`) are what BART's own tools read when they build a
+SENSE operator, and nothing else.
+
+## The encoding form
+
+Every MRI encoding reduces to one expression, for coil `c`, encoding frame `t`
+and sample `k`:
+
+```
+y[c, t, k] = sum_a  O[a, t](k) . T_t( I[c, a, t](r) . x[a](r) )(k)
+```
+
+`I` is the image-side element-wise factor -- the coil sensitivities, and a
+contraction's spatial weights; `T` is the transform, one of an FFT on the
+image's grid, a NUFFT over a trajectory, and a wave; `O` is the k-space
+element-wise factor -- a pattern, a table of sampled phase encodes, a subspace
+basis, density weights, a contraction's sample weights; and `sum_a` is the
+contraction.  `linop/form.py` is that expression as the library takes it, and
+`struct bartorch_encoding` is the same record in C.
+
+There is one executor, and it is parameterised by the form rather than written
+once per encoding.  `bartorch_linop_encoding` is the only entry point that
+builds an MRI encoding: `src/csrc/ops/sense.c` decides whether the coils can be
+walked a slab at a time, holds the bank as maps or inflates it from kernels,
+puts the contraction's terms around the transform, and asks `grid.c` or
+`nufft_create2` for the transform itself.  What the four encodings differ by is
+one `switch`.
+
+**Composing in Python builds a description.**  Matching and lowering happen
+once, when the operator is built, and each application is then one call into
+the library.  `linop/plan.py` holds both halves: `describe` reads a composition
+of diagonals around an encoding back into chains and sums of them, `lower`
+folds the factors into the encoding's form, and `materialise` builds BART's
+plain sum of chains where they do not fit.
+
+**The chosen plan is never silent.**  A fallback answers with the same numbers
+several times slower, so it is reported rather than left to a timing.  `A.plan`
+names the transform, the factors on each side, the contraction, what is
+streamed, how the normal is applied, and which executor ran it --
+`plan.executor` read back from `bartorch_encoding_counter` after the build, not
+worked out a second time in Python.  `plan.fused` is false for a form the slab
+loop could not take and for a sum of terms left chained.  The counters also
+record the loop's applications, which is what a card test asserts.
 
 **A backward pass is the adjoint, not the transpose.** Torch stores conjugate
 Wirtinger gradients: what it wants back for `y = A x` is `A^H g`. The near
