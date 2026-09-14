@@ -30,9 +30,10 @@ class NUFFT(LinearOperator):
     Parameters
     ----------
     traj : tensor
-        Trajectory ``(*encoding, shots, samples, 3)`` in grid units, as
-        :func:`bartorch.tools.traj` produces.  Its third component being zero
-        everywhere makes the transform two-dimensional.  The encoding axes are
+        Trajectory ``(*encoding, shots, samples, ndim)`` in grid units, as
+        :func:`bartorch.tools.traj` produces: ``kx, ky`` or ``kx, ky, kz``.  A
+        ``kz`` that is zero everywhere makes the transform two-dimensional as
+        well.  The encoding axes are
         whatever the samples vary along besides the shots -- frames, echoes,
         cardiac phases -- in any number.
     image_shape : tuple of int
@@ -79,9 +80,10 @@ class NUFFT(LinearOperator):
         self.traj = as_operand(traj, tuple(traj.shape), "traj")
         if self.traj.ndim < 3:
             raise ValueError(
-                f"a trajectory is (*encoding, shots, samples, 3), not {tuple(self.traj.shape)}"
+                f"a trajectory is (*encoding, shots, samples, ndim), not {tuple(self.traj.shape)}"
             )
         self.image_shape = tuple(image_shape)
+        self.traj = _finufft.three_components(self.traj)
         self.ndim = _finufft.spatial_ndim(self.traj)
         self.encoding = tuple(self.traj.shape[:-3])
 

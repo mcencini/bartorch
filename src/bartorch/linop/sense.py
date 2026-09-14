@@ -186,8 +186,8 @@ class NoncartesianSense(LinearOperator):
         trajectory's encoding axes -- with a basis, its coefficients in place of
         the last -- then the spatial axes the trajectory has.
     traj : tensor
-        Trajectory ``(*encoding, shots, samples, 3)`` in grid units, as
-        :func:`bartorch.tools.traj` produces.
+        Trajectory ``(*encoding, shots, samples, ndim)`` in grid units, as
+        :func:`bartorch.tools.traj` produces: ``kx, ky`` or ``kx, ky, kz``.
     kspace_shape : tuple of int, optional
         Sample shape; by default ``(*batches, coils, *encoding, shots,
         samples)``, and on a grid ``(*batches, coils, *encoding, [z,] y, x)``.
@@ -286,8 +286,10 @@ class NoncartesianSense(LinearOperator):
 
             if self.traj.ndim < 3:
                 raise ValueError(
-                    f"a trajectory is (*encoding, shots, samples, 3), not {tuple(self.traj.shape)}"
+                    "a trajectory is (*encoding, shots, samples, ndim), "
+                    f"not {tuple(self.traj.shape)}"
                 )
+            self.traj = _finufft.three_components(self.traj)
             self.ndim = _finufft.spatial_ndim(self.traj)
             self.encoding = tuple(int(n) for n in self.traj.shape[:-3])
         else:

@@ -561,6 +561,23 @@ def _tools_agree_with_bart(tolerance: float = 1e-2) -> bool:
     return bool(((fast - reference).abs().max() / scale).item() < tolerance)
 
 
+def three_components(traj: torch.Tensor) -> torch.Tensor:
+    """``traj`` with ``kz`` written out as zero where it carries ``kx, ky`` only.
+
+    BART's operators take three components per sample, and the FINUFFT
+    substitution reads them in that layout.  The FINUFFT plan's dimension
+    comes from the image, so a two-dimensional image is transformed by a 2D
+    plan either way.  The padding is one copy of the trajectory, made when an
+    operator is built; a three-component trajectory is returned as it is.
+    """
+    d = int(traj.shape[-1])
+    if d == 3:
+        return traj
+    if d != 2:
+        raise ValueError(f"a trajectory carries 2 or 3 components per sample, not {d}")
+    return torch.cat((traj, torch.zeros_like(traj[..., :1])), dim=-1).contiguous()
+
+
 def spatial_ndim(traj: torch.Tensor) -> int:
     """2 or 3: whether the trajectory's third component is used (BART always carries three)."""
     if traj.shape[-1] < 3:
