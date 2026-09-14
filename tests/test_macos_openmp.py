@@ -1,6 +1,6 @@
 """Reading a Mach-O's load commands, and deciding whether the two OpenMP runtimes are one.
 
-``scripts/macos_openmp.py`` decides whether FINUFFT's library can be pointed
+``bartorch._macos_openmp`` decides whether FINUFFT's library can be pointed
 at the OpenMP runtime torch carries.  What it decides from is the load
 commands, so the reader is held against Mach-O files built here rather than
 against a checked-in binary, and the decision is held against every answer it
@@ -8,27 +8,12 @@ can give.  The patch itself needs macOS and a toolchain, and is what the
 macOS CI job exercises.
 """
 
-import importlib.util
 import struct
-import sys
 from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parent.parent
-SCRIPT = ROOT / "scripts" / "macos_openmp.py"
-
-
-def _module():
-    spec = importlib.util.spec_from_file_location("macos_openmp", SCRIPT)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules.setdefault("macos_openmp", module)
-    spec.loader.exec_module(module)
-    return module
-
-
-mo = _module()
-
+from bartorch import _macos_openmp as mo
 
 # --- Mach-O files to read -----------------------------------------------------
 
@@ -247,3 +232,56 @@ def test_a_finufft_without_its_library_says_so(tmp_path):
     (tmp_path / "finufft").mkdir()
     with pytest.raises(SystemExit, match="libfinufft"):
         mo.find_layout(tmp_path)
+
+
+# --- the attempt the substitution makes for itself ----------------------------
+
+
+def test_off_macos_there_is_nothing_to_do():
+    """The pair is only fatal where LLVM's runtime aborts over it."""
+    assert mo.ensure() == "elsewhere"
+
+
+def test_a_pair_that_cannot_be_read_is_a_reason_and_not_an_exception(monkeypatch):
+    """Importing bartorch must not fail because another package is laid out oddly."""
+    monkeypatch.setattr(mo.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        mo, "find_layout", lambda *a, **k: (_ for _ in ()).throw(SystemExit("no finufft"))
+    )
+    assert mo.ensure().startswith("the pair could not be read")
+
+
+def test_a_pair_already_pointed_at_torchs_copy_is_left_alone(monkeypatch):
+    monkeypatch.setattr(mo.sys, "platform", "darwin")
+    monkeypatch.setattr(mo, "find_layout", lambda *a, **k: "layout")
+    monkeypatch.setattr(mo, "decide_for", lambda _: mo.Decision("already", "as it stands"))
+    assert mo.ensure() == "already"
+
+
+def test_a_pair_that_is_not_one_runtime_is_refused_with_its_reason(monkeypatch):
+    monkeypatch.setattr(mo.sys, "platform", "darwin")
+    monkeypatch.setattr(mo, "find_layout", lambda *a, **k: "layout")
+    monkeypatch.setattr(mo, "decide_for", lambda _: mo.Decision("refuse", "different runtimes"))
+    assert mo.ensure() == "different runtimes"
+
+
+def test_a_patch_that_did_not_take_is_not_reported_as_one(monkeypatch):
+    """codesign can report success over a load command that did not change.
+
+    Saying it worked when it did not would leave the two runtimes in place and
+    the caller would find out by the process aborting.
+    """
+    monkeypatch.setattr(mo.sys, "platform", "darwin")
+    monkeypatch.setattr(mo, "find_layout", lambda *a, **k: "layout")
+    monkeypatch.setattr(mo, "decide_for", lambda _: mo.Decision("patch", "both libomp 5.0.0"))
+    monkeypatch.setattr(mo, "apply", lambda *a, **k: None)
+    assert mo.ensure() == "the patch applied but the load command did not change"
+
+
+def test_a_patch_that_took_says_so(monkeypatch):
+    monkeypatch.setattr(mo.sys, "platform", "darwin")
+    monkeypatch.setattr(mo, "find_layout", lambda *a, **k: "layout")
+    answers = iter([mo.Decision("patch", "both libomp 5.0.0"), mo.Decision("already", "now")])
+    monkeypatch.setattr(mo, "decide_for", lambda _: next(answers))
+    monkeypatch.setattr(mo, "apply", lambda *a, **k: None)
+    assert mo.ensure() == "patched"

@@ -14,6 +14,8 @@ from pathlib import Path
 
 import torch
 
+from bartorch import _macos_openmp
+
 _keepalive: list[object] = []
 
 Shape = tuple[int, ...]
@@ -220,6 +222,13 @@ def use_in_tools(
             "pip install 'bartorch[cufinufft]'"
         )
 
+    # Before the library is loaded, because loading it is what brings its own
+    # OpenMP runtime into the process: patched first, the image that arrives
+    # resolves to the copy torch already has and there is one runtime rather
+    # than two.  Answers "elsewhere" off macOS, and a reason where it could
+    # not, which the runtime check below turns into the refusal.
+    repaired = _macos_openmp.ensure()
+
     if not _load_symbols():
         raise ImportError(
             "the finufft package is installed but its library did not hand over the entry "
@@ -245,9 +254,8 @@ def use_in_tools(
             "this process has loaded more than one OpenMP runtime ("
             + ", ".join(runtimes)
             + "), and calling FINUFFT would start the second, which LLVM's runtime ends "
-            "the process over (OMP: Error #15).  Every non-Cartesian transform will be "
-            "refused until there is one runtime: run `python scripts/macos_openmp.py "
-            "patch`, which points FINUFFT's library at the copy torch carries"
+            "the process over (OMP: Error #15).  Every non-Cartesian transform is refused "
+            "until there is one runtime.  " + _remedy(repaired)
         )
 
     lib.bartorch_finufft_set_tolerance(float(tolerance))
@@ -263,6 +271,25 @@ def use_in_tools(
         )
 
     return bool(lib.bartorch_finufft_usable())
+
+
+def _remedy(repaired: str) -> str:
+    """What to do about two runtimes, given what the attempt to make them one did.
+
+    ``ensure`` having patched the file and the process still carrying two
+    images means FINUFFT was loaded before bartorch asked -- the file is right
+    for the next run and nothing can unload the one in this one.
+    """
+    if repaired == "patched":
+        return (
+            "FINUFFT's library has been pointed at the copy torch carries, which the next "
+            "interpreter will pick up; this one loaded it before that could take effect, so "
+            "start again"
+        )
+    return (
+        f"Pointing FINUFFT's library at the copy torch carries did not work here ({repaired}); "
+        "`python scripts/macos_openmp.py diagnose` says what it found"
+    )
 
 
 def used_in_tools() -> bool:
