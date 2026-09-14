@@ -17,7 +17,7 @@ from bartorch._operator import Built, Shape, as_operand, dims
 from bartorch.linop.base import LinearOperator
 from bartorch.linop.form import Array, Form
 
-__all__ = ["Coils", "NoncartesianSense"]
+__all__ = ["Coils", "Encoded", "NoncartesianSense"]
 
 
 def _vector(v):
@@ -152,6 +152,26 @@ def build_form(owner, form: Form, image_shape=None, kspace_shape=None, encoding=
             sets_order(owner.batches, owner.sets, encoding, owner.ndim),
         )
     return Built(ptr, image_shape, kspace_shape, keep=form.keep(), device=owner.device)
+
+
+class Encoded(LinearOperator):
+    """One encoding built from a form the planner lowered, rather than from arguments.
+
+    It carries the shapes and the layout of the encoding it was matched
+    against; what differs is the form, which has the element-wise factors the
+    composition put on either side of the transform folded into it.
+    """
+
+    def __init__(self, source: LinearOperator, form: Form):
+        self._form = form
+        self._segments = form.contraction
+        for name in ("image_shape", "kspace_shape", "batches", "sets", "ndim", "image_encoding"):
+            setattr(self, name, getattr(source, name))
+        self.ishape, self.oshape, self.device = source.ishape, source.oshape, source.device
+        super().__init__()
+
+    def _create(self) -> Built:
+        return build_form(self, self._form)
 
 
 def _behind_permutation(owner, lib, ptr: int, ishape: Shape, order, device) -> int:
@@ -509,7 +529,7 @@ class NoncartesianSense(LinearOperator):
             fold_maps=self.fold_maps,
             coils=self.coils,
             sets=self.sets,
-            coeffs=1 if self.coeffs is None else self.coeffs,
+            coeffs=1 if b is None else int(b.shape[0]),
         )
 
 

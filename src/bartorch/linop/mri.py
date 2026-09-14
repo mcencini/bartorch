@@ -85,23 +85,18 @@ def _segment_layout(encoding, b, c, sample_dims, image_dims):
 
 
 class _Segmentable:
-    """A grid encoding :func:`FieldCorrected` can put its segments in the coil loop of."""
+    """A grid encoding whose coil loop a contraction over terms can go inside.
+
+    The axes each side's weights are laid out on: the image's spatial ones,
+    and one coil's samples, which carry the frames as well where a basis
+    contracts them.
+    """
 
     def _image_dims(self):
         return (2, 1, 0) if self.ndim == 3 else (1, 0)
 
     def _sample_dims(self):
         return ((5,) if self._grid_basis is not None else ()) + self._image_dims()
-
-    def _segmented(self, b, c):
-        """This encoding as ``sum_l diag(b_l) E diag(c_l)`` in its coil loop, or ``None``."""
-        if self._segments is not None:
-            return None
-        layout = _segment_layout(self, b, c, self._sample_dims(), self._image_dims())
-        if layout is None:
-            return None
-        args, kwargs = self._args
-        return type(self)(*args, **{**kwargs, "segments": layout})
 
 
 class _CartesianNative(_Segmentable, _GridSense):
@@ -115,14 +110,7 @@ class _CartesianNative(_Segmentable, _GridSense):
     the spatial axes and the samples its frames in front of them.
     """
 
-    def __init__(
-        self, sensitivities, image_shape, pattern, basis, toeplitz=True, segments=None, **kwargs
-    ):
-        self._args = (
-            (sensitivities, image_shape, pattern, basis),
-            {"toeplitz": toeplitz, **kwargs},
-        )
-        self._segments = segments
+    def __init__(self, sensitivities, image_shape, pattern, basis, toeplitz=True, **kwargs):
         self._grid_pattern = (
             None if pattern is None else as_operand(pattern, tuple(pattern.shape), "pattern")
         )
@@ -174,7 +162,6 @@ class _CartesianNative(_Segmentable, _GridSense):
             kernels=self.kernels,
             pattern=None if p is None else Array(p, pvec),
             basis=None if b is None else Array(b, bvec),
-            contraction=self._segments,
             toeplitz=self._grid_toeplitz,
             coil_batch=self.coil_batch,
             fold_maps=self.fold_maps,
@@ -324,26 +311,9 @@ class _WaveNative(_Segmentable, _GridSense):
         basis,
         centred,
         toeplitz,
-        segments=None,
         **kwargs,
     ):
         from bartorch.linop.sense import _grid_ndim
-
-        self._args = (
-            (
-                sensitivities,
-                psf,
-                image_shape,
-                readout,
-                pattern,
-                positions,
-                basis,
-                centred,
-                toeplitz,
-            ),
-            dict(kwargs),
-        )
-        self._segments = segments
 
         image_shape = tuple(image_shape)
         self._wave_readout = int(readout)
@@ -445,7 +415,6 @@ class _WaveNative(_Segmentable, _GridSense):
             readout=self._wave_readout,
             psf=w,
             centred=self._wave_centred,
-            contraction=self._segments,
             toeplitz=self._grid_toeplitz,
             coil_batch=self.coil_batch,
             fold_maps=self.fold_maps,
@@ -537,14 +506,46 @@ def _per_segment(values: torch.Tensor, shape: tuple[int, ...], what: str) -> tor
     return values.reshape(values.shape[0], *one.shape)
 
 
-def _segmented_nufft(encoding, b: torch.Tensor, c: torch.Tensor) -> LinearOperator | None:
-    """The time-segmented encoding over a NUFFT as one subspace operator, or ``None``.
+def contracted(encoding, b: torch.Tensor, c: torch.Tensor) -> LinearOperator | None:
+    """``sum_l diag(b_l) E diag(c_l)`` as one encoding, or ``None``.
 
-    ``sum_l diag(b_l) E diag(c_l)`` is the spatial weights fanning the image
-    out into segment images, then ``E`` through the basis ``b`` over the
-    samples.  It is taken where the encoding is a plain non-Cartesian SENSE
-    operator with no basis, sets or encoding axes of its own, and where the
-    sample weights vary along the shots and the readout alone.
+    What the planner reaches for a sum of chains sharing an encoding.  On a
+    grid the contraction goes inside the coil loop, around the transform each
+    slab carries, and the normal is the two applications: the closed form
+    would save no transform there.  Over a NUFFT it becomes a subspace basis
+    along the samples, whose Toeplitz normal is a point spread function per
+    pair of terms rather than two transforms per term per coil.
+
+    ``None`` says the factors do not fit the form -- weights that vary along
+    the batches, the coils, the sets or the coefficients, or an encoding that
+    already carries a contraction -- and the sum of chains stands instead.
+    """
+    if isinstance(encoding, _Segmentable):
+        return _grid_contraction(encoding, b, c)
+    return _nufft_contraction(encoding, b, c)
+
+
+def _grid_contraction(encoding, b: torch.Tensor, c: torch.Tensor) -> LinearOperator | None:
+    """The contraction in the coil loop of a grid encoding, or ``None``."""
+    from bartorch.linop.sense import Encoded
+
+    form = encoding._form()
+    if form.contraction is not None:
+        return None
+    layout = _segment_layout(encoding, b, c, encoding._sample_dims(), encoding._image_dims())
+    if layout is None:
+        return None
+    return Encoded(encoding, form.with_contraction(layout))
+
+
+def _nufft_contraction(encoding, b: torch.Tensor, c: torch.Tensor) -> LinearOperator | None:
+    """The contraction over a NUFFT as one subspace operator, or ``None``.
+
+    The spatial weights fan the image out into one image per term, and the
+    terms' sample weights are a basis over the samples.  Taken where the
+    encoding is a plain non-Cartesian SENSE operator with no basis, sets or
+    encoding axes of its own, and where the sample weights vary along the
+    shots and the readout alone.
     """
     if type(encoding) is not NoncartesianSense:
         return None
@@ -1061,26 +1062,11 @@ def FieldCorrected(  # noqa: N802  (it is a constructor)
         if b.shape[0] != c.shape[0]:
             raise ValueError(f"{b.shape[0]} sample weights against {c.shape[0]} spatial ones")
 
-    if isinstance(encoding, _Segmentable):
-        native = encoding._segmented(b, c)
-        if native is not None:
-            return native
+    from bartorch.linop import plan
 
-    native = _segmented_nufft(encoding, b, c)
-    if native is not None:
-        return native
-
-    terms = [
-        Diagonal(_broadcastable(b[ell], encoding.oshape, "sample weights"), encoding.oshape)
-        @ encoding
-        @ Diagonal(_broadcastable(c[ell], encoding.ishape, "spatial weights"), encoding.ishape)
-        for ell in range(b.shape[0])
-    ]
-
-    out = terms[0]
-    for term in terms[1:]:
-        out = out + term
-    return out
+    samples = _per_segment(b, encoding.oshape, "sample weights")
+    voxels = _per_segment(c, encoding.ishape, "spatial weights")
+    return plan.build(plan.Contract(encoding, samples, voxels))
 
 
 def _fit_coefficients(encoding, field_map, readout_time, mask, segments, method):

@@ -106,14 +106,16 @@ class Plan:
     image, kspace : tuple of Factor
         The element-wise factors on each side of the transform.
     contraction : str or None
-        What the sum over ``a`` is: ``"subspace"`` for a basis, ``"segments"``
-        for time segmentation, ``None`` where there is none.
+        What the sum over ``a`` is: ``"subspace"`` where a basis contracts the
+        coefficients, ``"segments"`` where terms are folded into the form's
+        own contraction, ``"chained"`` where a sum of terms was left as BART's
+        sum of chains because it did not match the form, and ``None`` where
+        there is none.
     terms : int
         How many terms the contraction has; one without one.
     normal : str
-        ``"kernel"`` where the k-space side collapses into a kernel applied
-        between the transforms, ``"applications"`` where the normal is the
-        forward followed by the adjoint.
+        ``"kernel"``, ``"transform"`` or ``"applications"``; see
+        :attr:`Form.normal`.
     coil_batch : int
         Coils in a slab; 0 is every coil at once, which is BART's own chain.
     streamed : tuple of str
@@ -137,8 +139,13 @@ class Plan:
 
     @property
     def fused(self) -> bool:
-        """Whether the slab executor ran this form rather than BART's plain chain."""
-        return self.executor == "slab"
+        """Whether every part of the plan runs in the slab executor.
+
+        False where the slab loop could not take the form, and where a sum of
+        terms was left as BART's sum of chains rather than folded into the
+        form's contraction.
+        """
+        return self.executor == "slab" and self.contraction != "chained"
 
     def __repr__(self) -> str:
         parts = [f"transform={self.transform}"]
@@ -216,18 +223,30 @@ class Form:
     # --- what the form is ----------------------------------------------------
 
     @property
-    def closed_normal(self) -> bool:
-        """Whether the k-space side collapses into a kernel between the transforms.
+    def normal(self) -> str:
+        """How ``A^H A`` is applied.
 
-        The wave transform puts its kernel between the phase-encode
-        transforms, so a pattern that varies along the readout has no such
-        form; the readout is not the transform's to cancel.
+        ``"kernel"`` where the k-space side collapses into one kernel applied
+        between the transforms, or into a point spread function convolved
+        with; ``"transform"`` where there is no k-space factor and the
+        transform's own normal is the whole of it; ``"applications"`` where it
+        is the forward followed by the adjoint.
+
+        A contraction over terms has no closed form: the sum is BART's, and
+        its normal is the two applications.  The wave transform puts its
+        kernel between the phase-encode transforms, so a pattern that varies
+        along the readout has no closed form either -- the readout is not the
+        transform's to cancel.
         """
-        if not self.toeplitz:
-            return False
+        if not self.toeplitz or self.contraction is not None:
+            return "applications"
+        if self.transform == "nufft":
+            return "kernel"
+        if self.pattern is None and self.basis is None and self.positions is None:
+            return "transform"
         if self.transform == "wave" and self.pattern is not None:
-            return self.pattern.vector[0] == 1
-        return True
+            return "kernel" if self.pattern.vector[0] == 1 else "applications"
+        return "kernel"
 
     def _image_factors(self) -> tuple[Factor, ...]:
         varies = ("coils",) + (("sets",) if self.sets > 1 else ())
@@ -289,7 +308,7 @@ class Form:
             kspace=self._kspace_factors(),
             contraction=contraction,
             terms=terms,
-            normal="kernel" if self.closed_normal else "applications",
+            normal=self.normal,
             coil_batch=self.coil_batch,
             streamed=tuple(streamed),
             executor=executor,
