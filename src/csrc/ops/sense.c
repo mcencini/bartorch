@@ -1296,13 +1296,13 @@ static const struct linop_s* form_chain(const struct bartorch_encoding* f, const
 	long img_dims[DIMS];
 	md_select_dims(DIMS, ~COIL_FLAG, img_dims, max_dims);
 
-	const struct linop_s* coils = linop_fmac_dims_create(DIMS, cim_dims, img_dims,
+	struct linop_s* coils = linop_fmac_dims_create(DIMS, cim_dims, img_dims,
 			(BARTORCH_ENCODING_NONE == f->transform) ? map_dims : f->sens_dims, f->sens);
 
 	if (BARTORCH_ENCODING_NONE == f->transform)
 		return coils;
 
-	return linop_chain_FF((struct linop_s*)coils, (struct linop_s*)contracted(f, form_transform(f, cim_dims, conf)));
+	return linop_chain_FF(coils, (struct linop_s*)contracted(f, form_transform(f, cim_dims, conf)));
 }
 
 /* One encoding, from the form the planner lowered a composition into.
@@ -1400,7 +1400,7 @@ const struct linop_s* bartorch_encoding_operator(const struct bartorch_encoding*
 	struct bartorch_encoding slab = *f;
 	slab.ksp_dims = slab_ksp_dims;
 
-	d->slab = (struct linop_s*)contracted(f, form_transform(&slab, d->cim_dims, &conf));
+	d->slab = contracted(f, form_transform(&slab, d->cim_dims, &conf));
 
 	sense_output_from(d, true);
 

@@ -1,15 +1,17 @@
-"""MRI encoding operators, each a chain of BART's own.
+"""The MRI encodings on a grid, and off-resonance over any of them.
 
-Built with ``linop_chain``, so what a solver drives is one BART operator
-rather than a Python object walked per iteration.
-:class:`~bartorch.linop.NoncartesianSense` is BART's own operator with the
-coil loop in it; :func:`CartesianSense` and :func:`WaveSense` are that loop
-over a Cartesian or a wave transform.
+Each is lowered into one :class:`~bartorch.linop.form.Form` and built by the
+library's single encoding entry point, so what a solver drives is one BART
+operator and each application is one call.  :func:`CartesianSense` and
+:func:`WaveSense` are :class:`~bartorch.linop.NoncartesianSense`'s coil loop
+over a Cartesian or a wave transform; :func:`FieldCorrected` hands the
+planner a contraction over segments and takes what it lowers.
 """
 
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 
 import torch
 
@@ -18,7 +20,7 @@ from bartorch._lib import DIMS, library
 from bartorch._operator import Built, Shape, as_operand, dims
 from bartorch.linop.base import LinearOperator, _WithNormal
 from bartorch.linop.basic import Diagonal, MultiplySum, Sampling
-from bartorch.linop.form import Array, Contraction, Form
+from bartorch.linop.form import Array, Contraction, Factor, Form
 from bartorch.linop.sense import NoncartesianSense
 
 __all__ = ["CartesianSense", "FieldCorrected", "WaveSense"]
@@ -567,7 +569,15 @@ def _nufft_contraction(encoding, b: torch.Tensor, c: torch.Tensor) -> LinearOper
     C = _Relabel(MultiplySum(fan, lifted, fanned), fanned, ishape)
 
     E = _SegmentedSense(encoding, basis)
-    return _WithNormal(E @ C, C.H @ E.gram() @ C)
+    out = _WithNormal(E @ C, C.H @ E.gram() @ C)
+
+    # The fan is an image-side factor of the composition rather than of the
+    # encoding, so the plan reports it beside the sensitivities.
+    out._plan = replace(
+        E.plan,
+        image=(*E.plan.image, Factor("segment weights", tuple(fan.shape), ("terms", "voxels"))),
+    )
+    return out
 
 
 #: The gyromagnetic ratio of hydrogen, in Hz per Gauss, as BART's ``wavepsf`` has it.
