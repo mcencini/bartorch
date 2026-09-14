@@ -16,7 +16,7 @@ import torch
 
 from bartorch._dispatch import BartError
 from bartorch._lib import library
-from bartorch._operator import Built, Operator
+from bartorch._operator import Built, Operator, Shape
 
 __all__ = ["LinearOperator"]
 
@@ -100,7 +100,8 @@ class LinearOperator(Operator):
 
     def __init__(self):
         if self._native:
-            self._build()
+            if not self._defers:
+                self._build()
         elif (
             type(self).forward is LinearOperator.forward
             or type(self).adjoint is LinearOperator.adjoint
@@ -147,6 +148,11 @@ class LinearOperator(Operator):
         composition with one encoding in it reports that encoding's plan;
         anything else has none.
         """
+        if self._defers and "_plan" not in self.__dict__:
+            # A composition works out its plan by lowering, and lowering is
+            # what building does, so ask for the handle rather than report
+            # the plan of an encoding the sum around it may have changed.
+            self._h  # noqa: B018
         own = getattr(self, "_plan", None)
         if own is not None:
             return own
@@ -447,53 +453,99 @@ class LinearOperator(Operator):
         return self.pinv(y, **kwargs)
 
 
-class _Compose(LinearOperator):
-    """``a @ b`` as one BART operator; ``b`` is applied first."""
+class _Composition(LinearOperator):
+    """A product or a sum, kept as a description until something needs it.
 
-    def __init__(self, a: LinearOperator, b: LinearOperator):
+    Its shapes come from its operands, so composing validates and reports
+    without building anything.  The handle is built on first use, and the
+    planner is offered the whole description first: an encoding with factors
+    and terms around it is lowered into one encoding, and what a solver then
+    drives is that rather than the chain this stands for.
+    """
+
+    _defers = True
+
+    def __init__(
+        self,
+        a: LinearOperator,
+        b: LinearOperator,
+        ishape: Shape,
+        oshape: Shape,
+        match: bool = True,
+    ):
         self.a, self.b = a._bart(), b._bart()
+        self.ishape, self.oshape = tuple(ishape), tuple(oshape)
+        self.device = self.a.device or self.b.device
+        self._match = bool(match)
         super().__init__()
 
+    def _chained(self) -> Built:
+        """This composition as BART's own operator over the two operands."""
+        raise NotImplementedError
+
     def _create(self) -> Built:
+        return self._chained()
+
+    def _build(self) -> None:
+        """The lowered encoding where the planner has one, else the plain chain."""
+        from bartorch.linop import plan
+
+        lowered = plan.lowered(self) if self._match else None
+        if lowered is None:
+            super()._build()
+            return
+
+        # The lowered operator answers from here on, and the two share its
+        # handle rather than the pointer: one owner frees it once, whichever
+        # of them the caller lets go of first.
+        self._lowered = lowered
+        self._h = lowered._h
+        self._plan = lowered.plan
+        if tuple(lowered.ishape) != self.ishape or tuple(lowered.oshape) != self.oshape:
+            raise ValueError(
+                f"the planner lowered {self.ishape}->{self.oshape} into "
+                f"{tuple(lowered.ishape)}->{tuple(lowered.oshape)}"
+            )
+
+
+class _Compose(_Composition):
+    """``a @ b`` as one BART operator; ``b`` is applied first."""
+
+    def __init__(self, a: LinearOperator, b: LinearOperator, match: bool = True):
+        super().__init__(a, b, b.ishape, a.oshape, match)
+
+    def _chained(self) -> Built:
         ptr = self._under_lock(
             library().bartorch_linop_chain,
             self.b._h.ptr,
             self.a._h.ptr,
-            device=self.a.device or self.b.device,
+            device=self.device,
         )
-        return Built(
-            ptr,
-            self.b.ishape,
-            self.a.oshape,
-            keep=(self.a, self.b),
-            device=self.a.device or self.b.device,
-        )
+        return Built(ptr, self.b.ishape, self.a.oshape, keep=(self.a, self.b), device=self.device)
 
     def __repr__(self) -> str:
         return f"({self.a!r} @ {self.b!r})"
 
 
-class _Add(LinearOperator):
+class _Add(_Composition):
     """``a + b`` as one BART operator; the two must have the same shapes."""
 
-    def __init__(self, a: LinearOperator, b: LinearOperator):
-        self.a, self.b = a._bart(), b._bart()
-        super().__init__()
+    def __init__(self, a: LinearOperator, b: LinearOperator, match: bool = True):
+        if tuple(a.ishape) != tuple(b.ishape) or tuple(a.oshape) != tuple(b.oshape):
+            raise ValueError(
+                f"a sum needs one pair of shapes, not {tuple(a.ishape)}->{tuple(a.oshape)} "
+                f"and {tuple(b.ishape)}->{tuple(b.oshape)}"
+            )
+        super().__init__(a, b, a.ishape, a.oshape, match)
 
-    def _create(self) -> Built:
+    def _chained(self) -> Built:
         ptr = self._under_lock(
             library().bartorch_linop_plus,
             self.a._h.ptr,
             self.b._h.ptr,
-            device=self.a.device or self.b.device,
+            device=self.device,
         )
-        return Built(
-            ptr,
-            self.a.ishape,
-            self.a.oshape,
-            keep=(self.a, self.b),
-            device=self.a.device or self.b.device,
-        )
+        return Built(ptr, self.a.ishape, self.a.oshape, keep=(self.a, self.b), device=self.device)
 
     def __repr__(self) -> str:
         return f"({self.a!r} + {self.b!r})"

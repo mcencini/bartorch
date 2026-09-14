@@ -218,6 +218,11 @@ class Operator:
     a handle, and the wrapper is not cached.
     """
 
+    #: Whether this operator works its shapes out without building, and waits
+    #: for something to need the handle.  A composition does, so that the
+    #: planner sees the whole description before any of it is built.
+    _defers: bool = False
+
     #: Library functions that free this kind of handle and report its shapes.
     _free_name: str = ""
     _domain_name: str = ""
@@ -230,6 +235,18 @@ class Operator:
     @property
     def _native(self) -> bool:
         return type(self)._create is not Operator._create
+
+    def __getattr__(self, name: str):
+        """Build the handle of an operator that put its construction off.
+
+        Only ``_h`` is answered here, and only once: :meth:`_build` writes it
+        into the instance, so every later access is an ordinary lookup and
+        this runs for nothing on a class that never deferred.
+        """
+        if name == "_h" and self._defers:
+            self._build()
+            return self.__dict__["_h"]
+        raise AttributeError(name)
 
     def _create(self) -> Built:
         """Build BART's operator from what the subclass recorded in ``__init__``.

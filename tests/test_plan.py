@@ -571,3 +571,72 @@ def test_on_a_card_the_slab_executor_is_still_what_ran_it(maps, pattern):
     assert _counter(_abi.BARTORCH_ENCODING_BUILT) == 1
     assert _counter(_abi.BARTORCH_ENCODING_CHAINED) == 0
     assert _counter(_abi.BARTORCH_ENCODING_NORMAL) == 1
+
+
+# --- a composition written by hand, rather than by a constructor --------------
+
+
+def _terms(E, b, c):
+    """``sum_l diag(b_l) E diag(c_l)`` written with ``@`` and ``+``."""
+    out = None
+    for term in range(int(b.shape[0])):
+        built = linop.Diagonal(b[term], E.oshape) @ E @ linop.Diagonal(c[term], E.ishape)
+        out = built if out is None else out + built
+    return out
+
+
+def test_composing_builds_a_description_and_nothing_else(maps, pattern):
+    """``@`` and ``+`` work the shapes out; nothing is built until something needs it."""
+    E = linop.CartesianSense(maps, (Y, X), pattern=pattern)
+    built = linop.Diagonal(_rand(Y, X), E.ishape)
+    composed = E @ built
+
+    assert "_h" not in composed.__dict__
+    assert composed.ishape == E.ishape and composed.oshape == E.oshape
+    composed(_rand(Y, X))
+    assert "_h" in composed.__dict__
+
+
+def test_a_sum_written_by_hand_is_the_contraction_the_planner_lowers(maps, pattern):
+    """The composition a caller writes and the description a fit hands over are one operator."""
+    torch.manual_seed(23)
+    E = linop.CartesianSense(maps, (Y, X), pattern=pattern)
+    b, c = _rand(3, 1, Y, X), _rand(3, Y, X)
+
+    composed = _terms(E, b, c)
+    assert composed.plan.contraction == "segments"
+    assert composed.plan.terms == 3
+    assert composed.plan.fused
+
+    fused = planner.lower(planner.Contract(E, b, c))
+    x = _rand(Y, X)
+    assert torch.equal(composed(x), fused(x))
+
+
+def test_a_sum_written_by_hand_is_the_sum_written_out(maps, pattern):
+    """Against the model itself: the segments summed with torch's own transform."""
+    torch.manual_seed(24)
+    E = linop.CartesianSense(maps, (Y, X), pattern=pattern)
+    b, c = _rand(3, 1, Y, X), _rand(3, Y, X)
+    x = _rand(Y, X)
+
+    want = torch.zeros(COILS, Y, X, dtype=torch.complex64)
+    for term in range(3):
+        coils = maps * (c[term] * x)
+        shifted = torch.fft.ifftshift(coils, dim=(-2, -1))
+        k = torch.fft.fftshift(torch.fft.fft2(shifted, norm="ortho"), dim=(-2, -1))
+        want = want + b[term] * pattern * k
+
+    got = _terms(E, b, c)(x)
+    assert (got - want).abs().max() / want.abs().max() < 1e-5
+
+
+def test_a_composition_costs_one_application_however_many_terms(maps, pattern):
+    """The counted form of composing costing nothing, for a sum a caller wrote."""
+    torch.manual_seed(25)
+    E = linop.CartesianSense(maps, (Y, X), pattern=pattern)
+    composed = _terms(E, _rand(4, 1, Y, X), _rand(4, Y, X))
+
+    library().bartorch_encoding_reset_counters()
+    composed(_rand(Y, X))
+    assert _counter(_abi.BARTORCH_ENCODING_FORWARD) == 1
