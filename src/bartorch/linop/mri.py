@@ -45,7 +45,81 @@ class _GridSense(NoncartesianSense):
     _needs_traj = False
 
 
-class _CartesianNative(_GridSense):
+def _flat_along(t: torch.Tensor, axes) -> torch.Tensor | None:
+    """``t`` at the first index of each of ``axes`` it is the same all along, or ``None``."""
+    for axis in axes:
+        if t.shape[axis] > 1:
+            first = t.narrow(axis, 0, 1)
+            if not torch.equal(t, first.expand_as(t)):
+                return None
+            t = first
+    return t
+
+
+def _segment_layout(encoding, b, c, sample_dims, image_dims):
+    """The segments as a coil loop takes them, or ``None``.
+
+    ``(count, sample vector, sample weights, image vector, image weights)``.
+
+    The sample weights may vary along one coil's samples and the spatial ones
+    along the image's spatial axes; weights the same along the batches, the
+    coils, the sets or the coefficients are taken once.  Weights that vary
+    along any of those are left to the sum of the segments.
+    """
+    count = int(b.shape[0])
+    oshape, ishape = tuple(encoding.oshape), tuple(encoding.ishape)
+    tail = tuple(encoding._kspace_tail())
+    lead = len(oshape) - len(tail)
+    image_lead = len(ishape) - encoding.ndim
+
+    samples = _flat_along(_per_segment(b, oshape, "sample weights"), range(1, 1 + lead))
+    image = _flat_along(_per_segment(c, ishape, "spatial weights"), range(1, 1 + image_lead))
+    if samples is None or image is None:
+        return None
+
+    samples = samples.reshape(count, *samples.shape[1 + lead :])
+    image = image.reshape(count, *image.shape[1 + image_lead :])
+    samples = as_operand(samples, tuple(samples.shape), "sample weights")
+    image = as_operand(image, tuple(image.shape), "spatial weights")
+    sample_vector = _layout.vector({d: int(n) for d, n in zip(sample_dims, samples.shape[1:])})
+    image_vector = _layout.vector({d: int(n) for d, n in zip(image_dims, image.shape[1:])})
+    return count, sample_vector, samples, image_vector, image
+
+
+def _set_segments(lib, layout) -> None:
+    """Hand the next build its segments, or clear them."""
+    from bartorch.linop.sense import _vector
+
+    if layout is None:
+        lib.bartorch_sense_set_segments(0, None, None, None, None)
+        return
+    count, sample_vector, samples, image_vector, image = layout
+    lib.bartorch_sense_set_segments(
+        count, _vector(sample_vector), samples.data_ptr(), _vector(image_vector), image.data_ptr()
+    )
+
+
+class _Segmentable:
+    """A grid encoding :func:`FieldCorrected` can put its segments in the coil loop of."""
+
+    def _image_dims(self):
+        return (2, 1, 0) if self.ndim == 3 else (1, 0)
+
+    def _sample_dims(self):
+        return ((5,) if self._grid_basis is not None else ()) + self._image_dims()
+
+    def _segmented(self, b, c):
+        """This encoding as ``sum_l diag(b_l) E diag(c_l)`` in its coil loop, or ``None``."""
+        if self._segments is not None:
+            return None
+        layout = _segment_layout(self, b, c, self._sample_dims(), self._image_dims())
+        if layout is None:
+            return None
+        args, kwargs = self._args
+        return type(self)(*args, **{**kwargs, "segments": layout})
+
+
+class _CartesianNative(_Segmentable, _GridSense):
     """:class:`_GridSense` with the pattern and the basis inside the coil loop.
 
     Each slab's transform carries the pattern and the basis, so they run where
@@ -56,7 +130,14 @@ class _CartesianNative(_GridSense):
     the spatial axes and the samples its frames in front of them.
     """
 
-    def __init__(self, sensitivities, image_shape, pattern, basis, toeplitz=True, **kwargs):
+    def __init__(
+        self, sensitivities, image_shape, pattern, basis, toeplitz=True, segments=None, **kwargs
+    ):
+        self._args = (
+            (sensitivities, image_shape, pattern, basis),
+            {"toeplitz": toeplitz, **kwargs},
+        )
+        self._segments = segments
         self._grid_pattern = (
             None if pattern is None else as_operand(pattern, tuple(pattern.shape), "pattern")
         )
@@ -107,6 +188,7 @@ class _CartesianNative(_GridSense):
             lib.bartorch_sense_set_coil_batch(self.coil_batch)
             lib.bartorch_sense_set_fold_maps(int(self.fold_maps))
             try:
+                _set_segments(lib, self._segments)
                 item = self._under_lock(
                     lib.bartorch_linop_cartesian,
                     _vector(self._max_vector()),
@@ -121,6 +203,7 @@ class _CartesianNative(_GridSense):
                     device=self.device,
                 )
             finally:
+                _set_segments(lib, None)
                 lib.bartorch_sense_set_coil_batch(was[0])
                 lib.bartorch_sense_set_fold_maps(was[1])
             ptr = wrap_item(
@@ -251,6 +334,7 @@ class _CartesianSampled(_GridSense):
                     device=self.device,
                 )
             finally:
+                _set_segments(lib, None)
                 lib.bartorch_sense_set_coil_batch(was[0])
                 lib.bartorch_sense_set_fold_maps(was[1])
             ptr = wrap_item(
@@ -267,7 +351,7 @@ class _CartesianSampled(_GridSense):
         return Built(ptr, self.image_shape, self.kspace_shape, keep=keep, device=self.device)
 
 
-class _WaveNative(_GridSense):
+class _WaveNative(_Segmentable, _GridSense):
     """:class:`_GridSense` over the wave encoding, with everything after the coils in the coil loop.
 
     Each slab's transform zero-fills the readout to ``readout`` about its
@@ -288,9 +372,26 @@ class _WaveNative(_GridSense):
         basis,
         centred,
         toeplitz,
+        segments=None,
         **kwargs,
     ):
         from bartorch.linop.sense import _grid_ndim
+
+        self._args = (
+            (
+                sensitivities,
+                psf,
+                image_shape,
+                readout,
+                pattern,
+                positions,
+                basis,
+                centred,
+                toeplitz,
+            ),
+            dict(kwargs),
+        )
+        self._segments = segments
 
         image_shape = tuple(image_shape)
         self._wave_readout = int(readout)
@@ -332,6 +433,11 @@ class _WaveNative(_GridSense):
             self._grid_pattern = _broadcastable(_one_coil(m, len(tail), "pattern"), tail, "pattern")
 
         super().__init__(sensitivities, image_shape, **kwargs)
+
+    def _sample_dims(self):
+        if self._positions is None:
+            return super()._sample_dims()
+        return ((5,) if self._grid_basis is not None else ()) + (2, 1)
 
     def _grid_encoding(self):
         return () if self._grid_basis is None else (int(self._grid_basis.shape[1]),)
@@ -381,6 +487,7 @@ class _WaveNative(_GridSense):
             lib.bartorch_sense_set_coil_batch(self.coil_batch)
             lib.bartorch_sense_set_fold_maps(int(self.fold_maps))
             try:
+                _set_segments(lib, self._segments)
                 item = self._under_lock(
                     lib.bartorch_linop_wave,
                     _vector(self._max_vector()),
@@ -402,6 +509,7 @@ class _WaveNative(_GridSense):
                     device=self.device,
                 )
             finally:
+                _set_segments(lib, None)
                 lib.bartorch_sense_set_coil_batch(was[0])
                 lib.bartorch_sense_set_fold_maps(was[1])
             ptr = wrap_item(
@@ -997,9 +1105,13 @@ def FieldCorrected(  # noqa: N802  (it is a constructor)
     Gram, with the spatial weights on either side -- a point-spread function
     per pair of segments rather than two transforms per segment per coil.
 
-    Over any other encoding the normal is the sum applied twice: the spatial
-    weights do not commute with the transform, and a Cartesian or wave
-    encoding has no basis over its samples to carry them.
+    Over :func:`CartesianSense` with a pattern or a basis, and over
+    :func:`WaveSense`, the segments go into the coil loop instead, around the
+    transform each slab carries: the same sum, run where the slab is, with the
+    two applications as its normal.  On a grid the closed form would not save
+    a transform.  Weights that vary along the batches, the coils, the sets or
+    the coefficients keep the sum over the whole encoding, as any other
+    encoding does.
 
     Examples
     --------
@@ -1014,6 +1126,11 @@ def FieldCorrected(  # noqa: N802  (it is a constructor)
         b, c = (as_operand(t, tuple(t.shape), "coefficients") for t in coefficients)
         if b.shape[0] != c.shape[0]:
             raise ValueError(f"{b.shape[0]} sample weights against {c.shape[0]} spatial ones")
+
+    if isinstance(encoding, _Segmentable):
+        native = encoding._segmented(b, c)
+        if native is not None:
+            return native
 
     native = _segmented_nufft(encoding, b, c)
     if native is not None:

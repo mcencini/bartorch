@@ -1265,6 +1265,70 @@ extern const struct linop_s* grid_transform_create(const long cim_dims[DIMS],
 		const long pat_dims[DIMS], const complex float* pattern,
 		const long bas_dims[DIMS], const complex float* basis, int toeplitz);
 
+/* Off-resonance by time segmentation, for the next Cartesian or wave encoding
+ * built (linop.FieldCorrected): `count` segments, each a weight over one
+ * coil's samples laid out as `sample_dims` and a weight over one coil image
+ * laid out as `image_dims`, one segment after another.  Set under the lock
+ * the build takes, as the coil batch is, and cleared after it. */
+static struct {
+
+	long count;
+	long sample_dims[DIMS];
+	const complex float* sample;
+	long image_dims[DIMS];
+	const complex float* image;
+
+} segments_setting = { 0 };
+
+void bartorch_sense_set_segments(long count, const long* sample_dims, const void* sample,
+		const long* image_dims, const void* image)
+{
+	segments_setting.count = (0 < count) ? count : 0;
+
+	if (0 == segments_setting.count)
+		return;
+
+	md_copy_dims(DIMS, segments_setting.sample_dims, sample_dims);
+	md_copy_dims(DIMS, segments_setting.image_dims, image_dims);
+	segments_setting.sample = sample;
+	segments_setting.image = image;
+}
+
+/* `slab` with the segments set around it, `sum_l diag(b_l) slab diag(c_l)`:
+ * each a copy of the weights on the side they multiply, all of it BART's
+ * sum of chains, so it runs where a slab does.  `slab` itself where none are
+ * set. */
+static const struct linop_s* segmented(const struct linop_s* slab)
+{
+	if (0 == segments_setting.count)
+		return slab;
+
+	const struct iovec_s* dom = linop_domain(slab);
+	const struct iovec_s* cod = linop_codomain(slab);
+
+	long sample_step = md_calc_size(DIMS, segments_setting.sample_dims);
+	long image_step = md_calc_size(DIMS, segments_setting.image_dims);
+
+	unsigned long sample_flags = md_nontriv_dims(DIMS, segments_setting.sample_dims);
+	unsigned long image_flags = md_nontriv_dims(DIMS, segments_setting.image_dims);
+
+	const struct linop_s* sum = NULL;
+
+	for (long l = 0; l < segments_setting.count; l++) {
+
+		const struct linop_s* term = linop_chain_FF(linop_chain_FF(
+				linop_cdiag_create(DIMS, dom->dims, image_flags, segments_setting.image + l * image_step),
+				linop_clone(slab)),
+				linop_cdiag_create(DIMS, cod->dims, sample_flags, segments_setting.sample + l * sample_step));
+
+		sum = (NULL == sum) ? term : linop_plus_FF(sum, term);
+	}
+
+	linop_free(slab);
+
+	return sum;
+}
+
 /* The Cartesian SENSE encoding with its pattern and subspace basis inside the
  * coil loop.
  *
@@ -1295,13 +1359,13 @@ const struct linop_s* bartorch_cartesian_operator(const long max_dims[DIMS], con
 		md_select_dims(DIMS, ~COIL_FLAG, img_dims, max_dims);
 
 		return linop_chain_FF(linop_fmac_dims_create(DIMS, cim_dims, img_dims, sens_dims, sens),
-				grid_transform_create(cim_dims, pat_dims, pattern, bas_dims, basis, toeplitz));
+				segmented(grid_transform_create(cim_dims, pat_dims, pattern, bas_dims, basis, toeplitz)));
 	}
 
 	struct sense_s* d = sense_slabs(max_dims, map_dims, cim_dims, 0UL);
 	sense_hold(d, sens_dims, sens, kernels);
 
-	d->slab = grid_transform_create(d->cim_dims, pat_dims, pattern, bas_dims, basis, toeplitz);
+	d->slab = segmented(grid_transform_create(d->cim_dims, pat_dims, pattern, bas_dims, basis, toeplitz));
 
 	sense_output_from(d, true);
 
@@ -1402,15 +1466,15 @@ const struct linop_s* bartorch_wave_operator(const long max_dims[DIMS], const lo
 		md_select_dims(DIMS, ~COIL_FLAG, img_dims, max_dims);
 
 		return linop_chain_FF(linop_fmac_dims_create(DIMS, cim_dims, img_dims, sens_dims, sens),
-				wave_slab(cim_dims, wx, psf, centred, pat_dims, pattern, frames, shots, components, positions,
-					bas_dims, basis, toeplitz));
+				segmented(wave_slab(cim_dims, wx, psf, centred, pat_dims, pattern, frames, shots, components, positions,
+					bas_dims, basis, toeplitz)));
 	}
 
 	struct sense_s* d = sense_slabs(max_dims, map_dims, cim_dims, 0UL);
 	sense_hold(d, sens_dims, sens, kernels);
 
-	d->slab = wave_slab(d->cim_dims, wx, psf, centred, pat_dims, pattern, frames, shots, components, positions,
-			bas_dims, basis, toeplitz);
+	d->slab = segmented(wave_slab(d->cim_dims, wx, psf, centred, pat_dims, pattern, frames, shots, components,
+			positions, bas_dims, basis, toeplitz));
 
 	sense_output_from(d, true);
 

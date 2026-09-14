@@ -6,6 +6,8 @@ it is built on where there is one, and against the chain written out by hand
 where there is not -- and that it stays a single BART operator.
 """
 
+import math
+
 import pytest
 import torch
 
@@ -1174,3 +1176,103 @@ def test_delay_and_scale_belong_to_the_gradient_wave(wave_parts):
     for extra in (dict(delay=0.01), dict(scale=1.05)):
         with pytest.raises(ValueError, match="one or the other"):
             linop.WaveSense(maps, SHAPE, readout=WX, psf=psf, **extra)
+
+
+# --- time segmentation over a grid ---------------------------------------------
+#
+# On a grid the segments run in the coil loop, around the transform each slab
+# carries; the operator is still the sum of its segments.
+
+
+def _segment_sum(E, b, c, x):
+    return sum(b[s] * E(c[s] * x) for s in range(b.shape[0]))
+
+
+def _segment_sum_adjoint(E, b, c, y):
+    return sum(c[s].conj() * E.adjoint(b[s].conj() * y) for s in range(b.shape[0]))
+
+
+def _segment_weights(sample_shape, image_shape, segments=3, seed=51):
+    """EPI-like: time runs along the rows and then along the readout."""
+    torch.manual_seed(seed)
+    t = torch.linspace(0.0, 1.0, math.prod(sample_shape), dtype=torch.float64).reshape(sample_shape)
+    b = torch.stack([torch.exp(-2j * torch.pi * (s + 1) * t) for s in range(segments)])
+    c = (torch.randn(segments, *image_shape, dtype=torch.complex64) * 0.1 + 1.0) / segments
+    return b.to(torch.complex64), c
+
+
+def _check_segmented(E, A, b, c):
+    assert getattr(A, "_segments", None) is not None, "the segments ran in the coil loop"
+    x = _rand(*E.ishape)
+    want = _segment_sum(E, b, c, x)
+    assert (A(x) - want).abs().max() / want.abs().max() < 1e-5
+    y = _rand(*E.oshape)
+    want = _segment_sum_adjoint(E, b, c, y)
+    assert (A.adjoint(y) - want).abs().max() / want.abs().max() < 1e-5
+    want = A.adjoint(A(x))
+    assert (A.normal(x) - want).abs().max() / want.abs().max() < 1e-5
+
+
+def test_a_segmented_cartesian_encoding_is_the_sum_of_its_segments(maps):
+    torch.manual_seed(52)
+    mask = (torch.rand(Y, 1) > 0.4).to(torch.complex64)
+    E = linop.CartesianSense(maps, (Y, X), pattern=mask)
+    b, c = _segment_weights((Y, X), (Y, X))
+    _check_segmented(E, linop.FieldCorrected(E, coefficients=(b, c)), b, c)
+
+
+def test_weights_the_same_on_every_coil_are_taken_once(maps):
+    """Readout times broadcast over the coils, as a fit hands them back."""
+    torch.manual_seed(53)
+    mask = (torch.rand(Y, 1) > 0.4).to(torch.complex64)
+    E = linop.CartesianSense(maps, (Y, X), pattern=mask)
+    b, c = _segment_weights((Y, X), (Y, X))
+    on_every_coil = b[:, None].expand(-1, COILS, -1, -1).contiguous()
+    _check_segmented(E, linop.FieldCorrected(E, coefficients=(on_every_coil, c)), b, c)
+
+
+def test_weights_that_differ_between_coils_keep_the_sum(maps):
+    torch.manual_seed(54)
+    E = linop.CartesianSense(maps, (Y, X), pattern=torch.ones(Y, 1, dtype=torch.complex64))
+    b, c = _segment_weights((COILS, Y, X), (Y, X))
+    A = linop.FieldCorrected(E, coefficients=(b, c))
+    assert getattr(A, "_segments", None) is None
+    x = _rand(Y, X)
+    want = _segment_sum(E, b, c, x)
+    assert (A(x) - want).abs().max() / want.abs().max() < 1e-5
+
+
+def test_a_segmented_wave_encoding_is_the_sum_of_its_segments(wave_parts):
+    maps, psf, mask = wave_parts
+    E = linop.WaveSense(maps, SHAPE, psf=psf, readout=WX, pattern=mask)
+    b, c = _segment_weights(tuple(E.oshape[1:]), SHAPE)
+    _check_segmented(E, linop.FieldCorrected(E, coefficients=(b, c)), b, c)
+
+
+@requires_cuda
+def test_on_a_card_segmented_grid_encodings_are_the_host_ones(maps, wave_parts):
+    torch.manual_seed(55)
+    mask = (torch.rand(Y, 1) > 0.4).to(torch.complex64)
+    wmaps, psf, wmask = wave_parts
+    cases = [
+        (
+            lambda **o: linop.CartesianSense(maps, (Y, X), pattern=mask, **o),
+            _segment_weights((Y, X), (Y, X)),
+        ),
+        (
+            lambda **o: linop.WaveSense(wmaps, SHAPE, psf=psf, readout=WX, pattern=wmask, **o),
+            _segment_weights((Z, 5, WX), SHAPE),
+        ),
+    ]
+    for make, (b, c) in cases:
+        A = linop.FieldCorrected(make(device="cuda"), coefficients=(b, c))
+        host = linop.FieldCorrected(make(), coefficients=(b, c))
+        assert getattr(A, "_segments", None) is not None
+        x = _rand(*A.ishape)
+        want = host(x)
+        assert (A(x) - want).abs().max() / want.abs().max() < 1e-4
+        y = _rand(*A.oshape)
+        want = host.adjoint(y)
+        assert (A.adjoint(y) - want).abs().max() / want.abs().max() < 1e-4
+        want = host.normal(x)
+        assert (A.normal(x) - want).abs().max() / want.abs().max() < 1e-4

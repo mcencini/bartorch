@@ -136,6 +136,7 @@ SYMBOLS = (
     "bartorch_linop_reshaped",
     "bartorch_linop_sense",
     "bartorch_linop_cartesian",
+    "bartorch_sense_set_segments",
     "bartorch_linop_cartesian_sampled",
     "bartorch_linop_wave",
     "bartorch_grid_fused",
@@ -520,6 +521,14 @@ def bind(lib: ctypes.CDLL) -> ctypes.CDLL:
         ctypes.POINTER(ctypes.c_long),
         ctypes.c_void_p,
         ctypes.c_int,
+    ]
+    lib.bartorch_sense_set_segments.restype = None
+    lib.bartorch_sense_set_segments.argtypes = [
+        ctypes.c_long,
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.c_void_p,
     ]
     lib.bartorch_linop_cartesian_sampled.restype = ctypes.c_void_p
     lib.bartorch_linop_cartesian_sampled.argtypes = [

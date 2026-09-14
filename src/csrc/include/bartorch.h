@@ -248,6 +248,13 @@ BARTORCH_API bartorch_linop* bartorch_linop_cartesian(const long* max_dims, cons
 		const void* sens, int kernels,
 		const long* pat_dims, const void* pattern,
 		const long* bas_dims, const void* basis, int toeplitz);
+/* Off-resonance by time segmentation for the next Cartesian or wave encoding
+ * built: `count` segments, each a weight over one coil's samples laid out as
+ * `sample_dims` and a weight over one coil image laid out as `image_dims`,
+ * contiguous one segment after another.  The encoding is then
+ * sum_l diag(sample_l) E diag(image_l), in its coil loop.  Zero clears it. */
+BARTORCH_API void bartorch_sense_set_segments(long count, const long* sample_dims, const void* sample,
+		const long* image_dims, const void* image);
 /* The Cartesian SENSE encoding over sampled-only k-space: `frames` x `shots`
  * phase-encode positions of `components` indices each -- (y) for a 2D image,
  * (z, y) for a 3D one, -1 for padding -- with the whole readout along each,
