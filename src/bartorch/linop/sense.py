@@ -77,7 +77,7 @@ class NoncartesianSense(LinearOperator):
         :func:`bartorch.tools.ecalib` and :func:`bartorch.tools.nlinv` return
         for ``maps > 1``.  The image then carries the sets and the samples do
         not: the encoding is ``y[c] = sum_m S[m, c] x[m]``, summed in BART's
-        own contraction rather than by anything here.
+        own ``md_ztenmul`` rather than by anything here.
     image_shape : tuple of int
         Coil-image shape, C order, for instance ``(coils, y, x)``.
     traj : tensor

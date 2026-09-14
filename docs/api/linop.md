@@ -1,11 +1,9 @@
 # Linear operators
 
 `bartorch.linop`.  An operator maps between two C-order shapes.  They compose
-and combine into a single BART operator through the algebra below -- every one
-of those is a BART constructor applied to BART operators, so what a solver
-drives is one operator in BART's own loop, with no arithmetic in Python
-between the steps.  Applying an operator to a tensor that requires a gradient
-records it for autograd.
+and combine into a single BART operator through the algebra below, so what a
+solver drives is one operator in BART's own loop.  Applying one to a tensor
+that requires a gradient records it for autograd.
 
 ```{eval-rst}
 .. currentmodule:: bartorch.linop
@@ -13,8 +11,9 @@ records it for autograd.
 
 ## MRI encoding
 
-These are what most reconstructions here are: an encoding, and a solver driving
-it.  They come first because they are what the rest of the page is for.
+An encoding and a solver driving it is what most reconstructions here are.
+Reach for `NoncartesianSense` off the grid, `CartesianSense` on it,
+`WaveSense` for Wave-CAIPI, and `Coils` for the sensitivity multiply alone.
 
 ```{eval-rst}
 .. autosummary::
@@ -29,48 +28,12 @@ it.  They come first because they are what the rest of the page is for.
    Sampling
 ```
 
-`NoncartesianSense` is BART's own operator -- the coil batching and the
-Toeplitz normal are what make it what it is.  `CartesianSense` is that same
-operator over BART's FFT rather than a NUFFT, with `Sampling` chained on;
-`WaveSense` is a composition of operators BART already has, chained by
-`linop_chain`, and is the same six in the same order that `src/wave.c` chains.
-Each is a single BART operator once built.
-
-`Coils` is the sensitivity multiply on its own, with the same slab loop and
-the same kernels, for an encoding whose transform is not a Fourier transform
-and so cannot be a SENSE operator.  It is what carries the coils through
-`WaveSense`, which is why sensitivities held as the k-space kernels `nlinv`
-produces work there too.
-
-All of them take several sets of maps -- ESPIRiT's second, ENLIVE's relaxed
-model -- as `(sets, coils, *spatial)`, which is what `tools.ecalib` and
-`tools.nlinv` return for `maps > 1` and needs no reshaping in between.  The
-image then carries the sets and the samples do not: the encoding is
-$y_c = \sum_m S_{m,c} x_m$, contracted in BART's own `md_ztenmul` rather than
-by anything in Python.
-
-`CartesianSense` and `WaveSense` read a temporal subspace when given a
-`basis` -- T2 shuffling and Wave-Shuffling, the forward `pics -B` builds.
-With `toeplitz=True` the normal collapses the frames into one
-coefficient-by-coefficient kernel, so an iteration never makes them: on
-sixty-four echoes over four coefficients that is sixteen times less k-space in
-the middle of every step.  Nothing is convolved and no grid is doubled, since
-the pattern already lies on the grid the transform is circular over.
-
-`FieldCorrected` wraps any of them and is a sum of chains rather than one:
-off-resonance during the readout is a different transform per sample, and time
-segmentation stands in for it with a short sum of ordinary encodings.  The
-coefficients come from `mri-nufft`; everything applied is BART's.
-
 ## Linear operator class
 
-An operator is combined with others through the algebra its class defines,
-rather than by naming a combining class: `A @ B` composes, `A + B` and
-`A - B` add, `c * A` scales, `A ** n` repeats, `A.H` and `A.T` transpose,
-`A.gram()` and `A.cogram()` are the normal operators, and `A[key]` restricts
-its output the way indexing a tensor does.  What each returns is private,
-because the algebra promises the operator, not the shape of the tree it is
-made of.
+`A @ B` composes, `A + B` and `A - B` add, `c * A` scales, `A ** n` repeats,
+`A.H` and `A.T` transpose, `A.gram()` and `A.cogram()` are the normal
+operators, and `A[key]` restricts the output as indexing a tensor does.  What
+each returns is private.
 
 ```{eval-rst}
 .. autosummary::
@@ -112,11 +75,9 @@ made of.
 
 ## Combining operators
 
-The only functions here.  Everything else BART offers maps a tensor to a
-tensor and is an operator in its own right, which makes it a class; these take
-operators and give back an operator, which is the one thing that cannot be
-written as arithmetic or as indexing.  Each is one BART operator, so what a
-solver drives is a single operator rather than a list walked per iteration.
+The only functions on this page: everything else maps a tensor to a tensor and
+is therefore an operator, which makes it a class.  Each of these is one BART
+operator, not a list walked per iteration.
 
 ```{eval-rst}
 .. autosummary::
@@ -131,11 +92,6 @@ solver drives is a single operator rather than a list walked per iteration.
 ```
 
 ## Shape
-
-Rearranging, reducing and restricting are operators like any other: each maps
-a tensor to a tensor, so each is a class, composes with `@` and `+`, and is
-solved by {mod}`bartorch.optim`.  Only something that takes operators and
-gives back an operator would be a function here.
 
 ```{eval-rst}
 .. autosummary::
