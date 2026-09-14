@@ -38,7 +38,7 @@ extensions = [
 ]
 source_suffix = {".md": "markdown", ".rst": "restructuredtext"}
 templates_path = ["_templates"]
-exclude_patterns = ["_build", "_ext", "gallery_src", "examples", "Thumbs.db", ".DS_Store"]
+exclude_patterns = ["_build", "_ext", "design", "gallery_src", "examples", "Thumbs.db", ".DS_Store"]
 
 myst_enable_extensions = ["colon_fence", "deflist", "dollarmath"]
 myst_heading_anchors = 3
