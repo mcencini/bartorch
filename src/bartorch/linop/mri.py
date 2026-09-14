@@ -61,16 +61,21 @@ def _flat_along(t: torch.Tensor, axes) -> torch.Tensor | None:
 def _segment_layout(encoding, b, c, sample_dims, image_dims):
     """The segments as the form's contraction, or ``None``.
 
-    The sample weights may vary along one coil's samples and the spatial ones
-    along the image's spatial axes; weights the same along the batches, the
-    coils, the sets or the coefficients are taken once.  Weights that vary
-    along any of those are left to the sum of the segments.
+    The sample weights may vary along one coil's samples and the image's
+    along the coefficients and the voxels; weights the same along the
+    batches, the coils and the sets are taken once.
+
+    The sets are on the far side of the sensitivities: the slab contracts
+    them away with ``md_ztenmul2`` before the image factor is reached, so a
+    weight that differs between sets is not this contraction whatever it
+    multiplies.  Those, and weights varying along the batches or the coils,
+    are left to the sum of the segments.
     """
     count = int(b.shape[0])
     oshape, ishape = tuple(encoding.oshape), tuple(encoding.ishape)
     tail = tuple(encoding._kspace_tail())
     lead = len(oshape) - len(tail)
-    image_lead = len(ishape) - encoding.ndim
+    image_lead = len(ishape) - len(image_dims)
 
     samples = _flat_along(_per_segment(b, oshape, "sample weights"), range(1, 1 + lead))
     image = _flat_along(_per_segment(c, ishape, "spatial weights"), range(1, 1 + image_lead))
@@ -89,16 +94,21 @@ def _segment_layout(encoding, b, c, sample_dims, image_dims):
 class _Segmentable:
     """A grid encoding whose coil loop a contraction over terms can go inside.
 
-    The axes each side's weights are laid out on: the image's spatial ones,
-    and one coil's samples, which carry the frames as well where a basis
-    contracts them.
+    The axes each side's weights are laid out on: the image's coefficients
+    and voxels, and one coil's samples, which carry the frames as well where a
+    basis contracts them.  Not the sets, which the sensitivities have summed
+    over by the time the image factor is applied.
     """
 
-    def _image_dims(self):
+    def _spatial_dims(self):
         return (2, 1, 0) if self.ndim == 3 else (1, 0)
 
+    def _image_dims(self):
+        _, image = _layout.encoding_dims(len(self.encoding), self._has_basis())
+        return (*image, *self._spatial_dims())
+
     def _sample_dims(self):
-        return ((5,) if self._grid_basis is not None else ()) + self._image_dims()
+        return ((5,) if self._grid_basis is not None else ()) + self._spatial_dims()
 
 
 class _CartesianNative(_Segmentable, _GridSense):

@@ -488,11 +488,22 @@ class _Composition(LinearOperator):
 
     def _build(self) -> None:
         """The lowered encoding where the planner has one, else the plain chain."""
+        from dataclasses import replace
+
         from bartorch.linop import plan
 
-        lowered = plan.lowered(self) if self._match else None
+        description = plan.describe(self) if self._match else None
+        lowered = None if description is None else plan.lower(description)
         if lowered is None:
             super()._build()
+            # A sum the form could not hold is a transform per term, and
+            # saying so is the whole point of reporting a plan: without this
+            # the search would answer with one term's own plan, which is the
+            # silent fallback rather than a report of it.
+            if description is not None and len(description.terms) > 1:
+                inner = description.terms[0].encoding.plan
+                if inner is not None:
+                    self._plan = replace(inner, contraction="chained", terms=len(description.terms))
             return
 
         # The lowered operator answers from here on, and the two share its

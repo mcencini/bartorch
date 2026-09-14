@@ -640,3 +640,94 @@ def test_a_composition_costs_one_application_however_many_terms(maps, pattern):
     library().bartorch_encoding_reset_counters()
     composed(_rand(Y, X))
     assert _counter(_abi.BARTORCH_ENCODING_FORWARD) == 1
+
+
+# --- the compositions the design names ----------------------------------------
+
+
+def _fft2(x):
+    shifted = torch.fft.ifftshift(x, dim=(-2, -1))
+    return torch.fft.fftshift(torch.fft.fft2(shifted, norm="ortho"), dim=(-2, -1))
+
+
+def test_a_shot_phase_is_a_contraction_over_the_shots(maps):
+    """Multishot: one image, a phase per shot, and the samples each shot took.
+
+    Against the shots written out, with torch's own transform.
+    """
+    torch.manual_seed(30)
+    shots = 3
+    E = linop.CartesianSense(maps, (Y, X), pattern=torch.ones(Y, 1, dtype=torch.complex64))
+
+    phase = _rand(shots, Y, X)
+    taken = torch.zeros(shots, 1, Y, 1, dtype=torch.complex64)
+    for shot in range(shots):
+        taken[shot, 0, shot::shots, 0] = 1
+
+    A = _terms(E, taken, phase)
+    assert A.plan.contraction == "segments" and A.plan.terms == shots
+    assert A.plan.fused
+
+    x = _rand(Y, X)
+    want = torch.zeros(COILS, Y, X, dtype=torch.complex64)
+    for shot in range(shots):
+        want = want + taken[shot] * _fft2(maps * (phase[shot] * x))
+    assert (A(x) - want).abs().max() / want.abs().max() < 1e-5
+
+
+def test_an_echo_phase_with_a_basis_is_a_contraction_over_the_frames(maps, basis):
+    """A per-voxel phase per frame cannot move to the k-space side, so it is a term each.
+
+    The basis still contracts the coefficients inside each term, which is what
+    makes this one encoding per frame rather than one per frame and
+    coefficient.
+    """
+    torch.manual_seed(31)
+    coeffs, frames = int(basis.shape[0]), int(basis.shape[1])
+    pattern = torch.ones(frames, Y, 1, dtype=torch.complex64)
+    E = linop.CartesianSense(maps, (coeffs, Y, X), pattern=pattern, basis=basis)
+
+    phase = _rand(frames, 1, Y, X)
+    selector = torch.zeros(frames, 1, frames, 1, 1, dtype=torch.complex64)
+    for frame in range(frames):
+        selector[frame, 0, frame] = 1
+
+    A = _terms(E, selector, phase)
+    assert A.plan.contraction == "segments" and A.plan.terms == frames
+    assert A.plan.fused
+
+    x = _rand(coeffs, Y, X)
+    want = torch.zeros(COILS, frames, Y, X, dtype=torch.complex64)
+    for frame in range(frames):
+        for coeff in range(coeffs):
+            want[:, frame] += basis[coeff, frame] * _fft2(maps * (phase[frame, 0] * x[coeff]))
+    assert (A(x) - want).abs().max() / want.abs().max() < 1e-5
+
+
+def test_a_weight_that_differs_between_sets_is_left_to_the_sum(pattern):
+    """The sets are summed before the image factor, so a factor along them is not this form.
+
+    What it must not be is fused and wrong: the slab contracts the sets away
+    with ``md_ztenmul2`` before the contraction's image factor is reached, so
+    the answer has to come from the sum of the terms instead.
+    """
+    torch.manual_seed(32)
+    sets = 2
+    sensitivities = _rand(sets, COILS, Y, X)
+    E = linop.CartesianSense(sensitivities, (sets, Y, X), pattern=pattern)
+    assert E.sets == sets
+
+    picked = torch.zeros(sets, sets, 1, 1, dtype=torch.complex64)
+    for s in range(sets):
+        picked[s, s] = 1
+    phase = _rand(sets, 1, Y, 1)
+
+    A = _terms(E, phase, picked)
+    assert A.plan.contraction == "chained" and A.plan.terms == sets
+    assert not A.plan.fused
+
+    x = _rand(sets, Y, X)
+    want = torch.zeros(COILS, Y, X, dtype=torch.complex64)
+    for s in range(sets):
+        want = want + phase[s] * pattern * _fft2(sensitivities[s] * x[s])
+    assert (A(x) - want).abs().max() / want.abs().max() < 1e-5
