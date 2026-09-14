@@ -23,7 +23,7 @@ term.
    Regularizer
 ```
 
-## In a solve that is being differentiated
+## Under differentiation
 
 BART's proximal operators carry no derivative, so
 {meth}`Regularizer.prox` refuses a tensor that does; a denoiser is what goes

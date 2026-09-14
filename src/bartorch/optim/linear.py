@@ -578,12 +578,12 @@ class _Solver:
     def _network(self, image_shape, *, deq: bool, trainable, **kwargs):
         from deepinv.optim import BaseOptim
 
-        from bartorch.optim.iterators import NormalEquations
+        from bartorch.optim._iterators import NormalEquations
 
         if _extending(self.regularizers):
             raise TypeError(
                 "a term that adds unknowns to the optimization has no step written out "
-                "here: the iterations in bartorch.optim.iterators walk the image, and this "
+                "here: the iterations written out in Python walk the image, and this "
                 "one walks the image and the supporting variables behind it.  It solves -- "
                 "inside the library, which is where BART lays that vector out -- but it "
                 "does not unroll"
@@ -651,11 +651,11 @@ class _Solver:
         """Solve with BART's own loop, without crossing back into Python.
 
         This is what :meth:`__call__` does for every solver whose iteration is
-        the library's.  Where the iteration has been written out in
-        :mod:`bartorch.optim.iterators` -- so that it can be unrolled into a
-        network or driven to a fixed point -- :meth:`__call__` runs that one
-        instead, and this stays as the reference it is held against: the two
-        answer with the same bits, which is what the suite checks.
+        the library's.  Where the iteration has been written out in Python --
+        so that it can be unrolled into a network or driven to a fixed point --
+        :meth:`__call__` runs that one instead, and this stays as the reference
+        it is held against: the two answer with the same bits, which is what
+        the suite checks.
 
         A solver holding a ``deepinv`` prior has no library route at all: BART
         has no way to be handed a denoiser, and this says so rather than
@@ -903,7 +903,7 @@ class IST(_Solver):
         return {"step": self.step, "eigen": self.eigen, "hogwild": self.hogwild}
 
     def _iteration(self):
-        from bartorch.optim.iterators import ISTIteration
+        from bartorch.optim._iterators import ISTIteration
 
         return ISTIteration()
 
@@ -920,7 +920,7 @@ class IST(_Solver):
         return {}
 
     def _pieces(self, image_shape: tuple[int, ...]):
-        from bartorch.optim.iterators import TermPrior
+        from bartorch.optim._iterators import TermPrior
 
         if self.eigen:
             raise ValueError(
@@ -937,14 +937,14 @@ class IST(_Solver):
         return self._iteration(), TermPrior(self.regularizers[0], image_shape), params
 
     def __call__(self, y: torch.Tensor, A, x0: torch.Tensor | None = None) -> torch.Tensor:
-        """Solve, by the iteration in :mod:`bartorch.optim.iterators`.
+        """Solve, by the iteration written out in Python.
 
         The loop is here rather than in the library, so that the same solver
         can be unrolled into a network or driven to a fixed point.  The step
         is BART's, held against the library's own to the bit.
         """
         from bartorch import to_deepinv
-        from bartorch.optim.iterators import NormalEquations, TermPrior
+        from bartorch.optim._iterators import NormalEquations, TermPrior
 
         iteration = self._iteration()
 
@@ -1026,7 +1026,7 @@ class FISTA(IST):
         return {**super()._settings(), "pqr": self.pqr}
 
     def _iteration(self):
-        from bartorch.optim.iterators import FISTAIteration
+        from bartorch.optim._iterators import FISTAIteration
 
         return FISTAIteration()
 
@@ -1234,7 +1234,7 @@ class ADMM(_Solver):
         )
 
     def _pieces(self, image_shape: tuple[int, ...]):
-        from bartorch.optim.iterators import ADMMIteration
+        from bartorch.optim._iterators import ADMMIteration
 
         params = {
             "maxiter": self.maxiter,
@@ -1259,7 +1259,7 @@ class ADMM(_Solver):
         return iteration, None, params
 
     def __call__(self, y: torch.Tensor, A, x0: torch.Tensor | None = None) -> torch.Tensor:
-        """Solve, by the iteration in :mod:`bartorch.optim.iterators`.
+        """Solve, by the iteration written out in Python.
 
         The loop is here rather than in the library, so that the same solver
         can be unrolled into a network or driven to a fixed point.  The step
@@ -1268,7 +1268,7 @@ class ADMM(_Solver):
 
         """
         from bartorch import to_deepinv
-        from bartorch.optim.iterators import NormalEquations
+        from bartorch.optim._iterators import NormalEquations
 
         if _extending(self.regularizers):
             # The step written out here walks the image; this one walks the
@@ -1384,7 +1384,7 @@ class PRIDU(_Solver):
         )
 
     def _pieces(self, image_shape: tuple[int, ...], divisor: float | None = None):
-        from bartorch.optim.iterators import PRIDUIteration
+        from bartorch.optim._iterators import PRIDUIteration
 
         if divisor is None and self.eigen:
             raise ValueError(
@@ -1409,14 +1409,14 @@ class PRIDU(_Solver):
         return PRIDUIteration(duals, image_shape, primal=primal), None, params
 
     def __call__(self, y: torch.Tensor, A, x0: torch.Tensor | None = None) -> torch.Tensor:
-        """Solve, by the iteration in :mod:`bartorch.optim.iterators`.
+        """Solve, by the iteration written out in Python.
 
         The loop is here rather than in the library, so that the same solver
         can be unrolled into a network or driven to a fixed point.  The steps
         are BART's, held against the library's own to the bit.
         """
         from bartorch import to_deepinv
-        from bartorch.optim.iterators import NormalEquations
+        from bartorch.optim._iterators import NormalEquations
 
         if _extending(self.regularizers):
             # As for the alternating directions: the enlarged variable is laid
@@ -1476,6 +1476,25 @@ class NIHT(_Solver):
         for term in self.regularizers:
             if term.kind not in ("H", "N"):
                 raise TypeError(f"NIHT takes WaveletNIHT and ImageNIHT terms, not {term!r}")
+
+    def __call__(self, y: torch.Tensor, A, x0: torch.Tensor | None = None) -> torch.Tensor:
+        """Refused: BART's own iteration cannot run against ``lsqr``'s operator.
+
+        ``niht`` applies the normal operator in place -- ``iter_op_call(op, g,
+        g)`` at ``iter/niht.c:85`` and ``:212`` -- and the operator ``lsqr2``
+        hands it asserts against exactly that, ``args[0] != args[1]`` at
+        ``iter/lsqr.c:60``.  Every NIHT solve therefore ends in an assertion,
+        ``bart pics -R H`` included, and BART's assertions are ``error()``
+        calls that unwind the process from here rather than returning.
+        """
+        raise NotImplementedError(
+            "BART's NIHT cannot run: `niht` applies the normal operator in place "
+            "(iter/niht.c:85, :212) and the operator `lsqr2` hands it asserts that it "
+            "is not (iter/lsqr.c:60), so every solve ends in an assertion -- `bart pics "
+            "-R H` included.  Nothing here can work around it; it needs a BART fix.  "
+            "prox.WaveletNIHT and prox.ImageNIHT still reach tools.pics, which catches "
+            "the assertion rather than ending the process"
+        )
 
 
 class EulerMaruyama(_Solver):

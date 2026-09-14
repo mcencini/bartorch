@@ -11,7 +11,7 @@ deepinv is a dependency for a different reason.  It was an extra while it was
 only an adapter -- `to_deepinv` handed an operator over and nothing imported
 deepinv until someone asked -- and it stopped being that when `optim.IST`,
 `optim.FISTA`, `optim.ADMM` and `optim.PRIDU` started running the iterations in
-`bartorch.optim.iterators`, which are written as deepinv optimizers.  A solver
+`bartorch.optim._iterators`, which are written as deepinv optimizers.  A solver
 that runs a different loop depending on whether an extra happens to be
 installed is worse than the install it saves.
 
@@ -104,7 +104,7 @@ def test_the_solvers_really_do_reach_deepinv():
     """
     import deepinv.optim.optim_iterators as di
 
-    from bartorch.optim import iterators
+    from bartorch.optim import _iterators as iterators
 
     assert issubclass(iterators.ADMMIteration, di.OptimIterator)
     assert issubclass(iterators.FISTAIteration, di.OptimIterator)

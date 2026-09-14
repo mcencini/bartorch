@@ -9,7 +9,7 @@ first, then inputs.
 .. currentmodule:: bartorch.nlop
 ```
 
-## Nonlinear operator class
+## Operator class
 
 ```{eval-rst}
 .. autosummary::
@@ -37,7 +37,7 @@ itself.
    Derivative
 ```
 
-## Basic operators
+## Basic
 
 ```{eval-rst}
 .. autosummary::
@@ -94,7 +94,7 @@ holds the curves against `bart signal` and the fits against `bart mobafit`.
    Bloch
 ```
 
-## A Gauss-Newton step, which BART already differentiates
+## Gauss-Newton step
 
 `noir/model_net.c` builds one iteration of `nlinv` out of `nlop`s throughout,
 so the step differentiates by its data, its iterate, its regularisation centre
@@ -119,7 +119,7 @@ whole = nlop.chain(nlop.chain(first, prior, output=0, input=0), second, output=0
 whole(y, x0, alpha, packed, ...).abs().square().sum().backward()
 ```
 
-## Python-defined operators
+## Python-defined
 
 A function of several tensors becomes an `nlop` of several inputs, which is
 what lets a denoiser's weights be *arguments* of a BART graph rather than

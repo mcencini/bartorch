@@ -22,35 +22,19 @@ from bartorch._operator import as_operand
 
 __all__ = ["IRGNM"]
 
-#: What a string names, for a caller who does not want to build a solver.
-_BY_NAME = ("cg", "ist", "fista", "admm", "pridu")
-
 
 def _inner_solver(inner):
-    """The solver an ``inner=`` argument stands for."""
+    """``inner`` checked to be a configured solver, which is all it may be."""
     from bartorch.optim import linear
 
     if isinstance(inner, str):
-        if inner not in _BY_NAME:
-            raise ValueError(f"no inner solver called {inner!r}; one of {list(_BY_NAME)}")
-        try:
-            return {
-                "cg": linear.CG,
-                "ist": linear.IST,
-                "fista": linear.FISTA,
-                "admm": linear.ADMM,
-                "pridu": linear.PRIDU,
-            }[inner]()
-        except ValueError as exc:
-            raise ValueError(
-                f"{inner!r} is a regularized solver and has nothing to regularize with; "
-                f"build it with its term, as inner=optim.{inner.upper()}(prox.Wavelet(...))"
-            ) from exc
-    if not isinstance(inner, linear._Solver):
         raise TypeError(
-            f"inner takes one of {list(_BY_NAME)} or a solver from bartorch.optim, "
-            f"not {type(inner).__name__}"
+            f"inner takes a configured solver, not the name of one: pass "
+            f"optim.{inner.upper()}() rather than {inner!r}, so that its terms and "
+            "settings are visible where the solve is written"
         )
+    if not isinstance(inner, linear._Solver):
+        raise TypeError(f"inner takes a solver from bartorch.optim, not {type(inner).__name__}")
     return inner
 
 
@@ -104,18 +88,22 @@ class IRGNM:
         Conjugate-gradient iterations per step, for the built-in solver.
     cg_tol : float
         Conjugate-gradient tolerance per step, for the built-in solver.
-    inner : str, solver or None
-        The solver for the linearized problem.  ``None`` runs BART's first
-        form, entirely inside the library, which is what ``nlinv`` runs.
-        Anything else runs the second form: ``"cg"``, ``"ist"``, ``"fista"``,
-        ``"admm"``, ``"pridu"``, or a configured solver from
-        :mod:`bartorch.optim`, whose regularizers become the ``R`` above.
+    inner : solver or None
+        A configured solver from :mod:`bartorch.optim` for the linearized
+        problem, whose regularizers become the ``R`` above.  ``None`` runs
+        BART's first form, entirely inside the library, which is what
+        ``nlinv`` runs.
 
     Examples
     --------
     Plain, which is ``nlinv``:
 
     >>> IRGNM(iterations=8)(kspace, F, x0=start)
+
+    The same method with the linearized problem written out here, which is
+    ``iter4_irgnm2`` to the bit:
+
+    >>> IRGNM(iterations=8, inner=optim.CG())(kspace, F, x0=start)
 
     Wavelet-regularized, which is what ``moba -l1`` runs:
 
@@ -138,7 +126,7 @@ class IRGNM:
     step; the second shifts by ``xref``, carries an extra ``DF (x - xref)``
     into the residual, and solves for the iterate itself.  They agree in exact
     arithmetic and differ in the last bits, so a run with ``inner=`` will not
-    reproduce one without it -- but ``inner="cg"`` reproduces
+    reproduce one without it -- but ``inner=optim.CG()`` reproduces
     ``iter4_irgnm2`` exactly, which is what the suite holds it to.
     """
 
@@ -225,7 +213,7 @@ class IRGNM:
     ) -> torch.Tensor:
         """BART's second form with its own conjugate gradients, ``iter4_irgnm2``.
 
-        What :meth:`__call__` with ``inner="cg"`` is held against: the loop
+        What :meth:`__call__` with ``inner=optim.CG()`` is held against: the loop
         below is written out in Python so the inner problem can go elsewhere,
         and this is the same loop inside the library.
         """
@@ -263,7 +251,7 @@ class IRGNM:
         Every line below is one of ``italgos.c``'s, in its order.  The
         arithmetic is a scale and an add, which ``vecops.c`` does with the
         same kernel torch does, so the bits are the library's -- that is what
-        ``inner="cg"`` against :meth:`in_library` checks.
+        ``inner=optim.CG()`` against :meth:`in_library` checks.
         """
         alpha = self.alpha
         # The derivative is a view of the operator's own, so it is built once

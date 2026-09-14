@@ -346,7 +346,7 @@ def test_a_term_that_adds_unknowns_refuses_a_tracked_right_hand_side():
 
 
 def test_a_term_that_adds_unknowns_does_not_unroll():
-    """The step written out in ``bartorch.optim.iterators`` walks the image;
+    """The step written out in ``bartorch.optim._iterators`` walks the image;
     this one walks the image and the fields behind it, and BART is where that
     vector is laid out."""
     solver = optim.ADMM(prox.TotalGeneralizedVariation((-1, -2), 0.01), maxiter=4)
@@ -387,6 +387,24 @@ def test_a_string_says_what_to_use_instead():
 
 
 # --- what it refuses --------------------------------------------------------
+
+
+def test_niht_cannot_run_because_bart_asserts_against_its_own_iteration():
+    """`niht` applies the normal operator in place -- `iter_op_call(op, g, g)`
+    at `iter/niht.c:85` and `:212` -- and the operator `lsqr2` hands it asserts
+    `args[0] != args[1]` at `iter/lsqr.c:60`.  `bart pics -R H` fails the same
+    way; the difference is that a tool runs under BART's error catcher and a
+    solve here does not, so the assertion would end the process."""
+    A = _unitary()
+    with pytest.raises(NotImplementedError, match="iter/niht.c"):
+        optim.NIHT(prox.ImageNIHT((-1, -2), count=8), maxiter=4)(_rand(8, 8), A)
+
+
+def test_the_tool_reaches_the_same_assertion_and_survives_it():
+    kspace = bt.phantom(16, coils=2, kspace=True)
+    maps = bt.ecalib(kspace, maps=1)
+    with pytest.raises(bartorch.BartError, match="lsqr.c"):
+        bt.pics(kspace, maps, regularizers=prox.WaveletNIHT((-1, -2), count=20), maxiter=5)
 
 
 def test_niht_takes_only_hard_thresholding_terms():

@@ -450,9 +450,9 @@ def _as_terms(regularizers) -> list[Regularizer]:
 def _term_shaped(thing) -> bool:
     """Whether something answers the four questions an iteration asks a term.
 
-    A ``deepinv`` prior behind :class:`~bartorch.optim.iterators.AsTerm` does,
-    which is how a denoiser stands where a term goes.  Nothing BART runs can
-    take one, so a solver holding one has no library route -- which is what
+    A ``deepinv`` prior behind ``_iterators.AsTerm`` does, which is how a
+    denoiser stands where a term goes.  Nothing BART runs can take one, so a
+    solver holding one has no library route -- which is what
     :meth:`~bartorch.optim.CG.in_library` refuses over, and what makes this a
     duck-typed test rather than a second base class.
     """

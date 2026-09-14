@@ -28,7 +28,7 @@ Reach for `NoncartesianSense` off the grid, `CartesianSense` on it,
    Sampling
 ```
 
-## Linear operator class
+## Operator class
 
 `A @ B` composes, `A + B` and `A - B` add, `c * A` scales, `A ** n` repeats,
 `A.H` and `A.T` transpose, `A.gram()` and `A.cogram()` are the normal
@@ -43,7 +43,7 @@ each returns is private.
    LinearOperator
 ```
 
-## Elementary operators
+## Elementary
 
 ```{eval-rst}
 .. autosummary::
@@ -73,7 +73,7 @@ each returns is private.
    Gradient
 ```
 
-## Combining operators
+## Combining
 
 The only functions on this page: everything else maps a tensor to a tensor and
 is therefore an operator, which makes it a class.  Each of these is one BART
@@ -113,7 +113,7 @@ operator, not a list walked per iteration.
    Repeat
 ```
 
-## Python-defined operators
+## Python-defined
 
 ```{eval-rst}
 .. autosummary::
