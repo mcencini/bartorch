@@ -288,9 +288,11 @@ extern "C" void bartorch_cb_grid_free(struct bartorch_cb_grid* p)
 /* The pair for an image of spatial `dims`, transformed along `flags`, with
  * `kept` places of a plane in the gathered spectrum -- or NULL where cuFFT
  * cannot link the callbacks in.  `mask`, `prefix` and `mod` are on the card
- * and stay the caller's. */
+ * and stay the caller's.  `unitary` scales each direction by one over the
+ * square root of the plane; without it the forward is cuFFT's unnormalized
+ * transform and the inverse its adjoint, as BART's uncentred `fft` is. */
 extern "C" struct bartorch_cb_grid* bartorch_cb_grid_create(const long dims[3], unsigned long flags, long kept,
-		const unsigned int* mask, const int* prefix, const _Complex float* mod[3])
+		const unsigned int* mask, const int* prefix, const _Complex float* mod[3], int unitary)
 {
 	set_jit_t set_jit = set_jit_callback();
 
@@ -337,7 +339,7 @@ extern "C" struct bartorch_cb_grid* bartorch_cb_grid_create(const long dims[3], 
 
 	g.plane = ps;
 	g.L = (unsigned int)kept;
-	g.scale = (float)(1. / sqrt((double)ps));
+	g.scale = (0 != unitary) ? (float)(1. / sqrt((double)ps)) : 1.f;
 	g.map = NULL;
 	g.src = NULL;
 	g.dst = NULL;

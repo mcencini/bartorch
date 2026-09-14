@@ -480,3 +480,68 @@ extern "C" void bartorch_cuda_table_to_bank(long U, long X, long S, int R, long 
 
 	CUDA_KERNEL_ERROR;
 }
+
+/* The front of a wave encoding (grid.c): a coefficient times a coil's
+ * sensitivity, zero-filled along the readout from `sx` to `wx` about the
+ * centre, and its adjoint.  The image is laid out as BART lays it, readout
+ * fastest; `map` NULL is one. */
+__global__ static void kern_pad_map(long sx, long wx, long rest, long off,
+		cuFloatComplex* dst, const cuFloatComplex* src, const cuFloatComplex* map)
+{
+	long start = threadIdx.x + (long)blockDim.x * blockIdx.x;
+	long stride = (long)blockDim.x * gridDim.x;
+	long n = wx * rest;
+
+	for (long i = start; i < n; i += stride) {
+
+		long r = i / wx;
+		long x = i - r * wx - off;
+
+		if ((0 > x) || (x >= sx)) {
+
+			dst[i] = make_cuFloatComplex(0.f, 0.f);
+			continue;
+		}
+
+		long j = x + r * sx;
+
+		dst[i] = (NULL == map) ? src[j] : cuCmulf(src[j], map[j]);
+	}
+}
+
+__global__ static void kern_crop_mapc_add(long sx, long wx, long rest, long off,
+		cuFloatComplex* dst, const cuFloatComplex* src, const cuFloatComplex* map)
+{
+	long start = threadIdx.x + (long)blockDim.x * blockIdx.x;
+	long stride = (long)blockDim.x * gridDim.x;
+	long n = sx * rest;
+
+	for (long j = start; j < n; j += stride) {
+
+		long r = j / sx;
+		cuFloatComplex v = src[(j - r * sx) + off + r * wx];
+
+		if (NULL != map)
+			v = cuCmulf(v, cuConjf(map[j]));
+
+		dst[j] = cuCaddf(dst[j], v);
+	}
+}
+
+extern "C" void bartorch_cuda_pad_map(long sx, long wx, long rest, long off,
+		_Complex float* dst, const _Complex float* src, const _Complex float* map)
+{
+	kern_pad_map<<<grid_for(wx * rest), 256, 0, cuda_get_stream()>>>(sx, wx, rest, off,
+			(cuFloatComplex*)dst, (const cuFloatComplex*)src, (const cuFloatComplex*)map);
+
+	CUDA_KERNEL_ERROR;
+}
+
+extern "C" void bartorch_cuda_crop_mapc_add(long sx, long wx, long rest, long off,
+		_Complex float* dst, const _Complex float* src, const _Complex float* map)
+{
+	kern_crop_mapc_add<<<grid_for(sx * rest), 256, 0, cuda_get_stream()>>>(sx, wx, rest, off,
+			(cuFloatComplex*)dst, (const cuFloatComplex*)src, (const cuFloatComplex*)map);
+
+	CUDA_KERNEL_ERROR;
+}

@@ -257,6 +257,21 @@ BARTORCH_API bartorch_linop* bartorch_linop_cartesian(const long* max_dims, cons
 BARTORCH_API bartorch_linop* bartorch_linop_cartesian_sampled(const long* max_dims, const long* sens_dims,
 		const void* sens, int kernels, long frames, long shots, int components, const void* positions,
 		const long* bas_dims, const void* basis, int kspace_readout, int toeplitz);
+/* The wave encoding in the coil loop: coil images zero-filled along the
+ * readout to `readout` about its centre, transformed along it (centred and
+ * unitary, or BART's uncentred transform), multiplied by `psf` over (readout,
+ * y, z), and transformed along the phase encodes.  With `positions` NULL the
+ * samples are dense, with `pattern` if any; otherwise a table of `frames` x
+ * `shots` phase encodes of `components` indices each, as for
+ * bartorch_linop_cartesian_sampled, with the readout along each.  `basis`
+ * may be NULL.  The closed-form normal needs a pattern the same along the
+ * readout; without it, or without `toeplitz`, the normal is the two
+ * applications. */
+BARTORCH_API bartorch_linop* bartorch_linop_wave(const long* max_dims, const long* sens_dims,
+		const void* sens, int kernels, long readout, const void* psf, int centred,
+		const long* pat_dims, const void* pattern,
+		long frames, long shots, int components, const void* positions,
+		const long* bas_dims, const void* basis, int toeplitz);
 /* Normals of a Cartesian encoding applied through cuFFT's callbacks since the
  * library was loaded; the rest were applied as BART's chain of operators. */
 BARTORCH_API long bartorch_grid_fused(void);

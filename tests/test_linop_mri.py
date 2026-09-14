@@ -889,3 +889,106 @@ def test_on_a_card_a_2d_sampled_encoding_is_the_host_one(maps, positions_2d):
         samples = _rand(*A.oshape)
         want = host.adjoint(samples)
         assert (A.adjoint(samples) - want).abs().max() / want.abs().max() < 1e-5
+
+
+# --- wave in the coil loop ---------------------------------------------------
+#
+# The table of a wave encoding is the dense one read at the positions, and its
+# normal is the dense one over the pattern with the same counts.
+
+
+@pytest.fixture
+def wave_subspace():
+    torch.manual_seed(21)
+    coils, z, y, x, wx, frames, coeffs, shots = 3, 4, 6, 5, 10, 5, 2, 7
+    maps = _rand(coils, z, y, x)
+    psf = torch.exp(1j * torch.randn(z, y, wx, dtype=torch.float64)).to(torch.complex64)
+    b = _rand(coeffs, frames)
+    positions = _positions_3d(frames, shots, z, y, 22)
+    return maps, psf, b, positions, (coeffs, z, y, x), wx
+
+
+@pytest.mark.parametrize("centred", [False, True])
+def test_sampled_wave_samples_are_the_dense_ones_at_the_positions(wave_subspace, centred):
+    maps, psf, b, positions, shape, wx = wave_subspace
+    A = linop.WaveSense(maps, psf, shape, readout=wx, positions=positions, basis=b, centred=centred)
+    dense = linop.WaveSense(maps, psf, shape, readout=wx, basis=b, centred=centred)
+    assert A.oshape == (maps.shape[0], b.shape[1], positions.shape[1], wx)
+
+    image = _rand(*shape)
+    want = _read_table(dense(image), positions)
+    got = A(image)
+    assert (got - want).abs().max() / want.abs().max() < 1e-5
+    assert _adjointness(A) < 1e-5
+
+
+@pytest.mark.parametrize("centred", [False, True])
+def test_sampled_wave_normal_is_the_two_applications_and_the_dense_one(wave_subspace, centred):
+    maps, psf, b, positions, shape, wx = wave_subspace
+    common = dict(readout=wx, basis=b, centred=centred)
+    fast = linop.WaveSense(maps, psf, shape, positions=positions, **common)
+    slow = linop.WaveSense(maps, psf, shape, positions=positions, toeplitz=False, **common)
+    dense = linop.WaveSense(
+        maps, psf, shape, pattern=_counts_pattern(positions, shape[1:3]), **common
+    )
+
+    image = _rand(*shape)
+    want = slow.adjoint(slow(image))
+    for got in (fast.normal(image), dense.normal(image)):
+        assert (got - want).abs().max() / want.abs().max() < 1e-5
+
+
+def test_a_wave_pattern_along_the_readout_keeps_the_two_applications(wave_parts):
+    """The readout is not the phase-encode transform's to cancel."""
+    maps, psf, mask = wave_parts
+    A = linop.WaveSense(maps, psf, SHAPE, readout=WX, pattern=mask)
+    x = _rand(*A.ishape)
+    want = A.adjoint(A(x))
+    got = A.normal(x)
+    assert (got - want).abs().max() / want.abs().max() < 1e-5
+
+
+@requires_cuda
+@pytest.mark.parametrize("centred", [False, True])
+def test_on_a_card_the_wave_normal_runs_through_cufft_and_is_the_host_one(wave_subspace, centred):
+    maps, psf, b, positions, shape, wx = wave_subspace
+    pattern = _counts_pattern(positions, shape[1:3])
+    common = dict(readout=wx, pattern=pattern, basis=b, centred=centred)
+    A = linop.WaveSense(maps, psf, shape, device="cuda", **common)
+    host = linop.WaveSense(maps, psf, shape, **common)
+
+    image = _rand(*shape)
+    before = library().bartorch_grid_fused()
+    got = A.normal(image)
+    assert library().bartorch_grid_fused() > before, "the normal ran through cuFFT's callbacks"
+    want = host.normal(image)
+    assert (got - want).abs().max() / want.abs().max() < 1e-5
+
+    want = host(image)
+    assert (A(image) - want).abs().max() / want.abs().max() < 1e-5
+    samples = _rand(*A.oshape)
+    want = host.adjoint(samples)
+    assert (A.adjoint(samples) - want).abs().max() / want.abs().max() < 1e-5
+
+
+@requires_cuda
+@pytest.mark.parametrize("centred", [False, True])
+def test_on_a_card_a_sampled_wave_runs_through_cufft_and_is_the_host_one(wave_subspace, centred):
+    maps, psf, b, positions, shape, wx = wave_subspace
+    common = dict(readout=wx, positions=positions, basis=b, centred=centred)
+    A = linop.WaveSense(maps, psf, shape, device="cuda", **common)
+    host = linop.WaveSense(maps, psf, shape, **common)
+
+    image = _rand(*shape)
+    before = library().bartorch_grid_fused()
+    got = A(image)
+    assert library().bartorch_grid_fused() > before, "the forward ran through cuFFT's callbacks"
+    want = host(image)
+    assert (got - want).abs().max() / want.abs().max() < 1e-5
+
+    samples = _rand(*A.oshape)
+    want = host.adjoint(samples)
+    assert (A.adjoint(samples) - want).abs().max() / want.abs().max() < 1e-5
+
+    want = host.normal(image)
+    assert (A.normal(image) - want).abs().max() / want.abs().max() < 1e-5

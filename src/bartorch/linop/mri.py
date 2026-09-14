@@ -2,8 +2,9 @@
 
 Built with ``linop_chain``, so what a solver drives is one BART operator
 rather than a Python object walked per iteration.
-:class:`~bartorch.linop.NoncartesianSense` is not one of these: it is BART's
-own operator, and what is here composes with it.
+:class:`~bartorch.linop.NoncartesianSense` is BART's own operator with the
+coil loop in it; :func:`CartesianSense` and :func:`WaveSense` are that loop
+over a Cartesian or a wave transform.
 """
 
 from __future__ import annotations
@@ -12,12 +13,11 @@ import torch
 
 from bartorch import _layout
 from bartorch._dispatch import _lock
-from bartorch._lib import DIMS, library
-from bartorch._operator import Built, Shape, as_operand, dims
+from bartorch._lib import library
+from bartorch._operator import Built, Shape, as_operand
 from bartorch.linop.base import LinearOperator, _WithNormal
-from bartorch.linop.basic import FFT, Diagonal, MultiplySum, Sampling
-from bartorch.linop.sense import Coils, NoncartesianSense
-from bartorch.linop.shape import Resize
+from bartorch.linop.basic import Diagonal, Sampling
+from bartorch.linop.sense import NoncartesianSense
 
 __all__ = ["CartesianSense", "FieldCorrected", "WaveSense"]
 
@@ -135,6 +135,36 @@ class _CartesianNative(_GridSense):
         return Built(ptr, self.image_shape, self.kspace_shape, keep=keep, device=self.device)
 
 
+def _checked_positions(positions, frames, encodes) -> torch.Tensor:
+    """Positions as int64 on the host, checked against the frames a basis has and the phase encodes.
+
+    Checked before the operator is built, which happens as it is made.
+    """
+    pos = torch.as_tensor(positions)
+    if pos.is_floating_point() or pos.is_complex():
+        raise ValueError("positions are integer phase-encode indices")
+    pos = pos.to(device="cpu", dtype=torch.int64).contiguous()
+    if pos.ndim < 2:
+        raise ValueError(f"positions are (*encoding, shots, d), not {tuple(pos.shape)}")
+    lead = tuple(pos.shape[:-2])
+    if frames is None and lead:
+        raise ValueError(f"positions over frames {lead} need a basis to contract them")
+    if frames is not None and lead != (frames,):
+        raise ValueError(f"positions over frames {lead}, and a basis of {frames}")
+    if pos.shape[-1] != len(encodes):
+        raise ValueError(
+            f"positions of {pos.shape[-1]} indices, "
+            f"for {len(encodes)} phase-encode axes {tuple(encodes)}"
+        )
+    padding = (pos == -1).all(-1)
+    inside = ((pos >= 0) & (pos < torch.tensor(encodes))).all(-1)
+    if not bool((padding | inside).all()):
+        raise ValueError(
+            f"a position lies outside the phase encodes {tuple(encodes)}, and is not padding"
+        )
+    return pos
+
+
 class _CartesianSampled(_GridSense):
     """:class:`_GridSense` over a table of the phase encodes that were sampled.
 
@@ -156,45 +186,20 @@ class _CartesianSampled(_GridSense):
         toeplitz=True,
         **kwargs,
     ):
+        from bartorch.linop.sense import _grid_ndim
+
         if readout not in ("kspace", "image"):
             raise ValueError(f"the readout is 'kspace' or 'image', not {readout!r}")
-        pos = torch.as_tensor(positions)
-        if pos.is_floating_point() or pos.is_complex():
-            raise ValueError("positions are integer phase-encode indices")
-        pos = pos.to(device="cpu", dtype=torch.int64).contiguous()
-        if pos.ndim < 2:
-            raise ValueError(f"positions are (*encoding, shots, d), not {tuple(pos.shape)}")
-
         self._grid_basis = None
+        frames = None
         if basis is not None:
             matrix, _, frames = _basis_matrix(basis)
             self._grid_basis = matrix.contiguous()
-        lead = tuple(pos.shape[:-2])
-        if self._grid_basis is None and lead:
-            raise ValueError(f"positions over frames {lead} need a basis to contract them")
-        if self._grid_basis is not None and lead != (frames,):
-            raise ValueError(f"positions over frames {lead}, and a basis of {frames}")
-
-        # Checked before the operator is built, which happens as it is made.
-        from bartorch.linop.sense import _grid_ndim
-
         ndim = _grid_ndim(
             sensitivities, image_shape, kwargs.get("kernels", False), kwargs.get("ndim")
         )
         encodes = tuple(image_shape)[len(image_shape) - ndim : -1]
-        if pos.shape[-1] != len(encodes):
-            raise ValueError(
-                f"positions of {pos.shape[-1]} indices, "
-                f"for {len(encodes)} phase-encode axes {encodes}"
-            )
-        padding = (pos == -1).all(-1)
-        inside = ((pos >= 0) & (pos < torch.tensor(encodes))).all(-1)
-        if not bool((padding | inside).all()):
-            raise ValueError(
-                f"a position lies outside the phase encodes {encodes}, and is not padding"
-            )
-
-        self._positions = pos
+        self._positions = _checked_positions(positions, frames, encodes)
         self._kspace_readout = readout == "kspace"
         self._grid_toeplitz = bool(toeplitz)
         super().__init__(sensitivities, image_shape, **kwargs)
@@ -260,6 +265,169 @@ class _CartesianSampled(_GridSense):
         return Built(ptr, self.image_shape, self.kspace_shape, keep=keep, device=self.device)
 
 
+class _WaveNative(_GridSense):
+    """:class:`_GridSense` over the wave encoding, with everything after the coils in the coil loop.
+
+    Each slab's transform zero-fills the readout to ``readout`` about its
+    centre, transforms along it, multiplies by the point spread function and
+    transforms along the phase encodes -- ``src/wave.c``'s chain -- with the
+    pattern or the positions, and a basis, after it as :func:`CartesianSense`
+    has them.
+    """
+
+    def __init__(
+        self,
+        sensitivities,
+        psf,
+        image_shape,
+        readout,
+        pattern,
+        positions,
+        basis,
+        centred,
+        toeplitz,
+        **kwargs,
+    ):
+        from bartorch.linop.sense import _grid_ndim
+
+        image_shape = tuple(image_shape)
+        self._wave_readout = int(readout)
+        if self._wave_readout < image_shape[-1]:
+            raise ValueError(
+                f"an oversampled readout of {readout} is shorter than the image's {image_shape[-1]}"
+            )
+        if pattern is not None and positions is not None:
+            raise ValueError("give a pattern or positions, not both")
+        self._wave_centred = bool(centred)
+        self._grid_toeplitz = bool(toeplitz)
+
+        self._grid_basis = None
+        frames = None
+        if basis is not None:
+            matrix, _, frames = _basis_matrix(basis)
+            self._grid_basis = matrix.contiguous()
+
+        ndim = _grid_ndim(
+            sensitivities, image_shape, kwargs.get("kernels", False), kwargs.get("ndim")
+        )
+        spatial = image_shape[len(image_shape) - ndim :]
+        over = (*spatial[:-1], self._wave_readout)
+
+        # The point spread function is over one coil's samples before any frame.
+        w = as_operand(psf, tuple(psf.shape), "psf")
+        self._psf = (
+            _broadcastable(_one_coil(w, len(over), "psf"), over, "psf").expand(over).contiguous()
+        )
+
+        self._positions = None
+        if positions is not None:
+            self._positions = _checked_positions(positions, frames, spatial[:-1])
+
+        self._grid_pattern = None
+        if pattern is not None:
+            tail = (*(() if frames is None else (frames,)), *over)
+            m = as_operand(pattern, tuple(pattern.shape), "pattern")
+            self._grid_pattern = _broadcastable(_one_coil(m, len(tail), "pattern"), tail, "pattern")
+
+        super().__init__(sensitivities, image_shape, **kwargs)
+
+    def _grid_encoding(self):
+        return () if self._grid_basis is None else (int(self._grid_basis.shape[1]),)
+
+    def _image_encoding(self):
+        return () if self._grid_basis is None else (int(self._grid_basis.shape[0]),)
+
+    def _has_basis(self):
+        return self._grid_basis is not None
+
+    def _kspace_tail(self):
+        if self._positions is not None:
+            return (*self.encoding, int(self._positions.shape[-2]), self._wave_readout)
+        return (*self.encoding, *self.spatial[:-1], self._wave_readout)
+
+    def _kspace_vector(self):
+        if self._positions is not None:
+            base = {
+                1: self._wave_readout,
+                2: int(self._positions.shape[-2]),
+                _layout.COIL: self.coils,
+            }
+        else:
+            z, y, _ = self._spatial3()
+            base = {0: self._wave_readout, 1: y, 2: z, _layout.COIL: self.coils}
+        return self._encoding_vector(base, self.encoding)
+
+    def _create(self) -> Built:
+        from bartorch.linop.sense import _vector, sets_order, wrap_item
+
+        lib = library()
+        w, p, b, pos = self._psf, self._grid_pattern, self._grid_basis, self._positions
+        frames = 1 if b is None else int(b.shape[1])
+        pvec = bvec = None
+        if p is not None:
+            shape = tuple(p.shape)
+            spatial = shape[len(shape) - self.ndim :]
+            z, y, x = spatial if self.ndim == 3 else (1, *spatial)
+            placed = {0: x, 1: y, 2: z}
+            if b is not None:
+                placed[5] = shape[0]
+            pvec = _layout.vector(placed)
+        if b is not None:
+            bvec = _layout.vector({5: b.shape[1], 6: b.shape[0]})
+        with _lock:
+            was = lib.bartorch_sense_coil_batch(), lib.bartorch_sense_fold_maps()
+            lib.bartorch_sense_set_coil_batch(self.coil_batch)
+            lib.bartorch_sense_set_fold_maps(int(self.fold_maps))
+            try:
+                item = self._under_lock(
+                    lib.bartorch_linop_wave,
+                    _vector(self._max_vector()),
+                    _vector(self._sens_vector()),
+                    self.sensitivities.data_ptr(),
+                    int(self.kernels),
+                    self._wave_readout,
+                    w.data_ptr(),
+                    int(self._wave_centred),
+                    None if p is None else _vector(pvec),
+                    None if p is None else p.data_ptr(),
+                    frames,
+                    0 if pos is None else int(pos.shape[-2]),
+                    0 if pos is None else int(pos.shape[-1]),
+                    None if pos is None else pos.data_ptr(),
+                    None if b is None else _vector(bvec),
+                    None if b is None else b.data_ptr(),
+                    int(self._grid_toeplitz),
+                    device=self.device,
+                )
+            finally:
+                lib.bartorch_sense_set_coil_batch(was[0])
+                lib.bartorch_sense_set_fold_maps(was[1])
+            ptr = wrap_item(
+                self,
+                lib,
+                item,
+                self.kspace_shape,
+                self.image_shape,
+                self.batches,
+                self.device,
+                sets_order(self.batches, self.sets, self.image_encoding, self.ndim),
+            )
+        keep = tuple(t for t in (self.sensitivities, w, p, pos, b) if t is not None)
+        return Built(ptr, self.image_shape, self.kspace_shape, keep=keep, device=self.device)
+
+
+def _one_coil(values: torch.Tensor, rank: int, what: str) -> torch.Tensor:
+    """``values`` without the leading axes of one that one coil's samples do not have."""
+    while values.ndim > rank and values.shape[0] == 1:
+        values = values.reshape(values.shape[1:])
+    if values.ndim > rank:
+        raise ValueError(
+            f"{what} of {tuple(values.shape)} varies along an axis in front of one coil's "
+            f"{rank} sample axes"
+        )
+    return values
+
+
 def _broadcastable(values: torch.Tensor, shape: tuple[int, ...], what: str) -> torch.Tensor:
     """``values`` given the rank of ``shape``, with ones where it is to broadcast."""
     got = tuple(values.shape)
@@ -281,95 +449,6 @@ def _basis_matrix(basis: torch.Tensor) -> tuple[torch.Tensor, int, int]:
         raise ValueError(f"a basis is (coeffs, frames, 1, ...), not {tuple(b.shape)}")
     coeffs, frames = int(b.shape[0]), int(b.shape[1])
     return b.reshape(coeffs, frames), coeffs, frames
-
-
-class _Relabel(LinearOperator):
-    """``op`` over other shapes holding the same elements in the same order.
-
-    BART's ``operator_reshape``: the dimensions are relabelled, nothing is
-    copied, and the operator keeps its own normal.  A contraction BART does
-    across two axes runs this way on samples that hold the two on one.
-    """
-
-    def __init__(self, op: LinearOperator, oshape: Shape, ishape: Shape):
-        self.op = op._bart()
-        self.ishape, self.oshape = tuple(ishape), tuple(oshape)
-        super().__init__()
-
-    def _create(self) -> Built:
-        device = self.op.device
-        ptr = self._under_lock(
-            library().bartorch_linop_reshaped,
-            self.op._h.ptr,
-            DIMS,
-            dims(self.oshape),
-            dims(self.ishape),
-            device=device,
-        )
-        return Built(ptr, self.ishape, self.oshape, keep=(self.op,), device=device)
-
-
-def _subspace_kernel(
-    b: torch.Tensor, pattern: torch.Tensor | None, sample_shape: tuple[int, ...], axis: int
-) -> torch.Tensor:
-    """The kernel a sampled subspace normal collapses to::
-
-        K[k, k'] = sum_t |P[t]|^2 conj(B[k', t]) B[k, t]
-
-    over the axes the pattern varies on, with ``k`` on ``axis`` of
-    ``sample_shape`` (where its frames are) and ``k'`` on the axis after it.
-    A ``MultiplySum`` from samples with the coefficients on ``axis`` and a one
-    after them, to samples with the two swapped, is ``B^H P^H P B`` without
-    the frames being made.
-    """
-    coeffs, frames = (int(n) for n in b.shape)
-    outer = b.T[:, :, None] * b.conj().T[:, None, :]
-    if pattern is None:
-        return outer.sum(0).reshape(coeffs, coeffs, *(1,) * (len(sample_shape) - axis - 1))
-    w = _broadcastable(pattern, sample_shape, "pattern").abs().square()
-    w = w.to(b.dtype).to(b.device).movedim(axis, -1)
-    if w.shape[-1] == 1:
-        kernel = w[..., None] * outer.sum(0)
-    else:
-        kernel = torch.tensordot(w, outer, dims=([-1], [0]))
-    return kernel.movedim((-2, -1), (axis, axis + 1))
-
-
-def _wave_subspace(
-    encoding: LinearOperator,
-    basis: torch.Tensor,
-    pattern: torch.Tensor | None,
-    toeplitz: bool,
-    ndim: int,
-) -> LinearOperator:
-    """``encoding`` over coefficient images, contracted into frames and sampled.
-
-    ``encoding`` returns ``(..., coeffs, *spatial)``, and the basis turns the
-    coefficients into frames on the same axis.  BART contracts across two
-    axes, so the contraction runs on the samples relabelled with a one after
-    the coefficients and is relabelled back.  With ``toeplitz`` the normal is
-    the encoding, the kernel of :func:`_subspace_kernel` between the same two
-    relabellings, and the encoding back.
-    """
-    b, coeffs, frames = _basis_matrix(basis)
-    over = tuple(encoding.oshape)
-    axis = len(over) - ndim - 1
-    split = (*over[: axis + 1], 1, *over[axis + 1 :])
-    swapped = (*over[:axis], 1, coeffs, *over[axis + 1 :])
-    framed = (*over[:axis], 1, frames, *over[axis + 1 :])
-    samples = (*over[:axis], frames, *over[axis + 1 :])
-
-    contraction = b.reshape(coeffs, frames, *(1,) * ndim)
-    spread = MultiplySum(contraction, split, framed) @ _Relabel(encoding, split, encoding.ishape)
-    out: LinearOperator = _Relabel(spread, samples, encoding.ishape)
-    if pattern is not None:
-        out = Sampling(_broadcastable(pattern, samples, "pattern"), samples) @ out
-    if not toeplitz:
-        return out
-
-    kernel = _subspace_kernel(b, pattern, samples, axis)
-    middle = _Relabel(MultiplySum(kernel, split, swapped), over, over)
-    return _WithNormal(out, encoding.H @ middle @ encoding)
 
 
 def CartesianSense(  # noqa: N802  (it is a constructor)
@@ -504,6 +583,7 @@ def WaveSense(  # noqa: N802  (it is a constructor)
     pattern: torch.Tensor | None = None,
     centred: bool = False,
     *,
+    positions: torch.Tensor | None = None,
     basis: torch.Tensor | None = None,
     toeplitz: bool = True,
     kernels: bool = False,
@@ -515,22 +595,19 @@ def WaveSense(  # noqa: N802  (it is a constructor)
 
     The gradients that run during the readout spread each voxel along it, and
     the spreading is a multiplication by a point-spread function between the
-    readout transform and the phase-encode ones.  So the encoding is six
-    operators in a row, which is what ``src/wave.c`` chains:
+    readout transform and the phase-encode ones.  So the encoding is what
+    ``src/wave.c`` chains:
 
     ``Sampling . FFT(phase) . Diagonal(psf) . FFT(readout) . Resize .
     Coils(maps)``
 
-    and every one of them is BART's, so the result is a single BART operator
-    with an adjoint and a normal of its own.
-
-    The coils go on through :class:`~bartorch.linop.Coils` rather than a plain
-    ``fmac``, so the sensitivities may be held as the k-space kernels
-    ``nlinv`` produces and inflated a slab at a time.
+    all of it after the coils running in the coil loop a slab at a time,
+    where the arithmetic is -- on a card for host arrays -- so what crosses is
+    the image and the samples.
 
     With a basis this is Wave-Shuffling: the same encoding over coefficient
-    images, the basis contracting the coefficients into frames, the pattern
-    keeping the samples.
+    images, the basis contracting the coefficients into frames, the pattern or
+    the positions keeping the samples.
 
     Parameters
     ----------
@@ -552,22 +629,28 @@ def WaveSense(  # noqa: N802  (it is a constructor)
         Ones where a sample was taken, broadcast over one coil's samples
         ``([frames,] [z,] y, readout)``.
     centred : bool
-        Centre the two transforms.  BART's ``wave`` leaves them uncentred and
-        this follows it; ``wshfl`` centres them for its calibration path.
+        Centre the two transforms, making them unitary.  BART's ``wave`` leaves
+        them uncentred and unnormalized and this follows it; ``wshfl`` centres
+        them for its calibration path.
+    positions : tensor, optional
+        Instead of a pattern, the phase encodes that were sampled, as for
+        :func:`CartesianSense`: ``([frames,] shots, d)`` with ``(y,)`` in 2D,
+        ``(z, y)`` in 3D and ``-1`` for padding.  The samples are then
+        ``(*batches, coils, [frames,] shots, readout)``, the oversampled
+        readout along each.
     basis : tensor, optional
-        Temporal subspace basis ``(coeffs, frames)``, of two coefficients or
-        more.
+        Temporal subspace basis ``(coeffs, frames)``.
     toeplitz : bool
-        With a basis, apply the normal as one coefficient-by-coefficient
-        kernel rather than as the two applications.  The kernel goes where the
-        sampling goes -- after the phase-encode transforms, on the oversampled
-        grid -- and is the one :func:`CartesianSense` collapses to.
+        Apply the normal as one coefficient-by-coefficient kernel between the
+        phase-encode transforms, with the point-spread function on either
+        side, rather than as the two applications.  A pattern that varies
+        along the readout has no such form, and keeps the two applications.
     kernels : bool
         Read ``sensitivities`` as k-space kernels.
     coil_batch : int
-        Coils applied at once; 0 uses BART's own ``fmac`` over all of them.
+        Coils applied at once; 0 is every coil at once, as BART chains it.
     device : device, optional
-        Where the coil multiply is built.
+        Where the operator is built and does its arithmetic.
     ndim : int, optional
         Spatial axes, where the sensitivities and the image do not say: a bank
         of four kernel axes is either three behind the coils or two behind
@@ -580,42 +663,21 @@ def WaveSense(  # noqa: N802  (it is a constructor)
     >>> A.oshape
     (coils, y, 2 * x)
     """
-    coeffs = 1
-    if basis is not None:
-        _, coeffs, _ = _basis_matrix(basis)
-        if coeffs < 2:
-            raise ValueError("a basis for Wave-Shuffling has two coefficients or more")
-
-    coil = Coils(
+    return _WaveNative(
         sensitivities,
+        psf,
         image_shape,
+        readout,
+        pattern,
+        positions,
+        basis,
+        centred,
+        toeplitz,
         kernels=kernels,
-        device=device,
         coil_batch=coil_batch,
-        coeffs=coeffs,
+        device=device,
         ndim=ndim,
     )
-    if readout < coil.spatial[-1]:
-        raise ValueError(
-            f"an oversampled readout of {readout} is shorter than the image's {coil.spatial[-1]}"
-        )
-
-    coil_shape = coil.oshape
-    over_shape = (*coil_shape[:-1], readout)
-    # The phase encodes are the spatial axes in front of the readout.
-    phase = (-2, -3) if coil.ndim == 3 else (-2,)
-
-    # The order is wave.c's: E, R, Fx, W, Fyz, M, applied left to right.
-    out: LinearOperator = Resize(over_shape, coil_shape) @ coil
-    out = FFT(over_shape, axes=-1, centred=centred) @ out
-    out = Diagonal(_broadcastable(psf, over_shape, "psf"), over_shape) @ out
-    out = FFT(over_shape, axes=phase, centred=centred) @ out
-
-    if basis is not None:
-        return _wave_subspace(out, basis, pattern, toeplitz, coil.ndim)
-    if pattern is not None:
-        out = Sampling(_broadcastable(pattern, over_shape, "pattern"), over_shape) @ out
-    return out
 
 
 def FieldCorrected(  # noqa: N802  (it is a constructor)

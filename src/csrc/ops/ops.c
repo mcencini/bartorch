@@ -573,6 +573,45 @@ bartorch_linop* bartorch_linop_cartesian_sampled(const long* max_dims, const lon
 	return (0 == guarded(linop_cartesian_sampled_worker, &a)) ? a.result : NULL;
 }
 
+/* The wave encoding, dense or over sampled-only k-space, in the coil loop. */
+extern const struct linop_s* bartorch_wave_operator(const long max_dims[DIMS], const long sens_dims[DIMS],
+		const _Complex float* sens, int kernels, long wx, const _Complex float* psf, int centred,
+		const long pat_dims[DIMS], const _Complex float* pattern,
+		long frames, long shots, int components, const long* positions,
+		const long bas_dims[DIMS], const _Complex float* basis, int toeplitz);
+
+struct linop_wave_args {
+
+	const long* max_dims; const long* sens_dims; const void* sens; int kernels;
+	long readout; const void* psf; int centred;
+	const long* pat_dims; const void* pattern;
+	long frames; long shots; int components; const void* positions;
+	const long* bas_dims; const void* basis; int toeplitz;
+	bartorch_linop* result;
+};
+
+static int linop_wave_worker(void* p)
+{
+	struct linop_wave_args* a = p;
+
+	a->result = wrap_linop(bartorch_wave_operator(a->max_dims, a->sens_dims, a->sens, a->kernels,
+				a->readout, a->psf, a->centred, a->pat_dims, a->pattern,
+				a->frames, a->shots, a->components, (const long*)a->positions,
+				a->bas_dims, a->basis, a->toeplitz));
+	return 0;
+}
+
+bartorch_linop* bartorch_linop_wave(const long* max_dims, const long* sens_dims,
+		const void* sens, int kernels, long readout, const void* psf, int centred,
+		const long* pat_dims, const void* pattern,
+		long frames, long shots, int components, const void* positions,
+		const long* bas_dims, const void* basis, int toeplitz)
+{
+	struct linop_wave_args a = { max_dims, sens_dims, sens, kernels, readout, psf, centred,
+		pat_dims, pattern, frames, shots, components, positions, bas_dims, basis, toeplitz, NULL };
+	return (0 == guarded(linop_wave_worker, &a)) ? a.result : NULL;
+}
+
 /* The coil multiply alone, over sensitivities held as maps or as kernels. */
 extern const struct linop_s* bartorch_coils_operator(const long max_dims[DIMS], const long sens_dims[DIMS],
 		const _Complex float* sens, int kernels);

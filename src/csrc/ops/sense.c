@@ -1353,6 +1353,70 @@ const struct linop_s* bartorch_cartesian_sampled_operator(const long max_dims[DI
 	return sense_operator(d);
 }
 
+/* Provided by grid.c: the wave slab transform, dense or over sampled-only
+ * k-space. */
+extern const struct linop_s* wave_transform_create(const long dom_dims[DIMS], long wx, const complex float* psf,
+		int centred, const long pat_dims[DIMS], const complex float* pattern,
+		const long bas_dims[DIMS], const complex float* basis, int toeplitz);
+extern const struct linop_s* wave_sampled_create(const long dom_dims[DIMS], long wx, const complex float* psf,
+		int centred, long T, long S, int components, const long* positions,
+		const long bas_dims[DIMS], const complex float* basis, int toeplitz);
+
+static const struct linop_s* wave_slab(const long cim_dims[DIMS], long wx, const complex float* psf, int centred,
+		const long pat_dims[DIMS], const complex float* pattern,
+		long frames, long shots, int components, const long* positions,
+		const long bas_dims[DIMS], const complex float* basis, int toeplitz)
+{
+	if (NULL != positions)
+		return wave_sampled_create(cim_dims, wx, psf, centred, frames, shots, components, positions,
+				bas_dims, basis, toeplitz);
+
+	return wave_transform_create(cim_dims, wx, psf, centred, pat_dims, pattern, bas_dims, basis, toeplitz);
+}
+
+/* The wave encoding with everything after the coils in the coil loop: the
+ * zero-fill, the readout transform, the point spread function and the
+ * phase-encode transform on the card a slab at a time, and on a card the
+ * normal -- and a table's forward and adjoint -- through cuFFT's callbacks.
+ * `positions` NULL is dense samples, with `pattern` if any. */
+const struct linop_s* bartorch_wave_operator(const long max_dims[DIMS], const long sens_dims[DIMS],
+		const complex float* sens, int kernels, long wx, const complex float* psf, int centred,
+		const long pat_dims[DIMS], const complex float* pattern,
+		long frames, long shots, int components, const long* positions,
+		const long bas_dims[DIMS], const complex float* basis, int toeplitz)
+{
+	long map_dims[DIMS];
+	md_select_dims(DIMS, FFT_FLAGS | COIL_FLAG | MAPS_FLAG, map_dims, max_dims);
+
+	long cim_dims[DIMS];
+	md_select_dims(DIMS, ~MAPS_FLAG, cim_dims, max_dims);
+
+	if (!sliceable(max_dims, map_dims, cim_dims, 0UL)) {
+
+		if (0 != kernels)
+			kernels_need_the_loop();
+
+		chained();
+
+		long img_dims[DIMS];
+		md_select_dims(DIMS, ~COIL_FLAG, img_dims, max_dims);
+
+		return linop_chain_FF(linop_fmac_dims_create(DIMS, cim_dims, img_dims, sens_dims, sens),
+				wave_slab(cim_dims, wx, psf, centred, pat_dims, pattern, frames, shots, components, positions,
+					bas_dims, basis, toeplitz));
+	}
+
+	struct sense_s* d = sense_slabs(max_dims, map_dims, cim_dims, 0UL);
+	sense_hold(d, sens_dims, sens, kernels);
+
+	d->slab = wave_slab(d->cim_dims, wx, psf, centred, pat_dims, pattern, frames, shots, components, positions,
+			bas_dims, basis, toeplitz);
+
+	sense_output_from(d, true);
+
+	return sense_operator(d);
+}
+
 /* The coil multiply on its own: the same slab loop with nothing after it.
  *
  * What a caller wants when the transform beside the coils is not a Fourier
