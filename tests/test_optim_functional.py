@@ -214,3 +214,48 @@ def test_the_function_runs_the_iteration_and_not_a_second_implementation(
     A, y = problem
     call(y, A, prox.L1(0.01))
     assert seen, f"{iteration} was never stepped, so something else ran the iteration"
+
+
+# --- the function layer covers every solver ---------------------------------
+
+
+def test_every_solver_has_a_function():
+    """The function is the ordinary call path, so a solver reachable only as a
+    class would send a caller to the handle for no reason."""
+    classes = {n for n in optim.__all__ if n[0].isupper()} - {"Tikhonov"}
+    functions = {n for n in optim.__all__ if n.islower()} - {"data_scaling", "maxeigen"}
+    assert {c.lower() for c in classes} == functions
+
+
+def test_niht_is_refused_the_way_its_class_is():
+    """BART's own iteration cannot run against the operator `lsqr2` hands it;
+    see `tests/test_solve.py`."""
+    A = linop.FFT((8, 8), axes=(-1, -2))
+    y = A(_rand(8, 8))
+    term = prox.WaveletNIHT((-1, -2), count=12)
+    with pytest.raises(NotImplementedError, match="applies the normal operator in place"):
+        optim.niht(y, A, term, maxiter=6)
+
+
+def test_eulermaruyama_forwards_to_its_class():
+    # A sampler draws from BART's own generator, so two runs never agree bit
+    # for bit; what is checked is that the settings reach the class, which a
+    # missing `step` shows because the class requires one.
+    A = linop.FFT((8, 8), axes=(-1, -2))
+    y = A(_rand(8, 8))
+    made = optim.eulermaruyama(y, A, prox.L2(0.01), step=0.1, maxiter=5)
+    assert tuple(made.shape) == (8, 8) and torch.isfinite(made).all()
+    with pytest.raises(TypeError):
+        optim.eulermaruyama(y, A, maxiter=5)
+
+
+def test_irgnm_is_its_class():
+    A = linop.FFT((4, 4), axes=-1)
+    x = _rand(4, 4)
+    start = torch.zeros(4, 4, dtype=torch.complex64)
+    torch.testing.assert_close(
+        optim.irgnm(A(x), A, x0=start.clone(), inner=optim.CG(), iterations=6, alpha=0.01),
+        optim.IRGNM(iterations=6, alpha=0.01, inner=optim.CG())(A(x), A, x0=start.clone()),
+        rtol=0.0,
+        atol=0.0,
+    )

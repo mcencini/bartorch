@@ -1477,6 +1477,25 @@ class NIHT(_Solver):
             if term.kind not in ("H", "N"):
                 raise TypeError(f"NIHT takes WaveletNIHT and ImageNIHT terms, not {term!r}")
 
+    def __call__(self, y: torch.Tensor, A, x0: torch.Tensor | None = None) -> torch.Tensor:
+        """Refused: BART's own iteration cannot run against ``lsqr``'s operator.
+
+        ``niht`` applies the normal operator in place -- ``iter_op_call(op, g,
+        g)`` at ``iter/niht.c:85`` and ``:212`` -- and the operator ``lsqr2``
+        hands it asserts against exactly that, ``args[0] != args[1]`` at
+        ``iter/lsqr.c:60``.  Every NIHT solve therefore ends in an assertion,
+        ``bart pics -R H`` included, and BART's assertions are ``error()``
+        calls that unwind the process from here rather than returning.
+        """
+        raise NotImplementedError(
+            "BART's NIHT cannot run: `niht` applies the normal operator in place "
+            "(iter/niht.c:85, :212) and the operator `lsqr2` hands it asserts that it "
+            "is not (iter/lsqr.c:60), so every solve ends in an assertion -- `bart pics "
+            "-R H` included.  Nothing here can work around it; it needs a BART fix.  "
+            "prox.WaveletNIHT and prox.ImageNIHT still reach tools.pics, which catches "
+            "the assertion rather than ending the process"
+        )
+
 
 class EulerMaruyama(_Solver):
     """BART's Euler-Maruyama iteration (``pics --eulermaruyama``).

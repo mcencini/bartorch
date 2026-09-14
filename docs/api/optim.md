@@ -36,25 +36,34 @@ with the same bits.
    maxeigen
 ```
 
-## The same solvers as functions
+## Functional wrappers
 
-`optim.fista(y, A, term, maxiter=30)` is `optim.FISTA(term, maxiter=30)(y, A)`.
-They take one argument the classes do not: a `deepinv` prior or a bare
-denoiser goes wherever a {mod}`bartorch.prox` term goes.
+`optim.fista(y, A, term, maxiter=30)` is `optim.FISTA(term, maxiter=30)(y, A)`,
+and is the ordinary way to run one.  Reach for the class when the solver has
+to be *held*: to unroll it, to drive it to a fixed point, or to hand it to
+{class}`IRGNM` as `inner=`.
 
 ```{eval-rst}
 .. autosummary::
    :toctree: generated
    :nosignatures:
 
+   cg
    ist
    fista
    admm
    pridu
-   cg
+   niht
+   eulermaruyama
+   irgnm
 ```
 
-## Iterations for unfolding and fixed points
+A `deepinv` prior or a bare denoiser goes wherever a {mod}`bartorch.prox` term
+goes, which the classes do not take.  `niht` and {class}`NIHT` refuse: BART's
+own iteration asserts against the operator `lsqr2` hands it, so no NIHT solve
+runs, `bart pics -R H` included.
+
+## Iterations
 
 `bartorch.optim.iterators`.  The same iterations written as
 `deepinv.optim.optim_iterators.OptimIterator` classes, so that a solver here
@@ -107,7 +116,7 @@ BART has Gauss-Newton in two forms and {class}`IRGNM` is both: without
 whose linearized problem goes to any solver here.
 
 ```python
-optim.IRGNM(inner="cg")                                     # iter4_irgnm2, to the bit
+optim.IRGNM(inner=optim.CG())                               # iter4_irgnm2, to the bit
 optim.IRGNM(inner=optim.FISTA(prox.Wavelet(axes, 0.001)))   # moba -l1's shape
 ```
 
