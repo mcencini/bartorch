@@ -71,8 +71,6 @@ class FromTorchSim(Callback):
     ----------
     channels : int
         Map channels the domain carries, in TorchSim's order.
-    names : tuple of str
-        What each channel is.
 
     Examples
     --------
