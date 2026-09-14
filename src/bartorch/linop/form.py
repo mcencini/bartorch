@@ -207,6 +207,7 @@ class Form:
     psf: torch.Tensor | None = None
     centred: bool = False
     contraction: Contraction | None = None
+    slice_phase: Array | None = None
     toeplitz: bool = True
     modulated: bool = False
     coil_batch: int = 1
@@ -238,7 +239,7 @@ class Form:
         along the readout has no closed form either -- the readout is not the
         transform's to cancel.
         """
-        if not self.toeplitz or self.contraction is not None:
+        if not self.toeplitz or self.contraction is not None or self.slice_phase is not None:
             return "applications"
         if self.transform == "nufft":
             return "kernel"
@@ -280,6 +281,10 @@ class Form:
             )
         if self.weights is not None:
             out.append(Factor("weights", tuple(self.weights.tensor.shape), ("samples",)))
+        if self.slice_phase is not None:
+            out.append(
+                Factor("slice phase", tuple(self.slice_phase.tensor.shape), ("sets", "samples"))
+            )
         if self.contraction is not None:
             out.append(
                 Factor(
@@ -295,6 +300,8 @@ class Form:
         contraction, terms = None, 1
         if self.contraction is not None:
             contraction, terms = "segments", self.contraction.count
+        elif self.slice_phase is not None:
+            contraction, terms = "slices", self.sets
         elif self.basis is not None:
             contraction, terms = "subspace", self.coeffs
 
@@ -359,6 +366,8 @@ class Form:
             s.segment_sample_dims, s.segment_sample = array(self.contraction.sample)
             s.segment_image_dims, s.segment_image = array(self.contraction.image)
 
+        s.slice_dims, s.slice = array(self.slice_phase)
+
         s.toeplitz = int(self.toeplitz)
         s.modulated = int(self.modulated)
         s.coil_batch = int(self.coil_batch)
@@ -383,7 +392,14 @@ class Form:
 
     def keep(self) -> tuple:
         """Every tensor the operator holds by pointer, so it outlives the handle."""
-        arrays = (self.sensitivities, self.pattern, self.basis, self.weights, self.traj)
+        arrays = (
+            self.sensitivities,
+            self.pattern,
+            self.basis,
+            self.weights,
+            self.traj,
+            self.slice_phase,
+        )
         out = [a.tensor for a in arrays if a is not None]
         out += [t for t in (self.positions, self.psf) if t is not None]
         if self.contraction is not None:

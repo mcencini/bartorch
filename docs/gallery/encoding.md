@@ -71,9 +71,15 @@ for you; the others are the composition and nothing more.  Each costs one
 transform per term inside the coil loop, which is what an image-side factor
 that varies along the frames costs.
 
-Weights that differ between *sets* of maps are not one of these: the
-sensitivities contract the sets away before the image factor is reached, so
-the sum stands and the plan says `chained`.
+Simultaneous multislice is the same shape with the slices as sets of maps:
+`c_l` picks slice `l` whole and `b_l` is its phase in k-space.  The slices are
+summed on the far side of the transform, so it runs once per slice, and
+`plan.contraction` is `slices`.
+
+Picking a slice whole is the only image-side factor that may differ between
+sets.  The sensitivities contract the sets before the image factor is reached,
+so any other weight along them leaves the sum standing and the plan says
+`chained`.
 
 ## Beyond Cartesian and radial encoding
 

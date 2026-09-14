@@ -717,11 +717,20 @@ which is what a per-frame image factor costs and all it costs.
 `tests/test_plan.py` holds each against its sum written out with torch's own
 transform, and against the plan it was meant to take.
 
-A weight that differs between sets is not one of these.  The slab contracts
-the sets away with `md_ztenmul2` before the contraction's image factor is
-reached, so such a weight is left to the sum of the terms and `plan.contraction`
-says `chained`.  Fusing it would be fusing a wrong answer, which is the one
-outcome worse than a slow one, and a test holds it chained.
+Simultaneous multislice is the fourth, and it is the one whose sum does not
+fit inside the sensitivities.  Each slice takes its own phase in k-space and
+the slices add up after it, so the sets have to survive the multiply that
+usually contracts them: with a slice phase in the form the coil images keep
+the sets, the transform runs once per slice, and `linop_sum_create` adds them
+up past the k-space factor.  The terms say which slice they are by picking it
+whole on the image side, and `plan.contraction` is `slices`.
+
+Picking a slice whole is the only image factor the sets can carry.  An image
+factor is applied to the coil images, where `md_ztenmul2` has already
+contracted the sets, so a weight that differs between them has nowhere to go
+and is left to the sum of the terms with `plan.contraction` saying `chained`.
+Fusing it would be fusing a wrong answer, which is the one outcome worse than
+a slow one, and a test holds it chained.
 
 **The chosen plan is never silent.**  A fallback answers with the same numbers
 several times slower, so it is reported rather than left to a timing.  `A.plan`

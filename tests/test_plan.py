@@ -705,12 +705,20 @@ def test_an_echo_phase_with_a_basis_is_a_contraction_over_the_frames(maps, basis
     assert (A(x) - want).abs().max() / want.abs().max() < 1e-5
 
 
-def test_a_weight_that_differs_between_sets_is_left_to_the_sum(pattern):
-    """The sets are summed before the image factor, so a factor along them is not this form.
+def _slices(sets):
+    """Maps per slice, and the indicator of each slice on the image side."""
+    picked = torch.zeros(sets, sets, 1, 1, dtype=torch.complex64)
+    for s in range(sets):
+        picked[s, s] = 1
+    return picked
 
-    What it must not be is fused and wrong: the slab contracts the sets away
-    with ``md_ztenmul2`` before the contraction's image factor is reached, so
-    the answer has to come from the sum of the terms instead.
+
+def test_a_phase_per_slice_is_summed_over_on_the_far_side(pattern):
+    """SMS: each slice takes its own phase in k-space, and the slices add up after it.
+
+    Against the slices written out.  The sum is past the transform, so the
+    sensitivities cannot contract the sets as they usually do: the coil images
+    keep them and the transform runs once per slice.
     """
     torch.manual_seed(32)
     sets = 2
@@ -718,17 +726,82 @@ def test_a_weight_that_differs_between_sets_is_left_to_the_sum(pattern):
     E = linop.CartesianSense(sensitivities, (sets, Y, X), pattern=pattern)
     assert E.sets == sets
 
-    picked = torch.zeros(sets, sets, 1, 1, dtype=torch.complex64)
-    for s in range(sets):
-        picked[s, s] = 1
     phase = _rand(sets, 1, Y, 1)
-
-    A = _terms(E, phase, picked)
-    assert A.plan.contraction == "chained" and A.plan.terms == sets
-    assert not A.plan.fused
+    A = _terms(E, phase, _slices(sets))
+    assert A.plan.contraction == "slices" and A.plan.terms == sets
+    assert A.plan.fused
+    assert "slice phase" in {factor.name for factor in A.plan.kspace}
 
     x = _rand(sets, Y, X)
     want = torch.zeros(COILS, Y, X, dtype=torch.complex64)
     for s in range(sets):
         want = want + phase[s] * pattern * _fft2(sensitivities[s] * x[s])
+    assert (A(x) - want).abs().max() / want.abs().max() < 1e-5
+
+
+def test_the_adjoint_of_a_slice_phase_fans_back_out(pattern):
+    """The sum runs the other way on the adjoint, which is where it could quietly not.
+
+    Against the adjoint written out, and against the identity
+    ``<A x, y> == <x, A^H y>`` which no reference of mine can talk it out of.
+    """
+    torch.manual_seed(35)
+    sets = 3
+    sensitivities = _rand(sets, COILS, Y, X)
+    E = linop.CartesianSense(sensitivities, (sets, Y, X), pattern=pattern)
+    phase = _rand(sets, 1, Y, 1)
+    A = _terms(E, phase, _slices(sets))
+
+    x, y = _rand(sets, Y, X), _rand(COILS, Y, X)
+    lhs = torch.vdot(A(x).reshape(-1), y.reshape(-1))
+    rhs = torch.vdot(x.reshape(-1), A.adjoint(y).reshape(-1))
+    assert abs(lhs - rhs) / abs(lhs) < 1e-5
+
+    want = torch.zeros(sets, Y, X, dtype=torch.complex64)
+    for s in range(sets):
+        shifted = torch.fft.ifftshift(pattern.conj() * phase[s].conj() * y, dim=(-2, -1))
+        image = torch.fft.fftshift(torch.fft.ifft2(shifted, norm="ortho"), dim=(-2, -1))
+        want[s] = (sensitivities[s].conj() * image).sum(0)
+    got = A.adjoint(y)
+    assert (got - want).abs().max() / want.abs().max() < 1e-5
+
+
+def test_a_slice_phase_costs_one_application_rather_than_one_per_slice(pattern):
+    """The sum over the slices is inside the executor, not around it."""
+    torch.manual_seed(33)
+    sets = 2
+    E = linop.CartesianSense(_rand(sets, COILS, Y, X), (sets, Y, X), pattern=pattern)
+    A = _terms(E, _rand(sets, 1, Y, 1), _slices(sets))
+
+    library().bartorch_encoding_reset_counters()
+    A(_rand(sets, Y, X))
+    assert _counter(_abi.BARTORCH_ENCODING_FORWARD) == 1
+
+
+def test_an_image_weight_that_differs_between_sets_is_left_to_the_sum(pattern):
+    """Only a slice picked whole can vary along the sets; anything else is the sum.
+
+    An image factor is applied to the coil images, where ``md_ztenmul2`` has
+    already contracted the sets, so a weight that differs between them has no
+    place to go.  What it must not be is fused and wrong.
+    """
+    torch.manual_seed(34)
+    sets = 2
+    sensitivities = _rand(sets, COILS, Y, X)
+    E = linop.CartesianSense(sensitivities, (sets, Y, X), pattern=pattern)
+
+    weights = _rand(sets, sets, 1, 1)
+    phase = _rand(sets, 1, Y, 1)
+
+    A = _terms(E, phase, weights)
+    assert A.plan.contraction == "chained" and A.plan.terms == sets
+    assert not A.plan.fused
+
+    x = _rand(sets, Y, X)
+    want = torch.zeros(COILS, Y, X, dtype=torch.complex64)
+    for term in range(sets):
+        inner = torch.zeros(COILS, Y, X, dtype=torch.complex64)
+        for s in range(sets):
+            inner = inner + sensitivities[s] * (weights[term, s] * x[s])
+        want = want + phase[term] * pattern * _fft2(inner)
     assert (A(x) - want).abs().max() / want.abs().max() < 1e-5

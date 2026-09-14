@@ -537,13 +537,61 @@ def contracted(encoding, b: torch.Tensor, c: torch.Tensor) -> LinearOperator | N
     return _nufft_contraction(encoding, b, c)
 
 
+def _picks_each_set(c: torch.Tensor, sets: int, axis: int) -> bool:
+    """Whether term ``l`` of ``c`` is the indicator of set ``l`` and nothing else."""
+    if int(c.shape[0]) != sets or int(c.shape[1 + axis]) != sets:
+        return False
+    for term in range(sets):
+        for other in range(sets):
+            want = 1.0 if term == other else 0.0
+            if not bool(torch.all(c[term].select(axis, other) == want)):
+                return False
+    return True
+
+
+def _slice_layout(encoding, b: torch.Tensor, c: torch.Tensor):
+    """The terms as a phase per set summed over on the far side, or ``None``.
+
+    What a simultaneous-multislice group is: the image carries the slices, the
+    sensitivities vary along them, and each slice's samples take their own
+    phase before the slices add up.  The terms say so by picking one slice
+    each on the image side, which is the only image factor the sets can carry
+    -- anything else would have to be applied before the sensitivities, where
+    the contraction does not reach.
+    """
+    if not encoding.has_sets or encoding.sets < 2:
+        return None
+    nb = len(encoding.batches)
+    image = _per_segment(c, tuple(encoding.ishape), "spatial weights")
+    if not _picks_each_set(image, encoding.sets, nb):
+        return None
+
+    oshape = tuple(encoding.oshape)
+    tail = tuple(encoding._kspace_tail())
+    lead = len(oshape) - len(tail)
+    samples = _flat_along(_per_segment(b, oshape, "sample weights"), range(1, 1 + lead))
+    if samples is None:
+        return None
+    samples = samples.reshape(encoding.sets, *samples.shape[1 + lead :])
+    samples = as_operand(samples, tuple(samples.shape), "slice phase")
+
+    placed = {_layout.MAPS: encoding.sets}
+    placed.update(dict(zip(encoding._sample_dims(), samples.shape[1:])))
+    return Array(samples, _layout.vector(placed))
+
+
 def _grid_contraction(encoding, b: torch.Tensor, c: torch.Tensor) -> LinearOperator | None:
     """The contraction in the coil loop of a grid encoding, or ``None``."""
     from bartorch.linop.sense import _Encoded
 
     form = encoding._form()
-    if form.contraction is not None:
+    if form.contraction is not None or form.slice_phase is not None:
         return None
+
+    phase = _slice_layout(encoding, b, c)
+    if phase is not None:
+        return _Encoded(encoding, replace(form, slice_phase=phase))
+
     layout = _segment_layout(encoding, b, c, encoding._sample_dims(), encoding._image_dims())
     if layout is None:
         return None

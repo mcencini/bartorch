@@ -46,6 +46,7 @@
 #include "linops/fmac.h"
 #include "linops/linop.h"
 #include "linops/someops.h"
+#include "linops/sum.h"
 
 #include "num/gpuops.h"
 
@@ -947,7 +948,7 @@ static long slab_size(long coils, long want)
  * `batch` and `fold` are the form's, so that nothing about one build is read
  * from the settings BART's own tools leave behind. */
 static struct sense_s* sense_slabs(long batch, bool fold, const long max_dims[DIMS], const long map_dims[DIMS],
-		const long out_dims[DIMS], unsigned long shared_img_flags)
+		const long out_dims[DIMS], unsigned long shared_img_flags, bool keep_sets)
 {
 	PTR_ALLOC(struct sense_s, d);
 	SET_TYPEID(sense_s, d);
@@ -966,7 +967,11 @@ static struct sense_s* sense_slabs(long batch, bool fold, const long max_dims[DI
 	md_copy_dims(DIMS, d->slab_dims, max_dims);
 	d->slab_dims[COIL_DIM] = d->batch;
 
-	md_select_dims(DIMS, ~MAPS_FLAG, d->cim_dims, d->slab_dims);
+	/* The sensitivities contract the sets as they are applied, unless
+	 * something after the transform needs them: a k-space factor that
+	 * differs between sets is summed over on the far side instead, so the
+	 * coil images keep them and the transform runs once per set. */
+	md_select_dims(DIMS, keep_sets ? ~0UL : ~MAPS_FLAG, d->cim_dims, d->slab_dims);
 	md_select_dims(DIMS, ~COIL_FLAG & ~shared_img_flags, d->img_dims, max_dims);
 
 	md_calc_strides(DIMS, d->cim_strs, d->cim_dims, CFL_SIZE);
@@ -1061,7 +1066,7 @@ struct linop_s* sense_init(unsigned long shared_img_flags, const long max_dims[D
 		return bart_sense_init(shared_img_flags, max_dims, sens_flags, sens);
 	}
 
-	struct sense_s* d = sense_slabs((long)coil_batch, 0 != fold_maps, max_dims, map_dims, ksp_dims, shared_img_flags);
+	struct sense_s* d = sense_slabs((long)coil_batch, 0 != fold_maps, max_dims, map_dims, ksp_dims, shared_img_flags, false);
 
 	/* The scaling and the modulation `maps_create` folds into the
 	 * sensitivities, kept here because the loop reads them many times. */
@@ -1103,7 +1108,7 @@ const struct linop_s* sense_nc_init(const long max_dims[DIMS], const long map_di
 				wgs_dims, weights, basis_dims, basis, fft_opp, shared_img_dims);
 	}
 
-	struct sense_s* d = sense_slabs((long)coil_batch, 0 != fold_maps, max_dims, map_dims, ksp_dims2, shared_img_dims);
+	struct sense_s* d = sense_slabs((long)coil_batch, 0 != fold_maps, max_dims, map_dims, ksp_dims2, shared_img_dims, false);
 
 	long slab_ksp_dims[DIMS];
 	md_copy_dims(DIMS, slab_ksp_dims, ksp_dims2);
@@ -1208,6 +1213,28 @@ static const struct linop_s* contracted(const struct bartorch_encoding* f, const
 	linop_free(slab);
 
 	return sum;
+}
+
+/* The k-space factor that differs between sets, and the sum over them.
+ *
+ * SMS: each slice of a group carries its own phase in k-space, and the slices
+ * add up into one set of samples.  The sum is on the far side of the
+ * transform, so the sensitivities cannot contract the sets as they usually do
+ * -- the coil images keep them, the transform runs once per set, and what
+ * comes back here has them still on it.
+ */
+static const struct linop_s* summed_over_sets(const struct bartorch_encoding* f, const struct linop_s* slab)
+{
+	if (NULL == f->slice)
+		return slab;
+
+	counted(BARTORCH_ENCODING_SEGMENTED);
+
+	const struct iovec_s* cod = linop_codomain(slab);
+
+	return linop_chain_FF(linop_chain_FF(slab,
+			linop_cdiag_create(DIMS, cod->dims, md_nontriv_dims(DIMS, f->slice_dims), f->slice)),
+			linop_sum_create(DIMS, cod->dims, MAPS_FLAG));
 }
 
 /* The transform the form asks for, over the coil images `cim_dims`.
@@ -1350,7 +1377,7 @@ const struct linop_s* bartorch_encoding_operator(const struct bartorch_encoding*
 
 	} else {
 
-		md_select_dims(DIMS, ~MAPS_FLAG, out_dims, max_dims);
+		md_select_dims(DIMS, (NULL != f->slice) ? ~0UL : ~MAPS_FLAG, out_dims, max_dims);
 	}
 
 	/* A k-space factor laid out along the coils would have to be sliced
@@ -1363,7 +1390,7 @@ const struct linop_s* bartorch_encoding_operator(const struct bartorch_encoding*
 		return form_chain(f, max_dims, map_dims, out_dims, &conf);
 
 	struct sense_s* d = sense_slabs((long)f->coil_batch, 0 != f->fold_maps,
-			max_dims, map_dims, out_dims, 0UL);
+			max_dims, map_dims, out_dims, 0UL, NULL != f->slice);
 
 	sense_hold(d, f->sens_dims, f->sens, f->kernels);
 
@@ -1400,7 +1427,7 @@ const struct linop_s* bartorch_encoding_operator(const struct bartorch_encoding*
 	struct bartorch_encoding slab = *f;
 	slab.ksp_dims = slab_ksp_dims;
 
-	d->slab = contracted(f, form_transform(&slab, d->cim_dims, &conf));
+	d->slab = contracted(f, summed_over_sets(f, form_transform(&slab, d->cim_dims, &conf)));
 
 	sense_output_from(d, true);
 
