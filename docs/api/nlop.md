@@ -168,35 +168,23 @@ it in `networks/nlinvnet.c`; a denoiser between two of these is NLINV-Net.
    GaussNewton
 ```
 
-Three things are worth knowing before using it.
+Three things about it are easy to trip over, and each has a longer account in
+the class's own documentation.
 
-**The model has no sampling pattern until it is given one, and it is given one
-as a side effect of the gridding.** `noir_adjoint_fft_fun` calls
-`linop_gdiag_set_diag(model->lop_pattern, ...)` on its way past, and off the
-grid `noir_adjoint_nufft_fun` calls `nufft_update_traj`. So `prepare()` has to
-be applied to *this* operator before a step is, and two operators do not share
-a model. A step applied to a model that never got a pattern reads a diagonal
-nothing has written, which is a segmentation fault rather than an error, so
-the operator refuses instead.
-
-It follows that the pattern is state. An operator carries whichever pattern
-its last `prepare()` set, so in a training loop `prepare()` belongs in the
-forward pass beside the step, not once at the start -- and the operator must
-not be prepared elsewhere between a forward pass and its backward pass, for
-the same reason a nonlinear operator must not be evaluated there.
+**The pattern is state, and `prepare()` is what sets it.** BART writes the
+sampling pattern into the model as a side effect of the gridding, so
+`prepare()` has to be applied to *this* operator before a step is, two
+operators do not share a model, and in a training loop `prepare()` belongs in
+the forward pass beside the step rather than once at the start.
 
 **The batch is BART's own.** Everywhere else here a leading axis is applied
 item by item from Python; this is the one operator that stacks a batch inside
-the library, because `nlinvnet` needed it. `batch=` says how many independent
-copies of the model to build, and that count is the leading axis of every
-argument.
+the library.  `batch=` is the leading axis of every argument.
 
-**The shapes are BART's sixteen axes, written short.** The operator records
-what BART reports, because that is what the arity check holds it to; what a
-caller passes and what comes back is `shapes` and `output_shapes`, which are
-the same tuples without the run of empty axes between the batch and the image.
-A run of singletons changes no strides, so moving between the two is a reshape
-and not a copy.
+**The shapes are BART's sixteen axes, written short.** `shapes` and
+`output_shapes` are what a caller passes and gets back; `ishapes` and
+`oshapes` stay what BART reports, because that is what the arity check holds
+the operator to.
 
 The iterate is the image and the coil coefficients laid end to end; `start()`
 makes the one BART starts from, `split()` and `join()` take it apart and put it
@@ -233,39 +221,16 @@ the prior's parameters included. A real parameter rides in the real part of a
 complex one, because BART's operators are complex throughout, so its gradient
 comes back complex and the real part is the one to take.
 
-A real denoiser is a `torch.nn.Module` with its parameters in several tensors
-of several shapes, and {class}`Parameters` is the one vector BART can carry and
-the way back:
+A real denoiser keeps its parameters in several tensors of several shapes, and
+{class}`Parameters` packs them into the one complex vector BART can carry and
+unpacks them again.  The packed vector is the thing to hold as a
+`torch.nn.Parameter`: it is what the operator differentiates.  How the
+denoiser sees the iterate is the caller's to say -- usually the image half of
+the state, shaped as an image.
 
-```python
-weights = nlop.Parameters(denoiser)
-prior = nlop.FromTorch(
-    lambda x, w: torch.func.functional_call(denoiser, weights.unpack(w), (x,)),
-    [state, weights.shape],
-    state,
-)
-trained = torch.nn.Parameter(weights.pack())
-optimiser = torch.optim.Adam([trained], lr=1e-3)
-...
-weights.load(trained)      # back into the module afterwards
-```
-
-The packed vector is the thing to hold as the `Parameter`: it is what the
-operator differentiates, and the gradient arrives in its real part. How the
-denoiser sees the iterate is the caller's to say: a denoiser usually wants the
-image half of the state, shaped as an image.
-
-**One thing to know before reading a gradient.** BART weights the coil half of
-the state by $(1 + a|k|^2)^{-b/2}$, and its default $b = 32$ is a sixteenth
-power: over the state of a small fit the gradient of that half spans tens of
-decades, and its tail runs below float32's smallest normal number. Below that
-edge the arithmetic belongs to the platform rather than to the library -- a
-right-hand side whose norm is no longer a normal number is one BART's
-`checkeps` declines to iterate on, and the solve comes back untouched, with
-`Warning: data corrupted` in the log and a gradient of zeros. Forward none of
-this matters, and the default is what `nlinv` reconstructs with. A *gradient*
-that has to mean something in the coil coefficients wants a gentler weighting:
-`sobolev=(220.0, 8.0)`.
+A gradient in the *coil* half of the state is unreliable at BART's default
+coil weighting, which is a sixteenth power; {class}`GaussNewton`'s
+documentation says why and what to use instead.
 
 ## Python-defined operators
 

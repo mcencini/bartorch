@@ -19,25 +19,14 @@ are functions on images.
 ```
 
 A term can also be applied on its own, which is what an iteration written
-outside the library needs: `Regularizer.prox(x, gamma)` is the proximal
-operator a solver calls between its gradient steps, `prox_shape` says what it
-works on, and `transform` is the operator BART puts in front of it.
-
-Two things the shapes do not say.  A term's proximal operator usually works on
-the image, because the transform is folded inside it -- a wavelet term is like
-this -- but total variation's is on the components of a gradient instead, an
-axis of their own beyond the image's.  And the Laplace term's transform is a
-real convolution whose codomain *is* shaped like the image, so a caller that
-guessed from the shape would quietly leave it out.  What a solver computes is
-`prox(transform(x))`; BART's own `iter2_ist` is the exception, applying the
-proximal operator to the image and ignoring the transform, which is why BART's
-IST and FISTA cannot take a total-variation term.
-
-`transform_is_identity` asks BART the same question `iter2_chambolle_pock`
-asks of the first term before making it the primal proximal step rather than a
-dual, and `rewind` puts a term's own random generator back where a fresh term
-would have it -- which is what a wavelet threshold's cycle spinning draws on,
-and what makes a term kept across solves answer as the tool does.
+outside the library needs.  What a solver computes is `prox(transform(x))`,
+and the shapes do not say which of the two carries the work: a wavelet term
+folds its transform inside the proximal operator, total variation's works on
+the components of a gradient instead, and the Laplace term's transform is a
+convolution whose codomain *is* shaped like the image.  So a caller that
+guessed from the shapes would leave a transform out.  BART's own `iter2_ist`
+does exactly that, which is why BART's IST and FISTA cannot take a
+total-variation term.
 
 ## In a solve that is being differentiated
 

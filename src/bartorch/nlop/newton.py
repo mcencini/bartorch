@@ -116,8 +116,8 @@ class _Companion(_Noir):
         if "prepare" == self.what:
             # `noir_adjoint_fft_fun` writes the pattern into the model on its
             # way past -- `linop_gdiag_set_diag(model->lop_pattern, ...)` --
-            # and the non-Cartesian one updates the trajectory the same way.
-            # That is how the model comes to have one at all.
+            # and off the grid `noir_adjoint_nufft_fun` calls
+            # `nufft_update_traj`.  That is how the model comes to have one.
             self.model._prepared = True
         return made
 
