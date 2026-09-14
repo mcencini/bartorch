@@ -548,10 +548,21 @@ def _nufft_contraction(encoding, b: torch.Tensor, c: torch.Tensor) -> LinearOper
     encoding is a plain non-Cartesian SENSE operator with no basis, sets or
     encoding axes of its own, and where the sample weights vary along the
     shots and the readout alone.
+
+    A basis along the samples is a transform only the substitution computes:
+    BART's own gridder asserts that the basis is trivial over the sample axes
+    (``nufft_set_traj`` in ``noncart/nufft.c``).  So where FINUFFT is not
+    answering -- a macOS process, where the OpenMP collision makes the
+    substitution decline -- there is no such operator, and the sum of chains
+    is what the planner falls back to.
     """
+    from bartorch import _finufft
+
     if type(encoding) is not NoncartesianSense:
         return None
     if encoding.basis is not None or encoding.sets > 1 or encoding.encoding:
+        return None
+    if not _finufft.serves(encoding.device.type == "cuda"):
         return None
 
     segments = int(b.shape[0])

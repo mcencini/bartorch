@@ -11,7 +11,7 @@ import pytest
 import torch
 
 import bartorch
-from bartorch import _abi, linop
+from bartorch import _abi, _finufft, linop
 from bartorch._lib import library
 from bartorch.linop import plan as planner
 
@@ -247,6 +247,9 @@ def test_a_grid_contraction_is_fused_and_a_coil_varying_one_is_not(maps, pattern
     assert stands.plan.contraction == "chained" and not stands.plan.fused
 
 
+@pytest.mark.skipif(
+    not _finufft.serves(), reason="a basis along the samples is a transform only FINUFFT computes"
+)
 def test_a_nufft_contraction_becomes_a_subspace_over_the_samples(maps):
     torch.manual_seed(8)
     traj = bartorch.tools.traj(x=X, y=8)
@@ -258,6 +261,26 @@ def test_a_nufft_contraction_becomes_a_subspace_over_the_samples(maps):
     assert A.plan.contraction == "subspace" and A.plan.terms == 3
     assert A.plan.normal == "kernel", "a kernel per pair of terms, not a transform each"
     assert A.plan.fused
+
+
+def test_a_contraction_barts_gridder_cannot_serve_falls_back_to_the_sum(maps):
+    """The planner lowers into no form the library cannot apply.
+
+    BART's own gridder asserts that a basis is trivial over the sample axes,
+    so a contraction over a NUFFT is the substitution's alone; without it the
+    sum of chains answers, and the plan says the terms are chained.
+    """
+    torch.manual_seed(18)
+    traj = bartorch.tools.traj(x=X, y=8)
+    E = linop.NoncartesianSense(maps, (X, X), traj=traj)
+    b, c = _rand(3, *E.oshape[1:]), _rand(3, X, X)
+
+    x = _rand(X, X)
+    want = sum(b[term] * E(c[term] * x) for term in range(3))
+    with _finufft.barts_own_gridder():
+        A = linop.FieldCorrected(E, coefficients=(b, c))
+        assert A.plan.contraction == "chained" and not A.plan.fused
+        assert (A(x) - want).abs().max() / want.abs().max() < 1e-5
 
 
 @pytest.mark.parametrize(
@@ -277,6 +300,10 @@ def test_a_nufft_contraction_becomes_a_subspace_over_the_samples(maps):
 )
 def test_every_benchmarked_case_takes_the_fused_plan(case):
     """The cases the design's targets are measured on, at a size that fits a test."""
+    # A contraction over a NUFFT puts its basis along the samples, which only
+    # FINUFFT computes; every other case here has a route BART's gridder has.
+    if case == "field-corrected non-cartesian" and not _finufft.serves():
+        pytest.skip("a basis along the samples is a transform only FINUFFT computes")
     A = _benchmark_case(case)
     assert A.plan.fused, f"{case} did not take the fused plan: {A.plan}"
 

@@ -1084,11 +1084,15 @@ def segmented():
 
 def test_a_segmented_nufft_is_the_sum_of_its_segments(segmented):
     maps, traj, b, c, n = segmented
+    from bartorch import _finufft
     from bartorch.linop.base import _WithNormal
 
     E = linop.NoncartesianSense(maps, (n, n), traj=traj)
     A = linop.FieldCorrected(E, coefficients=(b, c))
-    assert isinstance(A, _WithNormal), "the segments are one subspace operator, not their sum"
+    # A basis along the samples is a transform only FINUFFT computes, so where
+    # the substitution declines the sum of chains is what answers instead.
+    if _finufft.serves():
+        assert isinstance(A, _WithNormal), "the segments are one subspace operator, not their sum"
     assert (A.ishape, A.oshape) == (E.ishape, E.oshape)
 
     x = _rand(n, n)
