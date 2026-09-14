@@ -76,6 +76,20 @@ jobs:
           CXX: ${{ matrix.cc == 'gcc-14' && 'g++-14' || 'clang++' }}
         run: pip install -e ".${{ matrix.extras }}" --no-build-isolation -v
 
+      # Both wheels carry their own copy of LLVM's OpenMP runtime, and the
+      # runtime ends the process rather than run beside a second copy, so
+      # without this the substitution declines and every non-Cartesian test
+      # on this platform runs on BART's own gridder instead.  Pointing
+      # FINUFFT at the copy torch carries leaves one runtime loaded and the
+      # substitution can be taken up.  `diagnose` first so the log says what
+      # the pair was before anything was changed.
+      - name: One OpenMP runtime for torch and FINUFFT (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          python scripts/macos_openmp.py diagnose
+          python scripts/macos_openmp.py patch
+          python scripts/macos_openmp.py verify
+
       # Before the suite, because the suite is where the information goes
       # missing: bringing the library up is what installs the FINUFFT
       # substitution, and that probes itself by running `bart nufft` both
