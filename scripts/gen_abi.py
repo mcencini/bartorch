@@ -139,6 +139,30 @@ def param_type(param: str, callbacks: dict[str, str]) -> str:
     return ctype(" ".join(words) + "*" * stars, callbacks)
 
 
+def field_type(decl: str) -> str:
+    """The ctypes spelling of one structure field, whose name is dropped.
+
+    Every pointer is ``c_void_p`` here rather than a typed pointer: the
+    structure exists so that Python can fill it, and what it fills a pointer
+    field with is the integer a tensor reports.
+    """
+    decl = re.sub(r"\[[^\]]*\]", "*", normalise(decl))
+    if "*" in decl:
+        return "ctypes.c_void_p"
+    words = decl.split()
+    if len(words) > 1 and words[-1] not in TYPE_WORDS:
+        words.pop()
+    base = " ".join(words)
+    if base not in SCALARS:
+        raise Unknown(f"field type {base!r}")
+    return SCALARS[base]
+
+
+def struct_name(c_name: str) -> str:
+    """``bartorch_encoding`` as the generated class ``Encoding``."""
+    return "".join(part.capitalize() for part in c_name.removeprefix("bartorch_").split("_"))
+
+
 def parse(header: str) -> dict:
     """Read the header into the pieces the generated module is made of."""
     text = strip_comments(header)
@@ -154,6 +178,29 @@ def parse(header: str) -> dict:
     if enum:
         for name, value in re.findall(r"(BARTORCH_LOG_\w+)\s*=\s*(\d+)", enum.group(1)):
             levels.append((name, int(value)))
+
+    # Every other enum the header declares, so that a name Python has to
+    # pass -- a transform, a counter -- is the header's name and not a number
+    # written down twice.
+    constants: list[tuple[str, int]] = []
+    for name, body in re.findall(r"enum\s+(bartorch_\w+)\s*\{(.*?)\}", text, re.S):
+        if "bartorch_log_level" == name:
+            continue
+        for member, value in re.findall(r"(BARTORCH_\w+)\s*=\s*(\d+)", body):
+            constants.append((member, int(value)))
+
+    # Structures a caller fills and passes by pointer.
+    structs: list[tuple[str, str, list[tuple[str, str]]]] = []
+    for name, body in re.findall(r"struct\s+(bartorch_\w+)\s*\{(.*?)\n\}\s*;", text, re.S):
+        fields = []
+        for field in body.split(";"):
+            if not field.strip():
+                continue
+            member = normalise(field).replace("[", " [").split()[-1]
+            member = re.sub(r"[*\[\]0-9]", "", member)
+            fields.append((member, field_type(field)))
+        structs.append((struct_name(name), name, fields))
+        POINTERS[f"{name}*"] = f"ctypes.POINTER({struct_name(name)})"
 
     # Callback typedefs, in the order they appear, so a later signature can
     # name an earlier one.
@@ -186,6 +233,8 @@ def parse(header: str) -> dict:
         "dims": int(dims.group(1)),
         "levels": levels,
         "callbacks": emitted,
+        "constants": constants,
+        "structs": structs,
         "functions": functions,
     }
 
@@ -214,6 +263,24 @@ def render(spec: dict) -> str:
         for name, value in spec["levels"]:
             lines.append(f'    "{name.removeprefix("BARTORCH_LOG_").lower()}": {value},')
         lines.append("}")
+        lines.append("")
+
+    if spec["constants"]:
+        lines.append("#: The header's own enumerators, by their own names.")
+        for name, value in spec["constants"]:
+            lines.append(f"{name} = {value}")
+        lines.append("")
+        lines.append("")
+
+    for name, c_name, fields in spec["structs"]:
+        lines.append(f"class {name}(ctypes.Structure):")
+        lines.append(f'    """``struct {c_name}``, field for field."""')
+        lines.append("")
+        lines.append("    _fields_ = [")
+        for member, ctype_name in fields:
+            lines.append(f'        ("{member}", {ctype_name}),')
+        lines.append("    ]")
+        lines.append("")
         lines.append("")
 
     for name, restype, argtypes in spec["callbacks"]:
