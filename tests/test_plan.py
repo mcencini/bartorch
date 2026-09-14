@@ -805,3 +805,47 @@ def test_an_image_weight_that_differs_between_sets_is_left_to_the_sum(pattern):
             inner = inner + sensitivities[s] * (weights[term, s] * x[s])
         want = want + phase[term] * pattern * _fft2(inner)
     assert (A(x) - want).abs().max() / want.abs().max() < 1e-5
+
+
+@requires_cuda
+@pytest.mark.parametrize("model", ["shot phase", "echo phase", "slice phase"])
+def test_on_a_card_a_composition_takes_the_plan_it_takes_on_the_host(model, maps, basis, pattern):
+    """A card changes where the terms run, not whether they were folded in."""
+    torch.manual_seed(40)
+
+    def built(device):
+        if model == "shot phase":
+            dense = torch.ones(Y, 1, dtype=torch.complex64)
+            E = linop.CartesianSense(maps, (Y, X), pattern=dense, device=device)
+            taken = torch.zeros(3, 1, Y, 1, dtype=torch.complex64)
+            for shot in range(3):
+                taken[shot, 0, shot::3, 0] = 1
+            return _terms(E, taken, _rand(3, Y, X)), _rand(Y, X)
+        if model == "echo phase":
+            coeffs, frames = int(basis.shape[0]), int(basis.shape[1])
+            E = linop.CartesianSense(
+                maps,
+                (coeffs, Y, X),
+                pattern=torch.ones(frames, Y, 1, dtype=torch.complex64),
+                basis=basis,
+                device=device,
+            )
+            selector = torch.zeros(frames, 1, frames, 1, 1, dtype=torch.complex64)
+            for frame in range(frames):
+                selector[frame, 0, frame] = 1
+            return _terms(E, selector, _rand(frames, 1, Y, X)), _rand(coeffs, Y, X)
+        sets = 2
+        E = linop.CartesianSense(
+            _rand(sets, COILS, Y, X), (sets, Y, X), pattern=pattern, device=device
+        )
+        return _terms(E, _rand(sets, 1, Y, 1), _slices(sets)), _rand(sets, Y, X)
+
+    torch.manual_seed(40)
+    host, x = built(None)
+    torch.manual_seed(40)
+    card, _ = built("cuda")
+
+    assert card.plan.fused
+    assert (card.plan.contraction, card.plan.terms) == (host.plan.contraction, host.plan.terms)
+    want = host(x)
+    assert (card(x) - want).abs().max() / want.abs().max() < 1e-4
