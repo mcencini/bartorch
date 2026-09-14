@@ -146,20 +146,22 @@ def test_adjoint_identity_holds():
 
 @requires_finufft
 def test_it_carries_coils_through_one_plan():
-    # BART puts the coils past the three spatial axes, so a two-dimensional
-    # coil image is (coils, 1, y, x) and its k-space (coils, spokes, readout, 1).
+    # Coils lead the image and the samples as a batch: a two-dimensional coil
+    # image is (coils, y, x) and its samples (coils, spokes, readout).  With no
+    # encoding axes the batch lies on BART's coil axis, one plan over all of it.
     n, ncoils, spokes = 32, 4, 16
     traj = bt.traj(x=n, y=spokes, r=True)
-    A = linop.NUFFT(traj, (ncoils, 1, n, n), (ncoils, spokes, n, 1), toeplitz=False)
-    assert A.oshape[0] == ncoils
-    x = torch.randn(ncoils, 1, n, n, dtype=torch.complex64)
+    _finufft.reset_counters()
+    A = linop.NUFFT(traj, (ncoils, n, n), toeplitz=False)
+    _all_finufft()
+    assert _finufft.operators_built()[0] == 1, "one plan for every coil"
+    assert A.oshape == (ncoils, spokes, n)
+    x = torch.randn(ncoils, n, n, dtype=torch.complex64)
     y = A(x)
     # Each coil must transform independently of the others.
-    single = linop.NUFFT(traj, (1, 1, n, n), (1, spokes, n, 1), toeplitz=False)
+    single = linop.NUFFT(traj, (n, n), toeplitz=False)
     for c in range(ncoils):
-        torch.testing.assert_close(
-            y[c].reshape(-1), single(x[c : c + 1]).reshape(-1), rtol=1e-4, atol=1e-4
-        )
+        torch.testing.assert_close(y[c], single(x[c]), rtol=1e-4, atol=1e-4)
 
 
 @requires_finufft
@@ -446,12 +448,12 @@ def test_more_frames_than_a_batch_of_one_thousand_are_still_finuffts(in_tools):
     """
     n, frames = 16, 1500
     traj = bt.traj(x=n, y=8, r=True)
-    # Frames sit beyond the three spatial axes, which is what makes them a batch.
-    image = torch.zeros(frames, 1, n, n, dtype=torch.complex64)
+    # Frames over one trajectory lead the image, which is what makes them a batch.
+    image = torch.zeros(frames, n, n, dtype=torch.complex64)
     image[..., n // 2, n // 2] = 1.0  # a point source at the centre of every frame
 
     _finufft.reset_counters()
-    A = linop.NUFFT(traj, (frames, 1, n, n), kspace_shape=(frames, 8, n, 1), toeplitz=False)
+    A = linop.NUFFT(traj, (frames, n, n), toeplitz=False)
     _all_finufft()
 
     y = A(image)
@@ -748,16 +750,19 @@ def test_a_subspace_operator_needs_no_tool_and_no_fallback():
     n, spokes, frames, coeffs = 16, 5, 4, 2
     traj, basis = _subspace(n, spokes, frames, coeffs)
     torch.manual_seed(0)
-    img = torch.randn(coeffs, 1, 1, 1, 1, n, n, dtype=torch.complex64)
+    img = torch.randn(coeffs, n, n, dtype=torch.complex64)
 
+    # The trajectory is (frames, spokes, readout, 3) and the basis (coeffs,
+    # frames): the frames are the encoding axis the basis contracts, and the
+    # image carries the coefficients in their place.
     _finufft.reset_counters()
     A = linop.NUFFT(
-        traj,
-        (coeffs, 1, 1, 1, 1, n, n),
-        kspace_shape=(frames, 1, 1, spokes, n, 1),
-        basis=basis,
+        traj.reshape(frames, spokes, n, 3),
+        (coeffs, n, n),
+        basis=basis.reshape(coeffs, frames),
         toeplitz=False,
     )
+    assert A.oshape == (frames, spokes, n)
     _all_finufft()
     assert not _finufft.fallback_allowed()
 
@@ -1890,16 +1895,44 @@ def test_a_complex_basis_has_the_toeplitz_normal_of_the_two_applications():
     """
     n, shots, frames, coeffs = 16, 10, 3, 2
     torch.manual_seed(0)
-    per_frame = [bt.traj(x=n, y=shots, r=True, G=True).reshape(shots, n, 3) * (1 - 0.1 * f) for f in range(frames)]
-    traj = torch.stack(per_frame).reshape(frames, 1, 1, shots, n, 3)
-    image, kspace = (coeffs, 1, 1, 1, 1, n, n), (frames, 1, 1, shots, n, 1)
+    per_frame = [
+        bt.traj(x=n, y=shots, r=True, G=True).reshape(shots, n, 3) * (1 - 0.1 * f)
+        for f in range(frames)
+    ]
+    traj = torch.stack(per_frame)
 
     real = torch.randn(coeffs, frames, dtype=torch.float64).to(torch.complex64)
     complex_ = torch.randn(coeffs, frames, dtype=torch.complex64)
     for basis in (real, complex_):
-        b = basis.reshape(coeffs, frames, 1, 1, 1, 1, 1)
-        applied = linop.NUFFT(traj, image, kspace, basis=b, toeplitz=False)
-        collapsed = linop.NUFFT(traj, image, kspace, basis=b, toeplitz=True)
+        applied = linop.NUFFT(traj, (coeffs, n, n), basis=basis, toeplitz=False)
+        collapsed = linop.NUFFT(traj, (coeffs, n, n), basis=basis, toeplitz=True)
         x = torch.randn(*applied.ishape, dtype=torch.complex64)
         want = applied.adjoint(applied(x))
         assert (collapsed.normal(x) - want).abs().max() / want.abs().max() < 2e-2
+
+
+@requires_finufft
+def test_encoding_axes_behind_a_batch_are_transformed_a_batch_item_at_a_time():
+    """Batches lead the encoding axes in memory, which BART's roles cannot express.
+
+    So a transform with both is built for one batch item and applied to each in
+    turn, reading and writing each where it lies.  It is the same transform as
+    the one of a single item, applied to every item by hand.
+    """
+    n, spokes, frames, coeffs, coils = 16, 10, 3, 2, 4
+    torch.manual_seed(0)
+    traj = torch.stack(
+        [bt.traj(x=n, y=spokes, r=True, G=True).reshape(spokes, n, 3) * (1 - 0.1 * f) for f in range(frames)]
+    )
+    basis = torch.randn(coeffs, frames, dtype=torch.complex64)
+
+    A = linop.NUFFT(traj, (coils, coeffs, n, n), basis=basis, toeplitz=False)
+    one = linop.NUFFT(traj, (coeffs, n, n), basis=basis, toeplitz=False)
+    assert A.ishape == (coils, coeffs, n, n)
+    assert A.oshape == (coils, frames, spokes, n)
+
+    x = torch.randn(*A.ishape, dtype=torch.complex64)
+    y = torch.randn(*A.oshape, dtype=torch.complex64)
+    torch.testing.assert_close(A(x), torch.stack([one(x[c]) for c in range(coils)]))
+    torch.testing.assert_close(A.adjoint(y), torch.stack([one.adjoint(y[c]) for c in range(coils)]))
+    assert _inner(A(x), y) == pytest.approx(_inner(x, A.adjoint(y)), rel=1e-3)

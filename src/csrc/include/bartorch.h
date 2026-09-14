@@ -225,6 +225,16 @@ BARTORCH_API bartorch_linop* bartorch_linop_nufft(int N, const long* ksp_dims, c
  * and a modulation folded into the sensitivities, the plain transform after
  * them -- rather than the centred transform.  Off the grid there is only one
  * convention and `modulated` is refused. */
+/* An operator built for one block, applied to `n` consecutive blocks of arrays
+ * of `idims` and `odims`: how an operator in the torch layout, whose batches
+ * are slowest in memory, is built on BART's dimensions without a copy.  The
+ * block operator is referenced, so the caller still frees it. */
+BARTORCH_API bartorch_linop* bartorch_linop_blocks(const bartorch_linop* block, int N,
+		const long* odims, const long* idims, long n);
+/* `op` over the same memory described by `idims` and `odims`, with nothing
+ * copied.  The operator is referenced, so the caller still frees it. */
+BARTORCH_API bartorch_linop* bartorch_linop_reshaped(const bartorch_linop* op, int N,
+		const long* odims, const long* idims);
 BARTORCH_API bartorch_linop* bartorch_linop_sense(const long* max_dims, const long* ksp_dims,
 		const long* sens_dims, const void* sens, int kernels,
 		const long* traj_dims, const void* traj,

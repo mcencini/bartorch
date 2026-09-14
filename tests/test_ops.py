@@ -177,9 +177,9 @@ def test_a_three_dimensional_nufft_takes_three_spatial_axes_from_the_trajectory(
 
     # A volume: the last three axes are spatial and the coils sit in front.
     A = linop.NUFFT(volumetric, (coils, n, n, n), toeplitz=False)
-    assert A.oshape == (coils, spokes, n, 1)
+    assert A.oshape == (coils, spokes, n)
 
-    # The same shape read two-dimensionally would have made the coils a third
-    # spatial axis, so kz staying at zero is what has to say otherwise.
-    B = linop.NUFFT(planar, (1, n, n), toeplitz=False)
-    assert B.oshape == (1, spokes, n, 1)
+    # The same shape read two-dimensionally makes its first axis a batch
+    # rather than a third spatial axis, so kz staying at zero is what says so.
+    B = linop.NUFFT(planar, (n, n, n), toeplitz=False)
+    assert B.oshape == (n, spokes, n)

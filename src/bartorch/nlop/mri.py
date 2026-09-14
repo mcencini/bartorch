@@ -192,13 +192,13 @@ class NonlinearSense(NonlinearOperator):
         if kspace_shape is not None:
             self.kspace_shape = tuple(kspace_shape)
         elif self.noncart:
-            from bartorch.linop.nufft import default_kspace_shape
-
-            # Read against the expanded shape, whose three spatial axes leave
-            # only the coils in front: samples go where BART's NUFFT puts them,
-            # `(coils, *batches, samples, 1)`.
-            self.kspace_shape = default_kspace_shape(
-                tuple(self.trajectory.shape), self.coil_image_shape, 3
+            # BART's noir model reads the samples in BART's order, with the
+            # coils in front of the trajectory's axes and the coordinate axis a
+            # singleton: `(coils, *trajectory[:-1], 1)`.
+            self.kspace_shape = (
+                self.coil_image_shape[0],
+                *tuple(self.trajectory.shape)[:-1],
+                1,
             )
         else:
             self.kspace_shape = self.coil_image_shape

@@ -209,8 +209,8 @@ def test_a_named_backend_can_be_asked_for():
 def test_a_failed_assertion_inside_bart_reaches_the_caller():
     """BART checks its arguments with assert, and assert must not end the process.
 
-    Coil images and k-space that disagree on their dimensions trip an
-    assertion deep inside BART's own NUFFT.  The platform's assert would
+    A tensor larger than the shapes it is to multiply trips an assertion deep
+    inside BART's own tensor multiply.  The platform's assert would
     abort, so the library answers the function assert expands to and puts it
     back on BART's error path, where the error catcher turns it into a return
     code.  Which function that is differs: __assert_fail on glibc and musl,
@@ -218,10 +218,7 @@ def test_a_failed_assertion_inside_bart_reaches_the_caller():
     could not be reached on macOS -- the abort came earlier, while the suite
     was still being collected.
     """
-    import bartorch.tools as bt
     from bartorch import linop
 
-    n = 16
-    traj = bt.traj(x=n, y=8, r=True)
-    with pytest.raises(bartorch.BartError):
-        linop.NUFFT(traj, (8, 1, n, n), toeplitz=False)
+    with pytest.raises(bartorch.BartError, match="Assertion"):
+        linop.MultiplySum(torch.ones(7, 3, dtype=torch.complex64), (1, 3), (2, 3))

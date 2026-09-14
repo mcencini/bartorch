@@ -293,8 +293,10 @@ def test_a_noncartesian_fit_converges_to_the_image_it_was_made_from():
     n, coils, spokes = 24, 4, 32
     traj = bt.traj(x=n, y=spokes)
     truth = (_phantom(n, n) * _coils(coils, n, n)).reshape(coils, 1, n, n)
-    A = linop.NUFFT(traj, (coils, 1, n, n), (coils, spokes, n, 1))
-    kspace = A(truth)
+    # The linear NUFFT answers in the torch layout, (coils, spokes, readout);
+    # the nonlinear model reads BART's order, with the coordinate axis a singleton.
+    A = linop.NUFFT(traj, (coils, n, n))
+    kspace = A(truth.reshape(coils, n, n)).reshape(coils, spokes, n, 1)
     kspace = kspace * (100.0 / kspace.norm())
 
     errors = []

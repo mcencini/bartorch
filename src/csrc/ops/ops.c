@@ -343,6 +343,126 @@ bartorch_linop* bartorch_linop_nufft(int N, const long* ksp_dims, const long* ci
 	return (0 == guarded(linop_nufft_worker, &a)) ? a.result : NULL;
 }
 
+/* An operator built for one block, applied to consecutive blocks.
+ *
+ * The torch layout puts the axes that vary independently -- batches, and in
+ * k-space the coils -- slowest in memory, and BART's fixed order of roles puts
+ * coils before every encoding axis: no BART dimension vector describes a whole
+ * array of the one in the other's order.  One block does, so the operator is
+ * built for a block and applied to each in turn, reading and writing each
+ * where it lies.  The operator over all of them is described by `odims` and
+ * `idims`, which only have to hold `n` blocks each. */
+struct blocks_s {
+
+	linop_data_t super;
+
+	const struct linop_s* op;
+	long n;
+	long isize;
+	long osize;
+};
+
+static DEF_TYPEID(blocks_s);
+
+static void blocks_forward(const linop_data_t* _d, complex float* dst, const complex float* src)
+{
+	const auto d = CAST_DOWN(blocks_s, _d);
+
+	for (long k = 0; k < d->n; k++)
+		linop_forward_unchecked(d->op, dst + k * d->osize, src + k * d->isize);
+}
+
+static void blocks_adjoint(const linop_data_t* _d, complex float* dst, const complex float* src)
+{
+	const auto d = CAST_DOWN(blocks_s, _d);
+
+	for (long k = 0; k < d->n; k++)
+		linop_adjoint_unchecked(d->op, dst + k * d->isize, src + k * d->osize);
+}
+
+static void blocks_normal(const linop_data_t* _d, complex float* dst, const complex float* src)
+{
+	const auto d = CAST_DOWN(blocks_s, _d);
+
+	for (long k = 0; k < d->n; k++)
+		linop_normal_unchecked(d->op, dst + k * d->isize, src + k * d->isize);
+}
+
+static void blocks_del(const linop_data_t* _d)
+{
+	const auto d = CAST_DOWN(blocks_s, _d);
+
+	linop_free(d->op);
+	xfree(d);
+}
+
+struct linop_blocks_args {
+
+	const bartorch_linop* block; int N; const long* odims; const long* idims; long n;
+	bartorch_linop* result;
+};
+
+static int linop_blocks_worker(void* p)
+{
+	struct linop_blocks_args* a = p;
+
+	auto dom = linop_domain(a->block->op);
+	auto cod = linop_codomain(a->block->op);
+
+	long isize = md_calc_size(dom->N, dom->dims);
+	long osize = md_calc_size(cod->N, cod->dims);
+
+	if ((a->n < 1) || (md_calc_size(a->N, a->idims) != a->n * isize) || (md_calc_size(a->N, a->odims) != a->n * osize))
+		error("bartorch: %ld blocks of an operator from %ld to %ld elements are not %ld to %ld elements\n",
+				a->n, isize, osize, md_calc_size(a->N, a->idims), md_calc_size(a->N, a->odims));
+
+	PTR_ALLOC(struct blocks_s, d);
+	SET_TYPEID(blocks_s, d);
+
+	d->op = linop_clone(a->block->op);
+	d->n = a->n;
+	d->isize = isize;
+	d->osize = osize;
+
+	a->result = wrap_linop(linop_create(a->N, a->odims, a->N, a->idims, CAST_UP(PTR_PASS(d)),
+				blocks_forward, blocks_adjoint, blocks_normal, NULL, blocks_del));
+	return 0;
+}
+
+bartorch_linop* bartorch_linop_blocks(const bartorch_linop* block, int N, const long* odims, const long* idims, long n)
+{
+	struct linop_blocks_args a = { block, N, odims, idims, n, NULL };
+	return (0 == guarded(linop_blocks_worker, &a)) ? a.result : NULL;
+}
+
+/* An operator whose domain and codomain are described by other dimensions
+ * over the same memory: BART's reshape of an operator's arguments, which
+ * hands the caller's buffers straight through.  An operator built on BART's
+ * roles for a torch layout is given the plain reversal of the torch shapes
+ * this way, so it chains with every other operator built on that reversal. */
+struct linop_reshaped_args { const bartorch_linop* op; int N; const long* odims; const long* idims; bartorch_linop* result; };
+
+static int linop_reshaped_worker(void* p)
+{
+	struct linop_reshaped_args* a = p;
+
+	auto dom = linop_domain(a->op->op);
+	auto cod = linop_codomain(a->op->op);
+
+	if ((md_calc_size(a->N, a->idims) != md_calc_size(dom->N, dom->dims))
+	    || (md_calc_size(a->N, a->odims) != md_calc_size(cod->N, cod->dims)))
+		error("bartorch: a reshape keeps the number of elements\n");
+
+	a->result = wrap_linop(linop_reshape_out_F(linop_reshape_in(a->op->op, a->N, a->idims), a->N, a->odims));
+	return 0;
+}
+
+bartorch_linop* bartorch_linop_reshaped(const bartorch_linop* op, int N, const long* odims, const long* idims)
+{
+	struct linop_reshaped_args a = { op, N, odims, idims, NULL };
+	return (0 == guarded(linop_reshaped_worker, &a)) ? a.result : NULL;
+}
+
 /* Sensitivities, either as maps or as the kernels they band-limit to. */
 extern const struct linop_s* bartorch_sense_operator(const long max_dims[DIMS], const long sens_dims[DIMS],
 		const _Complex float* sens, int kernels, const long ksp_dims[DIMS],
