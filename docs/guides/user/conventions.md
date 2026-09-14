@@ -12,10 +12,9 @@ Python shapes are C order.  The BART dimension vector is the reversed shape:
 
 Keep meaningful singleton axes when calling BART's applications: BART's coil
 dimension is always dimension 3, and sets of maps occupy dimension 4.  Inspect
-returned shapes rather than assuming every singleton is removed.  Compact
-shapes such as `(coils, y, x)` work in explicitly constructed operators; they do
-not move the coil dimension in BART's commands.  Use `squeeze()` for display,
-after reconstruction.
+returned shapes rather than assuming every singleton is removed.  Use
+`squeeze()` for display, after reconstruction.  The operators in
+`bartorch.linop` use a layout of their own; see Operator layout.
 
 Axis arguments are indices, negative ones included:
 `bartorch.fft(x, axes=(-2, -1))`, and no argument takes a BART bitmask.  A
@@ -25,6 +24,34 @@ never a `-R` string: `pics(..., regularizers=prox.Wavelet((-1, -2), 0.005))`.
 A command that reads no array, such as `seq`, counts axes from the last one
 and takes negative axes only.  Trajectories carry `kx, ky, kz` in grid units,
 not radians or cycles per metre.
+
+## Operator layout
+
+The MRI operators in `bartorch.linop` lay arrays out the torch way, not in
+BART's axis order: batches first, then coils, then the problem.
+
+| Array | Shape |
+| --- | --- |
+| Image | `(*batches, [sets,] *encoding, [z,] y, x)` |
+| Sensitivities | `([sets,] coils, [z,] y, x)` |
+| Trajectory | `(*encoding, shots, samples, ndim)` |
+| Non-Cartesian samples | `(*batches, coils, *encoding, shots, samples)` |
+| Cartesian samples | `(*batches, coils, *encoding, [z,] y, x)` |
+| NUFFT and FFT samples | `(*batches, *encoding, shots, samples)` |
+
+Batches are volumes that share a trajectory or a pattern, such as slices or
+averages, and are applied independently.  A NUFFT or an FFT without
+sensitivities treats coils as one more batch axis.  Encoding axes are whatever
+the trajectory has in front of its shots: frames, echoes, cardiac phases, in
+any number.  A two-dimensional problem has no `z` axis anywhere.
+
+A basis `(coeffs, frames)` contracts the last encoding axis: the image carries
+coefficients where the samples carry frames.  A sampling pattern broadcasts
+over one coil's samples, so `(y, 1)` undersamples a phase encode for every coil
+and batch.  Several sets of maps together with an encoding axis cost one copy
+of the image per application.
+
+The commands in `bartorch.tools` keep BART's order; see Shapes and axes.
 
 ## Tools and operators
 
