@@ -37,6 +37,8 @@ BART's axis order: batches first, then coils, then the problem.
 | Trajectory | `(*encoding, shots, samples, ndim)` |
 | Non-Cartesian samples | `(*batches, coils, *encoding, shots, samples)` |
 | Cartesian samples | `(*batches, coils, *encoding, [z,] y, x)` |
+| Sampled-only samples | `(*batches, coils, [frames,] shots, readout)` |
+| Sampled phase encodes | `([frames,] shots, d)` |
 | NUFFT and FFT samples | `(*batches, *encoding, shots, samples)` |
 
 Batches are volumes that share a trajectory or a pattern, such as slices or
