@@ -701,3 +701,191 @@ def test_on_a_card_the_subspace_normal_runs_through_cufft_and_is_the_model_writt
     back = torch.einsum("kt,tczyx->kczyx", b.conj(), frame_k * pattern[:, None].conj())
     want = (maps.conj()[None] * _ifftc(back, (-3, -2, -1))).sum(1).reshape(A.ishape)
     assert (got - want).abs().max() / want.abs().max() < 1e-5
+
+
+# --- sampled-only k-space ----------------------------------------------------
+#
+# A table of phase encodes with the whole readout along each, checked against
+# the dense k-space of the model written out, read at the same places.
+
+
+def _read_table(k, positions):
+    """Dense k-space `k` of (coils, [frames,] [z,] y, x) at `positions` of
+    ([frames,] shots, d): (coils, [frames,] shots, x), zero at padding."""
+    frames = positions.shape[:-2]
+    k = k.reshape(k.shape[0], -1, *k.shape[-positions.shape[-1] - 1 :])
+    pos = positions.reshape(-1, *positions.shape[-2:])
+    out = torch.zeros(k.shape[0], pos.shape[0], pos.shape[1], k.shape[-1], dtype=k.dtype)
+    for t in range(pos.shape[0]):
+        for s in range(pos.shape[1]):
+            index = tuple(int(i) for i in pos[t, s])
+            if min(index) >= 0:
+                out[:, t, s] = k[(slice(None), t, *index)]
+    return out.reshape(k.shape[0], *frames, pos.shape[1], k.shape[-1])
+
+
+def _counts_pattern(positions, plane):
+    """The dense pattern with the same normal: the square root of how often a
+    place is sampled, per frame, flat along the readout."""
+    pos = positions.reshape(-1, *positions.shape[-2:])
+    counts = torch.zeros(pos.shape[0], *plane, dtype=torch.float64)
+    for t in range(pos.shape[0]):
+        for s in range(pos.shape[1]):
+            index = tuple(int(i) for i in pos[t, s])
+            if min(index) >= 0:
+                counts[(t, *index)] += 1
+    return counts.sqrt().to(torch.complex64).reshape(*positions.shape[:-2], *plane, 1)
+
+
+@pytest.fixture
+def positions_2d():
+    """Nine phase encodes of Y, one of them twice, and a padding entry."""
+    torch.manual_seed(5)
+    pos = torch.randperm(Y)[:9].reshape(9, 1)
+    return torch.cat([pos, pos[:1], torch.full((1, 1), -1)])
+
+
+@pytest.mark.parametrize("readout", ["kspace", "image"])
+def test_sampled_samples_are_the_dense_ones_at_the_positions(maps, positions_2d, readout):
+    A = linop.CartesianSense(maps, (Y, X), positions=positions_2d, readout=readout)
+    assert A.oshape == (COILS, positions_2d.shape[0], X)
+
+    image = _rand(Y, X)
+    axes = (-2, -1) if readout == "kspace" else (-2,)
+    want = _read_table(_fftc(maps * image, axes), positions_2d)
+    got = A(image)
+    assert (got - want).abs().max() / want.abs().max() < 1e-5
+    assert got[:, -1].abs().max() == 0
+
+
+@pytest.mark.parametrize("readout", ["kspace", "image"])
+def test_sampled_encoding_has_the_adjoint_it_claims(maps, positions_2d, readout):
+    A = linop.CartesianSense(maps, (Y, X), positions=positions_2d, readout=readout)
+    assert _adjointness(A) < 1e-5
+
+
+def test_sampled_normal_is_the_dense_one_with_the_same_counts(maps, positions_2d):
+    """A place sampled twice counts twice, as the two applications count it."""
+    fast = linop.CartesianSense(maps, (Y, X), positions=positions_2d)
+    slow = linop.CartesianSense(maps, (Y, X), positions=positions_2d, toeplitz=False)
+    dense = linop.CartesianSense(maps, (Y, X), pattern=_counts_pattern(positions_2d, (Y,)))
+
+    image = _rand(Y, X)
+    want = slow.adjoint(slow(image))
+    for got in (fast.normal(image), dense.normal(image)):
+        assert (got - want).abs().max() / want.abs().max() < 1e-5
+
+
+def _positions_3d(frames, shots, z, y, seed):
+    torch.manual_seed(seed)
+    out = torch.full((frames, shots, 2), -1, dtype=torch.long)
+    for t in range(frames):
+        n = shots - (t % 2)  # frames of different lengths, padded
+        flat = torch.randperm(z * y)[:n]
+        out[t, :n, 0], out[t, :n, 1] = flat // y, flat % y
+    return out
+
+
+@pytest.mark.parametrize("readout", ["kspace", "image"])
+def test_sampled_subspace_samples_are_the_dense_frames_at_the_positions(readout):
+    torch.manual_seed(11)
+    coils, z, y, x, frames, coeffs, shots = 3, 4, 6, 5, 5, 2, 7
+    maps = _rand(coils, z, y, x)
+    b = _rand(coeffs, frames)
+    positions = _positions_3d(frames, shots, z, y, 12)
+    A = linop.CartesianSense(maps, (coeffs, z, y, x), positions=positions, basis=b, readout=readout)
+    assert A.oshape == (coils, frames, shots, x)
+
+    image = _rand(coeffs, z, y, x)
+    axes = (-3, -2, -1) if readout == "kspace" else (-3, -2)
+    k = _fftc(maps[None] * image[:, None], axes)
+    frame_k = torch.einsum("kt,kczyx->ctzyx", b, k)
+    want = _read_table(frame_k, positions)
+    got = A(image)
+    assert (got - want).abs().max() / want.abs().max() < 1e-5
+    assert _adjointness(A) < 1e-5
+
+
+def test_sampled_subspace_normal_is_the_two_applications_and_the_dense_one():
+    torch.manual_seed(13)
+    coils, z, y, x, frames, coeffs, shots = 3, 4, 6, 5, 5, 2, 7
+    maps = _rand(coils, z, y, x)
+    b = _rand(coeffs, frames)
+    positions = _positions_3d(frames, shots, z, y, 14)
+    fast = linop.CartesianSense(maps, (coeffs, z, y, x), positions=positions, basis=b)
+    slow = linop.CartesianSense(
+        maps, (coeffs, z, y, x), positions=positions, basis=b, toeplitz=False
+    )
+    dense = linop.CartesianSense(
+        maps, (coeffs, z, y, x), pattern=_counts_pattern(positions, (z, y)), basis=b
+    )
+
+    image = _rand(coeffs, z, y, x)
+    want = slow.adjoint(slow(image))
+    for got in (fast.normal(image), dense.normal(image)):
+        assert (got - want).abs().max() / want.abs().max() < 1e-5
+
+
+def test_sampled_positions_are_checked(maps, positions_2d):
+    with pytest.raises(ValueError, match="pattern or positions"):
+        linop.CartesianSense(maps, (Y, X), pattern=torch.ones(Y, 1), positions=positions_2d)
+    with pytest.raises(ValueError, match="indices"):
+        linop.CartesianSense(maps, (Y, X), positions=torch.zeros(4, 2, dtype=torch.long))
+    with pytest.raises(ValueError, match="outside"):
+        linop.CartesianSense(maps, (Y, X), positions=torch.full((4, 1), Y))
+    with pytest.raises(ValueError, match="basis"):
+        linop.CartesianSense(maps, (Y, X), positions=torch.zeros(3, 4, 1, dtype=torch.long))
+    with pytest.raises(ValueError, match="readout"):
+        linop.CartesianSense(maps, (Y, X), positions=positions_2d, readout="hybrid")
+
+
+@requires_cuda
+@pytest.mark.parametrize("readout", ["kspace", "image"])
+def test_on_a_card_sampled_samples_run_through_cufft_and_are_the_dense_ones(readout):
+    torch.manual_seed(15)
+    coils, z, y, x, frames, coeffs, shots = 3, 4, 6, 5, 5, 2, 7
+    maps = _rand(coils, z, y, x)
+    b = _rand(coeffs, frames)
+    positions = _positions_3d(frames, shots, z, y, 16)
+    A = linop.CartesianSense(
+        maps, (coeffs, z, y, x), positions=positions, basis=b, readout=readout, device="cuda"
+    )
+    host = linop.CartesianSense(
+        maps, (coeffs, z, y, x), positions=positions, basis=b, readout=readout
+    )
+
+    image = _rand(coeffs, z, y, x)
+    before = library().bartorch_grid_fused()
+    got = A(image)
+    assert library().bartorch_grid_fused() > before, "the forward ran through cuFFT's callbacks"
+    want = host(image)
+    assert (got - want).abs().max() / want.abs().max() < 1e-5
+
+    samples = _rand(*A.oshape)
+    before = library().bartorch_grid_fused()
+    got = A.adjoint(samples)
+    assert library().bartorch_grid_fused() > before, "the adjoint ran through cuFFT's callbacks"
+    want = host.adjoint(samples)
+    assert (got - want).abs().max() / want.abs().max() < 1e-5
+
+    want = host.normal(image)
+    got = A.normal(image)
+    assert (got - want).abs().max() / want.abs().max() < 1e-5
+
+
+@requires_cuda
+def test_on_a_card_a_2d_sampled_encoding_is_the_host_one(maps, positions_2d):
+    """In 2D the transform along the phase encode alone takes the readout with
+    it (cuFFT links no callbacks into one axis), so the table is read in
+    k-space along the readout and transformed back for `image`."""
+    for readout in ("kspace", "image"):
+        A = linop.CartesianSense(
+            maps, (Y, X), positions=positions_2d, readout=readout, device="cuda"
+        )
+        host = linop.CartesianSense(maps, (Y, X), positions=positions_2d, readout=readout)
+        image = _rand(Y, X)
+        want = host(image)
+        assert (A(image) - want).abs().max() / want.abs().max() < 1e-5
+        samples = _rand(*A.oshape)
+        want = host.adjoint(samples)
+        assert (A.adjoint(samples) - want).abs().max() / want.abs().max() < 1e-5

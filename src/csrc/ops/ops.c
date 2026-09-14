@@ -541,6 +541,38 @@ bartorch_linop* bartorch_linop_cartesian(const long* max_dims, const long* sens_
 	return (0 == guarded(linop_cartesian_worker, &a)) ? a.result : NULL;
 }
 
+/* The Cartesian encoding over sampled-only k-space. */
+extern const struct linop_s* bartorch_cartesian_sampled_operator(const long max_dims[DIMS], const long sens_dims[DIMS],
+		const _Complex float* sens, int kernels, long frames, long shots, int components, const long* positions,
+		const long bas_dims[DIMS], const _Complex float* basis, int kspace_readout, int toeplitz);
+
+struct linop_cartesian_sampled_args {
+
+	const long* max_dims; const long* sens_dims; const void* sens; int kernels;
+	long frames; long shots; int components; const void* positions;
+	const long* bas_dims; const void* basis; int kspace_readout; int toeplitz;
+	bartorch_linop* result;
+};
+
+static int linop_cartesian_sampled_worker(void* p)
+{
+	struct linop_cartesian_sampled_args* a = p;
+
+	a->result = wrap_linop(bartorch_cartesian_sampled_operator(a->max_dims, a->sens_dims, a->sens, a->kernels,
+				a->frames, a->shots, a->components, (const long*)a->positions, a->bas_dims, a->basis,
+				a->kspace_readout, a->toeplitz));
+	return 0;
+}
+
+bartorch_linop* bartorch_linop_cartesian_sampled(const long* max_dims, const long* sens_dims,
+		const void* sens, int kernels, long frames, long shots, int components, const void* positions,
+		const long* bas_dims, const void* basis, int kspace_readout, int toeplitz)
+{
+	struct linop_cartesian_sampled_args a = { max_dims, sens_dims, sens, kernels, frames, shots, components,
+		positions, bas_dims, basis, kspace_readout, toeplitz, NULL };
+	return (0 == guarded(linop_cartesian_sampled_worker, &a)) ? a.result : NULL;
+}
+
 /* The coil multiply alone, over sensitivities held as maps or as kernels. */
 extern const struct linop_s* bartorch_coils_operator(const long max_dims[DIMS], const long sens_dims[DIMS],
 		const _Complex float* sens, int kernels);

@@ -71,6 +71,11 @@ extern void bartorch_nufft_coset_end(const struct linop_s* op);
 /* Provided by grid.c: a Cartesian transform's normal, run through cuFFT's
  * callbacks with the sensitivity handed in, where the card allows it. */
 extern int bartorch_grid_folds(const struct linop_s* op, const void* ref);
+extern int bartorch_grid_folds_samples(const struct linop_s* op, const void* ref);
+extern void bartorch_grid_forward_sense(const struct linop_s* op, complex float* dst, const complex float* src,
+		const long map_strs[DIMS], const complex float* map);
+extern void bartorch_grid_adjoint_sense(const struct linop_s* op, complex float* dst, const complex float* src,
+		const long map_strs[DIMS], const complex float* map);
 extern void bartorch_grid_normal_sense(const struct linop_s* op, complex float* dst, const complex float* src,
 		const long map_strs[DIMS], const complex float* map);
 
@@ -553,6 +558,40 @@ struct slab_ctx {
 	complex float* nrm;	/* what the normal convolves, per slab */
 };
 
+/* A slab's samples into their place in the whole, and back out of it. */
+static void put_samples(const struct sense_s* d, long coil, complex float* dst, const complex float* out)
+{
+	if (!d->coils_slowest) {
+
+		md_copy2(DIMS, d->out_dims, d->full_out_strs, dst + slab_at(d->out_slab_offset, coil),
+				d->out_strs, out, CFL_SIZE);
+		return;
+	}
+
+	/* The slab's coils one after another, each into its block of the whole. */
+	long coil_step = d->out_strs[COIL_DIM] / (long)CFL_SIZE;
+
+	for (long b = 0; b < d->batch; b++)
+		md_copy2(DIMS, d->block_dims, d->block_strs, dst + (coil + b) * d->block_size,
+				d->out_strs, out + b * coil_step, CFL_SIZE);
+}
+
+static void take_samples(const struct sense_s* d, long coil, complex float* out, const complex float* src)
+{
+	if (!d->coils_slowest) {
+
+		md_copy2(DIMS, d->out_dims, d->out_strs, out,
+				d->full_out_strs, src + slab_at(d->out_slab_offset, coil), CFL_SIZE);
+		return;
+	}
+
+	long coil_step = d->out_strs[COIL_DIM] / (long)CFL_SIZE;
+
+	for (long b = 0; b < d->batch; b++)
+		md_copy2(DIMS, d->block_dims, d->out_strs, out + b * coil_step,
+				d->block_strs, src + (coil + b) * d->block_size, CFL_SIZE);
+}
+
 static void forward_slab(const struct sense_s* d, long coil, const complex float* map,
 		const long* mstrs, bool last, void* _c)
 {
@@ -563,19 +602,7 @@ static void forward_slab(const struct sense_s* d, long coil, const complex float
 
 	linop_forward(d->slab, DIMS, d->out_dims, c->out, DIMS, d->cim_dims, c->cim);
 
-	if (!d->coils_slowest) {
-
-		md_copy2(DIMS, d->out_dims, d->full_out_strs, c->dst + slab_at(d->out_slab_offset, coil),
-				d->out_strs, c->out, CFL_SIZE);
-		return;
-	}
-
-	/* The slab's coils one after another, each into its block of the whole. */
-	long coil_step = d->out_strs[COIL_DIM] / (long)CFL_SIZE;
-
-	for (long b = 0; b < d->batch; b++)
-		md_copy2(DIMS, d->block_dims, d->block_strs, c->dst + (coil + b) * d->block_size,
-				d->out_strs, c->out + b * coil_step, CFL_SIZE);
+	put_samples(d, coil, c->dst, c->out);
 }
 
 static void adjoint_slab(const struct sense_s* d, long coil, const complex float* map,
@@ -584,23 +611,36 @@ static void adjoint_slab(const struct sense_s* d, long coil, const complex float
 	(void)last;
 	struct slab_ctx* c = _c;
 
-	if (!d->coils_slowest) {
-
-		md_copy2(DIMS, d->out_dims, d->out_strs, c->out,
-				d->full_out_strs, c->src + slab_at(d->out_slab_offset, coil), CFL_SIZE);
-
-	} else {
-
-		long coil_step = d->out_strs[COIL_DIM] / (long)CFL_SIZE;
-
-		for (long b = 0; b < d->batch; b++)
-			md_copy2(DIMS, d->block_dims, d->out_strs, c->out + b * coil_step,
-					d->block_strs, c->src + (coil + b) * d->block_size, CFL_SIZE);
-	}
+	take_samples(d, coil, c->out, c->src);
 
 	linop_adjoint(d->slab, DIMS, d->cim_dims, c->cim, DIMS, d->out_dims, c->out);
 
 	md_zfmacc2(DIMS, d->slab_dims, d->img_strs, c->dst, d->cim_strs, c->cim, mstrs, map);
+}
+
+/* The same for a sampled-only Cartesian transform on a card: the sensitivity
+ * goes on as a coefficient is read into the transform and comes off as the
+ * adjoint writes into the image, so no coil image is made. */
+static void forward_slab_gridded(const struct sense_s* d, long coil, const complex float* map,
+		const long* mstrs, bool last, void* _c)
+{
+	(void)last;
+	struct slab_ctx* c = _c;
+
+	bartorch_grid_forward_sense(d->slab, c->out, c->src, mstrs, map);
+
+	put_samples(d, coil, c->dst, c->out);
+}
+
+static void adjoint_slab_gridded(const struct sense_s* d, long coil, const complex float* map,
+		const long* mstrs, bool last, void* _c)
+{
+	(void)last;
+	struct slab_ctx* c = _c;
+
+	take_samples(d, coil, c->out, c->src);
+
+	bartorch_grid_adjoint_sense(d->slab, c->dst, c->out, mstrs, map);
 }
 
 static void normal_slab(const struct sense_s* d, long coil, const complex float* map,
@@ -673,17 +713,24 @@ static void sense_forward(const linop_data_t* _d, complex float* dst, const comp
 
 	complex float* src_on = onto_card(d->img_dims, src, true);
 
+	/* A sampled-only Cartesian transform folds the sensitivity into its
+	 * transforms, where they run through cuFFT on the card. */
+	bool gridded = d->fold && (1 == d->slab_dims[MAPS_DIM])
+			&& (0 != bartorch_grid_folds_samples(d->slab, src_on));
+
 	struct slab_ctx c = {
 
 		.dst = dst, .src = src_on,
-		.cim = md_alloc_sameplace(DIMS, d->cim_dims, CFL_SIZE, src_on),
+		.cim = gridded ? NULL : md_alloc_sameplace(DIMS, d->cim_dims, CFL_SIZE, src_on),
 		.out = md_alloc_sameplace(DIMS, d->out_dims, CFL_SIZE, src_on),
 	};
 
-	drive_slabs(d, src_on, forward_slab, &c, NULL);
+	drive_slabs(d, src_on, gridded ? forward_slab_gridded : forward_slab, &c, NULL);
 
 	md_free(c.out);
-	md_free(c.cim);
+
+	if (NULL != c.cim)
+		md_free(c.cim);
 
 	off_card(d->img_dims, (complex float*)src, src_on, false);
 
@@ -702,19 +749,24 @@ static void sense_adjoint(const linop_data_t* _d, complex float* dst, const comp
 	/* The caller's pages are faulted in while the card works (cuda.c). */
 	void* faulting = (dst_on != dst) ? bartorch_host_prefault_begin(dst, md_calc_size(DIMS, d->img_dims) * (long)CFL_SIZE) : NULL;
 
+	bool gridded = d->fold && (1 == d->slab_dims[MAPS_DIM])
+			&& (0 != bartorch_grid_folds_samples(d->slab, dst_on));
+
 	struct slab_ctx c = {
 
 		.dst = dst_on, .src = src,
-		.cim = md_alloc_sameplace(DIMS, d->cim_dims, CFL_SIZE, dst_on),
+		.cim = gridded ? NULL : md_alloc_sameplace(DIMS, d->cim_dims, CFL_SIZE, dst_on),
 		.out = md_alloc_sameplace(DIMS, d->out_dims, CFL_SIZE, dst_on),
 	};
 
 	md_clear(DIMS, d->img_dims, dst_on, CFL_SIZE);
 
-	drive_slabs(d, dst_on, adjoint_slab, &c, NULL);
+	drive_slabs(d, dst_on, gridded ? adjoint_slab_gridded : adjoint_slab, &c, NULL);
 
 	md_free(c.out);
-	md_free(c.cim);
+
+	if (NULL != c.cim)
+		md_free(c.cim);
 
 	bartorch_host_prefault_end(faulting);
 	off_card(d->img_dims, dst, dst_on, true);
@@ -1250,6 +1302,51 @@ const struct linop_s* bartorch_cartesian_operator(const long max_dims[DIMS], con
 	sense_hold(d, sens_dims, sens, kernels);
 
 	d->slab = grid_transform_create(d->cim_dims, pat_dims, pattern, bas_dims, basis, toeplitz);
+
+	sense_output_from(d, true);
+
+	return sense_operator(d);
+}
+
+/* Provided by grid.c: the slab transform over sampled-only k-space. */
+extern const struct linop_s* grid_sampled_create(const long cim_dims[DIMS], long T, long S, int components,
+		const long* positions, const long bas_dims[DIMS], const complex float* basis,
+		int kspace_readout, int toeplitz);
+
+/* The Cartesian SENSE encoding over sampled-only k-space: a table of phase
+ * encodes per frame, with the whole readout along each, instead of k-space
+ * over the whole plane.  On a card the forward and the adjoint fold the
+ * sensitivity into the same cuFFT transforms the normal runs. */
+const struct linop_s* bartorch_cartesian_sampled_operator(const long max_dims[DIMS], const long sens_dims[DIMS],
+		const complex float* sens, int kernels, long frames, long shots, int components, const long* positions,
+		const long bas_dims[DIMS], const complex float* basis, int kspace_readout, int toeplitz)
+{
+	long map_dims[DIMS];
+	md_select_dims(DIMS, FFT_FLAGS | COIL_FLAG | MAPS_FLAG, map_dims, max_dims);
+
+	long cim_dims[DIMS];
+	md_select_dims(DIMS, ~MAPS_FLAG, cim_dims, max_dims);
+
+	if (!sliceable(max_dims, map_dims, cim_dims, 0UL)) {
+
+		if (0 != kernels)
+			kernels_need_the_loop();
+
+		chained();
+
+		long img_dims[DIMS];
+		md_select_dims(DIMS, ~COIL_FLAG, img_dims, max_dims);
+
+		return linop_chain_FF(linop_fmac_dims_create(DIMS, cim_dims, img_dims, sens_dims, sens),
+				grid_sampled_create(cim_dims, frames, shots, components, positions, bas_dims, basis,
+					kspace_readout, toeplitz));
+	}
+
+	struct sense_s* d = sense_slabs(max_dims, map_dims, cim_dims, 0UL);
+	sense_hold(d, sens_dims, sens, kernels);
+
+	d->slab = grid_sampled_create(d->cim_dims, frames, shots, components, positions, bas_dims, basis,
+			kspace_readout, toeplitz);
 
 	sense_output_from(d, true);
 

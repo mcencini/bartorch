@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import torch
 
+from bartorch import _layout
 from bartorch._dispatch import _lock
 from bartorch._lib import DIMS, library
 from bartorch._operator import Built, Shape, as_operand, dims
@@ -134,6 +135,131 @@ class _CartesianNative(_GridSense):
         return Built(ptr, self.image_shape, self.kspace_shape, keep=keep, device=self.device)
 
 
+class _CartesianSampled(_GridSense):
+    """:class:`_GridSense` over a table of the phase encodes that were sampled.
+
+    Each frame's phase encodes are positions ``(shots, d)`` -- ``(y,)`` in 2D,
+    ``(z, y)`` in 3D, ``-1`` for padding -- with the whole readout along each,
+    so the samples are ``(*batches, coils, [frames,] shots, readout)`` and
+    nothing the size of the phase-encode plane is held for them.  The
+    transforms, the basis and the normal are :class:`_CartesianNative`'s, over
+    the pattern the positions stand for.
+    """
+
+    def __init__(
+        self,
+        sensitivities,
+        image_shape,
+        positions,
+        basis,
+        readout="kspace",
+        toeplitz=True,
+        **kwargs,
+    ):
+        if readout not in ("kspace", "image"):
+            raise ValueError(f"the readout is 'kspace' or 'image', not {readout!r}")
+        pos = torch.as_tensor(positions)
+        if pos.is_floating_point() or pos.is_complex():
+            raise ValueError("positions are integer phase-encode indices")
+        pos = pos.to(device="cpu", dtype=torch.int64).contiguous()
+        if pos.ndim < 2:
+            raise ValueError(f"positions are (*encoding, shots, d), not {tuple(pos.shape)}")
+
+        self._grid_basis = None
+        if basis is not None:
+            matrix, _, frames = _basis_matrix(basis)
+            self._grid_basis = matrix.contiguous()
+        lead = tuple(pos.shape[:-2])
+        if self._grid_basis is None and lead:
+            raise ValueError(f"positions over frames {lead} need a basis to contract them")
+        if self._grid_basis is not None and lead != (frames,):
+            raise ValueError(f"positions over frames {lead}, and a basis of {frames}")
+
+        # Checked before the operator is built, which happens as it is made.
+        from bartorch.linop.sense import _grid_ndim
+
+        ndim = _grid_ndim(
+            sensitivities, image_shape, kwargs.get("kernels", False), kwargs.get("ndim")
+        )
+        encodes = tuple(image_shape)[len(image_shape) - ndim : -1]
+        if pos.shape[-1] != len(encodes):
+            raise ValueError(
+                f"positions of {pos.shape[-1]} indices, "
+                f"for {len(encodes)} phase-encode axes {encodes}"
+            )
+        padding = (pos == -1).all(-1)
+        inside = ((pos >= 0) & (pos < torch.tensor(encodes))).all(-1)
+        if not bool((padding | inside).all()):
+            raise ValueError(
+                f"a position lies outside the phase encodes {encodes}, and is not padding"
+            )
+
+        self._positions = pos
+        self._kspace_readout = readout == "kspace"
+        self._grid_toeplitz = bool(toeplitz)
+        super().__init__(sensitivities, image_shape, **kwargs)
+
+    def _grid_encoding(self):
+        return tuple(int(n) for n in self._positions.shape[:-2])
+
+    def _image_encoding(self):
+        return () if self._grid_basis is None else (int(self._grid_basis.shape[0]),)
+
+    def _has_basis(self):
+        return self._grid_basis is not None
+
+    def _kspace_tail(self):
+        return (*self.encoding, int(self._positions.shape[-2]), int(self.spatial[-1]))
+
+    def _kspace_vector(self):
+        base = {1: self.spatial[-1], 2: int(self._positions.shape[-2]), _layout.COIL: self.coils}
+        return self._encoding_vector(base, self.encoding)
+
+    def _create(self) -> Built:
+        from bartorch.linop.sense import _vector, sets_order, wrap_item
+
+        lib = library()
+        b, pos = self._grid_basis, self._positions
+        frames = 1 if b is None else int(b.shape[1])
+        bvec = None if b is None else _layout.vector({5: b.shape[1], 6: b.shape[0]})
+        with _lock:
+            was = lib.bartorch_sense_coil_batch(), lib.bartorch_sense_fold_maps()
+            lib.bartorch_sense_set_coil_batch(self.coil_batch)
+            lib.bartorch_sense_set_fold_maps(int(self.fold_maps))
+            try:
+                item = self._under_lock(
+                    lib.bartorch_linop_cartesian_sampled,
+                    _vector(self._max_vector()),
+                    _vector(self._sens_vector()),
+                    self.sensitivities.data_ptr(),
+                    int(self.kernels),
+                    frames,
+                    int(pos.shape[-2]),
+                    int(pos.shape[-1]),
+                    pos.data_ptr(),
+                    None if b is None else _vector(bvec),
+                    None if b is None else b.data_ptr(),
+                    int(self._kspace_readout),
+                    int(self._grid_toeplitz),
+                    device=self.device,
+                )
+            finally:
+                lib.bartorch_sense_set_coil_batch(was[0])
+                lib.bartorch_sense_set_fold_maps(was[1])
+            ptr = wrap_item(
+                self,
+                lib,
+                item,
+                self.kspace_shape,
+                self.image_shape,
+                self.batches,
+                self.device,
+                sets_order(self.batches, self.sets, self.image_encoding, self.ndim),
+            )
+        keep = tuple(t for t in (self.sensitivities, pos, b) if t is not None)
+        return Built(ptr, self.image_shape, self.kspace_shape, keep=keep, device=self.device)
+
+
 def _broadcastable(values: torch.Tensor, shape: tuple[int, ...], what: str) -> torch.Tensor:
     """``values`` given the rank of ``shape``, with ones where it is to broadcast."""
     got = tuple(values.shape)
@@ -251,6 +377,8 @@ def CartesianSense(  # noqa: N802  (it is a constructor)
     image_shape: Shape,
     pattern: torch.Tensor | None = None,
     *,
+    positions: torch.Tensor | None = None,
+    readout: str = "kspace",
     basis: torch.Tensor | None = None,
     toeplitz: bool = True,
     **kwargs,
@@ -281,6 +409,17 @@ def CartesianSense(  # noqa: N802  (it is a constructor)
         Ones where a sample was taken and zeros where it was not, broadcast
         over one coil's samples ``([frames,] [z,] y, x)`` -- so ``(y, 1)``
         undersamples a phase encode for every coil and batch item.
+    positions : tensor, optional
+        Instead of a pattern, the phase encodes that were sampled, as integer
+        indices ``([frames,] shots, d)``: ``(y,)`` in 2D, ``(z, y)`` in 3D,
+        ``-1`` for padding where frames sample different numbers.  The samples
+        are then ``(*batches, coils, [frames,] shots, readout)``, the whole
+        readout along each phase encode, and nothing the size of the
+        phase-encode plane is held for them.
+    readout : {"kspace", "image"}
+        With positions, whether the samples are in k-space along the readout
+        or already transformed back along it (hybrid space).  Either way the
+        volume is not transformed along the readout: the samples are.
     basis : tensor, optional
         Temporal subspace basis ``(coeffs, frames)``.
     toeplitz : bool
@@ -315,6 +454,23 @@ def CartesianSense(  # noqa: N802  (it is a constructor)
     """
     if kwargs.get("traj") is not None:
         raise ValueError("a trajectory makes this non-Cartesian; use NoncartesianSense for that")
+
+    if positions is not None:
+        if pattern is not None:
+            raise ValueError("give a pattern or positions, not both")
+        if kwargs.get("modulated", False):
+            raise NotImplementedError("positions are laid out in the centred convention only")
+        return _CartesianSampled(
+            sensitivities,
+            image_shape,
+            positions,
+            basis,
+            readout=readout,
+            toeplitz=toeplitz,
+            **kwargs,
+        )
+    if readout != "kspace":
+        raise ValueError("the readout convention is for positions; dense samples are k-space")
 
     if basis is None and pattern is None:
         return _GridSense(sensitivities, image_shape, **kwargs)

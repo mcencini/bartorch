@@ -248,6 +248,15 @@ BARTORCH_API bartorch_linop* bartorch_linop_cartesian(const long* max_dims, cons
 		const void* sens, int kernels,
 		const long* pat_dims, const void* pattern,
 		const long* bas_dims, const void* basis, int toeplitz);
+/* The Cartesian SENSE encoding over sampled-only k-space: `frames` x `shots`
+ * phase-encode positions of `components` indices each -- (y) for a 2D image,
+ * (z, y) for a 3D one, -1 for padding -- with the whole readout along each,
+ * in k-space when `kspace_readout` and transformed back along it otherwise.
+ * `basis` may be NULL, with one frame.  Without `toeplitz` the normal is the
+ * two applications. */
+BARTORCH_API bartorch_linop* bartorch_linop_cartesian_sampled(const long* max_dims, const long* sens_dims,
+		const void* sens, int kernels, long frames, long shots, int components, const void* positions,
+		const long* bas_dims, const void* basis, int kspace_readout, int toeplitz);
 /* Normals of a Cartesian encoding applied through cuFFT's callbacks since the
  * library was loaded; the rest were applied as BART's chain of operators. */
 BARTORCH_API long bartorch_grid_fused(void);
