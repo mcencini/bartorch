@@ -273,16 +273,24 @@ def test_the_substitution_answers_before_anything_has_needed_one():
     has not built a NUFFT yet it would report that it does not serve -- and a
     test gated on it would skip where it should run, which is the silent
     fallback this file exists to catch.  It installs first.
+
+    What is asserted is that the two agree, not that either is true: where the
+    substitution declines for a reason of its own -- a macOS process, whose
+    second OpenMP runtime it will not start -- the honest answer is that it
+    does not serve, in a fresh process and in this one alike.
     """
-    if not _finufft.available():
-        pytest.skip("finufft is not installed")
-    fresh = subprocess.run(
-        [sys.executable, "-c", "from bartorch import _finufft; print(_finufft.serves())"],
-        capture_output=True,
-        text=True,
-        check=True,
+    probe = (
+        "from bartorch import _finufft\n"
+        "from bartorch._lib import library\n"
+        "asked = _finufft.serves()\n"  # nothing has needed a NUFFT yet
+        "_finufft.install_once()\n"  # what the first one would have done
+        "print(asked, bool(library().bartorch_finufft_usable_on(0)))\n"
     )
-    assert fresh.stdout.strip() == "True", fresh.stderr
+    fresh = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True, check=True
+    )
+    asked, after = fresh.stdout.split()
+    assert asked == after, fresh.stderr
 
 
 def test_a_contraction_barts_gridder_cannot_serve_falls_back_to_the_sum(maps):
