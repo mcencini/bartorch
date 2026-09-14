@@ -26,6 +26,7 @@ import torch
 import bartorch
 import bartorch.tools as bt
 from bartorch import linop, nlop, optim
+from bartorch.linop import basic
 
 
 def _rand(*shape):
@@ -355,7 +356,7 @@ def test_a_wave_encoding_takes_unknown_coils_the_same_way():
     # coil images to data will do, which is the point of it.
     shape = (4, 16, 16)
     pattern = torch.ones(1, 16, 16, dtype=torch.complex64)
-    E = linop.Sampling(pattern, shape) @ linop.FFT(shape, axes=(-1, -2))
+    E = basic.Sampling(pattern, shape) @ linop.FFT(shape, axes=(-1, -2))
     F = nlop.CoilSense(E)
     image, coils = _rand(1, 16, 16), _rand(*shape)
     torch.testing.assert_close(F(image, coils), E(image * coils), rtol=1e-4, atol=1e-4)

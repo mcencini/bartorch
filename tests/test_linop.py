@@ -14,6 +14,7 @@ import torch
 
 import bartorch
 from bartorch import linop, nlop, optim
+from bartorch.linop import basic
 
 
 def _rand(*shape):
@@ -56,7 +57,7 @@ def test_a_concrete_operator_is_backed_by_bart():
 
 
 def test_every_concrete_operator_says_how_it_is_built():
-    for cls in (linop.FFT, linop.Diagonal, linop.Sampling, linop.MultiplySum, linop.NUFFT):
+    for cls in (linop.FFT, linop.Diagonal, basic.Sampling, linop.MultiplySum, linop.NUFFT):
         assert "_create" in vars(cls), f"{cls.__name__} does not implement _create"
 
 

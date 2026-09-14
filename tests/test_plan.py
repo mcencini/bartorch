@@ -17,6 +17,7 @@ import bartorch
 from bartorch import _abi, _finufft, linop
 from bartorch._lib import library
 from bartorch.linop import plan as planner
+from bartorch.linop import sense
 
 COILS, Z, Y, X = 4, 3, 16, 12
 
@@ -62,7 +63,7 @@ def test_every_encoding_reports_its_transform(maps, pattern):
         "fft": linop.CartesianSense(maps, (Y, X), pattern=pattern),
         "nufft": linop.NoncartesianSense(maps, (Y, X), traj=traj),
         "wave": linop.WaveSense(maps, (Y, X), psf=psf, readout=2 * X),
-        "none": linop.Coils(maps, (Y, X)),
+        "none": sense.Coils(maps, (Y, X)),
     }
     for name, A in cases.items():
         assert A.plan.transform == name

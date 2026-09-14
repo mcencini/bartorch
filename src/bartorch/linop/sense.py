@@ -17,7 +17,7 @@ from bartorch._operator import Built, Shape, as_operand, dims
 from bartorch.linop.base import LinearOperator
 from bartorch.linop.form import Array, Form
 
-__all__ = ["Coils", "NoncartesianSense"]
+__all__ = ["NoncartesianSense"]
 
 
 def _vector(v):

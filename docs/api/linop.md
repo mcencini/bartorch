@@ -12,8 +12,9 @@ that requires a gradient records it for autograd.
 ## MRI encoding
 
 An encoding and a solver driving it is what most reconstructions here are.
-Reach for `NoncartesianSense` off the grid, `CartesianSense` on it,
-`WaveSense` for Wave-CAIPI, and `Coils` for the sensitivity multiply alone.
+Reach for `NoncartesianSense` off the grid, `CartesianSense` on it, and
+`WaveSense` for Wave-CAIPI.  Each owns its sensitivities and its sampling,
+and everything else is a composition with the operators below.
 
 ```{eval-rst}
 .. autosummary::
@@ -23,9 +24,7 @@ Reach for `NoncartesianSense` off the grid, `CartesianSense` on it,
    CartesianSense
    NoncartesianSense
    WaveSense
-   Coils
    FieldCorrected
-   Sampling
 ```
 
 ## Operator class

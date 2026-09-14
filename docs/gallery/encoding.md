@@ -13,10 +13,8 @@ factors; it is not in general an inverse.
 | Coil encoding, contraction | `linop.MultiplySum` | Multiply by a tensor and sum the axes missing from the output; conjugate in the adjoint.  Serves sensitivities and subspace contractions. |
 | SENSE encoding | `linop.CartesianSense`, `linop.NoncartesianSense` | Sensitivities followed by an FFT or a NUFFT, applied `coil_batch` coils at a time.  A `basis` reads the image as a temporal subspace; `(sets, coils, *spatial)` sensitivities are summed over the sets, as ESPIRiT's second map and ENLIVE mean them. |
 | Wave encoding | `linop.WaveSense` | The hybrid-space model below, as one BART operator; takes sensitivities as maps or as kernels, and a `basis` for Wave-Shuffling. |
-| Coil encoding alone | `linop.Coils` | The sensitivity multiply without a transform after it, for chaining onto an encoding that is not a SENSE operator. |
 | Cartesian FFT | `linop.FFT`; `bartorch.fft`, `bartorch.ifft` | The operator is centred and unitary; the function needs `unitary=True` for that scaling. |
-| Sampling | `linop.Sampling` | A mask on the full grid, broadcast over singleton axes. |
-| Phase, weights | `linop.Diagonal` | Complex pointwise multiplication; the adjoint uses the conjugate. |
+| Phase, weights, sampling | `linop.Diagonal` | Complex pointwise multiplication, broadcast over singleton axes; the adjoint uses the conjugate.  A sampling mask is one of these. |
 | Non-Cartesian transform | `linop.NUFFT`; `bartorch.nufft`, `tools.traj` | Trajectories in grid units, computed by FINUFFT or cuFINUFFT.  Density weights and a temporal basis belong to the operator; its Toeplitz normal should be checked against the explicit forward-adjoint pair. |
 | Custom encoding | `linop.Callback`, or a `LinearOperator` subclass | Supply a forward and an adjoint, and optionally a cheaper normal.  Callbacks see views of BART's buffers and must not modify their inputs. |
 | Operator algebra | `A @ B`, `A + B`, `A.to_nonlinear()` | The rightmost operator runs first; domains, codomains and devices must match. |
