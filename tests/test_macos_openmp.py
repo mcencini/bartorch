@@ -237,8 +237,13 @@ def test_a_finufft_without_its_library_says_so(tmp_path):
 # --- the attempt the substitution makes for itself ----------------------------
 
 
-def test_off_macos_there_is_nothing_to_do():
-    """The pair is only fatal where LLVM's runtime aborts over it."""
+def test_off_macos_there_is_nothing_to_do(monkeypatch):
+    """The pair is only fatal where LLVM's runtime aborts over it.
+
+    The platform is said rather than taken from the host, or this would be
+    asserting where the test runs instead of what the code does.
+    """
+    monkeypatch.setattr(mo.sys, "platform", "linux")
     assert mo.ensure() == "elsewhere"
 
 

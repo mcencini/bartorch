@@ -278,13 +278,21 @@ def _remedy(repaired: str) -> str:
 
     ``ensure`` having patched the file and the process still carrying two
     images means FINUFFT was loaded before bartorch asked -- the file is right
-    for the next run and nothing can unload the one in this one.
+    for the next run and nothing can unload the one in this one.  Its having
+    found nothing to do means the pair this knows about is already one, so the
+    second runtime came in with something else.
     """
     if repaired == "patched":
         return (
             "FINUFFT's library has been pointed at the copy torch carries, which the next "
             "interpreter will pick up; this one loaded it before that could take effect, so "
             "start again"
+        )
+    if repaired == "already":
+        return (
+            "FINUFFT's library already points at the copy torch carries, so the second runtime "
+            "is some other package's; `python scripts/macos_openmp.py diagnose` says what this "
+            "pair looks like"
         )
     return (
         f"Pointing FINUFFT's library at the copy torch carries did not work here ({repaired}); "

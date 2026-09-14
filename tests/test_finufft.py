@@ -401,13 +401,23 @@ def test_two_openmp_runtimes_refuse_the_transforms_rather_than_grid_them():
         bartorch.nufft(img, traj)
 
 
-@requires_finufft
-def test_the_refusal_names_what_makes_the_transforms_work():
+@pytest.mark.parametrize(
+    ("repaired", "says"),
+    [
+        # Patched in this process: too late for the image already loaded.
+        ("patched", "start again"),
+        # Nothing to do, so the second runtime is not one of this pair's.
+        ("already", "some other package's"),
+        # Anything else is the reason it could not, carried through.
+        ("no install_name_tool on PATH", "no install_name_tool on PATH"),
+    ],
+)
+def test_the_refusal_says_what_to_do_about_each_way_it_got_here(repaired, says):
     """A message with no remedy in it is one a caller cannot act on."""
-    with _two_openmp_runtimes():
-        with pytest.raises(RuntimeError) as raised:
-            _finufft.use_in_tools(True)
-    assert "scripts/macos_openmp.py" in str(raised.value)
+    remedy = _finufft._remedy(repaired)
+    assert says in remedy
+    if repaired != "patched":
+        assert "scripts/macos_openmp.py" in remedy
 
 
 @requires_finufft
