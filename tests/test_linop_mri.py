@@ -1135,3 +1135,42 @@ def test_on_a_card_a_segmented_nufft_is_the_host_one(segmented):
     assert (A.adjoint(y) - want).abs().max() / want.abs().max() < 1e-2
     want = host.adjoint(host(x))
     assert (A.normal(x) - want).abs().max() / want.abs().max() < 1e-2
+
+
+def test_a_scaled_wave_has_the_phase_scaled():
+    from bartorch.linop.mri import _wave_phase_per_cm
+
+    nominal = _wave_phase_per_cm(64, 6, 0.8, 17000.0, 3.0, cosine=False)
+    stronger = _wave_phase_per_cm(64, 6, 0.8, 17000.0, 3.0, cosine=False, scale=1.1)
+    torch.testing.assert_close(stronger, 1.1 * nominal)
+
+
+@pytest.mark.parametrize("cosine", [False, True])
+def test_a_wave_delayed_by_a_readout_sample_is_the_wave_a_sample_later(cosine):
+    """The wave is periodic over the readout, so a delay of one sample is a turn of one."""
+    from bartorch.linop.mri import _wave_phase_per_cm
+
+    readout, adc = 64, 3.0
+    nominal = _wave_phase_per_cm(readout, 6, 0.8, 17000.0, adc, cosine=cosine)
+    later = _wave_phase_per_cm(readout, 6, 0.8, 17000.0, adc, cosine=cosine, delay=adc / readout)
+    torch.testing.assert_close(later, torch.roll(nominal, 1), rtol=1e-9, atol=1e-9)
+
+
+def test_each_wave_takes_its_own_delay_and_scale():
+    """z first, as the image axes are; a correction on one axis leaves the other."""
+    from bartorch.linop.mri import _wave_psf
+
+    wx, nz, ny = 64, 8, 16
+    common = dict(resolution=(0.2, 0.1), offset=0.0, **WAVE)
+    both = _wave_psf(wx, (nz, ny), delay=(0.05, 0.0), scale=(1.0, 1.2), **common)
+    z_only = _wave_psf(wx, (nz, ny), delay=(0.05, 0.0), **common)
+    y_only = _wave_psf(wx, (nz, ny), scale=(1.0, 1.2), **common)
+    nominal = _wave_psf(wx, (nz, ny), **common)
+    torch.testing.assert_close(both * nominal, z_only * y_only)
+
+
+def test_delay_and_scale_belong_to_the_gradient_wave(wave_parts):
+    maps, psf, _ = wave_parts
+    for extra in (dict(delay=0.01), dict(scale=1.05)):
+        with pytest.raises(ValueError, match="one or the other"):
+            linop.WaveSense(maps, SHAPE, readout=WX, psf=psf, **extra)

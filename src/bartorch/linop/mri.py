@@ -537,13 +537,20 @@ def _fftc1(x: torch.Tensor, inverse: bool = False) -> torch.Tensor:
     return torch.fft.fftshift(fn(torch.fft.ifftshift(x), norm="ortho"))
 
 
-def _wave_phase_per_cm(readout, cycles, max_grad, max_slew, adc, cosine) -> torch.Tensor:
+def _wave_phase_per_cm(
+    readout, cycles, max_grad, max_slew, adc, cosine, delay=0.0, scale=1.0
+) -> torch.Tensor:
     """Phase per cm along an oversampled readout of a sine or cosine gradient wave.
 
     BART's ``wavepsf``: the wave on a 10 µs raster over ``adc`` milliseconds,
     as strong as the amplitude and the slew allow, its phase integrated with
     the trapezoid rule from the pre-phase that centres the sine, and resampled
     to ``readout`` points by zero-filling its centred spectrum.
+
+    ``scale`` multiplies the phase and ``delay``, in milliseconds, moves it
+    later in time: a linear phase on its spectrum, so a delay need not fall on
+    the raster.  The wave is a whole number of cycles over the readout, so its
+    phase is periodic there.  At their defaults the function is BART's.
     """
     dt = 1e-5
     points = int(round(adc * 1e-3 / dt))
@@ -556,13 +563,16 @@ def _wave_phase_per_cm(readout, cycles, max_grad, max_slew, adc, cosine) -> torc
     phase = 2 * math.pi * _LARMOR * ((before + g / 2) * dt - amp / w)
 
     spectrum = _fftc1(phase.to(torch.complex128))
+    if delay:
+        frequency = (torch.arange(points, dtype=torch.float64) - points // 2) / (points * dt)
+        spectrum = spectrum * torch.exp(-2j * math.pi * frequency * (delay * 1e-3))
     start = abs(readout // 2 - points // 2)
     if readout >= points:
         resized = torch.zeros(readout, dtype=torch.complex128)
         resized[start : start + points] = spectrum
     else:
         resized = spectrum[start : start + readout]
-    return _fftc1(resized, inverse=True).real * math.sqrt(readout / points)
+    return scale * _fftc1(resized, inverse=True).real * math.sqrt(readout / points)
 
 
 def _per_axis(value, n: int, what: str) -> tuple[float, ...]:
@@ -576,22 +586,28 @@ def _per_axis(value, n: int, what: str) -> tuple[float, ...]:
 
 
 def _wave_psf(
-    readout, encodes, max_grad, max_slew, cycles, adc, resolution, offset
+    readout, encodes, max_grad, max_slew, cycles, adc, resolution, offset, delay=0.0, scale=1.0
 ) -> torch.Tensor:
     """The wave point-spread function over ``(*encodes, readout)``.
 
     A sine wave drives y and, in 3D, a cosine wave drives z; each axis
     contributes ``exp(-i phase_per_cm * location)``, with a location in cm
-    measured from the middle voxel and shifted by ``offset``.
+    measured from the middle voxel and shifted by ``offset``.  ``delay`` and
+    ``scale`` are each axis's gradient delay and amplitude error, as
+    :func:`_wave_phase_per_cm` applies them.
     """
     encodes = tuple(int(n) for n in encodes)
     resolutions = _per_axis(resolution, len(encodes), "resolution")
     offsets = _per_axis(offset, len(encodes), "offset")
+    delays = _per_axis(delay, len(encodes), "delay")
+    scales = _per_axis(scale, len(encodes), "scale")
 
     out = torch.ones((*encodes, readout), dtype=torch.complex128)
     for axis, (n, step, shift) in enumerate(zip(encodes, resolutions, offsets)):
         cosine = len(encodes) == 2 and axis == 0
-        ppcm = _wave_phase_per_cm(readout, cycles, max_grad, max_slew, adc, cosine)
+        ppcm = _wave_phase_per_cm(
+            readout, cycles, max_grad, max_slew, adc, cosine, delays[axis], scales[axis]
+        )
         location = step * (torch.arange(n, dtype=torch.float64) - n // 2) - shift
         shape = [1] * len(encodes) + [readout]
         shape[axis] = n
@@ -772,6 +788,8 @@ def WaveSense(  # noqa: N802  (it is a constructor)
     adc: float | None = None,
     resolution: float | tuple[float, ...] | None = None,
     offset: float | tuple[float, ...] = 0.0,
+    delay: float | tuple[float, ...] = 0.0,
+    scale: float | tuple[float, ...] = 1.0,
     positions: torch.Tensor | None = None,
     basis: torch.Tensor | None = None,
     toeplitz: bool = True,
@@ -837,6 +855,11 @@ def WaveSense(  # noqa: N802  (it is a constructor)
     offset : float or tuple of float
         How far the field of view's centre is from the isocentre along the
         phase encodes, in cm, one value or ``(z, y)``.
+    delay : float or tuple of float
+        How much later than nominal each wave runs, in milliseconds, one value
+        or ``(z, y)``.
+    scale : float or tuple of float
+        How much stronger than nominal each wave is, one value or ``(z, y)``.
     positions : tensor, optional
         Instead of a pattern, the phase encodes that were sampled, as for
         :func:`CartesianSense`: ``([frames,] shots, d)`` with ``(y,)`` in 2D,
@@ -884,8 +907,13 @@ def WaveSense(  # noqa: N802  (it is a constructor)
             raise ValueError(f"give psf=, or the gradient wave: {', '.join(missing)} missing")
         spatial_ndim = _grid_ndim(sensitivities, image_shape, kernels, ndim)
         encodes = tuple(image_shape)[len(image_shape) - spatial_ndim : -1]
-        psf = _wave_psf(readout, encodes, offset=offset, **wave)
-    elif any(value is not None for value in wave.values()) or offset != 0.0:
+        psf = _wave_psf(readout, encodes, offset=offset, delay=delay, scale=scale, **wave)
+    elif (
+        any(value is not None for value in wave.values())
+        or offset != 0.0
+        or delay != 0.0
+        or scale != 1.0
+    ):
         raise ValueError(
             "psf= is the point-spread function the gradient wave would make; give one or the other"
         )
