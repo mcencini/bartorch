@@ -9,6 +9,8 @@ over a Cartesian or a wave transform.
 
 from __future__ import annotations
 
+import math
+
 import torch
 
 from bartorch import _layout
@@ -416,6 +418,78 @@ class _WaveNative(_GridSense):
         return Built(ptr, self.image_shape, self.kspace_shape, keep=keep, device=self.device)
 
 
+#: The gyromagnetic ratio of hydrogen, in Hz per Gauss, as BART's ``wavepsf`` has it.
+_LARMOR = 4257.56
+
+
+def _fftc1(x: torch.Tensor, inverse: bool = False) -> torch.Tensor:
+    """The centred unitary transform of a vector of even length."""
+    fn = torch.fft.ifft if inverse else torch.fft.fft
+    return torch.fft.fftshift(fn(torch.fft.ifftshift(x), norm="ortho"))
+
+
+def _wave_phase_per_cm(readout, cycles, max_grad, max_slew, adc, cosine) -> torch.Tensor:
+    """Phase per cm along an oversampled readout of a sine or cosine gradient wave.
+
+    BART's ``wavepsf``: the wave on a 10 µs raster over ``adc`` milliseconds,
+    as strong as the amplitude and the slew allow, its phase integrated with
+    the trapezoid rule from the pre-phase that centres the sine, and resampled
+    to ``readout`` points by zero-filling its centred spectrum.
+    """
+    dt = 1e-5
+    points = int(round(adc * 1e-3 / dt))
+    w = 2 * math.pi * cycles / (points * dt)
+    amp = max_grad if max_slew >= w * max_grad else max_slew / w
+
+    t = torch.arange(points, dtype=torch.float64) * dt
+    g = amp * (torch.cos(w * t) if cosine else torch.sin(w * t))
+    before = torch.cumsum(g, 0) - g
+    phase = 2 * math.pi * _LARMOR * ((before + g / 2) * dt - amp / w)
+
+    spectrum = _fftc1(phase.to(torch.complex128))
+    start = abs(readout // 2 - points // 2)
+    if readout >= points:
+        resized = torch.zeros(readout, dtype=torch.complex128)
+        resized[start : start + points] = spectrum
+    else:
+        resized = spectrum[start : start + readout]
+    return _fftc1(resized, inverse=True).real * math.sqrt(readout / points)
+
+
+def _per_axis(value, n: int, what: str) -> tuple[float, ...]:
+    """One value for each of ``n`` phase-encode axes, ``(z, y)`` or ``(y,)``."""
+    values = (
+        tuple(float(v) for v in value) if isinstance(value, (tuple, list)) else (float(value),) * n
+    )
+    if len(values) != n:
+        raise ValueError(f"{what} has {len(values)} values for {n} phase-encode axes")
+    return values
+
+
+def _wave_psf(
+    readout, encodes, max_grad, max_slew, cycles, adc, resolution, offset
+) -> torch.Tensor:
+    """The wave point-spread function over ``(*encodes, readout)``.
+
+    A sine wave drives y and, in 3D, a cosine wave drives z; each axis
+    contributes ``exp(-i phase_per_cm * location)``, with a location in cm
+    measured from the middle voxel and shifted by ``offset``.
+    """
+    encodes = tuple(int(n) for n in encodes)
+    resolutions = _per_axis(resolution, len(encodes), "resolution")
+    offsets = _per_axis(offset, len(encodes), "offset")
+
+    out = torch.ones((*encodes, readout), dtype=torch.complex128)
+    for axis, (n, step, shift) in enumerate(zip(encodes, resolutions, offsets)):
+        cosine = len(encodes) == 2 and axis == 0
+        ppcm = _wave_phase_per_cm(readout, cycles, max_grad, max_slew, adc, cosine)
+        location = step * (torch.arange(n, dtype=torch.float64) - n // 2) - shift
+        shape = [1] * len(encodes) + [readout]
+        shape[axis] = n
+        out = out * torch.exp(-1j * location[:, None] * ppcm[None, :]).reshape(shape)
+    return out
+
+
 def _one_coil(values: torch.Tensor, rank: int, what: str) -> torch.Tensor:
     """``values`` without the leading axes of one that one coil's samples do not have."""
     while values.ndim > rank and values.shape[0] == 1:
@@ -577,12 +651,18 @@ def CartesianSense(  # noqa: N802  (it is a constructor)
 
 def WaveSense(  # noqa: N802  (it is a constructor)
     sensitivities: torch.Tensor,
-    psf: torch.Tensor,
     image_shape: Shape,
     readout: int,
     pattern: torch.Tensor | None = None,
     centred: bool = False,
     *,
+    psf: torch.Tensor | None = None,
+    max_grad: float | None = None,
+    max_slew: float | None = None,
+    cycles: int | None = None,
+    adc: float | None = None,
+    resolution: float | tuple[float, ...] | None = None,
+    offset: float | tuple[float, ...] = 0.0,
     positions: torch.Tensor | None = None,
     basis: torch.Tensor | None = None,
     toeplitz: bool = True,
@@ -605,6 +685,10 @@ def WaveSense(  # noqa: N802  (it is a constructor)
     where the arithmetic is -- on a card for host arrays -- so what crosses is
     the image and the samples.
 
+    The point-spread function is given, or made from the gradient wave: a sine
+    wave along y and, in 3D, a cosine wave along z, as BART's ``wavepsf`` makes
+    them and ``fmac`` combines them.
+
     With a basis this is Wave-Shuffling: the same encoding over coefficient
     images, the basis contracting the coefficients into frames, the pattern or
     the positions keeping the samples.
@@ -614,10 +698,6 @@ def WaveSense(  # noqa: N802  (it is a constructor)
     sensitivities : tensor
         Coil sensitivities ``([sets,] coils, [z,] y, x)``, or their k-space
         kernels with ``kernels=True``.
-    psf : tensor
-        The wave point-spread function on the oversampled grid, broadcast over
-        one coil's samples ``([z,] y, readout)``; the same for every frame.
-        :func:`bartorch.tools.wavepsf` makes one from the gradient waveform.
     image_shape : tuple of int
         The image, ``(*batches, [sets,] [coeffs,] [z,] y, x)``, before the
         readout is oversampled.  The samples are ``(*batches, coils,
@@ -632,6 +712,22 @@ def WaveSense(  # noqa: N802  (it is a constructor)
         Centre the two transforms, making them unitary.  BART's ``wave`` leaves
         them uncentred and unnormalized and this follows it; ``wshfl`` centres
         them for its calibration path.
+    psf : tensor, optional
+        The point-spread function on the oversampled grid, broadcast over one
+        coil's samples ``([z,] y, readout)``; the same for every frame.  Give
+        it or the gradient wave below.
+    max_grad, max_slew : float
+        The largest gradient amplitude in G/cm and slew rate in G/cm/s the
+        wave may use.  The wave takes the larger amplitude either allows.
+    cycles : int
+        Sine cycles over the readout.
+    adc : float
+        Readout duration in milliseconds, on a 10 µs gradient raster.
+    resolution : float or tuple of float
+        Voxel size in cm along the phase encodes, one value or ``(z, y)``.
+    offset : float or tuple of float
+        How far the field of view's centre is from the isocentre along the
+        phase encodes, in cm, one value or ``(z, y)``.
     positions : tensor, optional
         Instead of a pattern, the phase encodes that were sampled, as for
         :func:`CartesianSense`: ``([frames,] shots, d)`` with ``(y,)`` in 2D,
@@ -658,11 +754,33 @@ def WaveSense(  # noqa: N802  (it is a constructor)
 
     Examples
     --------
-    >>> psf = bartorch.tools.wavepsf(x=2 * x, y=y)
-    >>> A = WaveSense(maps, psf, (y, x), readout=2 * x, pattern=mask)
+    >>> A = WaveSense(maps, (z, y, x), readout=3 * x, pattern=mask,
+    ...               max_grad=2.7, max_slew=18700.0, cycles=5, adc=5.0688,
+    ...               resolution=(0.1, 0.1))
     >>> A.oshape
-    (coils, y, 2 * x)
+    (coils, z, y, 3 * x)
     """
+    from bartorch.linop.sense import _grid_ndim
+
+    wave = {
+        "max_grad": max_grad,
+        "max_slew": max_slew,
+        "cycles": cycles,
+        "adc": adc,
+        "resolution": resolution,
+    }
+    if psf is None:
+        missing = [name for name, value in wave.items() if value is None]
+        if missing:
+            raise ValueError(f"give psf=, or the gradient wave: {', '.join(missing)} missing")
+        spatial_ndim = _grid_ndim(sensitivities, image_shape, kernels, ndim)
+        encodes = tuple(image_shape)[len(image_shape) - spatial_ndim : -1]
+        psf = _wave_psf(readout, encodes, offset=offset, **wave)
+    elif any(value is not None for value in wave.values()) or offset != 0.0:
+        raise ValueError(
+            "psf= is the point-spread function the gradient wave would make; give one or the other"
+        )
+
     return _WaveNative(
         sensitivities,
         psf,

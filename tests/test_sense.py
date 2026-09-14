@@ -664,7 +664,7 @@ _KERNEL_CASES = {
         s, _kernel_image(s), traj=_KERNEL_TRAJ(), kernels=k, **o
     ),
     "wave": lambda s, k, **o: linop.WaveSense(
-        s, _KERNEL_PSF(), _kernel_image(s), readout=2 * N_K, kernels=k, ndim=2, **o
+        s, _kernel_image(s), psf=_KERNEL_PSF(), readout=2 * N_K, kernels=k, ndim=2, **o
     ),
     "cartesian subspace": lambda s, k, **o: linop.CartesianSense(
         s,
@@ -677,8 +677,8 @@ _KERNEL_CASES = {
     ),
     "wave subspace": lambda s, k, **o: linop.WaveSense(
         s,
-        _KERNEL_PSF(),
         _kernel_image(s, COEFFS_K),
+        psf=_KERNEL_PSF(),
         readout=2 * N_K,
         pattern=_KERNEL_MASK(),
         basis=_KERNEL_BASIS(),

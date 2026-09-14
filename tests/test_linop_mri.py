@@ -119,7 +119,7 @@ def _by_hand(maps, psf, mask, image, centred):
 @pytest.mark.parametrize("centred", [False, True])
 def test_wave_is_the_chain_bart_builds(wave_parts, centred):
     maps, psf, mask = wave_parts
-    A = linop.WaveSense(maps, psf, SHAPE, readout=WX, pattern=mask, centred=centred)
+    A = linop.WaveSense(maps, SHAPE, psf=psf, readout=WX, pattern=mask, centred=centred)
     image = _rand(*A.ishape)
     torch.testing.assert_close(
         A(image), _by_hand(maps, psf, mask, image, centred), rtol=1e-4, atol=1e-4
@@ -128,14 +128,14 @@ def test_wave_is_the_chain_bart_builds(wave_parts, centred):
 
 def test_wave_oversamples_the_readout_and_leaves_the_rest(wave_parts):
     maps, psf, mask = wave_parts
-    A = linop.WaveSense(maps, psf, SHAPE, readout=WX, pattern=mask)
+    A = linop.WaveSense(maps, SHAPE, psf=psf, readout=WX, pattern=mask)
     assert A.ishape == (Z, 5, SX)
     assert A.oshape == (COILS, Z, 5, WX)
 
 
 def test_wave_without_a_pattern_is_the_encoding_without_one(wave_parts):
     maps, psf, _ = wave_parts
-    A = linop.WaveSense(maps, psf, SHAPE, readout=WX)
+    A = linop.WaveSense(maps, SHAPE, psf=psf, readout=WX)
     assert A.oshape == (COILS, Z, 5, WX)
     image = _rand(*A.ishape)
     ones = torch.ones(1, Z, 5, WX, dtype=torch.complex64)
@@ -147,14 +147,14 @@ def test_wave_without_a_pattern_is_the_encoding_without_one(wave_parts):
 def test_a_readout_shorter_than_the_image_is_refused(wave_parts):
     maps, psf, mask = wave_parts
     with pytest.raises(ValueError, match="shorter than the image"):
-        linop.WaveSense(maps, psf, SHAPE, readout=SX - 1, pattern=mask)
+        linop.WaveSense(maps, SHAPE, psf=psf, readout=SX - 1, pattern=mask)
 
 
 def test_a_bank_that_is_neither_coils_nor_sets_of_them_is_refused(wave_parts):
     """The coils are the bank's to say, so what can be wrong with it is its rank."""
     _, psf, mask = wave_parts
     with pytest.raises(ValueError, match="are neither"):
-        linop.WaveSense(_rand(2, 2, COILS, Z, 5, SX), psf, SHAPE, readout=WX, pattern=mask)
+        linop.WaveSense(_rand(2, 2, COILS, Z, 5, SX), SHAPE, psf=psf, readout=WX, pattern=mask)
 
 
 # --- what both have to hold --------------------------------------------------
@@ -169,8 +169,8 @@ def _encodings():
     mask = (torch.rand(1, Z, 5, WX) > 0.4).to(torch.complex64)
     return [
         linop.CartesianSense(maps2d, (Y, X), pattern=mask2d),
-        linop.WaveSense(maps3d, psf, SHAPE, readout=WX, pattern=mask),
-        linop.WaveSense(maps3d, psf, SHAPE, readout=WX, centred=True),
+        linop.WaveSense(maps3d, SHAPE, psf=psf, readout=WX, pattern=mask),
+        linop.WaveSense(maps3d, SHAPE, psf=psf, readout=WX, centred=True),
     ]
 
 
@@ -431,8 +431,8 @@ def test_wave_takes_the_kernels_nlinv_produces(wave_parts):
     kernels = _rand(COILS, Z, 3, 4)
     dense = bartorch.kernels_to_maps(kernels, (Z, 5, SX))
 
-    a = linop.WaveSense(dense, psf, SHAPE, readout=WX, pattern=mask)
-    b = linop.WaveSense(kernels, psf, SHAPE, readout=WX, pattern=mask, kernels=True, ndim=3)
+    a = linop.WaveSense(dense, SHAPE, psf=psf, readout=WX, pattern=mask)
+    b = linop.WaveSense(kernels, SHAPE, psf=psf, readout=WX, pattern=mask, kernels=True, ndim=3)
 
     x = _rand(*a.ishape)
     torch.testing.assert_close(b(x), a(x), rtol=1e-4, atol=1e-4)
@@ -443,16 +443,16 @@ def test_wave_takes_the_kernels_nlinv_produces(wave_parts):
 @pytest.mark.parametrize("batch", [0, 1, 2, 4])
 def test_the_wave_coil_slab_changes_nothing(wave_parts, batch):
     maps, psf, mask = wave_parts
-    A = linop.WaveSense(maps, psf, SHAPE, readout=WX, pattern=mask, coil_batch=batch)
-    B = linop.WaveSense(maps, psf, SHAPE, readout=WX, pattern=mask, coil_batch=0)
+    A = linop.WaveSense(maps, SHAPE, psf=psf, readout=WX, pattern=mask, coil_batch=batch)
+    B = linop.WaveSense(maps, SHAPE, psf=psf, readout=WX, pattern=mask, coil_batch=0)
     x = _rand(*A.ishape)
     torch.testing.assert_close(A(x), B(x), rtol=1e-5, atol=1e-5)
 
 
 def test_wave_shuffling_is_wave_read_through_a_subspace(wave_parts, basis):
     maps, psf, _ = wave_parts
-    A = linop.WaveSense(maps, psf, (COEFFS, *SHAPE), readout=WX, basis=basis)
-    plain = linop.WaveSense(maps, psf, SHAPE, readout=WX)
+    A = linop.WaveSense(maps, (COEFFS, *SHAPE), psf=psf, readout=WX, basis=basis)
+    plain = linop.WaveSense(maps, SHAPE, psf=psf, readout=WX)
 
     assert A.ishape == (COEFFS, *plain.ishape)
     assert A.oshape == (COILS, FRAMES, *plain.oshape[1:])
@@ -465,9 +465,11 @@ def test_the_collapsed_normal_carries_to_wave(wave_parts, basis):
     torch.manual_seed(5)
     pattern = (torch.rand(FRAMES, Z, 5, 1) > 0.4).to(torch.complex64)
 
-    fast = linop.WaveSense(maps, psf, (COEFFS, *SHAPE), readout=WX, pattern=pattern, basis=basis)
+    fast = linop.WaveSense(
+        maps, (COEFFS, *SHAPE), psf=psf, readout=WX, pattern=pattern, basis=basis
+    )
     slow = linop.WaveSense(
-        maps, psf, (COEFFS, *SHAPE), readout=WX, pattern=pattern, basis=basis, toeplitz=False
+        maps, (COEFFS, *SHAPE), psf=psf, readout=WX, pattern=pattern, basis=basis, toeplitz=False
     )
 
     x = _rand(*fast.ishape)
@@ -574,7 +576,7 @@ def test_wave_carries_several_sets_too(wave_parts):
     torch.manual_seed(10)
     sets_bank = _rand(SETS, COILS, Z, 5, SX)
 
-    A = linop.WaveSense(sets_bank, psf, (SETS, *SHAPE), readout=WX, pattern=mask)
+    A = linop.WaveSense(sets_bank, (SETS, *SHAPE), psf=psf, readout=WX, pattern=mask)
     assert A.ishape == (SETS, Z, 5, SX)
     assert A.oshape == (COILS, Z, 5, WX)
     assert _adjointness(A) < 1e-5
@@ -911,8 +913,10 @@ def wave_subspace():
 @pytest.mark.parametrize("centred", [False, True])
 def test_sampled_wave_samples_are_the_dense_ones_at_the_positions(wave_subspace, centred):
     maps, psf, b, positions, shape, wx = wave_subspace
-    A = linop.WaveSense(maps, psf, shape, readout=wx, positions=positions, basis=b, centred=centred)
-    dense = linop.WaveSense(maps, psf, shape, readout=wx, basis=b, centred=centred)
+    A = linop.WaveSense(
+        maps, shape, psf=psf, readout=wx, positions=positions, basis=b, centred=centred
+    )
+    dense = linop.WaveSense(maps, shape, psf=psf, readout=wx, basis=b, centred=centred)
     assert A.oshape == (maps.shape[0], b.shape[1], positions.shape[1], wx)
 
     image = _rand(*shape)
@@ -926,10 +930,10 @@ def test_sampled_wave_samples_are_the_dense_ones_at_the_positions(wave_subspace,
 def test_sampled_wave_normal_is_the_two_applications_and_the_dense_one(wave_subspace, centred):
     maps, psf, b, positions, shape, wx = wave_subspace
     common = dict(readout=wx, basis=b, centred=centred)
-    fast = linop.WaveSense(maps, psf, shape, positions=positions, **common)
-    slow = linop.WaveSense(maps, psf, shape, positions=positions, toeplitz=False, **common)
+    fast = linop.WaveSense(maps, shape, psf=psf, positions=positions, **common)
+    slow = linop.WaveSense(maps, shape, psf=psf, positions=positions, toeplitz=False, **common)
     dense = linop.WaveSense(
-        maps, psf, shape, pattern=_counts_pattern(positions, shape[1:3]), **common
+        maps, shape, psf=psf, pattern=_counts_pattern(positions, shape[1:3]), **common
     )
 
     image = _rand(*shape)
@@ -941,7 +945,7 @@ def test_sampled_wave_normal_is_the_two_applications_and_the_dense_one(wave_subs
 def test_a_wave_pattern_along_the_readout_keeps_the_two_applications(wave_parts):
     """The readout is not the phase-encode transform's to cancel."""
     maps, psf, mask = wave_parts
-    A = linop.WaveSense(maps, psf, SHAPE, readout=WX, pattern=mask)
+    A = linop.WaveSense(maps, SHAPE, psf=psf, readout=WX, pattern=mask)
     x = _rand(*A.ishape)
     want = A.adjoint(A(x))
     got = A.normal(x)
@@ -954,8 +958,8 @@ def test_on_a_card_the_wave_normal_runs_through_cufft_and_is_the_host_one(wave_s
     maps, psf, b, positions, shape, wx = wave_subspace
     pattern = _counts_pattern(positions, shape[1:3])
     common = dict(readout=wx, pattern=pattern, basis=b, centred=centred)
-    A = linop.WaveSense(maps, psf, shape, device="cuda", **common)
-    host = linop.WaveSense(maps, psf, shape, **common)
+    A = linop.WaveSense(maps, shape, psf=psf, device="cuda", **common)
+    host = linop.WaveSense(maps, shape, psf=psf, **common)
 
     image = _rand(*shape)
     before = library().bartorch_grid_fused()
@@ -976,8 +980,8 @@ def test_on_a_card_the_wave_normal_runs_through_cufft_and_is_the_host_one(wave_s
 def test_on_a_card_a_sampled_wave_runs_through_cufft_and_is_the_host_one(wave_subspace, centred):
     maps, psf, b, positions, shape, wx = wave_subspace
     common = dict(readout=wx, positions=positions, basis=b, centred=centred)
-    A = linop.WaveSense(maps, psf, shape, device="cuda", **common)
-    host = linop.WaveSense(maps, psf, shape, **common)
+    A = linop.WaveSense(maps, shape, psf=psf, device="cuda", **common)
+    host = linop.WaveSense(maps, shape, psf=psf, **common)
 
     image = _rand(*shape)
     before = library().bartorch_grid_fused()
@@ -992,3 +996,64 @@ def test_on_a_card_a_sampled_wave_runs_through_cufft_and_is_the_host_one(wave_su
 
     want = host.normal(image)
     assert (A.normal(image) - want).abs().max() / want.abs().max() < 1e-5
+
+
+# --- the wave point-spread function from the gradient wave ------------------
+#
+# Checked against BART's own ``wavepsf``, which makes the sine wave along y
+# with ``-c`` making the cosine one, combined as its help says with ``fmac``.
+
+WAVE = dict(max_grad=0.8, max_slew=17000.0, cycles=6, adc=3.0)
+TOOL = dict(a=3000, t=1e-5, g=0.8, s=17000.0, n=6)
+
+
+def test_the_wave_psf_along_y_is_barts_wavepsf():
+    import bartorch.tools as bt
+    from bartorch.linop.mri import _wave_psf
+
+    wx, ny, dy = 64, 16, 0.1
+    got = _wave_psf(wx, (ny,), resolution=dy, offset=0.0, **WAVE)
+    want = bt.wavepsf(x=wx, y=ny, r=dy, **TOOL).reshape(ny, wx)
+    torch.testing.assert_close(got.to(want.dtype), want, rtol=1e-4, atol=1e-4)
+
+
+def test_the_wave_psf_in_3d_is_barts_cosine_wave_along_z_times_the_sine_along_y():
+    import bartorch.tools as bt
+    from bartorch.linop.mri import _wave_psf
+
+    wx, nz, ny, dz, dy = 64, 8, 16, 0.2, 0.1
+    got = _wave_psf(wx, (nz, ny), resolution=(dz, dy), offset=0.0, **WAVE)
+    along_z = bt.wavepsf(c=True, x=wx, y=nz, r=dz, **TOOL).reshape(nz, 1, wx)
+    along_y = bt.wavepsf(x=wx, y=ny, r=dy, **TOOL).reshape(1, ny, wx)
+    want = along_z * along_y
+    torch.testing.assert_close(got.to(want.dtype), want, rtol=1e-4, atol=1e-4)
+
+
+def test_an_offset_moves_the_wave_psf_along_its_axis():
+    """An isocentre two voxels away is the same function two voxels along."""
+    from bartorch.linop.mri import _wave_psf
+
+    wx, ny, dy = 64, 16, 0.1
+    base = _wave_psf(wx, (ny,), resolution=dy, offset=0.0, **WAVE)
+    moved = _wave_psf(wx, (ny,), resolution=dy, offset=2 * dy, **WAVE)
+    torch.testing.assert_close(moved[2:], base[:-2])
+
+
+def test_wave_sense_makes_its_psf_from_the_gradient_wave(wave_parts):
+    from bartorch.linop.mri import _wave_psf
+
+    maps, _, mask = wave_parts
+    made = linop.WaveSense(maps, SHAPE, readout=WX, pattern=mask, resolution=(0.2, 0.1), **WAVE)
+    psf = _wave_psf(WX, SHAPE[:-1], resolution=(0.2, 0.1), offset=0.0, **WAVE)
+    given = linop.WaveSense(maps, SHAPE, readout=WX, pattern=mask, psf=psf)
+
+    x = _rand(*given.ishape)
+    torch.testing.assert_close(made(x), given(x), rtol=1e-6, atol=1e-6)
+
+
+def test_wave_sense_says_what_its_psf_is_missing(wave_parts):
+    maps, psf, _ = wave_parts
+    with pytest.raises(ValueError, match="cycles, adc missing"):
+        linop.WaveSense(maps, SHAPE, readout=WX, max_grad=0.8, max_slew=17000.0, resolution=0.1)
+    with pytest.raises(ValueError, match="one or the other"):
+        linop.WaveSense(maps, SHAPE, readout=WX, psf=psf, cycles=6)
