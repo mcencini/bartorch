@@ -71,3 +71,63 @@ __device__ void bartorch_store_out(void* out, unsigned long long off, cufftCompl
 
 	c->dst[off] = cuCaddf(c->dst[off], cuCmulf(val, w));
 }
+
+
+/* --- a Cartesian normal (grid.cuh) --------------------------------------
+ *
+ * The transform goes over the axes the pattern varies along, batched over the
+ * rest; the image is read and written in BART's layout through the index
+ * grid_index recovers.  The forward reads a coefficient multiplied by the
+ * sensitivity, the centring and the unitary scale, and writes the kept places
+ * into the gathered spectrum; the inverse reads the gathered spectrum, zeros
+ * elsewhere, and adds what it writes, multiplied by the conjugates, into the
+ * answer. */
+
+#include "grid.cuh"
+
+__device__ cufftComplex bartorch_grid_load_in(void* in, unsigned long long off, void* info, void* shared)
+{
+	const struct grid_info* g = (const struct grid_info*)info;
+
+	cuFloatComplex w;
+	unsigned int i = grid_index(g, (unsigned int)off, &w);
+
+	if (NULL != g->map)
+		w = cuCmulf(g->map[i], w);
+
+	return cuCmulf(g->src[i], w);
+}
+
+__device__ void bartorch_grid_store_gather(void* out, unsigned long long off, cufftComplex val, void* info, void* shared)
+{
+	const struct grid_info* g = (const struct grid_info*)info;
+
+	long j = grid_kept(g, (unsigned int)off);
+
+	if (0 <= j)
+		g->bank[j] = val;
+}
+
+__device__ cufftComplex bartorch_grid_load_scatter(void* in, unsigned long long off, void* info, void* shared)
+{
+	const struct grid_info* g = (const struct grid_info*)info;
+
+	long j = grid_kept(g, (unsigned int)off);
+
+	return (0 <= j) ? g->bank[j] : make_cuFloatComplex(0.f, 0.f);
+}
+
+__device__ void bartorch_grid_store_out(void* out, unsigned long long off, cufftComplex val, void* info, void* shared)
+{
+	const struct grid_info* g = (const struct grid_info*)info;
+
+	cuFloatComplex w;
+	unsigned int i = grid_index(g, (unsigned int)off, &w);
+
+	w = cuConjf(w);
+
+	if (NULL != g->map)
+		w = cuCmulf(cuConjf(g->map[i]), w);
+
+	g->dst[i] = cuCaddf(g->dst[i], cuCmulf(val, w));
+}

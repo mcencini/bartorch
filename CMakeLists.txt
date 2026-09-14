@@ -302,6 +302,7 @@ if(BARTORCH_CUDA)
                 -DNAME=bartorch_fft_callbacks_lto
                 -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed.cmake"
         DEPENDS "${_lto_src}" "${CMAKE_CURRENT_SOURCE_DIR}/src/csrc/ops/coset.cuh"
+                "${CMAKE_CURRENT_SOURCE_DIR}/src/csrc/ops/grid.cuh"
                 "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed.cmake"
         VERBATIM)
     list(APPEND BARTORCH_SOURCES "${_lto_hdr}")

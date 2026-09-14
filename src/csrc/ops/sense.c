@@ -68,6 +68,12 @@ extern void bartorch_nufft_coset_normal_sense(const struct linop_s* op,
 		const long map_strs[], const complex float* map, int last);
 extern void bartorch_nufft_coset_end(const struct linop_s* op);
 
+/* Provided by grid.c: a Cartesian transform's normal, run through cuFFT's
+ * callbacks with the sensitivity handed in, where the card allows it. */
+extern int bartorch_grid_folds(const struct linop_s* op, const void* ref);
+extern void bartorch_grid_normal_sense(const struct linop_s* op, complex float* dst, const complex float* src,
+		const long map_strs[DIMS], const complex float* map);
+
 #ifdef USE_CUDA
 /* csrc/kernels.cu: a volume times BART's inverse fftmod along its first three axes. */
 extern void bartorch_cuda_modulate(const long dims[3], long rest, const long grid[3], const long off[3],
@@ -617,6 +623,19 @@ static void normal_slab_folded(const struct sense_s* d, long coil, const complex
 	bartorch_nufft_coset_normal_sense(d->slab, c->dst, c->src, mstrs, map, last);
 }
 
+/* The same for a Cartesian transform: the sensitivity goes on as a
+ * coefficient is read into the transform and comes off as it is written
+ * into the answer, so here too no coil image is made. */
+static void normal_slab_gridded(const struct sense_s* d, long coil, const complex float* map,
+		const long* mstrs, bool last, void* _c)
+{
+	(void)coil;
+	(void)last;
+	struct slab_ctx* c = _c;
+
+	bartorch_grid_normal_sense(d->slab, c->dst, c->src, mstrs, map);
+}
+
 static void sense_forward(const linop_data_t* _d, complex float* dst, const complex float* src)
 {
 	const auto d = CAST_DOWN(sense_s, _d);
@@ -701,19 +720,28 @@ static void sense_normal(const linop_data_t* _d, complex float* dst, const compl
 	complex float* src_on = onto_card(d->img_dims, src, true);
 	complex float* dst_on = onto_card(d->img_dims, dst, false);
 
+	/* A Cartesian transform folds the sensitivity in the same way, where its
+	 * normal runs through cuFFT on the card the image is on. */
+	bool gridded = !folds && d->fold && (1 == d->slab_dims[MAPS_DIM])
+			&& (0 != bartorch_grid_folds(d->slab, dst_on));
+
 	/* The caller's pages are faulted in while the card works (cuda.c). */
 	void* faulting = (dst_on != dst) ? bartorch_host_prefault_begin(dst, md_calc_size(DIMS, d->img_dims) * (long)CFL_SIZE) : NULL;
 
 	struct slab_ctx c = {
 
 		.dst = dst_on, .src = src_on,
-		.cim = folds ? NULL : md_alloc_sameplace(DIMS, d->cim_dims, CFL_SIZE, dst_on),
-		.nrm = folds ? NULL : md_alloc_sameplace(DIMS, d->cim_dims, CFL_SIZE, dst_on),
+		.cim = (folds || gridded) ? NULL : md_alloc_sameplace(DIMS, d->cim_dims, CFL_SIZE, dst_on),
+		.nrm = (folds || gridded) ? NULL : md_alloc_sameplace(DIMS, d->cim_dims, CFL_SIZE, dst_on),
 	};
 
 	md_clear(DIMS, d->img_dims, dst_on, CFL_SIZE);
 
-	if (0 == cosets) {
+	if (gridded) {
+
+		drive_slabs(d, dst_on, normal_slab_gridded, &c, NULL);
+
+	} else if (0 == cosets) {
 
 		drive_slabs(d, dst_on, normal_slab, &c, NULL);
 

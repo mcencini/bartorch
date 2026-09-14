@@ -237,6 +237,9 @@ BARTORCH_API bartorch_linop* bartorch_linop_cartesian(const long* max_dims, cons
 		const void* sens, int kernels,
 		const long* pat_dims, const void* pattern,
 		const long* bas_dims, const void* basis);
+/* Normals of a Cartesian encoding applied through cuFFT's callbacks since the
+ * library was loaded; the rest were applied as BART's chain of operators. */
+BARTORCH_API long bartorch_grid_fused(void);
 /* The coil multiply on its own, over sensitivities held as maps or as kernels,
  * walking the coils a slab at a time.  For an encoding whose transform is not
  * a Fourier transform and so cannot be a SENSE operator. */

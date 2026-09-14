@@ -633,3 +633,65 @@ def test_the_native_subspace_normal_is_the_model_written_out():
 
     got = A.normal(image)
     assert (got - want).abs().max() / want.abs().max() < 1e-5
+
+
+# On a card the normal runs inside cuFFT's transforms, so what is checked there
+# is that it did, and that it is still the model written out.
+
+import bartorch  # noqa: E402  (for the card marker)
+from bartorch._lib import library  # noqa: E402
+
+requires_cuda = pytest.mark.skipif(
+    not bartorch._cuda.available(), reason="no CUDA device, or the library was built without CUDA"
+)
+
+
+@requires_cuda
+@pytest.mark.parametrize("shape", [(1, 16, 12), (6, 8, 10)])
+def test_on_a_card_the_normal_runs_through_cufft_and_is_the_model_written_out(shape):
+    """Host arrays and the operator on a card, with a pattern that varies along
+    one axis: cuFFT links no callbacks into a transform along one axis, so the
+    normal transforms a second, flat axis as well and is the same normal."""
+    torch.manual_seed(8)
+    coils = 3
+    z, y, x = shape
+    maps = _rand(coils, z, y, x)
+    mask = (torch.rand(1, 1, y, 1) > 0.5).to(torch.complex64)
+    A = linop.CartesianSense(maps, (coils, z, y, x), pattern=mask, device="cuda")
+
+    image = _rand(z, y, x)
+    before = library().bartorch_grid_fused()
+    got = A.normal(image)
+    assert library().bartorch_grid_fused() > before, "the normal ran through cuFFT's callbacks"
+
+    k = _fftc(maps * image, (-3, -2, -1)) * mask
+    want = (maps.conj() * _ifftc(k * mask.conj(), (-3, -2, -1))).sum(0)
+    assert (got - want).abs().max() / want.abs().max() < 1e-5
+
+
+@requires_cuda
+def test_on_a_card_the_subspace_normal_runs_through_cufft_and_is_the_model_written_out():
+    torch.manual_seed(9)
+    coils, z, y, x, frames, coeffs = 3, 4, 8, 6, 5, 2
+    maps = _rand(coils, z, y, x)
+    b = _rand(coeffs, frames)
+    pattern = (torch.rand(frames, z, y, 1) > 0.5).to(torch.complex64)
+    A = linop.CartesianSense(
+        maps,
+        (coils, z, y, x),
+        pattern=pattern.reshape(1, frames, 1, 1, z, y, 1),
+        basis=b.reshape(coeffs, frames, 1, 1, 1, 1, 1),
+        device="cuda",
+    )
+
+    image = _rand(*A.ishape)
+    before = library().bartorch_grid_fused()
+    got = A.normal(image)
+    assert library().bartorch_grid_fused() > before, "the normal ran through cuFFT's callbacks"
+
+    coeff_images = image.reshape(coeffs, 1, z, y, x)
+    k = _fftc(maps[None] * coeff_images, (-3, -2, -1))
+    frame_k = torch.einsum("kt,kczyx->tczyx", b, k) * pattern[:, None]
+    back = torch.einsum("kt,tczyx->kczyx", b.conj(), frame_k * pattern[:, None].conj())
+    want = (maps.conj()[None] * _ifftc(back, (-3, -2, -1))).sum(1).reshape(A.ishape)
+    assert (got - want).abs().max() / want.abs().max() < 1e-5

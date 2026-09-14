@@ -288,3 +288,49 @@ extern "C" int bartorch_cuda_contract_upper_real_bf16(long L, int R, _Complex fl
 
 	return 0;
 }
+
+
+/* A coil's gathered spectrum under a Cartesian normal, laid out with the
+ * coefficients slowest, the batch next and the kept places fastest,
+ * multiplied at each place by that place's coefficients-by-coefficients
+ * kernel and written back over itself.  Entry (r, c) of the kernel at place l
+ * is `K[(l R + r) R + c]`: the kernel varies over the transformed plane only,
+ * so every batch reads the same one. */
+__global__ static void kern_contract_grid(long L, long B, int R, cuFloatComplex* bank, const cuFloatComplex* K)
+{
+	long start = threadIdx.x + (long)blockDim.x * blockIdx.x;
+	long stride = (long)blockDim.x * gridDim.x;
+	long n = L * B;
+
+	for (long i = start; i < n; i += stride) {
+
+		long l = i % L;
+
+		cuFloatComplex in[CONTRACT_MAX];
+
+		for (int c = 0; c < R; c++)
+			in[c] = bank[c * n + i];
+
+		for (int r = 0; r < R; r++) {
+
+			cuFloatComplex acc = make_cuFloatComplex(0.f, 0.f);
+
+			for (int c = 0; c < R; c++)
+				acc = cuCaddf(acc, cuCmulf(K[(l * R + r) * R + c], in[c]));
+
+			bank[r * n + i] = acc;
+		}
+	}
+}
+
+extern "C" int bartorch_cuda_contract_grid(long L, long B, int R, _Complex float* bank, const _Complex float* K)
+{
+	if ((R < 1) || (R > CONTRACT_MAX))
+		return -1;
+
+	kern_contract_grid<<<grid_for(L * B), 256, 0, cuda_get_stream()>>>(L, B, R, (cuFloatComplex*)bank, (const cuFloatComplex*)K);
+
+	CUDA_KERNEL_ERROR;
+
+	return 0;
+}
