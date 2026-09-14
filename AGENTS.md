@@ -670,10 +670,23 @@ nothing the second time. The letters are BART's own, and a test holds every
 one this package offers against `grecon/optreg.c`, because a term BART does
 not know is answered with `error()` and that leaves the library spinning.
 
-Three of BART's terms are absent: TGV and the two infimal convolutions extend
-the optimisation variable, and what they add is counted across the whole set
-(`ropts->svars`, and the assertion at the end of `opt_reg_configure`), so one
-cannot be built alone. `tools.pics` reaches them.
+Three of BART's terms cannot be built alone: TGV and the two infimal
+convolutions extend the optimisation variable, and what they add is counted
+across the whole set (`ropts->svars`, and the assertion at the end of
+`opt_reg_configure`).  `bartorch_solve` configures the set itself when one is
+present, so `tools.pics`, `optim.ADMM` and `optim.PRIDU` all take them; the
+solve then runs inside the library and does not unroll.
+
+**Two habits of BART's arithmetic** decide whether a loop written out in
+`optim/iterators.py` answers with the library's bits, and both are easy to
+undo by accident.  Every scalar is a C `float` unless the library declares a
+`double`, and a scalar worked out in a double and rounded once at the end is a
+different number.  And a vector is scaled by a coefficient rather than divided
+by its reciprocal: `chambolle_pock` works out `1 / sigma`, `1 / (1 + sigma)`
+and `-sigma / (1 + sigma)` once, in a double, and rounds each to a float;
+dividing the tensor instead agrees while `sigma` is where `pics` starts it and
+stops agreeing once the adaptive step has moved it.  `_single`, `_norm`,
+`_ravine` and `_formula` are where that is kept.
 
 **The order costs nothing.** A C-order tensor of shape `(a, b, c)` and a BART
 array of dims `[c, b, a]` are the same bytes, so the boundary reverses the

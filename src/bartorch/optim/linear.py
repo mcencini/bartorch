@@ -711,6 +711,12 @@ class CG(_Solver):
         ``tol * ||A^H y||``.  Zero, BART's default, runs every iteration.
     cclambda : float
         Weight of an identity added to the normal operator (``pics -q``).
+    precond : LinearOperator, optional
+        Left preconditioner, ``lsqr2_create``'s ``precond_op``: chained onto
+        the normal operator and onto the adjoint, so the iteration sees
+        ``M(A^H A + lambda) x = M A^H y``.  Must be positive definite --
+        BART composes it without symmetrizing.  ``pics`` passes NULL, so
+        nothing on the command line has used it.
 
     Notes
     -----
@@ -851,6 +857,12 @@ class IST(_Solver):
         BART's ``hogwild`` setting (``pics -H``).
     cclambda : float
         Weight of an identity added to the normal operator (``pics -q``).
+    precond : LinearOperator, optional
+        Left preconditioner, ``lsqr2_create``'s ``precond_op``: chained onto
+        the normal operator and onto the adjoint, so the iteration sees
+        ``M(A^H A + lambda) x = M A^H y``.  Must be positive definite --
+        BART composes it without symmetrizing.  ``pics`` passes NULL, so
+        nothing on the command line has used it.
     """
 
     _algorithm = "ist"
@@ -977,6 +989,12 @@ class FISTA(IST):
         keeps BART's.
     cclambda : float
         Weight of an identity added to the normal operator (``pics -q``).
+    precond : LinearOperator, optional
+        Left preconditioner, ``lsqr2_create``'s ``precond_op``: chained onto
+        the normal operator and onto the adjoint, so the iteration sees
+        ``M(A^H A + lambda) x = M A^H y``.  Must be positive definite --
+        BART composes it without symmetrizing.  ``pics`` passes NULL, so
+        nothing on the command line has used it.
     """
 
     _algorithm = "fista"
@@ -1090,10 +1108,15 @@ class ADMM(_Solver):
         whatever ``iter_admm_defaults`` says, so the budget is what stops
         ``pics``; these are out of reach of :meth:`in_library`.
     cg_maxiter_first : int, optional
-        A separate budget for the first step's inner solve.  Not BART's --
-        it is riesling's ``iters0``, the one thing that implementation has
-        that BART's does not -- so it is out of reach of :meth:`in_library`
-        as well.
+        A separate budget for the first step's inner solve, where there is no
+        warm start to build on.  Not BART's, so out of reach of
+        :meth:`in_library` as well.
+    precond : LinearOperator, optional
+        Left preconditioner, ``lsqr2_create``'s ``precond_op``: chained onto
+        the normal operator and onto the adjoint, so the iteration sees
+        ``M(A^H A + lambda) x = M A^H y``.  Must be positive definite --
+        BART composes it without symmetrizing.  ``pics`` passes NULL, so
+        nothing on the command line has used it.
     """
 
     _algorithm = "admm"
@@ -1299,6 +1322,12 @@ class PRIDU(_Solver):
         Decay the steps by a factor of 0.95 (``pics -H``).
     cclambda : float
         Weight of an identity added to the normal operator (``pics -q``).
+    precond : LinearOperator, optional
+        Left preconditioner, ``lsqr2_create``'s ``precond_op``: chained onto
+        the normal operator and onto the adjoint, so the iteration sees
+        ``M(A^H A + lambda) x = M A^H y``.  Must be positive definite --
+        BART composes it without symmetrizing.  ``pics`` passes NULL, so
+        nothing on the command line has used it.
     """
 
     _algorithm = "pridu"
@@ -1425,6 +1454,12 @@ class NIHT(_Solver):
     maxiter : int
     cclambda : float
         Weight of an identity added to the normal operator (``pics -q``).
+    precond : LinearOperator, optional
+        Left preconditioner, ``lsqr2_create``'s ``precond_op``: chained onto
+        the normal operator and onto the adjoint, so the iteration sees
+        ``M(A^H A + lambda) x = M A^H y``.  Must be positive definite --
+        BART composes it without symmetrizing.  ``pics`` passes NULL, so
+        nothing on the command line has used it.
     """
 
     _algorithm = "niht"
@@ -1459,6 +1494,22 @@ class EulerMaruyama(_Solver):
         estimated with 30 power iterations (``pics -e``).
     cclambda : float
         Weight of an identity added to the normal operator (``pics -q``).
+    precond : LinearOperator, optional
+        Left preconditioner, ``lsqr2_create``'s ``precond_op``: chained onto
+        the normal operator and onto the adjoint, so the iteration sees
+        ``M(A^H A + lambda) x = M A^H y``.  Must be positive definite --
+        BART composes it without symmetrizing.  ``pics`` passes NULL, so
+        nothing on the command line has used it.
+    sampler_precond : LinearOperator, optional
+        A different thing: ``eulermaruyama_precond``, the one place in BART
+        where a preconditioned conjugate-gradient solve really runs.  Every
+        step solves ``(M^H M + diag) o = x``.  ``pics`` has no flag for it.
+    sampler_precond_diag : float
+        The ``diag`` above.  BART enters that path on a positive diagonal
+        rather than on the operator, so a preconditioner without one would be
+        ignored; this refuses it instead.
+    sampler_precond_tol, sampler_precond_maxiter : float, int
+        That solve's tolerance and iteration count.
     """
 
     _algorithm = "eulermaruyama"
