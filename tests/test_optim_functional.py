@@ -157,7 +157,7 @@ def test_the_denoiser_is_what_changes_the_answer(problem):
 def test_there_is_no_library_route_for_a_denoiser(problem):
     """BART has no way to be handed one, and the refusal says so rather than
     quietly running something else."""
-    from bartorch.optim.iterators import AsTerm
+    from bartorch.optim._iterators import AsTerm
 
     A, y = problem
     solver = optim.FISTA(AsTerm(_denoiser(), 0.05), maxiter=6, step=0.7)
@@ -194,7 +194,7 @@ def test_the_function_runs_the_iteration_and_not_a_second_implementation(
     problem, monkeypatch, call, iteration
 ):
     """The route is function -> solver -> the iteration in
-    :mod:`bartorch.optim.iterators`, and nothing in between writes the
+    :mod:`bartorch.optim._iterators`, and nothing in between writes the
     algorithm out again.
 
     Worth pinning rather than assuming: the whole claim that a plug-and-play
@@ -202,7 +202,7 @@ def test_the_function_runs_the_iteration_and_not_a_second_implementation(
     being exactly one copy of each iteration, and that is the copy the suite
     holds against the library.
     """
-    from bartorch.optim import iterators
+    from bartorch.optim import _iterators as iterators
 
     cls = getattr(iterators, iteration)
     seen = []

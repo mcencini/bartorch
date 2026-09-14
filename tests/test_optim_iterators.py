@@ -19,7 +19,7 @@ import torch
 
 import bartorch
 from bartorch import linop, optim, prox
-from bartorch.optim import iterators
+from bartorch.optim import _iterators as iterators
 
 
 def _rand(*shape):

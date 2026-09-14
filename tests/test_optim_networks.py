@@ -21,7 +21,7 @@ import torch
 
 import bartorch
 from bartorch import linop, optim, prox
-from bartorch.optim.iterators import AsTerm
+from bartorch.optim._iterators import AsTerm
 
 SHAPE = (1, 8, 8)
 

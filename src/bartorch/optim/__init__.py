@@ -1,10 +1,11 @@
-"""BART's iterative algorithms, one class per algorithm.
+"""BART's iterative algorithms, as a class and a function per algorithm.
 
-A solver is configured once and called as ``solver(y, A, x0=None)``.  The
-iteration is BART's, the one ``pics`` or ``nlinv`` runs: for the proximal
-solvers the loop is written out in :mod:`bartorch.optim.iterators` and each
-step calls the library, and for the rest the whole solve is one call into it.
-``solver.in_library(y, A)`` is BART's own loop, and answers with the same bits.
+A solver is configured once and called as ``solver(y, A, x0=None)``; the
+function ``optim.fista(y, A, term)`` is that call in one expression.  The
+iteration is BART's, the one ``pics`` or ``nlinv`` runs: the proximal solvers
+step through Python, so that a solver can be unrolled, and the rest solve in
+one call into the library.  ``solver.in_library(y, A)`` is BART's own loop
+either way, and answers with the same bits.
 """
 
 from __future__ import annotations

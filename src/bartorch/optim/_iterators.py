@@ -1,9 +1,10 @@
 """BART's proximal iterations, written as ``deepinv`` optimizers.
 
-The same arithmetic in the same order, with every operator still the library's
--- which is what lets a solver here be unrolled into a network or driven to a
-fixed point, and what the suite holds against the library's own answer to the
-bit.
+What :class:`~bartorch.optim.FISTA` and the other proximal solvers step
+through: the same arithmetic in the same order, with every operator still the
+library's, which is what lets ``solver.unrolled()`` be a torch graph over
+BART's own kernels.  A solver builds its own step, so nothing here is named to
+run one; these are reachable for a ``deepinv`` ``BaseOptim`` assembled by hand.
 
 ``deepinv`` is imported on first use rather than at import time, so a script
 that only builds operators does not pay for it.

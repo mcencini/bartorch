@@ -3,8 +3,7 @@
 ``optim.fista(y, A, term, maxiter=30)`` is ``optim.FISTA(term,
 maxiter=30)(y, A)``.  They take one argument the classes do not: a ``deepinv``
 prior or a bare denoiser goes wherever a :mod:`bartorch.prox` term goes, with
-``g_param`` as its own parameter.  What runs is still the iteration in
-:mod:`bartorch.optim.iterators`.
+``g_param`` as its own parameter.  What runs is the class.
 """
 
 from __future__ import annotations
@@ -33,7 +32,7 @@ def _priors(regularizers, g_param: float | None):
             # it passes this one by.
             wrapped.append(term)
         else:
-            from bartorch.optim.iterators import AsTerm
+            from bartorch.optim._iterators import AsTerm
 
             wrapped.append(term if isinstance(term, AsTerm) else AsTerm(term, g_param))
 

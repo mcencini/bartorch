@@ -63,33 +63,11 @@ goes, which the classes do not take.  `niht` and {class}`NIHT` refuse: BART's
 own iteration asserts against the operator `lsqr2` hands it, so no NIHT solve
 runs, `bart pics -R H` included.
 
-## Iterations
+## Unrolling
 
-`bartorch.optim.iterators`.  The same iterations written as
-`deepinv.optim.optim_iterators.OptimIterator` classes, so that a solver here
-can be unrolled into a network ({meth}`~CG.unrolled`) or driven to a fixed
-point ({meth}`~CG.fixed_point`).
-
-```{eval-rst}
-.. currentmodule:: bartorch.optim.iterators
-
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
-
-   ISTIteration
-   FISTAIteration
-   ADMMIteration
-   PRIDUIteration
-   NormalEquations
-   TermPrior
-   AsTerm
-```
-
-Every operator a step applies is recorded, so an unrolled iteration is a torch
-graph over BART's arithmetic.  Two things are deliberately not in it: BART's
-proximal operators, which carry no derivative, and the residual norms that
-steer $\rho$, $\tau$ and the stopping test.
+{meth}`~CG.unrolled` makes a solver a torch network and {meth}`~CG.fixed_point`
+drives it to a fixed point.  Both build the step themselves; there is no
+iteration class to name.
 
 ```python
 net = optim.FISTA(denoiser, maxiter=10, step=0.9).unrolled(
@@ -98,9 +76,10 @@ net = optim.FISTA(denoiser, maxiter=10, step=0.9).unrolled(
 image = net(kspace[None], bartorch.to_deepinv(A))
 ```
 
-```{eval-rst}
-.. currentmodule:: bartorch.optim
-```
+Every operator a step applies is recorded, so the graph is over BART's own
+arithmetic.  Two things are deliberately not in it: BART's proximal operators,
+which carry no derivative, and the residual norms that steer $\rho$, $\tau$ and
+the stopping test.
 
 ## Preconditioning
 

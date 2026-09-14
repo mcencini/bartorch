@@ -346,7 +346,7 @@ def test_a_term_that_adds_unknowns_refuses_a_tracked_right_hand_side():
 
 
 def test_a_term_that_adds_unknowns_does_not_unroll():
-    """The step written out in ``bartorch.optim.iterators`` walks the image;
+    """The step written out in ``bartorch.optim._iterators`` walks the image;
     this one walks the image and the fields behind it, and BART is where that
     vector is laid out."""
     solver = optim.ADMM(prox.TotalGeneralizedVariation((-1, -2), 0.01), maxiter=4)
