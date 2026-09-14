@@ -527,7 +527,7 @@ def contracted(encoding, b: torch.Tensor, c: torch.Tensor) -> LinearOperator | N
 
 def _grid_contraction(encoding, b: torch.Tensor, c: torch.Tensor) -> LinearOperator | None:
     """The contraction in the coil loop of a grid encoding, or ``None``."""
-    from bartorch.linop.sense import Encoded
+    from bartorch.linop.sense import _Encoded
 
     form = encoding._form()
     if form.contraction is not None:
@@ -535,7 +535,7 @@ def _grid_contraction(encoding, b: torch.Tensor, c: torch.Tensor) -> LinearOpera
     layout = _segment_layout(encoding, b, c, encoding._sample_dims(), encoding._image_dims())
     if layout is None:
         return None
-    return Encoded(encoding, form.with_contraction(layout))
+    return _Encoded(encoding, form.with_contraction(layout))
 
 
 def _nufft_contraction(encoding, b: torch.Tensor, c: torch.Tensor) -> LinearOperator | None:

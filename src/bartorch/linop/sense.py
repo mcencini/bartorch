@@ -17,7 +17,7 @@ from bartorch._operator import Built, Shape, as_operand, dims
 from bartorch.linop.base import LinearOperator
 from bartorch.linop.form import Array, Form
 
-__all__ = ["Coils", "Encoded", "NoncartesianSense"]
+__all__ = ["Coils", "NoncartesianSense"]
 
 
 def _vector(v):
@@ -154,7 +154,7 @@ def build_form(owner, form: Form, image_shape=None, kspace_shape=None, encoding=
     return Built(ptr, image_shape, kspace_shape, keep=form.keep(), device=owner.device)
 
 
-class Encoded(LinearOperator):
+class _Encoded(LinearOperator):
     """One encoding built from a form the planner lowered, rather than from arguments.
 
     It carries the shapes and the layout of the encoding it was matched
