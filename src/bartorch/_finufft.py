@@ -233,17 +233,21 @@ def use_in_tools(
     # than found out by the process ending.  Continuing anyway is what
     # KMP_DUPLICATE_LIB_OK asks for, and what it buys is a crash later or a
     # wrong answer quietly -- neither of which a reconstruction should risk.
+    #
+    # The fallback is not opened: an answer from BART's gridder, an order
+    # further from the transform and several times slower, is worse than no
+    # answer when nobody asked for it.  So the transforms are refused, and the
+    # message says what makes them work.
     runtimes = openmp_runtimes()
     if len(runtimes) > 1:
         lib.bartorch_finufft_use_in_tools(0)
-        lib.bartorch_nufft_allow_fallback(1)
         raise RuntimeError(
             "this process has loaded more than one OpenMP runtime ("
             + ", ".join(runtimes)
             + "), and calling FINUFFT would start the second, which LLVM's runtime ends "
-            "the process over (OMP: Error #15).  BART's own gridder serves the transforms "
-            "instead.  One runtime is the fix: a FINUFFT built against the same libomp "
-            "torch carries, or a torch built against FINUFFT's"
+            "the process over (OMP: Error #15).  Every non-Cartesian transform will be "
+            "refused until there is one runtime: run `python scripts/macos_openmp.py "
+            "patch`, which points FINUFFT's library at the copy torch carries"
         )
 
     lib.bartorch_finufft_set_tolerance(float(tolerance))

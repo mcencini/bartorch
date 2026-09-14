@@ -144,18 +144,32 @@ so a bartorch without it does non-Cartesian work slowly rather than well,
 which is a dependency and not a choice. cuFINUFFT serves a transform on a
 card, and most machines have no card, so it stays an extra.
 
-**Except on macOS, where it cannot be taken up.** torch carries an OpenMP
-runtime and the FINUFFT wheel carries its own, and LLVM's runtime ends the
-process rather than run beside a second copy of itself (`OMP: Error #15`).
-`_finufft.openmp_runtimes()` reads the loaded images for that pair before the
-first call into FINUFFT; more than one and the substitution declines, BART's
-own gridder answers, and `install_once` says so at warning level.  The same
-collision is open upstream in mri-nufft with no fix, so it is the dependency
-pair rather than anything here.  `KMP_DUPLICATE_LIB_OK=TRUE` makes it run and
-is documented by the runtime's own authors as unsafe -- a crash later or a
-wrong answer quietly -- which is the wrong trade for a reconstruction, so it
-is neither set nor suggested.  Linux is not asked: its loader resolves the
-duplicate instead of dying on it.
+**On macOS the two wheels have to be made one runtime first.** torch carries
+an OpenMP runtime and the FINUFFT wheel carries its own, and LLVM's runtime
+ends the process rather than run beside a second copy of itself (`OMP: Error
+#15`).  `_finufft.openmp_runtimes()` reads the loaded images for that pair
+before the first call into FINUFFT; more than one and the substitution
+declines, `install_once` says so at warning level, and every non-Cartesian
+transform is then refused.  BART's gridder does not quietly take over: an
+answer an order further from the transform and several times slower, arriving
+with nothing to say so, is worse than no answer.
+
+`scripts/macos_openmp.py` is the fix, and the message names it.  The two
+copies are the same runtime -- both LLVM's libomp, both compatibility version
+5.0.0, and every OpenMP symbol `libfinufft.dylib` imports is exported by the
+copy torch carries -- so FINUFFT's library is pointed at torch's copy with
+`install_name_tool` and re-signed, one runtime is loaded, and the substitution
+installs as it does everywhere else.  That is not `KMP_DUPLICATE_LIB_OK=TRUE`,
+which tells one runtime to tolerate a second live copy and is documented by
+its own authors as unsafe; here there is one copy, and torch and FINUFFT share
+its pool.  The macOS CI job runs the script before the suite, so that platform
+tests the substitution rather than the gridder.
+
+The patch rewrites a file inside another package, so `pip install -U finufft`
+undoes it and it has to be run again; there is no wheel hook to hang it on.
+An install that has not had it refuses rather than answering slowly, which is
+the same trade the rest of the substitution makes.  Linux is not asked: its
+loader resolves the duplicate instead of dying on it.
 
 The requirement carries no marker, and that is a decision about which wheels
 exist rather than an oversight. FINUFFT ships none for Linux on aarch64 -- it
@@ -204,10 +218,14 @@ serve, naming the reason. The substitution being switched off is a reason like
 any other, which is what closes the case that used to be silent: the library
 as it starts, before anyone has mentioned FINUFFT.
 
-BART's own gridder is not reachable from the package's surface at all. What is
-left of it is `_finufft.barts_own_gridder()`, a context manager the agreement
-check uses and the tests hold the substitution against; there is nothing a
-caller can pass to end up there. `_finufft.use_in_tools` raises when `finufft` is missing
+BART's own gridder is not reachable from the package's surface at all, and
+nothing in the library opens it: `bartorch_nufft_allow_fallback` is set by
+`_finufft.barts_own_gridder()` and by `use_in_tools(False)`, which are the
+agreement check and the tests, and by nothing else.  Every way the
+substitution can fail to install -- `finufft` missing, `cufinufft` missing on
+a machine with a card, two OpenMP runtimes, the agreement check disagreeing --
+leaves it closed, so what follows is a refusal naming the reason.  There is
+nothing a caller can pass to end up on the gridder. `_finufft.use_in_tools` raises when `finufft` is missing
 -- which on a platform it ships a wheel for means the install has lost it --
 or when `cufinufft` is missing on a machine whose card BART would otherwise
 use. A test that enters that block would carry it into the next test, so

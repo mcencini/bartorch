@@ -66,18 +66,31 @@ gridder.  The `mkl` extra is optional; the Cartesian examples do not need it.
 Linux is the platform bartorch is developed and measured on, and the one the
 CUDA path is written for.
 
-**macOS works, without FINUFFT.**  torch and the FINUFFT wheel each carry an
+**macOS needs one command first.**  torch and the FINUFFT wheel each carry an
 OpenMP runtime, and LLVM's runtime ends the process rather than run beside a
-second copy of itself (`OMP: Error #15`).  On macOS the substitution checks
-for that pair before the first call into FINUFFT, declines when it finds it,
-and says so once at warning level; BART's own gridder then computes the
-non-Cartesian transforms.  The same collision is
-[open upstream in mri-nufft](https://github.com/mind-inria/mri-nufft/issues/333)
-with no fix.  `KMP_DUPLICATE_LIB_OK=TRUE` makes it run and is documented by the
-runtime's authors as unsafe -- a crash later, or a wrong answer quietly -- so
-bartorch neither sets nor suggests it.  A conda environment where one OpenMP
-runtime serves both packages is the way to FINUFFT on macOS; it is untested
-here.
+second copy of itself (`OMP: Error #15`).  So on macOS the substitution checks
+for that pair before its first call into FINUFFT, declines when it finds it,
+and every non-Cartesian transform is refused until there is one runtime:
+
+```bash
+python scripts/macos_openmp.py patch
+```
+
+That points FINUFFT's library at the copy torch carries -- the same runtime at
+the same version, so one is loaded instead of two -- and re-signs it.  Run
+`diagnose` first to see what it would do, and `verify` afterwards; it refuses
+rather than patching if the two are not the same runtime, and rerunning it is
+a no-op.  It rewrites a file inside the `finufft` package, so `pip install -U
+finufft` undoes it and it has to be run again.
+
+The transforms are refused rather than quietly computed by BART's own gridder,
+which would be an answer an order further from the transform and several times
+slower with nothing to say so.  `KMP_DUPLICATE_LIB_OK=TRUE` is the other thing
+people reach for and is documented by the runtime's authors as unsafe -- a
+crash later, or a wrong answer quietly -- so bartorch neither sets nor
+suggests it: it tells one runtime to tolerate a second live copy, where
+patching leaves one copy.  The same collision is
+[open upstream in mri-nufft](https://github.com/mind-inria/mri-nufft/issues/333).
 
 **Windows is not a target.**  BART does not build on it; WSL2 is a Linux
 install like any other.
