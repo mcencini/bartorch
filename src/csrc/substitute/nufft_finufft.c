@@ -1696,7 +1696,7 @@ const char* bartorch_nufft_decline_text(void)
 	case 11: return "FINUFFT would not plan the forward transform";
 	case 12: return "FINUFFT would not plan the adjoint transform";
 	case 13: return "FINUFFT would not take the trajectory";
-	case 14: return "the subspace basis does not lie along frames and coefficients";
+	case 14: return "the basis lies along something other than coefficients, frames, shots and samples";
 	case 15: return "the weights do not lie along k-space";
 	case 16: return "the images vary across frames as well as the trajectory";
 	case 17: return "the kernel width asked for has no tolerance that would give it";
@@ -2535,10 +2535,50 @@ static const struct linop_s* toeplitz_for(int N, const long ksp_dims[N], const l
 		barts.precomp_linphase = false;
 	}
 
+	/* BART's own operator, whose normal is borrowed, takes a basis along the
+	 * frames and the coefficients alone.  A basis along the shots and the
+	 * samples -- the segments of a time-segmented off-resonance -- is handed
+	 * to it as one sample's worth along the coefficients, which is all its
+	 * normal and the layout of its function read of a basis, and put back in
+	 * its place before the function is built from it. */
+	bool along_samples = (NULL != basis) && ((1 != bas_dims[1]) || (1 != bas_dims[2]));
+
+	long stand_dims[N];
+	complex float* stand = NULL;
+
+	if (along_samples) {
+
+		md_select_dims(N, ~(MD_BIT(1) | MD_BIT(2)), stand_dims, bas_dims);
+
+		long pos[N];
+		md_set_dims(N, pos, 0);
+
+		complex float* whole = md_alloc(N, bas_dims, CFL_SIZE);
+		md_copy(N, bas_dims, whole, basis, CFL_SIZE);
+
+		stand = md_alloc(N, stand_dims, CFL_SIZE);
+		md_copy_block(N, pos, stand_dims, stand, bas_dims, whole, CFL_SIZE);
+
+		md_free(whole);
+	}
+
 	const struct linop_s* op = bart_nufft_create2(N, ksp_dims, cim_dims, traj_dims, traj,
-			wgh_dims, weights, (NULL != basis) ? bas_dims : NULL, basis, barts);
+			wgh_dims, weights, (NULL == basis) ? NULL : (along_samples ? stand_dims : bas_dims),
+			along_samples ? stand : basis, barts);
 
 	struct nufft_data* data = CAST_DOWN(nufft_data, linop_get_data_nested(op));
+
+	if (along_samples) {
+
+		md_free(stand);
+
+		md_copy_dims(N, data->bas_dims, bas_dims);
+		data->bas_dims[N] = 1;
+		md_calc_strides(N + 1, data->bas_strs, data->bas_dims, CFL_SIZE);
+
+		multiplace_free(data->basis);
+		data->basis = multiplace_move(N + 1, data->bas_dims, CFL_SIZE, basis);
+	}
 
 	making_psf++;
 	/* The function is built where the arithmetic will be.  BART's own
@@ -2641,7 +2681,21 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 
 	if (NULL != basis) {
 
-		if (1 != md_calc_size(5, bas_dims))
+		/* A basis lies along the coefficients and along any of what a
+		 * sample is indexed by -- its frame, as a subspace has it, or its
+		 * shot and its place along the readout, as the segments of a
+		 * time-segmented off-resonance have them -- and along nothing
+		 * else.  The contraction and the point spread function read it by
+		 * its strides either way. */
+		if ((1 != bas_dims[0]) || (1 != bas_dims[3]) || (1 != bas_dims[4]))
+			DECLINE(14);
+
+		for (int i = 7; i < N; i++)
+			if (1 != bas_dims[i])
+				DECLINE(14);
+
+		if (((1 != bas_dims[1]) && (bas_dims[1] != ksp_dims[1]))
+				|| ((1 != bas_dims[2]) && (bas_dims[2] != ksp_dims[2])))
 			DECLINE(14);
 
 		if (cim_dims[6] != bas_dims[6])
@@ -2651,7 +2705,10 @@ static struct linop_s* try_create(int N, const long ksp_dims[N], const long cim_
 			DECLINE(14);
 
 		grd_dims[6] = bas_dims[6];
-		out_dims[5] = bas_dims[5];
+
+		if (1 != bas_dims[5])
+			out_dims[5] = bas_dims[5];
+
 		out_dims[6] = 1;
 	}
 

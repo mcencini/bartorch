@@ -1057,3 +1057,81 @@ def test_wave_sense_says_what_its_psf_is_missing(wave_parts):
         linop.WaveSense(maps, SHAPE, readout=WX, max_grad=0.8, max_slew=17000.0, resolution=0.1)
     with pytest.raises(ValueError, match="one or the other"):
         linop.WaveSense(maps, SHAPE, readout=WX, psf=psf, cycles=6)
+
+
+# --- time segmentation over a NUFFT -------------------------------------------
+#
+# Written out, the encoding is the sum of the segments; over a non-Cartesian
+# SENSE operator it is one subspace operator whose basis lies along the samples.
+
+
+@pytest.fixture
+def segmented():
+    import bartorch.tools as bt
+
+    torch.manual_seed(31)
+    n, coils, segments = 16, 3, 3
+    maps = _rand(coils, n, n)
+    traj = bt.traj(x=n, y=24, r=True)
+    t = torch.arange(n, dtype=torch.float64) / n
+    b = torch.stack([torch.exp(-2j * torch.pi * (s + 1) * t) for s in range(segments)])
+    b = b.to(torch.complex64).reshape(segments, 1, n)
+    c = (torch.randn(segments, n, n, dtype=torch.complex64) * 0.1 + 1.0) / segments
+    return maps, traj, b, c, n
+
+
+def test_a_segmented_nufft_is_the_sum_of_its_segments(segmented):
+    maps, traj, b, c, n = segmented
+    from bartorch.linop.base import _WithNormal
+
+    E = linop.NoncartesianSense(maps, (n, n), traj=traj)
+    A = linop.FieldCorrected(E, coefficients=(b, c))
+    assert isinstance(A, _WithNormal), "the segments are one subspace operator, not their sum"
+    assert (A.ishape, A.oshape) == (E.ishape, E.oshape)
+
+    x = _rand(n, n)
+    want = sum(b[s] * E(c[s] * x) for s in range(b.shape[0]))
+    got = A(x)
+    assert (got - want).abs().max() / want.abs().max() < 1e-5
+
+    y = _rand(*A.oshape)
+    want = sum(c[s].conj() * E.adjoint(b[s].conj() * y) for s in range(b.shape[0]))
+    got = A.adjoint(y)
+    assert (got - want).abs().max() / want.abs().max() < 1e-5
+
+
+def test_a_segmented_nufft_normal_is_the_two_applications(segmented):
+    """The Toeplitz normal, to within the transform's own tolerance."""
+    maps, traj, b, c, n = segmented
+    E = linop.NoncartesianSense(maps, (n, n), traj=traj)
+    A = linop.FieldCorrected(E, coefficients=(b, c))
+
+    x = _rand(n, n)
+    want = A.adjoint(A(x))
+    got = A.normal(x)
+    assert (got - want).abs().max() / want.abs().max() < 1e-2
+
+
+@requires_cuda
+def test_on_a_card_a_segmented_nufft_is_the_host_one(segmented):
+    maps, traj, b, c, n = segmented
+    A = linop.FieldCorrected(
+        linop.NoncartesianSense(maps, (n, n), traj=traj, device="cuda"), coefficients=(b, c)
+    )
+    host = linop.FieldCorrected(
+        linop.NoncartesianSense(maps, (n, n), traj=traj), coefficients=(b, c)
+    )
+
+    from bartorch.linop.base import _WithNormal
+
+    assert isinstance(A, _WithNormal) and isinstance(host, _WithNormal)
+
+    # cuFINUFFT and FINUFFT agree on a plain NUFFT to a few parts in 1e3.
+    x = _rand(n, n)
+    want = host(x)
+    assert (A(x) - want).abs().max() / want.abs().max() < 1e-2
+    y = _rand(*A.oshape)
+    want = host.adjoint(y)
+    assert (A.adjoint(y) - want).abs().max() / want.abs().max() < 1e-2
+    want = host.adjoint(host(x))
+    assert (A.normal(x) - want).abs().max() / want.abs().max() < 1e-2

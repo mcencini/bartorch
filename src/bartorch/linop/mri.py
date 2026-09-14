@@ -15,10 +15,10 @@ import torch
 
 from bartorch import _layout
 from bartorch._dispatch import _lock
-from bartorch._lib import library
-from bartorch._operator import Built, Shape, as_operand
+from bartorch._lib import DIMS, library
+from bartorch._operator import Built, Shape, as_operand, dims
 from bartorch.linop.base import LinearOperator, _WithNormal
-from bartorch.linop.basic import Diagonal, Sampling
+from bartorch.linop.basic import Diagonal, MultiplySum, Sampling
 from bartorch.linop.sense import NoncartesianSense
 
 __all__ = ["CartesianSense", "FieldCorrected", "WaveSense"]
@@ -416,6 +416,115 @@ class _WaveNative(_GridSense):
             )
         keep = tuple(t for t in (self.sensitivities, w, p, pos, b) if t is not None)
         return Built(ptr, self.image_shape, self.kspace_shape, keep=keep, device=self.device)
+
+
+class _Relabel(LinearOperator):
+    """``op`` over other shapes holding the same elements in the same order.
+
+    BART's ``operator_reshape``: the dimensions are relabelled, nothing is
+    copied, and the operator keeps its own normal.
+    """
+
+    def __init__(self, op: LinearOperator, oshape: Shape, ishape: Shape):
+        self.op = op._bart()
+        self.ishape, self.oshape = tuple(ishape), tuple(oshape)
+        super().__init__()
+
+    def _create(self) -> Built:
+        device = self.op.device
+        ptr = self._under_lock(
+            library().bartorch_linop_reshaped,
+            self.op._h.ptr,
+            DIMS,
+            dims(self.oshape),
+            dims(self.ishape),
+            device=device,
+        )
+        return Built(ptr, self.ishape, self.oshape, keep=(self.op,), device=device)
+
+
+class _SegmentedSense(NoncartesianSense):
+    """:class:`~bartorch.linop.NoncartesianSense` read through a basis over the samples.
+
+    The image carries ``L`` segment images in front of its spatial axes, and a
+    sample is ``sum_l b_l(t) E(x_l)`` -- time segmentation, with each
+    segment's sample weights as a basis along the shots and the readout.  The
+    normal is the Toeplitz one over that basis's packed Gram, so the segments
+    cost a kernel per pair of them rather than a transform each.
+    """
+
+    def __init__(self, encoding: NoncartesianSense, basis: torch.Tensor):
+        self._sample_basis = basis
+        segments = int(basis.shape[0])
+        super().__init__(
+            encoding.sensitivities,
+            (*encoding.batches, segments, *encoding.spatial),
+            traj=encoding.traj,
+            kernels=encoding.kernels,
+            toeplitz=encoding.toeplitz,
+            weights=encoding.weights,
+            device=encoding.device,
+            coil_batch=encoding.coil_batch,
+            fold_maps=encoding.fold_maps,
+        )
+
+    def _image_encoding(self):
+        return (int(self._sample_basis.shape[0]),)
+
+    def _max_vector(self):
+        z, y, x = self._spatial3()
+        return _layout.vector(
+            {
+                _layout.READ: x,
+                _layout.PHS1: y,
+                _layout.PHS2: z,
+                _layout.COIL: self.coils,
+                _layout.MAPS: self.sets,
+                _layout.COEFF: int(self._sample_basis.shape[0]),
+            }
+        )
+
+    def _basis_layout(self):
+        b = self._sample_basis
+        return b, _layout.vector({1: b.shape[2], 2: b.shape[1], _layout.COEFF: b.shape[0]})
+
+
+def _per_segment(values: torch.Tensor, shape: tuple[int, ...], what: str) -> torch.Tensor:
+    """``values`` of ``(segments, ...)``, what follows the segments broadcast over ``shape``."""
+    one = _broadcastable(values[0], shape, what)
+    return values.reshape(values.shape[0], *one.shape)
+
+
+def _segmented_nufft(encoding, b: torch.Tensor, c: torch.Tensor) -> LinearOperator | None:
+    """The time-segmented encoding over a NUFFT as one subspace operator, or ``None``.
+
+    ``sum_l diag(b_l) E diag(c_l)`` is the spatial weights fanning the image
+    out into segment images, then ``E`` through the basis ``b`` over the
+    samples.  It is taken where the encoding is a plain non-Cartesian SENSE
+    operator with no basis, sets or encoding axes of its own, and where the
+    sample weights vary along the shots and the readout alone.
+    """
+    if type(encoding) is not NoncartesianSense:
+        return None
+    if encoding.basis is not None or encoding.sets > 1 or encoding.encoding:
+        return None
+
+    segments = int(b.shape[0])
+    oshape, ishape = tuple(encoding.oshape), tuple(encoding.ishape)
+    weights = _per_segment(b, oshape, "sample weights")
+    if any(n != 1 for n in weights.shape[1:-2]):
+        return None
+    basis = weights.reshape(segments, weights.shape[-2], weights.shape[-1]).contiguous()
+
+    nb = len(encoding.batches)
+    spatial = _per_segment(c, ishape, "spatial weights")
+    fan = spatial.movedim(0, nb).contiguous()
+    lifted = (*ishape[:nb], 1, *ishape[nb:])
+    fanned = (*ishape[:nb], segments, *ishape[nb:])
+    C = _Relabel(MultiplySum(fan, lifted, fanned), fanned, ishape)
+
+    E = _SegmentedSense(encoding, basis)
+    return _WithNormal(E @ C, C.H @ E.gram() @ C)
 
 
 #: The gyromagnetic ratio of hydrogen, in Hz per Gauss, as BART's ``wavepsf`` has it.
@@ -852,10 +961,17 @@ def FieldCorrected(  # noqa: N802  (it is a constructor)
 
     Notes
     -----
-    The normal operator is the sum applied twice rather than anything cheaper:
-    a segmented encoding has no Toeplitz form, because the spatial weights do
-    not commute with the transform.  More segments is a better approximation
-    and proportionally more work.
+    Over a :class:`~bartorch.linop.NoncartesianSense` with no basis, sets or
+    encoding axes, and sample weights that vary along the shots and the
+    readout alone, the sum is one operator: the spatial weights fan the image
+    out into segment images, and the segments' sample weights are a basis over
+    the samples.  Its normal is then the Toeplitz one over the basis's packed
+    Gram, with the spatial weights on either side -- a point-spread function
+    per pair of segments rather than two transforms per segment per coil.
+
+    Over any other encoding the normal is the sum applied twice: the spatial
+    weights do not commute with the transform, and a Cartesian or wave
+    encoding has no basis over its samples to carry them.
 
     Examples
     --------
@@ -870,6 +986,10 @@ def FieldCorrected(  # noqa: N802  (it is a constructor)
         b, c = (as_operand(t, tuple(t.shape), "coefficients") for t in coefficients)
         if b.shape[0] != c.shape[0]:
             raise ValueError(f"{b.shape[0]} sample weights against {c.shape[0]} spatial ones")
+
+    native = _segmented_nufft(encoding, b, c)
+    if native is not None:
+        return native
 
     terms = [
         Diagonal(_broadcastable(b[ell], encoding.oshape, "sample weights"), encoding.oshape)

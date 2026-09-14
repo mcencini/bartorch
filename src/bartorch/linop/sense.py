@@ -463,13 +463,26 @@ class NoncartesianSense(LinearOperator):
                 sets_order(self.batches, self.sets, self.image_encoding, self.ndim),
             )
         keep = tuple(
-            x for x in (self.sensitivities, self.traj, self.weights, self.basis) if x is not None
+            x
+            for x in (self.sensitivities, self.traj, self.weights, self._basis_layout()[0])
+            if x is not None
         )
         return Built(ptr, self.image_shape, self.kspace_shape, keep=keep, device=self.device)
 
+    def _basis_layout(self):
+        """``(basis, vector)``: the basis the item is built with and its BART dimensions.
+
+        A subspace basis lies along the frames and the coefficients.
+        """
+        b = self.basis
+        if b is None:
+            return None, None
+        return b, _layout.vector({_layout.TE: b.shape[1], _layout.COEFF: b.shape[0]})
+
     def _build_item(self, lib) -> int:
-        t, w, b = self.traj, self.weights, self.basis
-        tvec = wvec = bvec = None
+        t, w = self.traj, self.weights
+        b, bvec = self._basis_layout()
+        tvec = wvec = None
         if t is not None:
             shots, samples, d = (int(n) for n in t.shape[-3:])
             tvec = self._encoding_vector({0: d, 1: samples, 2: shots}, self.encoding)
@@ -477,8 +490,6 @@ class NoncartesianSense(LinearOperator):
             wshape = tuple(w.shape)
             base = {1: wshape[-1], 2: wshape[-2]} if t is not None else {}
             wvec = self._encoding_vector(base, wshape[: len(self.encoding)])
-        if b is not None:
-            bvec = _layout.vector({_layout.TE: b.shape[1], _layout.COEFF: b.shape[0]})
         return self._under_lock(
             lib.bartorch_linop_sense,
             _vector(self._max_vector()),
