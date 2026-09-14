@@ -388,6 +388,39 @@ bartorch_linop* bartorch_linop_sense(const long* max_dims, const long* ksp_dims,
 	return (0 == guarded(linop_sense_worker, &a)) ? a.result : NULL;
 }
 
+/* The Cartesian encoding, pattern and basis in the coil loop. */
+extern const struct linop_s* bartorch_cartesian_operator(const long max_dims[DIMS], const long sens_dims[DIMS],
+		const _Complex float* sens, int kernels,
+		const long pat_dims[DIMS], const _Complex float* pattern,
+		const long bas_dims[DIMS], const _Complex float* basis);
+
+struct linop_cartesian_args {
+
+	const long* max_dims; const long* sens_dims; const void* sens; int kernels;
+	const long* pat_dims; const void* pattern;
+	const long* bas_dims; const void* basis;
+	bartorch_linop* result;
+};
+
+static int linop_cartesian_worker(void* p)
+{
+	struct linop_cartesian_args* a = p;
+
+	a->result = wrap_linop(bartorch_cartesian_operator(a->max_dims, a->sens_dims, a->sens, a->kernels,
+				a->pat_dims, a->pattern, a->bas_dims, a->basis));
+	return 0;
+}
+
+bartorch_linop* bartorch_linop_cartesian(const long* max_dims, const long* sens_dims,
+		const void* sens, int kernels,
+		const long* pat_dims, const void* pattern,
+		const long* bas_dims, const void* basis)
+{
+	struct linop_cartesian_args a = { max_dims, sens_dims, sens, kernels,
+		pat_dims, pattern, bas_dims, basis, NULL };
+	return (0 == guarded(linop_cartesian_worker, &a)) ? a.result : NULL;
+}
+
 /* The coil multiply alone, over sensitivities held as maps or as kernels. */
 extern const struct linop_s* bartorch_coils_operator(const long max_dims[DIMS], const long sens_dims[DIMS],
 		const _Complex float* sens, int kernels);

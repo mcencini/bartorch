@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import torch
 
-from bartorch._operator import Shape, as_operand
+from bartorch._dispatch import _lock
+from bartorch._lib import library
+from bartorch._operator import Built, Shape, as_operand, dims
 from bartorch.linop.base import LinearOperator, _WithNormal
 from bartorch.linop.basic import FFT, Diagonal, MultiplySum, Sampling
-from bartorch.linop.sense import Coils, NoncartesianSense
+from bartorch.linop.sense import Coils, NoncartesianSense, _bank
 from bartorch.linop.shape import Reshape, Resize
 
 __all__ = ["CartesianSense", "FieldCorrected", "WaveSense"]
@@ -46,6 +48,92 @@ class _GridSense(NoncartesianSense):
         # carries coefficients that BART is not told about.
         self._coeff_count = int(coeffs)
         super().__init__(*args, **kwargs)
+
+
+class _CartesianNative(_GridSense):
+    """:class:`_GridSense` with the pattern and the basis inside the coil loop.
+
+    The same encoding :func:`CartesianSense` chains, built as one operator in C:
+    each slab's transform carries the pattern and the basis, so they run where
+    the transform does and the k-space never crosses back for them.  Its
+    normal transforms only the axes the pattern varies along and applies the
+    collapsed kernel between them.
+    """
+
+    def __init__(self, sensitivities, image_shape, pattern, basis, **kwargs):
+        self._grid_pattern = pattern
+        self._grid_basis = basis
+        coeffs = 1 if basis is None else int(basis.shape[0])
+        super().__init__(sensitivities, image_shape, coeffs=coeffs, **kwargs)
+
+    def _default_kspace(self, coils: int) -> Shape:
+        shape = super()._default_kspace(coils)
+        if self._grid_basis is None:
+            return shape
+        # The basis contracts the coefficients into frames, which BART lays
+        # out on the TE axis: ``(1, frames, 1, coils, *spatial)``.
+        return (1, int(self._grid_basis.shape[1]), *shape[2:])
+
+    def _create(self) -> Built:
+        lib = library()
+        with _lock:
+            was = lib.bartorch_sense_coil_batch(), lib.bartorch_sense_fold_maps()
+            lib.bartorch_sense_set_coil_batch(self.coil_batch)
+            lib.bartorch_sense_set_fold_maps(int(self.fold_maps))
+            try:
+                p, b = self._grid_pattern, self._grid_basis
+                ptr = self._under_lock(
+                    lib.bartorch_linop_cartesian,
+                    dims(self._max_shape),
+                    dims(self._sens_shape),
+                    self.sensitivities.data_ptr(),
+                    int(self.kernels),
+                    None if p is None else dims(tuple(p.shape)),
+                    None if p is None else p.data_ptr(),
+                    None if b is None else dims(tuple(b.shape)),
+                    None if b is None else b.data_ptr(),
+                    device=self.device,
+                )
+            finally:
+                lib.bartorch_sense_set_coil_batch(was[0])
+                lib.bartorch_sense_set_fold_maps(was[1])
+        keep = tuple(t for t in (self.sensitivities, self._grid_pattern, self._grid_basis) if t is not None)
+        return Built(ptr, self.ishape, self.kspace_shape, keep=keep, device=self.device)
+
+
+def _native_cartesian(sensitivities, image_shape, pattern, basis, kwargs):
+    """A :class:`_CartesianNative`, or ``None`` where the chain has to serve.
+
+    The chain is what serves BART's modulated convention, several sets of
+    maps, and a pattern that differs between coils: the kernel is laid out over
+    the spatial axes and the frames alone.
+    """
+    if kwargs.get("modulated", False):
+        return None
+    coils, spatial = _spatial(image_shape)
+    _, sets, _ = _bank(sensitivities, coils, spatial)
+    if sets != 1:
+        return None
+
+    b = None
+    if basis is not None:
+        matrix, coeffs, frames = _basis_matrix(basis)
+        b = matrix.reshape(coeffs, frames, 1, 1, 1, 1, 1).contiguous()
+        sample_shape = (1, frames, 1, coils, *spatial)
+        spatial_axes = (4, 5, 6)
+    else:
+        sample_shape = (coils, *spatial)
+        spatial_axes = (1, 2, 3)
+
+    p = None
+    if pattern is not None:
+        widened = _broadcastable(as_operand(pattern, tuple(pattern.shape), "pattern"), sample_shape, "pattern")
+        for axis, n in enumerate(widened.shape):
+            if n != 1 and axis not in spatial_axes and not (basis is not None and axis == 1):
+                return None
+        p = widened.contiguous()
+
+    return _CartesianNative(sensitivities, image_shape, p, b, **kwargs)
 
 
 def _broadcastable(values: torch.Tensor, shape: tuple[int, ...], what: str) -> torch.Tensor:
@@ -236,11 +324,18 @@ def CartesianSense(  # noqa: N802  (it is a constructor)
     if kwargs.get("traj") is not None:
         raise ValueError("a trajectory makes this non-Cartesian; use NoncartesianSense for that")
 
+    if basis is None and pattern is None:
+        return _GridSense(sensitivities, image_shape, **kwargs)
+
+    # With a basis, `toeplitz=False` asks for the normal as the two
+    # applications, which is what the chain gives.
+    if toeplitz or basis is None:
+        native = _native_cartesian(sensitivities, image_shape, pattern, basis, kwargs)
+        if native is not None:
+            return native
+
     if basis is None:
         encoding = _GridSense(sensitivities, image_shape, **kwargs)
-        if pattern is None:
-            return encoding
-
         mask = as_operand(pattern, tuple(pattern.shape), "pattern")
         return Sampling(mask, encoding.oshape) @ encoding
 

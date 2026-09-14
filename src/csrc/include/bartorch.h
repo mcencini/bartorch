@@ -230,6 +230,13 @@ BARTORCH_API bartorch_linop* bartorch_linop_sense(const long* max_dims, const lo
 		const long* traj_dims, const void* traj,
 		const long* wgh_dims, const void* weights,
 		const long* bas_dims, const void* basis, int toeplitz, int modulated);
+/* The Cartesian SENSE encoding with its pattern and subspace basis inside the
+ * coil loop, and a normal that transforms only the axes the pattern varies
+ * along.  `pattern` and `basis` may each be NULL. */
+BARTORCH_API bartorch_linop* bartorch_linop_cartesian(const long* max_dims, const long* sens_dims,
+		const void* sens, int kernels,
+		const long* pat_dims, const void* pattern,
+		const long* bas_dims, const void* basis);
 /* The coil multiply on its own, over sensitivities held as maps or as kernels,
  * walking the coils a slab at a time.  For an encoding whose transform is not
  * a Fourier transform and so cannot be a SENSE operator. */

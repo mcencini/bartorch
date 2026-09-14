@@ -566,3 +566,70 @@ def test_wave_carries_several_sets_too(wave_parts):
     assert A.ishape == (1, 1, SETS, 1, Z, 5, SX)
     assert A.oshape == (1, 1, 1, COILS, Z, 5, WX)
     assert _adjointness(A) < 1e-5
+
+
+# --- the native Cartesian operator --------------------------------------------
+#
+# With a pattern or a basis, CartesianSense is one operator in C: the pattern
+# and the basis run inside the coil loop, and the normal transforms only the
+# axes the pattern varies along.  Held against the model written out in torch.
+
+
+def _fftc(t, axes):
+    """The centred unitary transform, in torch."""
+    return torch.fft.fftshift(torch.fft.fftn(torch.fft.ifftshift(t, dim=axes), dim=axes, norm="ortho"), dim=axes)
+
+
+def _ifftc(t, axes):
+    return torch.fft.fftshift(torch.fft.ifftn(torch.fft.ifftshift(t, dim=axes), dim=axes, norm="ortho"), dim=axes)
+
+
+def test_a_pattern_or_a_basis_builds_the_native_operator(maps, basis, frame_pattern):
+    from bartorch.linop.mri import _CartesianNative
+
+    mask = (torch.rand(1, 1, Y, 1) > 0.5).to(torch.complex64)
+    assert isinstance(linop.CartesianSense(maps, (COILS, Y, X), pattern=mask), _CartesianNative)
+    assert isinstance(
+        linop.CartesianSense(maps, (COILS, Y, X), pattern=frame_pattern, basis=basis), _CartesianNative
+    )
+
+
+def test_the_native_normal_with_a_pattern_is_the_model_written_out():
+    """A pattern of phase encodes, flat along the readout, on a 3D grid."""
+    torch.manual_seed(6)
+    coils, z, y, x = 3, 6, 8, 10
+    maps = _rand(coils, z, y, x)
+    mask = (torch.rand(1, z, y, 1) > 0.5).to(torch.complex64)
+    A = linop.CartesianSense(maps, (coils, z, y, x), pattern=mask)
+
+    image = _rand(z, y, x)
+    k = _fftc(maps * image, (-3, -2, -1)) * mask
+    want = (maps.conj() * _ifftc(k * mask.conj(), (-3, -2, -1))).sum(0)
+
+    got = A.normal(image)
+    assert (got - want).abs().max() / want.abs().max() < 1e-5
+
+
+def test_the_native_subspace_normal_is_the_model_written_out():
+    """Frames, a basis and their pattern, collapsed into one kernel."""
+    torch.manual_seed(7)
+    coils, z, y, x, frames, coeffs = 3, 4, 8, 6, 5, 2
+    maps = _rand(coils, z, y, x)
+    b = _rand(coeffs, frames)
+    pattern = (torch.rand(frames, z, y, 1) > 0.5).to(torch.complex64)
+    A = linop.CartesianSense(
+        maps,
+        (coils, z, y, x),
+        pattern=pattern.reshape(1, frames, 1, 1, z, y, 1),
+        basis=b.reshape(coeffs, frames, 1, 1, 1, 1, 1),
+    )
+
+    image = _rand(*A.ishape)
+    coeff_images = image.reshape(coeffs, 1, z, y, x)
+    k = _fftc(maps[None] * coeff_images, (-3, -2, -1))
+    frame_k = torch.einsum("kt,kczyx->tczyx", b, k) * pattern[:, None]
+    back = torch.einsum("kt,tczyx->kczyx", b.conj(), frame_k * pattern[:, None].conj())
+    want = (maps.conj()[None] * _ifftc(back, (-3, -2, -1))).sum(1).reshape(A.ishape)
+
+    got = A.normal(image)
+    assert (got - want).abs().max() / want.abs().max() < 1e-5

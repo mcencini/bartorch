@@ -133,6 +133,7 @@ SYMBOLS = (
     "bartorch_linop_sampling",
     "bartorch_linop_nufft",
     "bartorch_linop_sense",
+    "bartorch_linop_cartesian",
     "bartorch_linop_coils",
     "bartorch_linop_with_normal",
     "bartorch_linop_chain",
@@ -487,6 +488,17 @@ def bind(lib: ctypes.CDLL) -> ctypes.CDLL:
         ctypes.c_void_p,
         ctypes.c_int,
         ctypes.c_int,
+    ]
+    lib.bartorch_linop_cartesian.restype = ctypes.c_void_p
+    lib.bartorch_linop_cartesian.argtypes = [
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.c_void_p,
     ]
     lib.bartorch_linop_coils.restype = ctypes.c_void_p
     lib.bartorch_linop_coils.argtypes = [

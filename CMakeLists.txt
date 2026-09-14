@@ -264,6 +264,7 @@ set(BARTORCH_SOURCES
 
     src/csrc/ops/ops.c
     src/csrc/ops/sense.c
+    src/csrc/ops/grid.c
     src/csrc/ops/iter.c
 
     src/csrc/substitute/backend.c

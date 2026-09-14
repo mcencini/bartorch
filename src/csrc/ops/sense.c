@@ -1121,6 +1121,55 @@ const struct linop_s* bartorch_sense_operator(const long max_dims[DIMS], const l
 	return sense_operator(d);
 }
 
+/* Provided by grid.c: a Cartesian slab's transform, pattern and basis, with
+ * the normal that transforms only the axes the pattern varies along. */
+extern const struct linop_s* grid_transform_create(const long cim_dims[DIMS],
+		const long pat_dims[DIMS], const complex float* pattern,
+		const long bas_dims[DIMS], const complex float* basis);
+
+/* The Cartesian SENSE encoding with its pattern and subspace basis inside the
+ * coil loop.
+ *
+ * Chained in Python, the pattern and the basis are operators of their own,
+ * which run where their arrays are: for a caller whose arrays are on the host
+ * the whole k-space crosses back for them, and the normal crosses it twice.
+ * Here they are part of the transform a slab carries, so what crosses is the
+ * image, once each way. */
+const struct linop_s* bartorch_cartesian_operator(const long max_dims[DIMS], const long sens_dims[DIMS],
+		const complex float* sens, int kernels,
+		const long pat_dims[DIMS], const complex float* pattern,
+		const long bas_dims[DIMS], const complex float* basis)
+{
+	long map_dims[DIMS];
+	md_select_dims(DIMS, FFT_FLAGS | COIL_FLAG | MAPS_FLAG, map_dims, max_dims);
+
+	long cim_dims[DIMS];
+	md_select_dims(DIMS, ~MAPS_FLAG, cim_dims, max_dims);
+
+	if (!sliceable(max_dims, map_dims, cim_dims, 0UL)) {
+
+		if (0 != kernels)
+			kernels_need_the_loop();
+
+		chained();
+
+		long img_dims[DIMS];
+		md_select_dims(DIMS, ~COIL_FLAG, img_dims, max_dims);
+
+		return linop_chain_FF(linop_fmac_dims_create(DIMS, cim_dims, img_dims, sens_dims, sens),
+				grid_transform_create(cim_dims, pat_dims, pattern, bas_dims, basis));
+	}
+
+	struct sense_s* d = sense_slabs(max_dims, map_dims, cim_dims, 0UL);
+	sense_hold(d, sens_dims, sens, kernels);
+
+	d->slab = grid_transform_create(d->cim_dims, pat_dims, pattern, bas_dims, basis);
+
+	sense_output_from(d);
+
+	return sense_operator(d);
+}
+
 /* The coil multiply on its own: the same slab loop with nothing after it.
  *
  * What a caller wants when the transform beside the coils is not a Fourier
