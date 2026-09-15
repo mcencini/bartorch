@@ -1197,6 +1197,47 @@ def test_a_stack_per_frame_is_decoupled_in_every_frame():
     assert _off(A.normal(x), A.adjoint(A(x))) < 1e-2
 
 
+def _against_the_chain(A, E, b, c):
+    """The fused terms against BART's sum of chains, both ways and through the normal."""
+    chained = planner.materialise(planner.describe(_terms(E, b, c)))
+    x, y = _rand(*A.ishape), _rand(*A.oshape)
+    for one, other in ((A(x), chained(x)), (A.adjoint(y), chained.adjoint(y))):
+        assert _off(one, other) < 1e-4
+    assert _off(A.normal(x), A.adjoint(A(x))) < 1e-4
+
+
+def test_segments_on_a_trajectory_per_frame_are_the_sum_they_stand_for():
+    """Time segmentation over frames that each have their own spokes."""
+    torch.manual_seed(65)
+    segments = 3
+    E = linop.NoncartesianSense(
+        _rand(COILS, PLANE, PLANE),
+        (FRAMES, PLANE, PLANE),
+        traj=_per_item_radial(FRAMES, PLANE, SPOKES),
+    )
+    b = _rand(segments, 1, FRAMES, 1, PLANE)
+    c = _rand(segments, FRAMES, PLANE, PLANE)
+    A = _terms(E, b, c)
+    assert A.plan.contraction == "segments" and A.plan.items == FRAMES and A.plan.fused
+    _against_the_chain(A, E, b, c)
+
+
+def test_per_set_image_weights_on_a_trajectory_per_frame_are_the_sum_they_stand_for():
+    """Image weights that differ between sets and between frames, before the sensitivities."""
+    torch.manual_seed(66)
+    sets = 2
+    E = linop.NoncartesianSense(
+        _rand(sets, COILS, PLANE, PLANE),
+        (sets, FRAMES, PLANE, PLANE),
+        traj=_per_item_radial(FRAMES, PLANE, SPOKES),
+    )
+    b = _rand(sets, 1, FRAMES, 1, PLANE)
+    c = _rand(sets, sets, FRAMES, 1, 1)
+    A = _terms(E, b, c)
+    assert A.plan.contraction == "segments" and A.plan.items == FRAMES and A.plan.fused
+    _against_the_chain(A, E, b, c)
+
+
 @requires_cuda
 def test_on_a_card_a_trajectory_per_frame_is_the_host_one():
     torch.manual_seed(64)

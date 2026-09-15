@@ -58,6 +58,19 @@ def _flat_along(t: torch.Tensor, axes) -> torch.Tensor | None:
     return t
 
 
+def _in_bart_order(weights: torch.Tensor, placed) -> tuple[torch.Tensor, tuple[int, ...]]:
+    """``weights`` of ``(terms, *axes)`` with the axes laid out slowest BART dimension first.
+
+    BART reads an array in the order of its dimensions, which the torch layout
+    does not keep where the sets lie in front of the encoding axes.
+    """
+    order = sorted(range(len(placed)), key=lambda j: -placed[j])
+    if order == list(range(len(placed))):
+        return weights, tuple(placed)
+    permuted = weights.permute(0, *(1 + j for j in order)).contiguous()
+    return permuted, tuple(placed[j] for j in order)
+
+
 def _segment_layout(encoding, b, c, sample_dims, image_dims):
     """The segments as the form's contraction, or ``None``.
 
@@ -80,6 +93,8 @@ def _segment_layout(encoding, b, c, sample_dims, image_dims):
 
     samples = samples.reshape(count, *samples.shape[1 + lead :])
     image = image.reshape(count, *image.shape[1 + image_lead :])
+    samples, sample_dims = _in_bart_order(samples, sample_dims)
+    image, image_dims = _in_bart_order(image, image_dims)
     samples = as_operand(samples, tuple(samples.shape), "sample weights")
     image = as_operand(image, tuple(image.shape), "spatial weights")
     sample_vector = _layout.vector({d: int(n) for d, n in zip(sample_dims, samples.shape[1:])})
@@ -531,8 +546,9 @@ def contracted(encoding, b: torch.Tensor, c: torch.Tensor) -> LinearOperator | N
     along the samples, whose Toeplitz normal is a point spread function per
     pair of terms rather than two transforms per term per coil.
 
-    With several sets of maps off the grid the terms go inside the coil loop
-    as they do on it, where the subspace form does not take them.
+    Off the grid, with several sets of maps or a trajectory per item, the terms
+    go inside the coil loop as they do on it, where the subspace form does not
+    take them.
 
     ``None`` says the factors do not fit the form -- weights that vary along
     the batches or the coils, or an encoding that already carries a
@@ -541,7 +557,11 @@ def contracted(encoding, b: torch.Tensor, c: torch.Tensor) -> LinearOperator | N
     if isinstance(encoding, _Segmentable):
         return _grid_contraction(encoding, b, c)
     out = _nufft_contraction(encoding, b, c)
-    if out is None and type(encoding) is NoncartesianSense and encoding.sets > 1:
+    if (
+        out is None
+        and type(encoding) is NoncartesianSense
+        and (encoding.sets > 1 or encoding._item_vector() is not None)
+    ):
         out = _grid_contraction(encoding, b, c, slices=False)
     return out
 
