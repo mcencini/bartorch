@@ -315,13 +315,9 @@ class NonlinearSense(NonlinearOperator):
         return chain(made, last, output=0, input=0)
 
     def _bundle(self):
-        from bartorch.nlop.bundle import Bundle
+        from bartorch.nlop.bundle import of_composition
 
-        written = self._composition()
-        if written.ishapes != self.ishapes or written.oshapes != self.oshapes:
-            return None
-        inner = written.bundle
-        return None if inner is None else Bundle(self, inner.derivative, inner.adjoint)
+        return of_composition(self, self._composition())
 
     def _read(self, which: int) -> Shape:
         """One of BART's dimension vectors, as a C-order shape.
