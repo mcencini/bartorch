@@ -727,7 +727,8 @@ BARTORCH_API void bartorch_nlop_free(bartorch_nlop* h);
  * iterations.  `normal` takes the vector as input 0 and the linearisation
  * point as the inputs after it; what comes back takes those and then `lambda`.
  * A nonzero `tol` is refused by BART's own assertions once the result is
- * differentiated.
+ * differentiated, and no value of `l2lambda` has been seen to change an
+ * answer -- `noir_normal_inversion_create` passes it the same way.
  */
 BARTORCH_API bartorch_nlop* bartorch_nlop_checkpoint(const bartorch_nlop* x, int der_once, int clear_mem);
 BARTORCH_API bartorch_nlop* bartorch_nlop_norm_inv_lambda(const bartorch_nlop* normal, int maxiter, float tol, float l2lambda);

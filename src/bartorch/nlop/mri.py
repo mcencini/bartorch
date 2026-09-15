@@ -308,7 +308,7 @@ class NonlinearSense(NonlinearOperator):
         # The chain leaves the coil coefficients in front of the image.
         made = made.permute_inputs([1, 0])
         last = (
-            Asymmetric(transform.gram(), Identity(product.oshape))
+            Asymmetric(transform.gram(), Identity(product.oshape), source=transform)
             if self.noncart
             else transform.to_nonlinear()
         )

@@ -66,10 +66,9 @@ and `norm_inv_create` asserts one output whose codomain is the domain of input 0
 operator, and BART's assertion does not catch it because the shapes agree.
 
 The point may be more than one argument. A model of several unknowns has a
-bundle whose members take them all, and it is the caller's `flatten` that decides
-whether a step runs over one vector or several -- the same choice
-`noir_get_forward` makes for itself with `nlop_flatten_in_F` and
-`nlop_stack_inputs_F`.
+bundle whose members take them all, and the step lays them end to end into one
+state -- the same choice `noir_get_forward` makes for itself with
+`nlop_flatten_in_F` and `nlop_stack_inputs_F`.
 
 `normal` is carried rather than derived because deriving it throws away the
 cheapest thing the model knows; what it saves is [The normal-equation
@@ -141,9 +140,16 @@ was written in:
 | `chain(f, g)` | `D_g(D_f(dx, x), f(x))` | `D_f^H(D_g^H(dz, f(x)), x)` |
 | `combine(f, g)` | the two side by side | the two side by side |
 | `dup(a, b)` | the sum of the two tangent paths | the two adjoints, added |
-| `link(o, i)` | the chain rule along the tie | the chain rule along the tie |
 | `pin(i, v)` | the input leaves both tangent and point | the same |
-| `flatten`, `reshape`, `permute`, `stack` | relabelled axes | relabelled axes |
+| `del_out(o)` | the output carries no tangent | its cotangent is zero |
+| `reshape`, `permute` | relabelled axes | relabelled axes |
+
+`link` has no row. Its derivative table is
+`D[o][i] + D[o][ii] . D[oo][i]` (`chain.c:442`), which is over the whole graph
+rather than over the node, so a composition carrying one reports no bundle and
+[Outside the form](#outside-the-form) covers it. `flatten` and `stack` have none
+either, because it is the step that lays a state out and it does so on the
+members; see [The generic step](#the-generic-step).
 
 `chain` is the only row that needs something the operands do not have: `f(x)`,
 the point the second operand is linearized at. **It is recomputed, not carried.**
@@ -193,27 +199,29 @@ adjoint. BART's own non-Cartesian model fails that identity for the same reason.
 What survives, and what the inner solve needs, is that
 `DG^H (E^H E) DG` is Hermitian.
 
-| | Transforms per normal application | Data argument |
-| --- | --- | --- |
-| `E` applied as a pair | forward and adjoint | samples |
-| `E` applied as its normal | one | coil images |
+| | Applications of `E` per normal | What one costs | Data argument |
+| --- | --- | --- | --- |
+| as a pair | a forward and an adjoint | two transforms | samples |
+| as its normal | one | whatever `linop_get_normal` is | coil images |
 
-This is the same trade `pics` makes between its Toeplitz normal and its transform
-pair, and `AGENTS.md` already records what that is worth there: 1.06 s against
-2.33 s on a 256x256 eight-coil radial dataset on the host. Whether it is worth
-the same inside a Newton step is measured in [Verification](#verification) and is
-not claimed here.
+What the one costs is the whole question, and it is the encoding's answer rather
+than this design's. Off a grid it is a point spread function, which is the trade
+`pics` makes and which `AGENTS.md` already prices there: 1.06 s against 2.33 s on
+a 256x256 eight-coil radial dataset on the host. On a grid `linop_get_normal` of
+an FFT is the same two transforms, so there is nothing to win -- which is why
+BART leaves its own Cartesian model paired. [Targets](#targets) is the
+measurement.
 
 It is a trade and not a free win. The data argument moves from samples to coil
 images, so an acquisition with far fewer samples than voxels stores more, and an
 encoding whose normal has no kernel gains nothing but pays the same storage. The
 plan says which happened.
 
-This is also where `_Cell`'s companions go. `prepare()` is `E^H` applied once,
-which any linear operator has; `split`, `join` and `decompose` are the flattening
-of a multi-unknown state and the model's own linear parts, which `flatten`,
-`stack_inputs` and the operator's parts already give. None of them needs the noir
-model to exist.
+This is also where the step's own companions come from. `Step.prepare` is `E^H`
+applied once, which any linear operator has, and `split` and `join` are the
+laying out of a multi-unknown state. Neither needs the noir model to exist, which
+is why they are the step's rather than a model's; what `_Cell` keeps that they do
+not replace is in [Fusion of the coil model](#fusion-of-the-coil-model).
 
 ## The generic step
 
@@ -243,8 +251,13 @@ own order -- which is what "no noir code is copied" means here, and what makes
 the same reading hold for `noir_gauss_newton_iter_create_s` (`:402`), the
 decaying-`alpha` loop `_Cell` already exposes.
 
-The step asserts its state is one flat vector (`model_net.c:367`), so a model of
-several unknowns is flattened first, as `noir_get_forward` flattens its own two.
+The step asserts its state is one flat vector (`model_net.c:367`), so each
+member is laid out first, as `noir_get_forward` lays out its own two:
+`nlop_flatten_in` per argument and then `nlop_stack_inputs`, and not
+`nlop_flatten`, which builds at BART's sixteen axes. What the assertion is about
+is the rank, so a model of one unknown is written this way too. The operators the
+step puts around the state are built at `N = 1` for the same reason: `nlop_dup`
+compares `iovec`s and not shapes.
 
 ## Fusion of the coil model
 
@@ -271,28 +284,48 @@ What the planner matches, and what it does:
 | In the composition | Lowered to |
 | --- | --- |
 | a linear operator after a `Multiply` of two unknowns | `E` folded into the bundle as `E^H E`, per [The normal-equation domain](#the-normal-equation-domain) |
-| a linear operator before either unknown | folded into that input's own linear part |
-| a `Diagonal` on either side | folded the way the linear planner folds one |
+| an asymmetric stage already there | left as it stands: BART lowered it itself |
 | anything else | the bundle by the plain chain rule, transform pair and all |
+
+The rewrite is taken wherever the composition matches, and not on a judgement
+about which is faster. `linop_get_normal` is the encoding's own normal where it
+has one -- a point spread function for a NUFFT, the transform's own where no
+k-space factor survives -- and the two applications where it has not, which is
+what the pair costs anyway. So the arithmetic is never more; what the rewrite
+trades is where the data lives, and that is what the plan reports. `fuse=False`
+declines it, which is what the fused answer is held against.
 
 `E` is whatever the linear planner made of it, so a fused `NoncartesianSense`
 with a point spread function arrives as one operator with a normal kernel, and
 the coil slab loop of `src/csrc/ops/sense.c` runs inside the Newton solve rather
 than around it. No C is written for this: the executor is the linear one,
-reached through `LinearOperator.normal`.
+reached through `LinearOperator.gram`.
 
 **The chosen plan is never silent**, for the same reason it is not in the linear
-case: a fallback answers with the same numbers several times slower. `F.plan`
-names the bundle's source for each stage (declared, chain rule, or torch),
-whether the step runs in the normal-equation domain, and the linear part's own
-`plan`; `plan.fused` is false when the rewrite was not taken. The executor
-counters stay the linear ones, because it is the linear encoding that runs.
+case: a fallback answers with the same numbers several times slower.
+`Step.plan` -- what `IRGNM(...).operator(F)` returns -- names where the bundle
+came from (declared, linear, chain rule, or torch), whether the step runs in the
+normal-equation domain, and the linear part's own `plan`; `plan.fused` is false
+where the rewrite was not taken. The plan sits on the step rather than on the
+model because that is where the decision is made and read back from, not worked
+out a second time. The executor counters stay the linear ones, because it is the
+linear encoding that runs.
 
-`IRGNM.operator(F)` then takes any operator with a bundle, `_Cell` is retired
-with `bartorch_noir_net_*` left in the ABI unused by the operator layer, and the
-restriction list the network model imposed -- `oversampling_coils=1.0`, no
-`optimized`, no `oversampled_coils`, no separate coefficient shape -- goes with
-it, because none of it is a property of the expression.
+`IRGNM.operator(F)` then takes any operator with a bundle, and the restriction
+list the network model imposed -- `oversampling_coils=1.0`, no `optimized`, no
+`oversampled_coils`, no separate coefficient shape -- applies only to the model
+that imposes it.
+
+**`_Cell` stays, and for two reasons that are `noir2_net`'s rather than the
+expression's.** It carries BART's own batch axis, which is
+`nlop_stack_multiple` over one model per item; and its `prepare()` takes the
+sampling pattern as an *argument*, which is what lets one trained network answer
+for several patterns -- `noir2` bakes the pattern into `lop_pattern` at
+construction, so a `Step` over a `NonlinearSense` is one model per pattern.
+Neither is reachable by assembling the expression differently. So
+`IRGNM.operator` sends a `NonlinearSense` to `_Cell` and everything else to
+`Step`, and a test holds the two to the same numbers over the composition BART's
+own model writes.
 
 ## Outside the form
 
@@ -319,14 +352,14 @@ that is torch, which can differentiate every primitive in the table:
 
 | Claim | Pinned against |
 | --- | --- |
-| a declared bundle's `derivative` | `(F(x + eps dx) - F(x)) / eps`, and `torch.func.jvp` of the same function |
+| a declared bundle's `derivative` | a central quotient, whose error is quadratic in the step and so still resolved in single precision, and `torch.func.jvp` of the same function |
 | a declared bundle's `adjoint` | the adjoint identity `<D dx, dz> = <dx, D^H dz>` over random vectors, and torch's own gradient -- with the transpose asserted to disagree, as `tests/test_linop.py` does |
 | `normal` | `adjoint(derivative(dx, x), x)` |
 | a composed bundle | torch's jvp and vjp of the composition written out |
-| the generic step | a Gauss-Newton loop written out in torch, on a model small enough to write out -- a two-parameter exponential fit |
+| the generic step | a Gauss-Newton loop written out in torch, on a model small enough for its Jacobian to be a matrix, with each inner problem solved exactly rather than by conjugate gradients -- so what is compared is the method and not two paths through one iteration |
 | the step's gradients | torch autograd through that written-out loop, for all four of `y`, `xn`, `x0`, `alpha` |
-| the normal-equation rewrite | the same step assembled without it, to the last bits where the arithmetic is the same and to the solver's tolerance where it is not |
-| fusion | the fused plan asserted by `F.plan`, and the fused result against the unfused one |
+| the normal-equation rewrite | the same step assembled with `fuse=False`: to single precision on a grid, and off it to a distance that closes as the transform's tolerance is tightened, which is what says the transform and not the rewrite is what separates them |
+| fusion | the plan asserted by `Step.plan`, on a coil composition and on one that is not |
 
 Two agreement checks are BART against BART and are labelled as such rather than
 counted as numerical tests: a bundle's `derivative` against `nlop_get_derivative`
@@ -354,26 +387,36 @@ They say the two routes have not diverged; they do not say either is right.
    - Done when it matches the written-out torch loop, carries gradients by all
      four arguments, and reproduces `_Cell` for the noir composition.
 4. **The planner and fusion.**
-   - The normal-equation rewrite, `F.plan`, `_Cell` retired and the
-     `NonlinearSense`-only restriction removed.
+   - The normal-equation rewrite, `Step.plan`, and the `NonlinearSense`-only
+     restriction removed.
    - Done when the fused and unfused results agree, the fused plan is asserted,
      and the benchmark in [Targets](#targets) is filled in.
+   - `_Cell` is not retired; see [Fusion of the coil model](#fusion-of-the-coil-model).
 
 Names that appear: `nlop.Derivative` keeps its meaning; `IRGNM.operator(F)` loses
-its type restriction; `F.plan` and `F.bundle` are new. Names that go: `_Cell` and
-its `prepare`/`split`/`join`/`decompose` companions, replaced by the linear
-part's adjoint and the algebra's own `flatten`.
+its type restriction; `F.bundle`, `nlop.Bundle`, `nlop.Plan` and `Step.plan` are
+new, and `Step` carries `prepare`, `split` and `join` of its own. No name goes.
 
 ## Targets
 
-To be filled by a run on a machine with a card, and by a host run. One case per
-row, best of five, against the same reconstruction assembled without the rewrite:
+`scripts/benchmark_newton.py`, best of five, one case per process, against the
+same step assembled with `fuse=False`.  Measured on a four-core host with no
+card: 256² with eight coils and eight Newton steps.
 
-| Case | Step, paired transform (s) | Step, normal domain (s) |
-| --- | --- | --- |
-| Cartesian 256², 8 coils, 8 Newton steps | — | — |
-| non-Cartesian 256², 8 coils, 401 spokes, 8 Newton steps | — | — |
-| the same, unrolled and trained for one epoch | — | — |
+| Case | paired (s) | normal domain (s) | |
+| --- | --- | --- | --- |
+| Cartesian | 4.79 | 4.53 | 1.06x |
+| non-Cartesian, 401 spokes | 14.29 | 7.52 | 1.90x |
+
+Which is the shape the rewrite was expected to have and the reason the note does
+not gate on it: on a grid `linop_get_normal` of an FFT is the same two
+transforms, so there is nothing to win and nothing to lose; off it the point
+spread function halves the step.
+
+Two rows are still open, and both want a machine that is not this one: the same
+cases on a card, and the backward pass, whose first measurement here --
+Cartesian, 19.96 s against a 4.70 s forward -- says only that it is the four
+solves and not the rewrite that a training step spends its time in.
 
 ## Working constraints
 
@@ -381,7 +424,8 @@ row, best of five, against the same reconstruction assembled without the rewrite
   checked in the CPU suite as `AGENTS.md` describes; the card tests are written
   alongside the code and marked as needing one. What needs a card run: the fused
   plan on device memory, the coil slab loop's counters inside a Newton solve, and
-  every row of [Targets](#targets).
+  [Targets](#targets) again, where the host numbers there are what a four-core
+  container measured rather than what the design is worth.
 - **BART.** Not edited. The two new entry points wrap public constructors in
   `src/csrc/ops/`; nothing is compiled in BART's place.
 - **Docstrings.** Two to four lines of contract for each addition. Documentation

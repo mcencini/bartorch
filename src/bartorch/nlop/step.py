@@ -15,6 +15,7 @@ import torch
 from bartorch._dispatch import BartError
 from bartorch._lib import library
 from bartorch._operator import Built, Shape
+from bartorch.nlop import plan as _plan
 from bartorch.nlop.base import NonlinearOperator, _built, arity, chain
 from bartorch.nlop.basic import Add, Multiply, Weighted
 from bartorch.nlop.bundle import Bundle, scaled
@@ -131,11 +132,14 @@ class Step(NonlinearOperator):
     ``alpha`` a vector as long as the state and decaying by ``redu`` towards
     ``alpha_min``.  The state is the model's unknowns laid end to end;
     :meth:`split` and :meth:`join` read and write one.
+
+    A coil composition is lowered so that its encoding is applied once as its
+    normal, which moves ``y`` from samples to coil images; :meth:`prepare` puts
+    a measurement there and :attr:`plan` says whether it happened.
     """
 
-    def __init__(self, F, schedule, *, cg_lambda: float = 0.0):
-        bundle = F.bundle
-        if bundle is None:
+    def __init__(self, F, schedule, *, cg_lambda: float = 0.0, fuse: bool = True):
+        if F.bundle is None:
             raise TypeError(
                 f"{type(F).__name__} supplies no derivative as a function of the point, so a "
                 "Gauss-Newton step cannot be assembled over it; IRGNM(...)(y, F, x0) solves "
@@ -147,7 +151,9 @@ class Step(NonlinearOperator):
                 f"{len(F.oshapes)}"
             )
         self.model = F
-        self.flat = flattened(F.bundle)
+        #: What the model was lowered into, what prepares its data, and the plan.
+        self.lowered, self._prepare, self.plan = _plan.build(F, fuse=fuse)
+        self.flat = flattened(self.lowered.bundle)
         self.iterations = int(schedule.iterations)
         self.redu = float(schedule.redu)
         self.alpha_min = float(schedule.alpha_min)
@@ -233,7 +239,7 @@ class Step(NonlinearOperator):
 
     @property
     def data_shape(self) -> Shape:
-        """What ``y`` is: whatever the model returns."""
+        """What ``y`` is: what the model returns, or ``E^H`` of it once lowered."""
         return self.flat.operator.oshapes[0]
 
     @property
@@ -241,11 +247,20 @@ class Step(NonlinearOperator):
         """What ``xn``, ``x0`` and the answer are: the unknowns laid end to end."""
         return self.flat.operator.ishapes[0]
 
+    def prepare(self, y: torch.Tensor) -> torch.Tensor:
+        """A measurement in the shape the step takes.
+
+        ``E^H y`` where the step works in the normal-equation domain, which is
+        what :attr:`plan` reports, and the measurement unchanged where it does
+        not.
+        """
+        return y if self._prepare is None else self._prepare.forward(y)
+
     def split(self, x: torch.Tensor) -> tuple[torch.Tensor, ...]:
         """One state back into a tensor per unknown of the model."""
         flat, at = x.reshape(-1), 0
         out = []
-        for shape in self.model.ishapes:
+        for shape in self.lowered.ishapes:
             size = math.prod(shape)
             out.append(flat[at : at + size].reshape(shape))
             at += size

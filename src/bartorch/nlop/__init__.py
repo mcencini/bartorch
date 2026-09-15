@@ -46,6 +46,7 @@ from bartorch.nlop.mri import (
     NoncartesianSense,
     NonlinearSense,
 )
+from bartorch.nlop.plan import Plan
 from bartorch.nlop.simulation import (
     Bloch,
     FromTorchSim,
@@ -79,6 +80,7 @@ __all__ = [
     "NonlinearSense",
     "Parameters",
     "Phase",
+    "Plan",
     "Power",
     "RootSumOfSquares",
     "SmoothAbs",

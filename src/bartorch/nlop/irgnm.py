@@ -240,7 +240,7 @@ class IRGNM:
 
     # --- BART's whole step, as an operator ---------------------------------
 
-    def operator(self, F, *, batch: int = 1, cg_lambda: float = 0.0):
+    def operator(self, F, *, batch: int = 1, cg_lambda: float = 0.0, fuse: bool = True):
         """This schedule as one operator ``(y, xn, x0, alpha) -> x``, differentiable by all four.
 
         ``iterations`` steps, the weight decaying by ``redu`` towards
@@ -257,6 +257,17 @@ class IRGNM:
         ``xn``, ``x0`` and the answer are the model's unknowns in one flat
         vector, which ``split()`` and ``join()`` read and write, and ``alpha``
         may be a number.  ``cg_lambda`` is the inner solve's ``l2lambda``.
+
+        A product of two unknowns behind a linear encoding is lowered so the
+        encoding is applied once as its normal, which moves ``y`` from samples
+        to coil images -- ``prepare()`` puts a measurement there and ``plan``
+        says whether it happened.  ``fuse=False`` declines the rewrite and
+        applies the encoding as a pair.
+
+        ``cg_lambda`` is ``iter_conjgrad_conf.l2lambda``, and no value of it
+        has been seen to change an answer -- neither here nor through BART's
+        own step, which takes the same parameter.  It is carried because BART
+        takes it, not because it is known to do anything.
 
         Notes
         -----
@@ -276,10 +287,20 @@ class IRGNM:
 
         Examples
         --------
+        BART's own model, with its batch and its pattern per call:
+
         >>> F = nlop.CartesianSense((coils, 256, 256), sobolev=(220.0, 8.0))
         >>> cell = nlop.IRGNM(iterations=1).operator(F, batch=4)
         >>> y = cell.prepare()(kspace, pattern)
         >>> x1 = cell(y, cell.start(batch=4), cell.start(batch=4), 1.0)
+
+        A model assembled here, over the encoding of your choice:
+
+        >>> E = linop.NUFFT(traj, (coils, 1, 256, 256))
+        >>> step = nlop.IRGNM(iterations=8).operator(nlop.CoilSense(E))
+        >>> step.plan.domain
+        'normal'
+        >>> x = step(step.prepare(kspace), start, start, 1.0)
         """
         from bartorch.nlop._newton import _Cell
         from bartorch.nlop.mri import NonlinearSense
@@ -301,7 +322,7 @@ class IRGNM:
                     "only BART's noir model carries a batch of its own; a model assembled "
                     "here takes whatever axes it was built with"
                 )
-            return Step(F, self, cg_lambda=cg_lambda)
+            return Step(F, self, cg_lambda=cg_lambda, fuse=fuse)
         beyond = [
             name
             for name, asked in (

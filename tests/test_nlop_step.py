@@ -201,3 +201,108 @@ def test_the_step_reaches_a_model_built_from_torch(generator):
     y = rand((5,), generator)
     x0 = rand((5,), generator) * 0.1 + 1.0
     assert (5,) == tuple(step(y, x0, x0, 1.0).shape)
+
+
+# --- the plan the step took --------------------------------------------------
+
+
+def _coil_model(n=16, coils=4, off_grid=False):
+    import bartorch.tools as bt
+
+    shape = (coils, 1, n, n)
+    if off_grid:
+        return nlop.CoilSense(linop.NUFFT(bt.traj(x=n, y=21), shape))
+    return nlop.CoilSense(linop.FFT(shape, axes=(-1, -2)))
+
+
+@pytest.mark.parametrize("off_grid", [False, True])
+def test_a_coil_composition_is_lowered_into_the_normal_equation_domain(off_grid):
+    step = nlop.IRGNM(iterations=1, cg_maxiter=10, cg_tol=0.0).operator(
+        _coil_model(off_grid=off_grid)
+    )
+    assert step.plan.fused
+    assert "normal" == step.plan.domain
+    assert "chain rule" == step.plan.bundle
+    # The data is what the encoding's adjoint returns, not what it takes.
+    assert (4, 1, 16, 16) == step.data_shape
+
+
+@pytest.mark.parametrize("off_grid", [False, True])
+def test_the_rewrite_is_declined_when_it_is_declined(off_grid):
+    step = nlop.IRGNM(iterations=1, cg_maxiter=10, cg_tol=0.0).operator(
+        _coil_model(off_grid=off_grid), fuse=False
+    )
+    assert not step.plan.fused
+    assert "paired" == step.plan.domain
+
+
+def test_a_model_that_is_not_a_coil_composition_has_nothing_to_lower():
+    step = nlop.IRGNM(iterations=1, cg_maxiter=10, cg_tol=0.0).operator(nlop.Multiply(IMAGE, COILS))
+    assert not step.plan.fused
+    assert step.plan.encoding is None
+    assert "declared" == step.plan.bundle
+
+
+def test_preparing_the_data_is_the_encodings_adjoint(generator):
+    encoding = linop.FFT((4, 1, 16, 16), axes=(-1, -2))
+    step = nlop.IRGNM(iterations=1, cg_maxiter=10, cg_tol=0.0).operator(nlop.CoilSense(encoding))
+    kspace = rand((4, 1, 16, 16), generator)
+    assert torch.equal(step.prepare(kspace), encoding.adjoint(kspace))
+
+
+def test_the_grid_leaves_the_fused_and_the_paired_answers_agreeing(generator):
+    """On a grid the two are the same arithmetic up to single precision."""
+    F = _coil_model()
+    schedule = nlop.IRGNM(iterations=2, alpha=1.0, redu=2.0, cg_maxiter=60, cg_tol=0.0)
+    fused, paired = schedule.operator(F), schedule.operator(F, fuse=False)
+
+    kspace = rand(paired.data_shape, generator)
+    start = rand(paired.state_shape, generator) * 0.2 + 1.0
+    one = fused(fused.prepare(kspace), start, start, 1.0)
+    other = paired(paired.prepare(kspace), start, start, 1.0)
+    assert (one - other).abs().max() < 1e-4 * other.abs().max()
+
+
+def test_off_the_grid_the_two_close_with_the_transforms_tolerance(generator):
+    """Which says what separates them is the NUFFT's accuracy and not the rewrite."""
+    from bartorch import _finufft
+
+    distances = []
+    for tolerance in (1e-2, 1e-3, 1e-5):
+        _finufft.use_in_tools(tolerance=tolerance)
+        F = _coil_model(off_grid=True)
+        schedule = nlop.IRGNM(iterations=2, alpha=1.0, redu=2.0, cg_maxiter=60, cg_tol=0.0)
+        fused, paired = schedule.operator(F), schedule.operator(F, fuse=False)
+
+        state = torch.Generator().manual_seed(4)
+        kspace = rand(paired.data_shape, state)
+        start = rand(paired.state_shape, state) * 0.2 + 1.0
+        one = fused(fused.prepare(kspace), start, start, 1.0)
+        other = paired(paired.prepare(kspace), start, start, 1.0)
+        distances.append(((one - other).abs().max() / other.abs().max()).item())
+
+    assert distances[0] > distances[1] > distances[2]
+    assert distances[2] < 1e-3
+
+
+# --- BART's own model ---------------------------------------------------------
+
+
+def test_barts_noir_model_arrives_lowered_off_the_grid_and_not_on_it():
+    """``noir2_join``'s own choice, read back through the composition it writes."""
+    import bartorch.tools as bt
+    from bartorch.nlop.plan import describe
+
+    assert not describe(nlop.CartesianSense((4, 16, 16))).lowered
+    assert describe(nlop.NoncartesianSense(bt.traj(x=16, y=21), (4, 16, 16))).lowered
+
+
+def test_the_planner_lowers_the_model_bart_left_paired():
+    """Which is the ground the planner adds: on a grid BART applies the pair."""
+    schedule = nlop.IRGNM(iterations=1, cg_maxiter=10, cg_tol=0.0)
+    step = Step(nlop.CartesianSense((4, 16, 16))._composition(), schedule)
+    assert step.plan.fused
+    assert "normal" == step.plan.domain
+    assert not Step(
+        nlop.CartesianSense((4, 16, 16))._composition(), schedule, fuse=False
+    ).plan.fused

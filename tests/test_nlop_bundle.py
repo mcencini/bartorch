@@ -228,6 +228,26 @@ def composed(generator):
         "nested": chain(
             nlop.Exp(SHAPE) @ nlop.Log(SHAPE), nlop.Multiply(SHAPE, SHAPE), output=0, input=1
         ),
+        # The operand that feeds the chain has an output left over, which is
+        # the arithmetic the one-output cases never reach.
+        "chain from several outputs": chain(
+            combine(nlop.Exp(SHAPE), nlop.Log(SHAPE)),
+            nlop.Multiply(SHAPE, SHAPE),
+            output=0,
+            input=1,
+        ),
+        "chain from the later output": chain(
+            combine(nlop.Exp(SHAPE), nlop.Log(SHAPE)),
+            nlop.Multiply(SHAPE, SHAPE),
+            output=1,
+            input=0,
+        ),
+        "chain into several outputs": chain(
+            nlop.Multiply(SHAPE, SHAPE),
+            combine(nlop.Exp(SHAPE), nlop.Log(SHAPE)),
+            output=0,
+            input=1,
+        ),
     }
 
 
@@ -292,3 +312,19 @@ def test_a_link_has_no_bundle():
     # consumes and the tie is the one the algebra allows.
     made = combine(nlop.Exp(SHAPE), nlop.Log(SHAPE)).link(1, 0)
     assert made.bundle is None
+
+
+@pytest.mark.parametrize("name", sorted(composed(torch.Generator().manual_seed(0))))
+def test_a_composed_normal_is_its_own_derivative_followed_by_its_own_adjoint(name, generator):
+    """The chain rule puts the first operand in both members, and the normal in one
+    graph twice; both copies are handed the same point, so the derivative it stores
+    is the same either way."""
+    op = composed(generator)[name]
+    if 1 != len(op.oshapes):
+        pytest.skip("a normal operator is defined for one output")
+    xs = [rand(s, generator) + 3.0 for s in op.ishapes]
+    dxs = [rand(s, generator) for s in op.ishapes]
+    got = tupled(op.bundle.normal(*dxs, *xs))
+    want = tupled(op.bundle.adjoint(op.bundle.derivative(*dxs, *xs), *xs))
+    for one, other in zip(got, want):
+        assert torch.equal(one, other)

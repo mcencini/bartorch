@@ -36,6 +36,7 @@ itself.
    FromLinear
    Derivative
    Bundle
+   Plan
 ```
 
 ## Basic
