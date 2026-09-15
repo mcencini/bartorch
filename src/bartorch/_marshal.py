@@ -145,18 +145,28 @@ def dim_vector() -> ctypes.Array:
 
 
 def wide_dim_vector() -> ctypes.Array:
-    """A dimension vector one entry longer than :data:`DIMS`.
+    """A dimension vector two entries longer than :data:`DIMS`.
 
-    A proximal operator may work a rank past BART's usual sixteen: total
-    variation thresholds the components of a gradient, which are an axis of
-    their own beyond the image's.
+    A proximal operator may work past BART's usual sixteen: total variation
+    thresholds a gradient's components, an axis beyond the image's, and total
+    generalized variation's symmetric gradient adds a second (``tgv.c``).
     """
-    return (ctypes.c_long * (DIMS + 1))()
+    return (ctypes.c_long * (DIMS + 2))()
 
 
 def long_out() -> ctypes.c_long:
     """A number the library writes into; read it back off ``.value``."""
     return ctypes.c_long()
+
+
+def int_out() -> ctypes.c_int:
+    """An ``int`` to be written through a pointer."""
+    return ctypes.c_int()
+
+
+def pointer_buffer(count: int) -> ctypes.Array:
+    """Room for ``count`` pointers to be written."""
+    return (ctypes.c_void_p * count)()
 
 
 def double_out() -> ctypes.c_double:

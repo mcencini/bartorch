@@ -78,7 +78,7 @@ under `external/`.
   a card runs.
 - `cmake/`: what the build system runs.
 - `tests/`: numerical and interoperability checks.
-- `docs/`: pages, gallery scripts and the build configuration.
+- `docs/`: pages and the build configuration.
 
 The compiled library uses no Python or torch C API; Python passes pointers and
 reversed dimension vectors through ctypes.  Keep BART changes at the

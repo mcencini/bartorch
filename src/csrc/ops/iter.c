@@ -87,7 +87,6 @@ static enum algo_t algo_by_name(const char* name)
 	if (0 == strcmp(name, "admm"))		return ALGO_ADMM;
 	if (0 == strcmp(name, "pridu"))		return ALGO_PRIDU;
 	if (0 == strcmp(name, "niht"))		return ALGO_NIHT;
-	if (0 == strcmp(name, "eulermaruyama"))	return ALGO_EULERMARUYAMA;
 	return (enum algo_t)-1;
 }
 
@@ -146,6 +145,79 @@ int bartorch_prox_create(const char* kind, long xflags, long jflags, float lambd
 	p->trafo = trafos[0];
 	p->xform = xform;
 	*out = PTR_PASS(p);
+
+	return 0;
+}
+
+int bartorch_prox_set_create(int n, const char* const* kinds,
+		const long* xflags, const long* jflags, const float* lambda, const int* k,
+		int llr_blk, const char* wavelet, int shift_mode,
+		const float* alpha, const float* gamma, const long* img_dims,
+		int max_out, bartorch_prox** out, int* count, long* svars)
+{
+	if ((0 > n) || (NUM_REGS < n) || (NULL == out) || (NULL == count) || (NULL == svars))
+		return -1;
+
+	struct opt_reg_s ropts;
+	(void)opt_reg_init(&ropts);
+
+	for (int i = 0; i < n; i++) {
+
+		int xform;
+
+		if (0 != xform_by_name(kinds[i], &xform))
+			return -4;
+
+		ropts.regs[i].xform = xform;
+		ropts.regs[i].xflags = (unsigned long)xflags[i];
+		ropts.regs[i].jflags = (unsigned long)jflags[i];
+		ropts.regs[i].lambda = lambda[i];
+		ropts.regs[i].k = k[i];
+		ropts.regs[i].graph_file = NULL;
+		ropts.regs[i].asl = false;
+	}
+
+	ropts.r = n;
+
+	if (NULL != alpha)
+		for (int i = 0; i < 2; i++)
+			ropts.alpha[i] = alpha[i];
+
+	if (NULL != gamma)
+		for (int i = 0; i < 2; i++)
+			ropts.gamma[i] = gamma[i];
+
+	const struct operator_p_s* prox_ops[NUM_REGS] = { NULL };
+	const struct linop_s* trafos[NUM_REGS] = { NULL };
+	const long (*sdims[NUM_REGS])[DIMS + 1] = { NULL };
+
+	long dims[DIMS];
+	md_copy_dims(DIMS, dims, img_dims);
+
+	opt_reg_configure(DIMS, dims, &ropts, prox_ops, trafos, sdims,
+			llr_blk, shift_mode, (NULL != wavelet) ? wavelet : "dau2", false, ITER_DIM);
+
+	int penalties = ropts.r + ropts.sr;
+
+	if (max_out < penalties) {
+
+		opt_reg_free(&ropts, prox_ops, trafos);
+		return -5;
+	}
+
+	/* A fresh set per solve, as `bartorch_solve` builds one, so nothing in it
+	 * is rewound: `xform` is left unset for every handle. */
+	for (int i = 0; i < penalties; i++) {
+
+		PTR_ALLOC(struct bartorch_prox_s, p);
+		p->op = prox_ops[i];
+		p->trafo = trafos[i];
+		p->xform = -1;
+		out[i] = PTR_PASS(p);
+	}
+
+	*count = penalties;
+	*svars = ropts.svars;
 
 	return 0;
 }
@@ -360,7 +432,7 @@ static void maxeigen_del(const operator_data_t* _data)
 /* The largest eigenvalue of the operator an iteration divides its step by.
  *
  * `pics -e` asks for it, and every iteration that takes a step -- `ist`,
- * `fista`, `eulermaruyama`, `chambolle_pock` -- divides by what comes back.
+ * `fista`, `chambolle_pock` -- divides by what comes back.
  * It is a power iteration from a random start, so it draws on BART's own
  * generator: a loop written outside the library has to ask for it here, at
  * the point in the sequence the library would have asked, or the draws that
@@ -373,8 +445,8 @@ static void maxeigen_del(const operator_data_t* _data)
  *
  * Returns 0 and writes `out`, or a negative code.
  */
-int bartorch_maxeigen(const bartorch_linop* handle, float cclambda,
-		int nprox, const bartorch_prox* const* proxes,
+int bartorch_maxeigen(const bartorch_linop* handle, const bartorch_linop* precond,
+		float cclambda, int nprox, const bartorch_prox* const* proxes,
 		int iterations, double* out)
 {
 	if ((NULL == handle) || (NULL == out) || (1 > iterations))
@@ -399,6 +471,22 @@ int bartorch_maxeigen(const bartorch_linop* handle, float cclambda,
 
 	const struct operator_s* normal = operator_create(iov->N, iov->dims, iov->N, iov->dims,
 			CAST_UP(PTR_PASS(data)), maxeigen_apply, maxeigen_del);
+
+	/* `lsqr2_create`'s chain, before `iter2_chambolle_pock` adds the terms. */
+	if (NULL != precond) {
+
+		const struct linop_s* m = bartorch_linop_unwrap(precond);
+
+		if (NULL == m) {
+
+			operator_free(normal);
+			return -1;
+		}
+
+		auto tmp = normal;
+		normal = operator_chain(normal, m->forward);
+		operator_free(tmp);
+	}
 
 	for (int i = 0; i < nprox; i++) {
 
@@ -432,8 +520,6 @@ int bartorch_solve(const bartorch_linop* handle,
 		float sigma_tau_ratio, int adaptive_step,
 		int warmstart,
 		const bartorch_linop* precond,
-		const bartorch_linop* em_precond, float em_precond_diag, float em_precond_tol,
-		int em_precond_maxiter,
 		int llr_blk, const char* wavelet, int shift_mode,
 		const float* alpha, const float* gamma,
 		void* x, const void* y, long* iterations)
@@ -606,22 +692,6 @@ int bartorch_solve(const bartorch_linop* handle,
 
 		CAST_DOWN(iter_conjgrad_conf, CAST_DOWN(iter_call_s, it.iconf)->_conf)->tol = cg_tol;
 		nr_penalties = 0;
-	}
-
-	/* The sampler's own preconditioner, which is a different thing from
-	 * `lsqr`'s and the only genuinely preconditioned conjugate gradients in
-	 * BART: `eulermaruyama_precond` solves `(M^H M + diag) o = x` with
-	 * `conjgrad` at every step.  `italgo_config` cannot be told about it and
-	 * `pics` has no flag for it, so this is the only way to reach it. */
-	if ((ALGO_EULERMARUYAMA == algo) && (0. < em_precond_diag)) {
-
-		struct iter_eulermaruyama_conf* em =
-			CAST_DOWN(iter_eulermaruyama_conf, CAST_DOWN(iter_call_s, it.iconf)->_conf);
-
-		em->precond_diag = em_precond_diag;
-		em->precond_tol = em_precond_tol;
-		em->precond_max_iter = em_precond_maxiter;
-		em->precond_linop = (NULL == em_precond) ? NULL : bartorch_linop_unwrap(em_precond);
 	}
 
 	/* Only three of the iterations take the regularizers' transforms; the

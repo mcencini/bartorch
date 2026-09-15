@@ -1,11 +1,11 @@
 # Regularization and denoising
 
-`bartorch.prox`.  A regularization term is what a solver in
+`bartorch.priors`.  A regularization term is what a solver in
 {mod}`bartorch.optim` takes; BART builds its proximal operator.  The denoisers
 are functions on images.
 
 ```{eval-rst}
-.. currentmodule:: bartorch.prox
+.. currentmodule:: bartorch.priors
 ```
 
 ## Regularizer class
@@ -27,14 +27,16 @@ term.
 
 BART's proximal operators carry no derivative, so
 {meth}`Regularizer.prox` refuses a tensor that does; a denoiser is what goes
-in that slot instead.  {func}`frozen` is for the mixed solve, where the
-gradient is meant to reach the denoiser and another term is furniture.
+in that slot instead, as an {class}`ImplicitPrior`.  {func}`frozen` is for the
+mixed solve, where the gradient is meant to reach the denoiser and another term
+is furniture.
 
 ```{eval-rst}
 .. autosummary::
    :toctree: generated
    :nosignatures:
 
+   ImplicitPrior
    frozen
 ```
 
@@ -99,8 +101,8 @@ gradient is meant to reach the denoiser and another term is furniture.
 
 These split into several penalties over a variable larger than the image, so
 one cannot be built alone.  {func}`bartorch.tools.pics`,
-{class}`bartorch.optim.ADMM` and {class}`bartorch.optim.PRIDU` take them; the
-solve then runs in the library and does not unroll.
+{class}`bartorch.optim.ADMM` and {class}`bartorch.optim.PRIDU` take them; their
+blocks walk the image followed by those unknowns, and output the image.
 
 ```{eval-rst}
 .. autosummary::

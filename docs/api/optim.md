@@ -1,9 +1,9 @@
 # Optimization
 
-`bartorch.optim`.  A solver is configured once and called as
-`solver(y, A, x0=None)`; the iteration is BART's, the one `pics` or `nlinv`
-runs.  `solver.in_library(y, A)` runs BART's own loop instead, and answers
-with the same bits.
+`bartorch.optim`.  A block is one step of a BART iteration as a torch module; a
+solver loops a block to BART's schedule and is called as
+`solver(y, A, x0=None)`; the function `optim.fista(y, A, term)` is that call in
+one expression.
 
 ```{eval-rst}
 .. currentmodule:: bartorch.optim
@@ -32,16 +32,62 @@ with the same bits.
    ADMM
    PRIDU
    NIHT
-   EulerMaruyama
    maxeigen
+```
+
+A {class}`~bartorch.priors.ImplicitPrior` goes wherever a term goes.
+{class}`NIHT` refuses: BART's own iteration asserts against the operator
+`lsqr2` hands it, so no NIHT solve runs, `bart pics -R H` included.
+
+## Blocks
+
+`state = block.start(y, A, x0)` sets a run up, `state = block(state, A)` takes a
+step, and `block.output(state, A)` is the image.  A solver is these three
+calls in a loop, so a stack of frozen blocks answers with the solver's bits.
+Step sizes and weights are parameters, frozen until `requires_grad_()`.
+
+```python
+blocks = nn.ModuleList(
+    optim.FISTABlock(priors.ImplicitPrior(UNet(), sigma=0.05), step=0.9) for _ in range(10)
+)
+for block in blocks:
+    block.step.requires_grad_()
+
+state = blocks[0].start(kspace, A)
+for block in blocks:
+    state = block(state, A)
+image = blocks[-1].output(state, A)
+```
+
+BART's proximal operators and the residual norms that steer the schedule
+carry no derivative; everything else a step applies is recorded.
+
+```{eval-rst}
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   ISTBlock
+   FISTABlock
+   ADMMBlock
+   PRIDUBlock
+```
+
+{class}`FixedPoint` iterates a block to its fixed point and differentiates
+through the point rather than the run: a deep-equilibrium model.
+
+```{eval-rst}
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   FixedPoint
 ```
 
 ## Functional wrappers
 
-`optim.fista(y, A, term, maxiter=30)` is `optim.FISTA(term, maxiter=30)(y, A)`,
-and is the ordinary way to run one.  Reach for the class when the solver has
-to be *held*: to unroll it, to drive it to a fixed point, or to hand it to
-{class}`IRGNM` as `inner=`.
+`optim.fista(y, A, term, maxiter=30)` is `optim.FISTA(term, maxiter=30)(y, A)`.
+Reach for the class to hand a solver to {class}`bartorch.nlop.IRGNM` as `inner=`.
 
 ```{eval-rst}
 .. autosummary::
@@ -54,58 +100,13 @@ to be *held*: to unroll it, to drive it to a fixed point, or to hand it to
    admm
    pridu
    niht
-   eulermaruyama
-   irgnm
 ```
-
-A `deepinv` prior or a bare denoiser goes wherever a {mod}`bartorch.prox` term
-goes, which the classes do not take.  `niht` and {class}`NIHT` refuse: BART's
-own iteration asserts against the operator `lsqr2` hands it, so no NIHT solve
-runs, `bart pics -R H` included.
-
-## Unrolling
-
-{meth}`~CG.unrolled` makes a solver a torch network and {meth}`~CG.fixed_point`
-drives it to a fixed point.  Both build the step themselves; there is no
-iteration class to name.
-
-```python
-net = optim.FISTA(denoiser, maxiter=10, step=0.9).unrolled(
-    (1, 256, 256), trainable=["stepsize"]
-)
-image = net(kspace[None], bartorch.to_deepinv(A))
-```
-
-Every operator a step applies is recorded, so the graph is over BART's own
-arithmetic.  Two things are deliberately not in it: BART's proximal operators,
-which carry no derivative, and the residual norms that steer $\rho$, $\tau$ and
-the stopping test.
 
 ## Preconditioning
 
-BART calls three unrelated things preconditioning.  `precond=` is
+BART calls two unrelated things preconditioning.  `precond=` is
 `lsqr2_create`'s `precond_op`, which every solver here takes; `pics --precond`
-reformulates the data fidelity instead; and {class}`EulerMaruyama`'s
-`sampler_precond=` is the one preconditioned solve BART really runs.
-
-## Nonlinear least squares
-
-BART has Gauss-Newton in two forms and {class}`IRGNM` is both: without
-`inner=` it is `irgnm`, run inside the library, and with one it is `irgnm2`,
-whose linearized problem goes to any solver here.
-
-```python
-optim.IRGNM(inner=optim.CG())                               # iter4_irgnm2, to the bit
-optim.IRGNM(inner=optim.FISTA(prox.Wavelet(axes, 0.001)))   # moba -l1's shape
-```
-
-```{eval-rst}
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
-
-   IRGNM
-```
+reformulates the data fidelity instead.
 
 ## Data scaling
 

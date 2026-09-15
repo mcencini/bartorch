@@ -64,7 +64,7 @@ def _rank(op: NonlinearOperator, at: int, output: bool) -> int:
     lib = library()
     query = lib.bartorch_nlop_output_codomain if output else lib.bartorch_nlop_input_domain
     vector = _marshal.wide_dim_vector()
-    rank = query(op._h.ptr, at, DIMS + 1, vector)
+    rank = query(op._h.ptr, at, len(vector), vector)
     if rank < 0:
         raise BartError("BART would not report the rank of one of its arguments")
     return rank
@@ -268,14 +268,28 @@ class NonlinearOperator(Operator):
         return outs[0] if 1 == len(outs) else tuple(outs)
 
     def _as_callbacks(self) -> NonlinearOperator:
-        from bartorch.nlop.callback import Callback
-
         if 1 != len(self.ishapes) or 1 != len(self.oshapes):
             raise NotImplementedError(
                 "a Python-defined operator of more than one argument has no BART callback "
                 "behind it; build it from one-argument pieces with the algebra instead"
             )
-        return Callback(self.oshape, self.ishape, self.forward, self.derivative, self.adjoint)
+        return NonlinearOperator.from_callbacks(
+            self.oshape, self.ishape, self.forward, self.derivative, self.adjoint
+        )
+
+    @classmethod
+    def from_callbacks(cls, oshape, ishape, forward, derivative, adjoint) -> NonlinearOperator:
+        """An operator from Python functions, applied through BART.
+
+        ``forward`` fixes the point ``derivative`` and ``adjoint`` are taken at,
+        until the next forward.  A sequence of shapes makes that many outputs
+        or inputs; then ``forward(*xs)`` returns one tensor per output, and
+        ``derivative(o, i, dx)`` and ``adjoint(o, i, dy)`` take output ``o`` by
+        input ``i``.
+        """
+        from bartorch.nlop.callback import _Callback
+
+        return _Callback(oshape, ishape, forward, derivative, adjoint)
 
     # --- the derivative as a linear operator -------------------------------
 
@@ -301,10 +315,12 @@ class NonlinearOperator(Operator):
         is taken at.  For an operator of one input and one output; for the
         others, evaluate and take a :meth:`jacobian`.
         """
-        from bartorch.linop.basic import Callback as LinearCallback
+        from bartorch.linop.base import LinearOperator
 
         self.forward(*xs)
-        return LinearCallback(self.oshape, self.ishape, self.derivative, self.adjoint)
+        return LinearOperator.from_callbacks(
+            self.oshape, self.ishape, self.derivative, self.adjoint
+        )
 
     def __call__(self, *xs: torch.Tensor):
         """``F(x)``, recorded for autograd when an input requires a gradient."""
@@ -407,7 +423,7 @@ class NonlinearOperator(Operator):
         ``nlop_flatten``.  What a two-unknown model needs to reach a solver
         that knows one vector: ``noir/recon2.c`` lays the image and the coil
         coefficients out one after the other, in argument order, and that is
-        what :class:`~bartorch.optim.IRGNM` is handed.
+        what :class:`~bartorch.nlop.IRGNM` is handed.
         """
         return _Flattened(self, inputs_only)
 

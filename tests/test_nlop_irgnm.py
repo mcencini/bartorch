@@ -12,7 +12,7 @@ loop to the bit.
 import pytest
 import torch
 
-from bartorch import linop, nlop, optim, prox
+from bartorch import linop, nlop, optim, priors
 
 
 def _rand(*shape):
@@ -36,8 +36,8 @@ _SETTINGS = dict(iterations=8, alpha=1.0, redu=2.0, cg_maxiter=30, cg_tol=0.0)
 def test_the_python_loop_with_conjugate_gradients_is_the_library_to_the_last_bit():
     F, data, _ = _decay()
     start = torch.full((24,), 0.1, dtype=torch.complex64)
-    library = optim.IRGNM(**_SETTINGS).in_library(data, F, x0=start.clone())
-    written_out = optim.IRGNM(**_SETTINGS, inner=optim.CG())(data, F, x0=start.clone())
+    library = nlop.IRGNM(**_SETTINGS)._in_library(data, F, x0=start.clone())
+    written_out = nlop.IRGNM(**_SETTINGS, inner=optim.CG())(data, F, x0=start.clone())
     torch.testing.assert_close(written_out, library, rtol=0.0, atol=0.0)
 
 
@@ -47,8 +47,8 @@ def test_it_is_the_library_to_the_last_bit_with_a_regularization_centre_too():
     F, data, _ = _decay()
     start = torch.full((24,), 0.1, dtype=torch.complex64)
     centre = torch.full((24,), 0.3, dtype=torch.complex64)
-    library = optim.IRGNM(**_SETTINGS).in_library(data, F, x0=start.clone(), xref=centre)
-    written_out = optim.IRGNM(**_SETTINGS, inner=optim.CG())(data, F, x0=start.clone(), xref=centre)
+    library = nlop.IRGNM(**_SETTINGS)._in_library(data, F, x0=start.clone(), xref=centre)
+    written_out = nlop.IRGNM(**_SETTINGS, inner=optim.CG())(data, F, x0=start.clone(), xref=centre)
     torch.testing.assert_close(written_out, library, rtol=0.0, atol=0.0)
 
 
@@ -57,8 +57,8 @@ def test_it_stays_the_library_however_many_steps_are_taken(steps):
     F, data, _ = _decay()
     start = torch.full((24,), 0.1, dtype=torch.complex64)
     settings = {**_SETTINGS, "iterations": steps}
-    library = optim.IRGNM(**settings).in_library(data, F, x0=start.clone())
-    written_out = optim.IRGNM(**settings, inner=optim.CG())(data, F, x0=start.clone())
+    library = nlop.IRGNM(**settings)._in_library(data, F, x0=start.clone())
+    written_out = nlop.IRGNM(**settings, inner=optim.CG())(data, F, x0=start.clone())
     torch.testing.assert_close(written_out, library, rtol=0.0, atol=0.0)
 
 
@@ -66,8 +66,8 @@ def test_the_weight_floor_is_honoured():
     F, data, _ = _decay()
     start = torch.full((24,), 0.1, dtype=torch.complex64)
     settings = dict(iterations=6, alpha=1.0, alpha_min=0.0, alpha_min0=0.25, redu=2.0)
-    library = optim.IRGNM(**settings).in_library(data, F, x0=start.clone())
-    written_out = optim.IRGNM(**settings, inner=optim.CG())(data, F, x0=start.clone())
+    library = nlop.IRGNM(**settings)._in_library(data, F, x0=start.clone())
+    written_out = nlop.IRGNM(**settings, inner=optim.CG())(data, F, x0=start.clone())
     torch.testing.assert_close(written_out, library, rtol=0.0, atol=0.0)
 
 
@@ -78,8 +78,8 @@ def test_the_two_forms_are_the_same_method_and_not_the_same_arithmetic():
     # someone compares two runs and reports a bug.
     F, data, _ = _decay()
     start = torch.full((24,), 0.1, dtype=torch.complex64)
-    first = optim.IRGNM(**_SETTINGS)(data, F, x0=start.clone())
-    second = optim.IRGNM(**_SETTINGS).in_library(data, F, x0=start.clone())
+    first = nlop.IRGNM(**_SETTINGS)(data, F, x0=start.clone())
+    second = nlop.IRGNM(**_SETTINGS)._in_library(data, F, x0=start.clone())
     assert not torch.equal(first, second)
     torch.testing.assert_close(first, second, rtol=1e-4, atol=1e-5)
 
@@ -91,8 +91,8 @@ def test_the_two_forms_are_the_same_method_and_not_the_same_arithmetic():
 def test_an_unregularized_inner_solver_reaches_the_same_answer(build):
     F, data, _ = _decay()
     start = torch.full((24,), 0.1, dtype=torch.complex64)
-    reference = optim.IRGNM(**_SETTINGS, inner=optim.CG())(data, F, x0=start.clone())
-    made = optim.IRGNM(**_SETTINGS, inner=build())(data, F, x0=start.clone())
+    reference = nlop.IRGNM(**_SETTINGS, inner=optim.CG())(data, F, x0=start.clone())
+    made = nlop.IRGNM(**_SETTINGS, inner=build())(data, F, x0=start.clone())
     torch.testing.assert_close(made, reference, rtol=1e-3, atol=1e-4)
 
 
@@ -103,19 +103,19 @@ def test_a_proximal_inner_solver_reaches_the_same_answer_at_no_threshold(solver)
     # being applied to the right problem and the weight to the right place.
     F, data, _ = _decay()
     start = torch.full((24,), 0.1, dtype=torch.complex64)
-    reference = optim.IRGNM(**_SETTINGS, inner=optim.CG())(data, F, x0=start.clone())
-    inner = getattr(optim, solver)(prox.L1(0.0), maxiter=80)
-    made = optim.IRGNM(**_SETTINGS, inner=inner)(data, F, x0=start.clone())
+    reference = nlop.IRGNM(**_SETTINGS, inner=optim.CG())(data, F, x0=start.clone())
+    inner = getattr(optim, solver)(priors.L1(0.0), maxiter=80)
+    made = nlop.IRGNM(**_SETTINGS, inner=inner)(data, F, x0=start.clone())
     torch.testing.assert_close(made, reference, rtol=2e-2, atol=2e-3)
 
 
 def test_a_threshold_pulls_the_answer_away_from_the_unregularized_one():
     F, data, _ = _decay()
     start = torch.full((24,), 0.1, dtype=torch.complex64)
-    plain = optim.IRGNM(**_SETTINGS, inner=optim.CG())(data, F, x0=start.clone())
+    plain = nlop.IRGNM(**_SETTINGS, inner=optim.CG())(data, F, x0=start.clone())
     apart = None
     for weight in (1e-5, 1e-3, 1e-1):
-        made = optim.IRGNM(**_SETTINGS, inner=optim.FISTA(prox.L1(weight), maxiter=60))(
+        made = nlop.IRGNM(**_SETTINGS, inner=optim.FISTA(priors.L1(weight), maxiter=60))(
             data, F, x0=start.clone()
         )
         distance = (made - plain).abs().max().item()
@@ -130,16 +130,16 @@ def test_the_inner_step_is_scaled_by_a_power_iteration_as_barts_own_is():
     # whose largest eigenvalue is near five diverges outright.
     F, data, _ = _decay()
     start = torch.full((24,), 0.1, dtype=torch.complex64)
-    made = optim.IRGNM(**_SETTINGS, inner=optim.FISTA(prox.L1(0.0), maxiter=40, eigen=False))(
+    made = nlop.IRGNM(**_SETTINGS, inner=optim.FISTA(priors.L1(0.0), maxiter=40, eigen=False))(
         data, F, x0=start.clone()
     )
     assert torch.isfinite(made).all()
 
 
 def test_a_solver_handed_in_is_not_changed_by_the_run():
-    inner = optim.FISTA(prox.L1(0.001), maxiter=20, eigen=False, cclambda=0.0)
+    inner = optim.FISTA(priors.L1(0.001), maxiter=20, eigen=False, cclambda=0.0)
     F, data, _ = _decay()
-    optim.IRGNM(**_SETTINGS, inner=inner)(data, F, x0=torch.full((24,), 0.1, dtype=torch.complex64))
+    nlop.IRGNM(**_SETTINGS, inner=inner)(data, F, x0=torch.full((24,), 0.1, dtype=torch.complex64))
     assert inner.eigen is False
     assert 0.0 == inner.cclambda
 
@@ -151,27 +151,27 @@ def test_a_solver_named_rather_than_built_says_to_build_it():
     """``inner`` takes the handle, so that the solver's terms and settings are
     visible where the solve is written rather than defaulted out of sight."""
     with pytest.raises(TypeError, match="not the name of one"):
-        optim.IRGNM(inner="cg")
+        nlop.IRGNM(inner="cg")
     with pytest.raises(TypeError, match="optim.FISTA"):
-        optim.IRGNM(inner="fista")
+        nlop.IRGNM(inner="fista")
 
 
 def test_something_that_is_not_a_solver_at_all_says_so():
     with pytest.raises(TypeError, match="bartorch.optim"):
-        optim.IRGNM(inner=object())
+        nlop.IRGNM(inner=object())
 
 
 def test_no_inner_solver_runs_the_first_form_inside_the_library():
     F, data, _ = _decay()
     start = torch.full((24,), 0.1, dtype=torch.complex64)
-    plain = optim.IRGNM(**_SETTINGS)
+    plain = nlop.IRGNM(**_SETTINGS)
     assert plain.inner is None
     assert torch.isfinite(plain(data, F, x0=start)).all()
 
 
 def test_the_repr_says_which_inner_solver_is_in_use():
-    assert "inner" not in repr(optim.IRGNM())
-    assert "CG" in repr(optim.IRGNM(inner=optim.CG()))
+    assert "inner" not in repr(nlop.IRGNM())
+    assert "CG" in repr(nlop.IRGNM(inner=optim.CG()))
 
 
 # --- it fits something ------------------------------------------------------
@@ -182,7 +182,7 @@ def test_the_fit_recovers_the_parameter_it_was_made_from(build):
     F, data, truth = _decay()
     start = torch.full((24,), 0.1, dtype=torch.complex64)
     inner = None if build is None else build()
-    made = optim.IRGNM(iterations=14, alpha=1.0, redu=2.0, cg_maxiter=50, inner=inner)(
+    made = nlop.IRGNM(iterations=14, alpha=1.0, redu=2.0, cg_maxiter=50, inner=inner)(
         data, F, x0=start
     )
     torch.testing.assert_close(made.real, truth.real, rtol=1e-2, atol=1e-2)
@@ -191,7 +191,7 @@ def test_the_fit_recovers_the_parameter_it_was_made_from(build):
 def test_a_linear_operator_is_taken_as_a_nonlinear_one():
     A = linop.FFT((4, 4), axes=-1)
     x = _rand(4, 4)
-    made = optim.IRGNM(iterations=8, alpha=0.001, inner=optim.CG())(
+    made = nlop.IRGNM(iterations=8, alpha=0.001, inner=optim.CG())(
         A(x), A, x0=torch.zeros(4, 4, dtype=torch.complex64)
     )
     torch.testing.assert_close(made, x, rtol=1e-2, atol=1e-2)
@@ -212,8 +212,20 @@ def test_a_two_unknown_model_reaches_it_through_flatten():
     )
     kspace = _rand(*F.kspace_shape)
     kspace = kspace * (100.0 / kspace.norm())
-    made = optim.IRGNM(iterations=4, alpha=1.0, inner=optim.CG())(F.prepare(kspace), flat, x0=start)
+    made = nlop.IRGNM(iterations=4, alpha=1.0, inner=optim.CG())(F.prepare(kspace), flat, x0=start)
     assert torch.isfinite(made).all()
     image, coefficients = flat.split(made)
     assert tuple(image.shape) == F.ishapes[0]
     assert tuple(coefficients.shape) == F.ishapes[1]
+
+
+def test_the_function_is_its_class():
+    A = linop.FFT((4, 4), axes=-1)
+    x = _rand(4, 4)
+    start = torch.zeros(4, 4, dtype=torch.complex64)
+    torch.testing.assert_close(
+        nlop.irgnm(A(x), A, x0=start.clone(), inner=optim.CG(), iterations=6, alpha=0.01),
+        nlop.IRGNM(iterations=6, alpha=0.01, inner=optim.CG())(A(x), A, x0=start.clone()),
+        rtol=0.0,
+        atol=0.0,
+    )

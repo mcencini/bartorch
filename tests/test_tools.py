@@ -16,7 +16,7 @@ import torch
 import bartorch
 import bartorch.tools as bt
 import bartorch.tools.recon as recon
-from bartorch import _call, _coverage, prox
+from bartorch import _call, _coverage, priors
 from bartorch import _catalogue as catalogue
 from bartorch._dispatch import dispatch
 from bartorch._options import describe
@@ -44,7 +44,7 @@ def test_every_private_command_gives_a_reason():
 
 
 def test_a_private_command_has_no_public_wrapper():
-    public = set(bartorch.__all__) | set(bt.__all__) | set(bartorch.prox.__all__)
+    public = set(bartorch.__all__) | set(bt.__all__) | set(bartorch.priors.__all__)
     for name in _coverage.PRIVATE:
         assert name not in public, f"{name} is private but exported"
 
@@ -119,7 +119,7 @@ def test_pics_can_choose_its_solver(solver):
     """With a regularizer, because IST and FISTA assert on exactly one penalty."""
     kspace = bt.phantom(24, coils=2, kspace=True)
     maps = bt.ecalib(kspace, maps=1)
-    term = prox.Wavelet((-1, -2), 0.01)
+    term = priors.Wavelet((-1, -2), 0.01)
     image = bt.pics(kspace, maps, regularizers=term, solver=solver, maxiter=5)
     assert tuple(image.shape) == (24, 24)
 
@@ -228,9 +228,9 @@ def _pics_data():
 @pytest.mark.parametrize(
     "term,flags",
     [
-        (prox.Wavelet((-1, -2), 0.01, randshift=False), {"R": ["W:3:0:0.01"], "n": True}),
-        (prox.LocallyLowRank((-1, -2), 0.01, block=4), {"R": ["L:3:0:0.01"], "b": 4}),
-        (prox.TotalGeneralizedVariation((-1, -2), 0.01), {"R": ["G:3:0:0.01"]}),
+        (priors.Wavelet((-1, -2), 0.01, randshift=False), {"R": ["W:3:0:0.01"], "n": True}),
+        (priors.LocallyLowRank((-1, -2), 0.01, block=4), {"R": ["L:3:0:0.01"], "b": 4}),
+        (priors.TotalGeneralizedVariation((-1, -2), 0.01), {"R": ["G:3:0:0.01"]}),
     ],
     ids=["wavelet", "locally low rank", "tgv"],
 )
@@ -245,7 +245,7 @@ def test_pics_is_given_each_term_as_bart_would_be(term, flags):
 
 def test_pics_takes_terms_and_not_strings():
     kspace, maps = _pics_data()
-    with pytest.raises(TypeError, match="prox.Wavelet"):
+    with pytest.raises(TypeError, match="priors.Wavelet"):
         bt.pics(kspace, maps, regularizers="W:3:0:0.01")
     with pytest.raises(TypeError, match="regularizers"):
         bt.pics(kspace, maps, R="W:3:0:0.01")
@@ -255,7 +255,7 @@ def test_pics_takes_terms_and_not_strings():
 
 def test_a_setting_pics_gives_once_has_to_agree_across_terms():
     kspace, maps = _pics_data()
-    terms = [prox.Wavelet((-1, -2), 0.01), prox.Wavelet((-1, -2), 0.01, family="haar")]
+    terms = [priors.Wavelet((-1, -2), 0.01), priors.Wavelet((-1, -2), 0.01, family="haar")]
     with pytest.raises(ValueError, match="family"):
         bt.pics(kspace, maps, regularizers=terms)
 
@@ -266,7 +266,7 @@ def test_pics_refuses_an_infimal_convolution_with_no_axis_of_each_kind():
     same question first."""
     kspace, maps = _pics_data()
     with pytest.raises(ValueError, match="at least one of the image's last three axes"):
-        bt.pics(kspace, maps, regularizers=prox.InfimalConvolutionTV((-1, -2), 0.01))
+        bt.pics(kspace, maps, regularizers=priors.InfimalConvolutionTV((-1, -2), 0.01))
 
 
 # --- `signal -C` reads memory nothing wrote -----------------------------------
@@ -313,7 +313,7 @@ def test_the_guard_is_only_for_the_ir_mgre_sequence():
 def test_a_command_refuses_a_term_its_parser_does_not_know():
     kspace, maps = _pics_data()
     with pytest.raises(TypeError, match="sqpics does not take"):
-        bt.sqpics(kspace, maps, R=prox.TotalGeneralizedVariation((-1, -2), 0.01))
+        bt.sqpics(kspace, maps, R=priors.TotalGeneralizedVariation((-1, -2), 0.01))
 
 
 def test_a_derived_wrapper_is_shaped_like_the_command_line():

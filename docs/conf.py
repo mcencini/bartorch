@@ -1,7 +1,7 @@
 """Sphinx configuration: pages in Markdown (MyST), the reference by autodoc over the package.
 
 Importing ``bartorch`` needs torch but not the compiled library, so rendering
-needs no native build; executing the gallery does.
+needs no native build.
 """
 
 import importlib.metadata
@@ -11,7 +11,6 @@ from pathlib import Path
 
 DOCS = Path(__file__).resolve().parent
 ROOT = DOCS.parent
-sys.path.insert(0, str(DOCS / "_ext"))
 sys.path.insert(0, str(ROOT / "src"))
 
 project = "bartorch"
@@ -33,12 +32,11 @@ extensions = [
     "sphinx.ext.mathjax",
     "sphinx.ext.intersphinx",
     "sphinx_copybutton",
-    "sphinx_gallery.gen_gallery",
     "myst_parser",
 ]
 source_suffix = {".md": "markdown", ".rst": "restructuredtext"}
 templates_path = ["_templates"]
-exclude_patterns = ["_build", "_ext", "design", "gallery_src", "examples", "Thumbs.db", ".DS_Store"]
+exclude_patterns = ["_build", "design", "Thumbs.db", ".DS_Store"]
 
 myst_enable_extensions = ["colon_fence", "deflist", "dollarmath"]
 myst_heading_anchors = 3
@@ -78,23 +76,3 @@ intersphinx_mapping = (
 )
 copybutton_prompt_text = r"\$ "
 copybutton_prompt_is_regexp = True
-
-# The gallery is rendered without running unless asked; a failing example then
-# fails the build.
-plot_gallery = "True" if os.environ.get("BARTORCH_DOCS_EXECUTE") == "1" else "False"
-sphinx_gallery_conf = {
-    "examples_dirs": str(DOCS / "gallery_src"),
-    "gallery_dirs": "auto_examples",
-    "filename_pattern": r"/plot_",
-    "ignore_pattern": r"__init__\.py",
-    "within_subsection_order": "gallery_order.ExampleOrder",
-    "nested_sections": True,
-    "download_all_examples": True,
-    "backreferences_dir": None,
-    "doc_module": (),
-    "reference_url": {},
-    "image_scrapers": ("matplotlib",),
-    "abort_on_example_error": True,
-    "only_warn_on_example_error": False,
-    "remove_config_comments": True,
-}

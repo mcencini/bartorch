@@ -20,7 +20,6 @@ from bartorch._operator import (
 from bartorch.linop.base import LinearOperator
 
 __all__ = [
-    "Callback",
     "ComponentDiagonal",
     "Conj",
     "Diagonal",
@@ -293,8 +292,9 @@ class Conj(LinearOperator):
         return Built(ptr, self._shape, self._shape)
 
 
-class Callback(LinearOperator):
-    """A linear operator from Python functions, applied through BART.
+class _Callback(LinearOperator):
+    """A linear operator from Python functions, applied through BART; see
+    :meth:`LinearOperator.from_callbacks`.
 
     Each function receives a view of BART's buffer, without a copy, and returns a
     tensor; every application crosses into Python.

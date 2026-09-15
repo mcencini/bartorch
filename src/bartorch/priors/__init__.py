@@ -7,10 +7,11 @@ rather than bitmasks; BART builds the proximal operator from it.
 
 from __future__ import annotations
 
-from bartorch.prox import denoise
-from bartorch.prox.base import Regularizer, frozen
-from bartorch.prox.denoise import *  # noqa: F401,F403
-from bartorch.prox.terms import (
+from bartorch.priors import denoise
+from bartorch.priors.base import Regularizer, frozen
+from bartorch.priors.denoise import *  # noqa: F401,F403
+from bartorch.priors.implicit import ImplicitPrior
+from bartorch.priors.terms import (
     L1,
     L2,
     FourierL1,
@@ -31,6 +32,7 @@ from bartorch.prox.terms import (
 __all__ = [
     "FourierL1",
     "ImageNIHT",
+    "ImplicitPrior",
     "ImaginaryL1",
     "ImaginaryL2",
     "InfimalConvolutionTGV",

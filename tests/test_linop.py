@@ -7,7 +7,6 @@ BART's and composes and solves with it, and that a backward pass is the adjoint
 a transpose.
 """
 
-import deepinv
 import numpy as np
 import pytest
 import torch
@@ -174,7 +173,7 @@ def test_the_adjoint_differentiates_too():
     shape = (4, 8)
     A = linop.Diagonal(_rand(*shape), shape)
     y = _rand(*shape).requires_grad_(True)
-    A.A_adjoint(y).abs().square().sum().backward()
+    A.H(y).abs().square().sum().backward()
     assert y.grad is not None
 
 
@@ -182,7 +181,7 @@ def test_the_normal_operator_differentiates_as_itself():
     """``A^H A`` is Hermitian, so its backward pass is the same operator.
 
     ``normal`` is the raw application and records nothing -- it takes ``out=``
-    and is what a solver drives inside the library.  ``A_adjoint_A`` is the
+    and is what a solver drives inside the library.  ``A.gram()`` is the
     recording one, and it is what an unrolled gradient step applies: taking
     the normal operator as a constant would leave the step looking like a
     plain move towards the prior.
@@ -192,15 +191,15 @@ def test_the_normal_operator_differentiates_as_itself():
     v = _rand(*shape)
 
     x = _rand(*shape).requires_grad_(True)
-    (gradient,) = torch.autograd.grad(A.A_adjoint_A(x), x, grad_outputs=v)
+    (gradient,) = torch.autograd.grad(A.gram()(x), x, grad_outputs=v)
     torch.testing.assert_close(gradient, A.normal(v), rtol=1e-5, atol=1e-6)
 
     # And the same gradient the two recorded applications give, which is the
     # route it replaces.
     through = x.detach().clone().requires_grad_(True)
-    A.A_adjoint_A(through).abs().square().sum().backward()
+    A.gram()(through).abs().square().sum().backward()
     composed = x.detach().clone().requires_grad_(True)
-    A.A_adjoint(A(composed)).abs().square().sum().backward()
+    A.H(A(composed)).abs().square().sum().backward()
     torch.testing.assert_close(through.grad, composed.grad, rtol=1e-5, atol=1e-6)
 
 
@@ -209,7 +208,7 @@ def test_the_raw_normal_records_nothing_and_the_recorded_one_agrees_with_it():
     A = linop.FFT(shape, axes=-1)
     x = _rand(*shape).requires_grad_(True)
     assert A.normal(x).grad_fn is None
-    recorded = A.A_adjoint_A(x)
+    recorded = A.gram()(x)
     assert recorded.grad_fn is not None
     assert torch.equal(recorded.detach(), A.normal(x.detach()))
 
@@ -279,66 +278,6 @@ def test_a_nonlinear_operators_backward_pass_is_its_adjoint_derivative():
     ref = x.detach().clone().requires_grad_(True)
     (model(ref).conj() * w).sum().real.backward()
     torch.testing.assert_close(x.grad, ref.grad, rtol=1e-3, atol=1e-4)
-
-
-# --- deepinv ----------------------------------------------------------------
-
-
-def test_an_operator_answers_to_deepinvs_names_without_deepinv_installed():
-    shape = (2, 8, 8)
-    A = linop.MultiplySum(_rand(*shape), (1, 8, 8), shape)
-    x = _rand(1, 8, 8)
-    torch.testing.assert_close(A.A(x), A(x))
-    torch.testing.assert_close(A.A_adjoint(A(x)), A.adjoint(A(x)))
-    assert A.A_dagger(A(x)).shape == (1, 8, 8)
-
-
-def test_an_operator_becomes_a_linear_physics():
-    shape = (2, 8, 8)
-    maps = _rand(*shape)
-    maps = maps / maps.abs().square().sum(0, keepdim=True).sqrt()
-    A = linop.MultiplySum(maps, (1, 8, 8), shape)
-
-    physics = bartorch.to_deepinv(A)
-    assert isinstance(physics, deepinv.physics.LinearPhysics)
-
-    x = _rand(1, 8, 8)
-    y = physics(x)
-    torch.testing.assert_close(y, A(x), rtol=1e-4, atol=1e-5)
-    torch.testing.assert_close(physics.A_adjoint(y), A.adjoint(y), rtol=1e-4, atol=1e-5)
-    # A^H A is the identity for orthonormal maps, so the solve returns x.
-    torch.testing.assert_close(physics.A_dagger(y), x, rtol=1e-3, atol=1e-4)
-
-
-def test_the_physics_walks_deepinvs_batch_axis():
-    """An operator's shape is fixed; one axis more than it expects is a batch."""
-    shape = (2, 8, 8)
-    maps = _rand(*shape)
-    maps = maps / maps.abs().square().sum(0, keepdim=True).sqrt()
-    physics = bartorch.to_deepinv(linop.MultiplySum(maps, (1, 8, 8), shape))
-
-    batch = torch.stack([_rand(1, 8, 8) for _ in range(3)])
-    y = physics.A(batch)
-    assert y.shape == (3, *shape)
-    torch.testing.assert_close(physics.A_dagger(y), batch, rtol=1e-3, atol=1e-4)
-    for i in range(3):
-        torch.testing.assert_close(y[i], physics.op(batch[i]), rtol=1e-4, atol=1e-5)
-
-
-def test_a_gradient_flows_through_the_physics():
-    shape = (2, 8, 8)
-    physics = bartorch.to_deepinv(linop.MultiplySum(_rand(*shape), (1, 8, 8), shape))
-    x = torch.stack([_rand(1, 8, 8) for _ in range(2)]).requires_grad_(True)
-    physics.A(x).abs().square().sum().backward()
-    assert x.grad is not None and x.grad.shape == x.shape
-
-
-def test_the_physics_is_not_what_an_operator_inherits_from():
-    """deepinv is an adapter, not a base class, so it is never in the way."""
-    for cls in linop.FFT.__mro__:
-        assert not cls.__module__.startswith("deepinv"), (
-            f"{cls} makes deepinv a dependency of every operator"
-        )
 
 
 # --- what BART's own operators still do -------------------------------------
@@ -563,13 +502,6 @@ def test_the_pseudo_inverse_solves_the_damped_least_squares():
     x = D.pinv(y, damp=0.1, maxiter=200, tol=1e-9)
     # (A^H A + damp I) x = A^H y
     torch.testing.assert_close(D.adjoint(D(x)) + 0.1 * x, D.adjoint(y), rtol=1e-3, atol=1e-3)
-
-
-def test_the_pseudo_inverse_is_what_deepinv_asks_for():
-    shape = (8, 16)
-    D = linop.Diagonal(_rand(1, 16) + 2.0, shape)
-    y = _rand(*shape)
-    torch.testing.assert_close(D.A_dagger(y, damp=0.1, maxiter=60), D.pinv(y, damp=0.1, maxiter=60))
 
 
 def test_nothing_here_yet_has_barts_closed_form_pseudo_inverse():

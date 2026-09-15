@@ -41,7 +41,7 @@ CURATED_MODULES = (
     "bartorch.registration",
     "bartorch.metrics",
     "bartorch.io",
-    "bartorch.prox.denoise",
+    "bartorch.priors.denoise",
     *TOOLS_MODULES,
 )
 

@@ -6,7 +6,6 @@ from bartorch.linop import mri  # noqa: F401  (tests reach the fit helper)
 from bartorch.linop.base import LinearOperator
 from bartorch.linop.basic import (
     FFT,
-    Callback,
     ComponentDiagonal,
     Conj,
     Diagonal,
@@ -43,7 +42,6 @@ __all__ = [
     "hstack",
     "stack",
     "CartesianSense",
-    "Callback",
     "ComponentDiagonal",
     "Conj",
     "Convolve",

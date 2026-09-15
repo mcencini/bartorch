@@ -94,29 +94,38 @@ holds the curves against `bart signal` and the fits against `bart mobafit`.
    Bloch
 ```
 
-## Gauss-Newton step
+## Gauss-Newton
 
-`noir/model_net.c` builds one iteration of `nlinv` out of `nlop`s throughout,
-so the step differentiates by its data, its iterate, its regularisation centre
-and its weight.  {class}`GaussNewton` is that operator.
+BART has Gauss-Newton in two forms and {class}`IRGNM` is both: without
+`inner=` it is `irgnm`, run inside the library, and with one it is `irgnm2`,
+whose linearized problem goes to any solver in {mod}`bartorch.optim`.
+
+```python
+nlop.IRGNM(inner=optim.CG())                               # iter4_irgnm2, to the bit
+nlop.IRGNM(inner=optim.FISTA(priors.Wavelet(axes, 0.001)))   # moba -l1's shape
+```
+
+For a {class}`NonlinearSense`, {meth}`IRGNM.operator` is BART's own step of
+`nlinv` as one operator, differentiable by its data, iterate, regularisation
+centre and weight.  An unrolled network is then a *single* `nlop`: chain the
+cells and BART drives the whole thing, crossing into Python once a step for
+the prior.  A weight the prior *closes over* reaches no gradient; give it the
+weights as arguments instead, which is what {class}`Parameters` packs.
+
+```python
+first, second = (nlop.IRGNM(iterations=1).operator(F) for _ in range(2))
+prior = nlop.FromTorch(lambda x, w: w * x, [state, weights.shape], state)
+whole = nlop.chain(nlop.chain(first, prior, output=0, input=0), second, output=0, input=1)
+whole(y, x0, alpha, packed, ...).abs().square().sum().backward()
+```
 
 ```{eval-rst}
 .. autosummary::
    :toctree: generated
    :nosignatures:
 
-   GaussNewton
-```
-
-An unrolled network is then a *single* `nlop`: chain the cells and BART drives
-the whole thing, crossing into Python once a step for the prior.  A weight the
-prior *closes over* reaches no gradient; give it the weights as arguments
-instead, which is what {class}`Parameters` packs.
-
-```python
-prior = nlop.FromTorch(lambda x, w: w * x, [state, weights.shape], state)
-whole = nlop.chain(nlop.chain(first, prior, output=0, input=0), second, output=0, input=1)
-whole(y, x0, alpha, packed, ...).abs().square().sum().backward()
+   IRGNM
+   irgnm
 ```
 
 ## Python-defined
@@ -124,13 +133,14 @@ whole(y, x0, alpha, packed, ...).abs().square().sum().backward()
 A function of several tensors becomes an `nlop` of several inputs, which is
 what lets a denoiser's weights be *arguments* of a BART graph rather than
 something the function closed over.
+{meth}`NonlinearOperator.from_callbacks` takes the forward, the derivative and
+the adjoint as functions; {class}`FromTorch` takes one differentiable function.
 
 ```{eval-rst}
 .. autosummary::
    :toctree: generated
    :nosignatures:
 
-   Callback
    FromTorch
    Parameters
 ```

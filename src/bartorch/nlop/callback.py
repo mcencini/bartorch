@@ -24,7 +24,7 @@ from bartorch._operator import (
 )
 from bartorch.nlop.base import NonlinearOperator, _built
 
-__all__ = ["Callback", "FromTorch", "Parameters"]
+__all__ = ["FromTorch", "Parameters"]
 
 
 def _shapes(shape) -> tuple[Shape, ...]:
@@ -49,8 +49,9 @@ def _flat(shapes: Sequence[Shape]) -> list[int]:
     return out
 
 
-class Callback(NonlinearOperator):
-    """A nonlinear operator implemented by Python functions on tensors.
+class _Callback(NonlinearOperator):
+    """A nonlinear operator implemented by Python functions on tensors; see
+    :meth:`NonlinearOperator.from_callbacks`.
 
     ``forward`` evaluates the operator and fixes the point at which
     ``derivative`` and ``adjoint`` are taken until the next forward call,
@@ -71,11 +72,13 @@ class Callback(NonlinearOperator):
 
     Examples
     --------
-    >>> Callback((4,), (4,), lambda x: 2 * x, lambda d: 2 * d, lambda v: 2 * v)
+    >>> NonlinearOperator.from_callbacks(
+    ...     (4,), (4,), lambda x: 2 * x, lambda d: 2 * d, lambda v: 2 * v
+    ... )
 
     Two inputs, so that the second can carry a weight a gradient reaches:
 
-    >>> Callback((4,), [(4,), ()], scale, d_scale, adj_scale)
+    >>> NonlinearOperator.from_callbacks((4,), [(4,), ()], scale, d_scale, adj_scale)
     """
 
     def __init__(
@@ -141,7 +144,7 @@ class Callback(NonlinearOperator):
         return Built(ptr, ishape, oshape, keep=keep)
 
 
-class FromTorch(Callback):
+class FromTorch(_Callback):
     """A nonlinear operator from a differentiable torch function.
 
     The derivative is torch's forward-mode Jacobian-vector product, and its
@@ -159,7 +162,7 @@ class FromTorch(Callback):
     Examples
     --------
     >>> F = FromTorch(lambda p: p[0] * torch.exp(-t / p[1]), (2,), t.shape)
-    >>> optim.IRGNM()(measured, F, x0=torch.tensor([1.0, 20.0]))
+    >>> nlop.IRGNM()(measured, F, x0=torch.tensor([1.0, 20.0]))
 
     A denoiser whose weights are an argument, so that they train through a
     graph BART applies:

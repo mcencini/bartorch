@@ -28,9 +28,8 @@ jobs:
   # -------------------------------------------------------------------------
   # Job 1: validate that the docs build (runs on every PR and push)
   # Nothing is compiled: docs/conf.py extracts the reference from the checkout
-  # rather than from an installed package, and the gallery is rendered without
-  # being executed unless BARTORCH_DOCS_EXECUTE says otherwise.  This is what
-  # ./scripts/build_docs.sh runs locally.
+  # rather than from an installed package.  This is what ./scripts/build_docs.sh
+  # runs locally.
   # -------------------------------------------------------------------------
   build-docs:
     name: Build Sphinx docs

@@ -133,7 +133,7 @@ class NonlinearSense(NonlinearOperator):
     >>> F = NonlinearSense((8, 128, 128), pattern=mask)
     >>> F.ishapes
     ((1, 128, 128), (8, 128, 128))
-    >>> image, coefficients = optim.IRGNM()(F.prepare(kspace), F.flatten(), ...)
+    >>> image, coefficients = nlop.IRGNM()(F.prepare(kspace), F.flatten(), ...)
     """
 
     def __init__(

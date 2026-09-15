@@ -115,16 +115,6 @@ argument is an index into a tensor's shape.
    kernels_to_maps
 ```
 
-## Interoperability
-
-```{eval-rst}
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
-
-   to_deepinv
-```
-
 ## Errors
 
 ```{eval-rst}

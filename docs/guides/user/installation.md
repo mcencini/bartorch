@@ -93,4 +93,4 @@ same collision is
 **Windows is not a target.**  BART does not build on it; WSL2 is a Linux
 install like any other.
 
-Next: {doc}`conventions` and {doc}`../../auto_examples/index`.
+Next: {doc}`conventions`.

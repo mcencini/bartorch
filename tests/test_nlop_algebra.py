@@ -435,7 +435,9 @@ def test_a_derivative_agrees_with_a_finite_difference(make):
     d = _rand(6)
     F.forward(x)
     predicted = F.derivative(d)
-    h = 1e-4
+    # The operators are float32: at h = 1e-4 rounding over h failed 22 random
+    # draws in 500 for the cube and 7 for exp; at 1e-2 none of them did.
+    h = 1e-2
     taken = (F.forward(x + h * d) - F.forward(x - h * d)) / (2 * h)
     torch.testing.assert_close(predicted, taken, rtol=2e-2, atol=2e-3)
 
@@ -538,7 +540,7 @@ def test_a_callback_of_many_arguments_says_which_pair_it_is_asked_for():
         seen.append(("adj", o, i))
         return v if 0 == i else v.sum()
 
-    F = nlop.Callback((4,), [(4,), ()], forward, derivative, adjoint)
+    F = nlop.NonlinearOperator.from_callbacks((4,), [(4,), ()], forward, derivative, adjoint)
     x, w = _rand(4), torch.tensor(0.5, dtype=torch.complex64)
     F(x, w)
     F.jacobian(0, 1)(torch.tensor(1.0, dtype=torch.complex64))
@@ -586,7 +588,7 @@ def test_a_chain_holds_the_two_sides_at_the_same_rank():
     ones is not a change to it.  This is what says the padding is done.
     """
     low = nlop.Exp((4,)).reshape_output(0, (1, 1, 4))
-    high = nlop.Callback(
+    high = nlop.NonlinearOperator.from_callbacks(
         (1, 1, 4), (1, 1, 4), lambda x: 2.0 * x, lambda d: 2.0 * d, lambda v: 2.0 * v
     )
 
@@ -629,7 +631,7 @@ def test_a_composed_model_is_solved_by_gauss_newton():
 
     F = nlop.chain(nlop.Multiply((16,), (16,)).pin(0, -t), nlop.Exp((16,)))
     assert F.ishapes == ((16,),)
-    fitted = optim.IRGNM(iterations=12)(data, F, x0=torch.full((16,), 0.1, dtype=torch.complex64))
+    fitted = nlop.IRGNM(iterations=12)(data, F, x0=torch.full((16,), 0.1, dtype=torch.complex64))
     torch.testing.assert_close(fitted.real, truth.real, rtol=1e-2, atol=1e-2)
 
 

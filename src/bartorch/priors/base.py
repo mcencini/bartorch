@@ -97,7 +97,7 @@ class Regularizer(abc.ABC):
         out = _marshal.wide_dim_vector()
 
         with _lock:
-            rank = library().bartorch_prox_domain(handle, DIMS + 1, out)
+            rank = library().bartorch_prox_domain(handle, len(out), out)
         if rank < 0:
             raise BartError(f"{self!r} would not say what it works on (code {rank})")
 
@@ -143,7 +143,7 @@ class Regularizer(abc.ABC):
 
         Examples
         --------
-        >>> prox.Wavelet((-1, -2), 0.01).prox(image, gamma=0.95)
+        >>> priors.Wavelet((-1, -2), 0.01).prox(image, gamma=0.95)
         """
         from bartorch.linop.base import _tracking
 
@@ -153,7 +153,7 @@ class Regularizer(abc.ABC):
                 "`operator_p_fun_t` is (data, mu, dst, src), with nowhere for one to live, "
                 "so an iteration with this term in it cannot be differentiated.  Put a "
                 "denoiser where the term goes -- `optim.admm(y, A, denoiser)` differentiates "
-                "end to end -- or `prox.frozen(term)` to say that this one is meant to be a "
+                "end to end -- or `priors.frozen(term)` to say that this one is meant to be a "
                 "constant in the graph"
             )
 
@@ -213,7 +213,7 @@ class Regularizer(abc.ABC):
         from bartorch.linop.base import _tracking
 
         if _tracking(x):
-            from bartorch.prox.autograd import apply_transform
+            from bartorch.priors.autograd import apply_transform
 
             return apply_transform(
                 self, x, tuple(image_shape if image_shape is not None else x.shape), mode
@@ -433,8 +433,8 @@ def _as_terms(regularizers) -> list[Regularizer]:
     """``regularizers`` -- None, one term or an iterable of them -- as a list of terms."""
     if isinstance(regularizers, str):
         raise TypeError(
-            f"a regularizer is a term from bartorch.prox, not the string {regularizers!r}; "
-            "`prox.Wavelet(axes=(-1, -2), weight=...)` is what `-R W:3:0:...` says"
+            f"a regularizer is a term from bartorch.priors, not the string {regularizers!r}; "
+            "`priors.Wavelet(axes=(-1, -2), weight=...)` is what `-R W:3:0:...` says"
         )
     if regularizers is None:
         return []
@@ -443,18 +443,16 @@ def _as_terms(regularizers) -> list[Regularizer]:
     terms = list(regularizers) if isinstance(regularizers, Iterable) else [regularizers]
     for term in terms:
         if not isinstance(term, Regularizer) and not _term_shaped(term):
-            raise TypeError(f"a regularizer is a term from bartorch.prox, not {term!r}")
+            hint = "; a denoiser goes in priors.ImplicitPrior" if callable(term) else ""
+            raise TypeError(f"a regularizer is a term from bartorch.priors, not {term!r}{hint}")
     return terms
 
 
 def _term_shaped(thing) -> bool:
     """Whether something answers the four questions an iteration asks a term.
 
-    A ``deepinv`` prior behind ``_iterators.AsTerm`` does, which is how a
-    denoiser stands where a term goes.  Nothing BART runs can take one, so a
-    solver holding one has no library route -- which is what
-    :meth:`~bartorch.optim.CG.in_library` refuses over, and what makes this a
-    duck-typed test rather than a second base class.
+    :class:`~bartorch.priors.ImplicitPrior` does.  BART cannot take one, so a
+    solver holding one has no library route.
     """
     return all(
         callable(getattr(thing, name, None))
@@ -527,6 +525,33 @@ class _Frozen:
 Regularizer.register(_Frozen)
 
 
+class _Penalty(Regularizer):
+    """One penalty of a set BART configured together, over the image and the unknowns behind it.
+
+    Its proximal operator detaches first when every term the set came from was
+    :func:`frozen`.
+    """
+
+    kind = "penalty"
+
+    def __init__(self, handle: int, shape: tuple[int, ...], frozen: bool):
+        self._handles = {tuple(shape): handle}
+        self._frozen = bool(frozen)
+        weakref.finalize(self, _release, handle)
+
+    def build(self, shape: tuple[int, ...]) -> int:
+        shape = tuple(shape)
+        if shape not in self._handles:
+            raise ValueError(f"this penalty walks {next(iter(self._handles))}, not {shape}")
+        return self._handles[shape]
+
+    def prox(self, x, gamma: float = 1.0, *, image_shape=None):
+        return super().prox(x.detach() if self._frozen else x, gamma, image_shape=image_shape)
+
+    def __repr__(self) -> str:
+        return f"penalty over {next(iter(self._handles))}"
+
+
 def frozen(term: Regularizer) -> Regularizer:
     """``term``, with its proximal operator a constant in a differentiated solve.
 
@@ -542,6 +567,6 @@ def frozen(term: Regularizer) -> Regularizer:
 
     Examples
     --------
-    >>> optim.admm(y, A, [denoiser, prox.frozen(prox.Wavelet((-1, -2), 0.01))])
+    >>> optim.admm(y, A, [denoiser, priors.frozen(priors.Wavelet((-1, -2), 0.01))])
     """
     return _Frozen(term)

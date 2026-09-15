@@ -14,16 +14,6 @@ guides/user/issues
 
 ```{toctree}
 :hidden:
-:caption: Examples
-
-auto_examples/index
-gallery/encoding
-gallery/research
-gallery/learning_resources
-```
-
-```{toctree}
-:hidden:
 :caption: API reference
 
 api/index

@@ -114,10 +114,6 @@ operator, not a list walked per iteration.
 
 ## Python-defined
 
-```{eval-rst}
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
-
-   Callback
-```
+{meth}`LinearOperator.from_callbacks` makes an operator of Python functions
+for the forward, the adjoint and, where a cheaper form exists, the normal;
+every application crosses into Python.

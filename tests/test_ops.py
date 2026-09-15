@@ -37,7 +37,7 @@ def test_adjoint_identity_holds_for_the_fft_operator():
 def test_python_operator_runs_inside_bart_and_chains_with_a_bart_operator():
     shape = (8, 16)
     w = _rand(*shape)
-    W = linop.Callback(shape, shape, lambda x: w * x, lambda y: w.conj() * y)
+    W = linop.LinearOperator.from_callbacks(shape, shape, lambda x: w * x, lambda y: w.conj() * y)
     F = linop.FFT(shape, axes=-1)
     A = F @ W
     x = _rand(*shape)
@@ -54,7 +54,7 @@ def test_bart_uses_the_normal_callback_when_given_one():
         calls.append(1)
         return 2 * x
 
-    Op = linop.Callback(shape, shape, lambda x: x, lambda y: y, normal=normal)
+    Op = linop.LinearOperator.from_callbacks(shape, shape, lambda x: x, lambda y: y, normal=normal)
     x = _rand(*shape)
     torch.testing.assert_close(Op.normal(x), 2 * x)
     assert calls
@@ -134,7 +134,7 @@ def test_gauss_newton_fits_a_mono_exponential_decay():
     F = nlop.FromTorch(model, (2, nvox), (nvox, nechoes))
     y = model(truth)
     x0 = torch.ones(2, nvox, dtype=torch.complex64)
-    gauss_newton = optim.IRGNM(iterations=10, alpha=1.0, alpha_min=1e-6, redu=3.0, cg_maxiter=50)
+    gauss_newton = nlop.IRGNM(iterations=10, alpha=1.0, alpha_min=1e-6, redu=3.0, cg_maxiter=50)
     x = gauss_newton(y, F, x0)
     torch.testing.assert_close(x, truth, rtol=1e-2, atol=1e-2)
 
@@ -156,7 +156,7 @@ def test_model_based_reconstruction_chains_a_torch_model_with_a_bart_encoding():
     assert A.ishape == (2, n, n) and A.oshape == (nechoes, n, n)
     y = A(truth)
     x0 = torch.stack([torch.ones(n, n), 0.5 * torch.ones(n, n)]).to(torch.complex64)
-    gauss_newton = optim.IRGNM(iterations=12, alpha=1.0, alpha_min=1e-6, redu=3.0, cg_maxiter=60)
+    gauss_newton = nlop.IRGNM(iterations=12, alpha=1.0, alpha_min=1e-6, redu=3.0, cg_maxiter=60)
     x = gauss_newton(y, A, x0)
     mask = img > 0.1
     err = (x[0][mask] - truth[0][mask]).abs().max().item()
