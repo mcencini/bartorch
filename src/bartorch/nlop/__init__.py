@@ -38,13 +38,13 @@ from bartorch.nlop.basic import (
 )
 from bartorch.nlop.callback import Callback, FromTorch, Parameters
 from bartorch.nlop.derivative import Derivative
+from bartorch.nlop.irgnm import IRGNM, irgnm
 from bartorch.nlop.mri import (
     CartesianSense,
     CoilSense,
     NoncartesianSense,
     NonlinearSense,
 )
-from bartorch.nlop.newton import GaussNewton
 from bartorch.nlop.simulation import (
     Bloch,
     FromTorchSim,
@@ -67,7 +67,7 @@ __all__ = [
     "FromLinear",
     "FromTorch",
     "FromTorchSim",
-    "GaussNewton",
+    "IRGNM",
     "InversionRecovery",
     "Inverse",
     "Log",
@@ -86,4 +86,5 @@ __all__ = [
     "Weighted",
     "chain",
     "combine",
+    "irgnm",
 ]

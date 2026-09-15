@@ -407,7 +407,7 @@ class NonlinearOperator(Operator):
         ``nlop_flatten``.  What a two-unknown model needs to reach a solver
         that knows one vector: ``noir/recon2.c`` lays the image and the coil
         coefficients out one after the other, in argument order, and that is
-        what :class:`~bartorch.optim.IRGNM` is handed.
+        what :class:`~bartorch.nlop.IRGNM` is handed.
         """
         return _Flattened(self, inputs_only)
 

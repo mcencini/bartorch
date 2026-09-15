@@ -87,7 +87,7 @@ class FromTorchSim(Callback):
     Under an encoding:
 
     >>> F = nlop.chain(M, encoding.to_nonlinear())
-    >>> maps = optim.IRGNM()(kspace, F, x0=M.initial(T2=80.0))
+    >>> maps = nlop.IRGNM()(kspace, F, x0=M.initial(T2=80.0))
     >>> M.split(maps)["T2"]
     """
 

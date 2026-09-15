@@ -157,7 +157,7 @@ def test_gauss_newton_recovers_the_relaxation_time_it_was_given():
     truth = M.initial(T2=45.0)
     data = M(truth)
     start = M.initial(T2=120.0)
-    fitted = optim.IRGNM(iterations=14, alpha=1.0, redu=2.0, cg_maxiter=50)(
+    fitted = nlop.IRGNM(iterations=14, alpha=1.0, redu=2.0, cg_maxiter=50)(
         data, M, x0=start.clone(), xref=start
     )
     torch.testing.assert_close(M.split(fitted)["T2"], torch.full((4, 4), 45.0), rtol=5e-2, atol=2.0)
@@ -184,7 +184,7 @@ def test_a_model_under_an_encoding_is_solved_for_its_parameters():
     truth = M.initial(T2=40.0)
     data = F(truth)
     start = M.initial(T2=120.0)
-    fitted = optim.IRGNM(iterations=14, alpha=1.0, redu=2.0, cg_maxiter=50)(
+    fitted = nlop.IRGNM(iterations=14, alpha=1.0, redu=2.0, cg_maxiter=50)(
         data, F, x0=start.clone(), xref=start
     )
     torch.testing.assert_close(M.split(fitted)["T2"], torch.full((6, 6), 40.0), rtol=1e-1, atol=4.0)
@@ -269,7 +269,7 @@ def _irgnm(M, values, shape, **start):
     """``values`` repeated over ``shape``, fitted through ``M`` by Gauss-Newton."""
     data = values.reshape(len(values), 1, 1).expand(len(values), *shape).contiguous()
     first = M.initial(**start)
-    fitted = optim.IRGNM(iterations=16, alpha=1.0, redu=2.0, cg_maxiter=60)(
+    fitted = nlop.IRGNM(iterations=16, alpha=1.0, redu=2.0, cg_maxiter=60)(
         data, M, x0=first.clone(), xref=first
     )
     return M.split(fitted)

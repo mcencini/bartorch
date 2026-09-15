@@ -76,7 +76,7 @@ carry no derivative; everything else a step applies is recorded.
 ## Functional wrappers
 
 `optim.fista(y, A, term, maxiter=30)` is `optim.FISTA(term, maxiter=30)(y, A)`.
-Reach for the class to hand a solver to {class}`IRGNM` as `inner=`.
+Reach for the class to hand a solver to {class}`bartorch.nlop.IRGNM` as `inner=`.
 
 ```{eval-rst}
 .. autosummary::
@@ -89,7 +89,6 @@ Reach for the class to hand a solver to {class}`IRGNM` as `inner=`.
    admm
    pridu
    niht
-   irgnm
 ```
 
 ## Preconditioning
@@ -97,25 +96,6 @@ Reach for the class to hand a solver to {class}`IRGNM` as `inner=`.
 BART calls two unrelated things preconditioning.  `precond=` is
 `lsqr2_create`'s `precond_op`, which every solver here takes; `pics --precond`
 reformulates the data fidelity instead.
-
-## Nonlinear least squares
-
-BART has Gauss-Newton in two forms and {class}`IRGNM` is both: without
-`inner=` it is `irgnm`, run inside the library, and with one it is `irgnm2`,
-whose linearized problem goes to any solver here.
-
-```python
-optim.IRGNM(inner=optim.CG())                               # iter4_irgnm2, to the bit
-optim.IRGNM(inner=optim.FISTA(priors.Wavelet(axes, 0.001)))   # moba -l1's shape
-```
-
-```{eval-rst}
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
-
-   IRGNM
-```
 
 ## Data scaling
 

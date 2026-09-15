@@ -9,7 +9,7 @@ import torch
 
 from bartorch.optim.linear import ADMM, CG, FISTA, IST, NIHT, PRIDU
 
-__all__ = ["admm", "cg", "fista", "irgnm", "ist", "niht", "pridu"]
+__all__ = ["admm", "cg", "fista", "ist", "niht", "pridu"]
 
 
 def ist(y: torch.Tensor, A, regularizers=None, *, x0=None, **settings):
@@ -48,14 +48,3 @@ def cg(y: torch.Tensor, A, lambda_: float = 0.0, *, x0=None, **settings):
     describes; no proximal term goes here.
     """
     return CG(lambda_, **settings)(y, A, x0)
-
-
-def irgnm(y: torch.Tensor, F, *, x0=None, xref=None, inner=None, **settings):
-    """Gauss-Newton for a nonlinear ``F``.  See :class:`~bartorch.optim.IRGNM`.
-
-    ``F`` is a :class:`~bartorch.nlop.NonlinearOperator` rather than a linear
-    encoding, and ``inner`` a configured solver from :mod:`bartorch.optim`.
-    """
-    from bartorch.optim.nonlinear import IRGNM
-
-    return IRGNM(inner=inner, **settings)(y, F, x0=x0, xref=xref)

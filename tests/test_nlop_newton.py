@@ -6,7 +6,7 @@ linearisation point*, the adjoint, and ``norm_inv``'s implicitly
 differentiated inverse of the normal operator.  So the step differentiates by
 the data, the iterate, the regularisation centre and the weight, second-order
 terms included -- which is what ``networks/nlinvnet.c`` trains through, and
-what a :class:`~bartorch.nlop.GaussNewton` hands to torch.
+what :meth:`~bartorch.nlop.IRGNM.operator` hands to torch.
 
 The thing to know about the model is that it has no sampling pattern until it
 is given one, and it is given one as a *side effect* of the gridding:
@@ -22,10 +22,24 @@ import pytest
 import torch
 
 import bartorch.tools as bt
-from bartorch import linop, nlop
+from bartorch import linop, nlop, optim
 from bartorch._dispatch import BartError
 
 N, COILS = 16, 2
+
+#: What goes to the model, and what goes to the schedule; the rest is the operator's.
+_MODEL = {"pattern", "trajectory", "sobolev", "weights", "basis", "mask", "real", "sos", "c"}
+_SCHEDULE = {"iterations", "redu", "alpha_min", "cg_maxiter", "cg_tol"}
+
+
+def _cell(image_shape, **settings):
+    """A noir model, a schedule of one step unless told otherwise, and the operator of the two."""
+    model = {k: settings.pop(k) for k in list(settings) if k in _MODEL}
+    schedule = {k: settings.pop(k) for k in list(settings) if k in _SCHEDULE}
+    schedule.setdefault("iterations", 1)
+    if model.get("trajectory") is not None:
+        model["oversampling_coils"] = 1.0
+    return nlop.IRGNM(**schedule).operator(nlop.NonlinearSense(image_shape, **model), **settings)
 
 
 def _phantom():
@@ -58,7 +72,7 @@ def test_the_batch_is_barts_own(batch):
     """Everywhere else here a leading axis is applied item by item from
     Python.  This is the one operator whose batch BART carries itself, because
     ``nlinvnet`` needed it."""
-    newton = nlop.GaussNewton((COILS, 8, 8), batch=batch)
+    newton = _cell((COILS, 8, 8), batch=batch)
     assert (batch, COILS, 1, 8, 8) == newton.data_shape
     assert batch == newton.state_shape[0]
     assert 1 == len(newton.output_shapes)
@@ -68,14 +82,14 @@ def test_the_batch_is_barts_own(batch):
 def test_the_short_shapes_are_the_long_ones_written_without_the_empty_axes():
     # BART's sixteen axes are what the operator records, because that is what
     # the arity check holds it to; the short form is the same memory.
-    newton = nlop.GaussNewton((COILS, 8, 8), batch=2)
+    newton = _cell((COILS, 8, 8), batch=2)
     assert 16 == len(newton.ishapes[0])
     assert (2, COILS, 1, 8, 8) == newton.shapes[0]
     assert math.prod(newton.ishapes[0]) == math.prod(newton.shapes[0])
 
 
 def test_the_companions_say_what_they_take(problem):
-    newton = nlop.GaussNewton((COILS, 8, 8))
+    newton = _cell((COILS, 8, 8))
     assert 2 == len(newton.prepare().shapes)
     assert (1, newton.state_shape[1]) == newton.decompose().shapes[0]
     assert 2 == len(newton.decompose().output_shapes)
@@ -84,7 +98,7 @@ def test_the_companions_say_what_they_take(problem):
 
 def test_off_the_grid_the_gridding_takes_the_trajectory_too():
     trajectory = bt.traj(x=16, y=8, r=True)
-    newton = nlop.GaussNewton((COILS, 8, 8), trajectory=trajectory)
+    newton = _cell((COILS, 8, 8), trajectory=trajectory)
     assert 3 == len(newton.prepare().shapes)
     assert (1, *tuple(trajectory.shape)) == newton.prepare().shapes[2]
 
@@ -94,7 +108,7 @@ def test_off_the_grid_the_gridding_takes_the_trajectory_too():
 
 def test_a_step_before_the_gridding_says_so_rather_than_taking_the_process(problem):
     _, _, kspace = problem
-    newton = nlop.GaussNewton((COILS, N, N))
+    newton = _cell((COILS, N, N))
     y = torch.zeros(newton.data_shape, dtype=torch.complex64)
     x0 = newton.start()
     with pytest.raises(BartError, match="no sampling pattern yet"):
@@ -103,8 +117,8 @@ def test_a_step_before_the_gridding_says_so_rather_than_taking_the_process(probl
 
 def test_two_operators_do_not_share_a_model(problem):
     _, _, kspace = problem
-    first = nlop.GaussNewton((COILS, N, N))
-    second = nlop.GaussNewton((COILS, N, N))
+    first = _cell((COILS, N, N))
+    second = _cell((COILS, N, N))
     y = first.prepare()(kspace, _ones())
     x0 = first.start()
     assert torch.isfinite(first(y, x0, x0, 1.0)).all()
@@ -116,14 +130,14 @@ def test_two_operators_do_not_share_a_model(problem):
 
 
 def test_the_start_is_an_image_of_ones_and_no_coils():
-    newton = nlop.GaussNewton((COILS, 8, 8))
+    newton = _cell((COILS, 8, 8))
     image, coils = newton.split()(newton.start())
     torch.testing.assert_close(image, torch.ones_like(image), rtol=0, atol=0)
     torch.testing.assert_close(coils, torch.zeros_like(coils), rtol=0, atol=0)
 
 
 def test_split_and_join_are_each_other():
-    newton = nlop.GaussNewton((COILS, 8, 8))
+    newton = _cell((COILS, 8, 8))
     x = torch.randn(newton.state_shape, dtype=torch.complex64)
     image, coils = newton.split()(x)
     torch.testing.assert_close(newton.join()(image, coils), x, rtol=0, atol=0)
@@ -132,7 +146,7 @@ def test_split_and_join_are_each_other():
 def test_decompose_carries_the_transforms_and_split_does_not():
     # `decompose` runs the coils through the Sobolev weighting, so what comes
     # back is profiles rather than the coefficients that were fitted.
-    newton = nlop.GaussNewton((COILS, 8, 8))
+    newton = _cell((COILS, 8, 8))
     x = torch.randn(newton.state_shape, dtype=torch.complex64)
     assert not torch.equal(newton.decompose()(x)[1], newton.split()(x)[1])
 
@@ -142,7 +156,7 @@ def test_decompose_carries_the_transforms_and_split_does_not():
 
 def test_it_recovers_the_image_as_well_as_the_tool_does(problem):
     image, _, kspace = problem
-    newton = nlop.GaussNewton((COILS, N, N), iterations=8, redu=2.0)
+    newton = _cell((COILS, N, N), iterations=8, redu=2.0)
     y = newton.prepare()(kspace, _ones())
     x0 = newton.start()
     made, sensitivities = newton.decompose()(newton(y, x0, x0, 1.0))
@@ -168,7 +182,7 @@ def test_more_steps_fit_better(problem):
     truth = image.abs()
     errors = []
     for steps in (2, 5, 9):
-        newton = nlop.GaussNewton((COILS, N, N), iterations=steps)
+        newton = _cell((COILS, N, N), iterations=steps)
         y = newton.prepare()(kspace, _ones())
         x0 = newton.start()
         made, sens = newton.decompose()(newton(y, x0, x0, 1.0))
@@ -185,14 +199,14 @@ def test_the_steps_compose_the_way_the_unrolled_form_does(problem):
     one written here -- ``(alpha - alpha_min) / redu + alpha_min``.
     """
     _, _, kspace = problem
-    both = nlop.GaussNewton((COILS, N, N), iterations=2, redu=3.0)
+    both = _cell((COILS, N, N), iterations=2, redu=3.0)
     y = both.prepare()(kspace, _ones())
     x0 = both.start()
     together = both(y, x0, x0, 1.0)
 
     apart = x0
     for alpha in (1.0, 1.0 / 3.0):
-        cell = nlop.GaussNewton((COILS, N, N), iterations=1)
+        cell = _cell((COILS, N, N), iterations=1)
         apart = cell(cell.prepare()(kspace, _ones()), apart, x0, alpha)
     torch.testing.assert_close(together, apart, rtol=1e-4, atol=1e-5)
 
@@ -215,7 +229,7 @@ _HOLDS = (220.0, 8.0)
 @pytest.mark.parametrize("at", ["data", "iterate", "centre", "weight"])
 def test_every_argument_carries_a_gradient(problem, at):
     _, _, kspace = problem
-    newton = nlop.GaussNewton((COILS, N, N), iterations=2, sobolev=_HOLDS)
+    newton = _cell((COILS, N, N), iterations=2, sobolev=_HOLDS)
     y = newton.prepare()(kspace, _ones())
     x0 = newton.start()
 
@@ -239,7 +253,7 @@ def test_a_gentler_weighting_keeps_the_whole_gradient_in_range(problem):
     above stand on.
     """
     _, _, kspace = problem
-    newton = nlop.GaussNewton((COILS, N, N), iterations=2, sobolev=_HOLDS)
+    newton = _cell((COILS, N, N), iterations=2, sobolev=_HOLDS)
     y = newton.prepare()(kspace, _ones())
     x0 = newton.start()
     tracked = x0.clone().requires_grad_(True)
@@ -252,7 +266,7 @@ def test_a_gentler_weighting_keeps_the_whole_gradient_in_range(problem):
 def test_a_denoiser_between_two_cells_trains(problem):
     """NLINV-Net's shape, and the gradient finite differences measure."""
     _, _, kspace = problem
-    cells = [nlop.GaussNewton((COILS, N, N), iterations=1, sobolev=_HOLDS) for _ in range(2)]
+    cells = [_cell((COILS, N, N), iterations=1, sobolev=_HOLDS) for _ in range(2)]
 
     def run(weight):
         x = cells[0].start()
@@ -276,19 +290,32 @@ def test_a_denoiser_between_two_cells_trains(problem):
 
 def test_no_steps_at_all_is_refused():
     with pytest.raises(ValueError, match="at least one step"):
-        nlop.GaussNewton((COILS, 8, 8), iterations=0)
+        _cell((COILS, 8, 8), iterations=0)
 
 
 def test_an_empty_batch_is_refused():
     with pytest.raises(ValueError, match="batch is at least one"):
-        nlop.GaussNewton((COILS, 8, 8), batch=0)
+        _cell((COILS, 8, 8), batch=0)
+
+
+def test_only_barts_noir_model_builds_its_step_as_an_operator():
+    with pytest.raises(TypeError, match="only BART's noir model"):
+        nlop.IRGNM().operator(nlop.CoilSense(linop.FFT((COILS, 8, 8), axes=(-1, -2))))
+
+
+def test_what_the_network_model_cannot_take_is_refused():
+    trajectory = bt.traj(x=16, y=8, r=True)
+    with pytest.raises(ValueError, match="oversampling_coils"):
+        nlop.IRGNM().operator(nlop.NoncartesianSense(trajectory, (COILS, 8, 8)))
+    with pytest.raises(ValueError, match="no inner solver"):
+        nlop.IRGNM(inner=optim.CG()).operator(nlop.CartesianSense((COILS, 8, 8)))
 
 
 # --- an unrolled network as one BART operator -----------------------------------
 
 
 def _cells(n: int = 2):
-    return [nlop.GaussNewton((COILS, N, N), iterations=1, sobolev=_HOLDS) for _ in range(n)]
+    return [_cell((COILS, N, N), iterations=1, sobolev=_HOLDS) for _ in range(n)]
 
 
 def test_two_cells_chain_into_one_operator(problem):

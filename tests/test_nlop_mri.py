@@ -67,7 +67,7 @@ def _start(F) -> torch.Tensor:
 def _fit(F, kspace, steps: int) -> torch.Tensor:
     """The image, fitted the way ``noir2_recon`` fits it."""
     flat = F.flatten(inputs_only=True)
-    solution = optim.IRGNM(
+    solution = nlop.IRGNM(
         iterations=steps, alpha=1.0, redu=2.0, alpha_min=0.0, cg_maxiter=100, cg_tol=0.1
     )(F.prepare(kspace), flat, x0=_start(F))
     return flat.split(solution)[0]
@@ -304,7 +304,7 @@ def test_a_noncartesian_fit_converges_to_the_image_it_was_made_from():
     for steps in (4, 8, 12):
         F = nlop.NoncartesianSense(traj, (coils, n, n))
         flat = F.flatten(inputs_only=True)
-        solution = optim.IRGNM(iterations=steps, alpha=1.0, redu=2.0, cg_maxiter=100, cg_tol=0.1)(
+        solution = nlop.IRGNM(iterations=steps, alpha=1.0, redu=2.0, cg_maxiter=100, cg_tol=0.1)(
             F.prepare(kspace), flat, x0=_start(F)
         )
         image, coefficients = flat.split(solution)
@@ -328,7 +328,7 @@ def test_a_cartesian_fit_recovers_the_image_it_was_made_from():
     kspace = _cartesian_data(coils, n)
     F = nlop.CartesianSense((coils, n, n))
     flat = F.flatten(inputs_only=True)
-    solution = optim.IRGNM(iterations=10, alpha=1.0, redu=2.0, cg_maxiter=100, cg_tol=0.1)(
+    solution = nlop.IRGNM(iterations=10, alpha=1.0, redu=2.0, cg_maxiter=100, cg_tol=0.1)(
         F.prepare(kspace), flat, x0=_start(F)
     )
     fitted, coefficients = flat.split(solution)
@@ -373,7 +373,7 @@ def test_the_recipe_reaches_gauss_newton_like_any_other_model():
     # Started at the answer and regularised towards it, the steps have nowhere
     # to go: what this holds is that the model, its derivative and its adjoint
     # all reach the solver and agree with one another.
-    solution = optim.IRGNM(iterations=6, alpha=0.01)(data, flat, x0=truth.clone(), xref=truth)
+    solution = nlop.IRGNM(iterations=6, alpha=0.01)(data, flat, x0=truth.clone(), xref=truth)
     torch.testing.assert_close(flat(solution), data, rtol=1e-3, atol=1e-4)
     assert (solution - truth).norm() < 1e-3 * truth.norm()
 

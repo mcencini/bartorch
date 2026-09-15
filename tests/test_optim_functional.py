@@ -209,15 +209,3 @@ def test_niht_is_refused_the_way_its_class_is():
     term = priors.WaveletNIHT((-1, -2), count=12)
     with pytest.raises(NotImplementedError, match="applies the normal operator in place"):
         optim.niht(y, A, term, maxiter=6)
-
-
-def test_irgnm_is_its_class():
-    A = linop.FFT((4, 4), axes=-1)
-    x = _rand(4, 4)
-    start = torch.zeros(4, 4, dtype=torch.complex64)
-    torch.testing.assert_close(
-        optim.irgnm(A(x), A, x0=start.clone(), inner=optim.CG(), iterations=6, alpha=0.01),
-        optim.IRGNM(iterations=6, alpha=0.01, inner=optim.CG())(A(x), A, x0=start.clone()),
-        rtol=0.0,
-        atol=0.0,
-    )

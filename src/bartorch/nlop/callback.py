@@ -159,7 +159,7 @@ class FromTorch(Callback):
     Examples
     --------
     >>> F = FromTorch(lambda p: p[0] * torch.exp(-t / p[1]), (2,), t.shape)
-    >>> optim.IRGNM()(measured, F, x0=torch.tensor([1.0, 20.0]))
+    >>> nlop.IRGNM()(measured, F, x0=torch.tensor([1.0, 20.0]))
 
     A denoiser whose weights are an argument, so that they train through a
     graph BART applies:

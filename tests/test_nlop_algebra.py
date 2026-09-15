@@ -629,7 +629,7 @@ def test_a_composed_model_is_solved_by_gauss_newton():
 
     F = nlop.chain(nlop.Multiply((16,), (16,)).pin(0, -t), nlop.Exp((16,)))
     assert F.ishapes == ((16,),)
-    fitted = optim.IRGNM(iterations=12)(data, F, x0=torch.full((16,), 0.1, dtype=torch.complex64))
+    fitted = nlop.IRGNM(iterations=12)(data, F, x0=torch.full((16,), 0.1, dtype=torch.complex64))
     torch.testing.assert_close(fitted.real, truth.real, rtol=1e-2, atol=1e-2)
 
 

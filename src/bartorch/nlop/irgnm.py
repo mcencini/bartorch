@@ -1,13 +1,12 @@
 """Nonlinear inverse problems by BART's iteratively regularized Gauss-Newton.
 
 BART has the method in two forms, and :class:`IRGNM` is both.  ``irgnm``
-solves each linearized problem with its own conjugate gradients and nothing
-else, which is what ``nlinv`` runs and what ``IRGNM`` does without an inner
-solver.  ``irgnm2`` pays an extra application of the derivative and hands the
-problem to a generic regularized least-squares solver, which is how a
-regularized ``nlinv`` or ``moba`` works; ``inner=`` is that form, with the
-outer loop written out here so any solver in :mod:`bartorch.optim` can take
-it.
+solves each linearized problem with its own conjugate gradients, which is what
+``nlinv`` runs and what ``IRGNM`` does without an inner solver.  ``irgnm2``
+hands the problem to a generic regularized least-squares solver, which is how a
+regularized ``nlinv`` or ``moba`` works; ``inner=`` is that form, with the outer
+loop written out here.  :meth:`IRGNM.operator` is BART's own step of ``nlinv``
+as an operator a network is built of.
 """
 
 from __future__ import annotations
@@ -20,7 +19,7 @@ from bartorch._dispatch import BartError, _lock, _on_device
 from bartorch._lib import library
 from bartorch._operator import as_operand
 
-__all__ = ["IRGNM"]
+__all__ = ["IRGNM", "irgnm"]
 
 
 def _inner_solver(inner):
@@ -98,22 +97,22 @@ class IRGNM:
     --------
     Plain, which is ``nlinv``:
 
-    >>> IRGNM(iterations=8)(kspace, F, x0=start)
+    >>> nlop.IRGNM(iterations=8)(kspace, F, x0=start)
 
     The same method with the linearized problem written out here, which is
     ``iter4_irgnm2`` to the bit:
 
-    >>> IRGNM(iterations=8, inner=optim.CG())(kspace, F, x0=start)
+    >>> nlop.IRGNM(iterations=8, inner=optim.CG())(kspace, F, x0=start)
 
     Wavelet-regularized, which is what ``moba -l1`` runs:
 
-    >>> IRGNM(inner=optim.FISTA(priors.Wavelet((-1, -2), 0.001), maxiter=30))(
+    >>> nlop.IRGNM(inner=optim.FISTA(priors.Wavelet((-1, -2), 0.001), maxiter=30))(
     ...     kspace, F, x0=start
     ... )
 
     Several terms at once, which is ADMM's job:
 
-    >>> IRGNM(
+    >>> nlop.IRGNM(
     ...     inner=optim.ADMM(
     ...         [priors.Wavelet((-1, -2), 0.001), priors.TotalVariation((-1, -2), 0.01)]
     ...     )
@@ -186,11 +185,11 @@ class IRGNM:
         ref = as_operand(xref, op.ishape, "xref") if xref is not None else None
         if self.inner is not None:
             return self._in_python(y, op, x, ref)
-        return self._in_library(y, op, x, ref)
+        return self._first_form(y, op, x, ref)
 
     # --- BART's first form, entirely inside the library --------------------
 
-    def _in_library(self, y, op, x, ref) -> torch.Tensor:
+    def _first_form(self, y, op, x, ref) -> torch.Tensor:
         with _lock, _on_device(op.device or y.device):
             code = library().bartorch_irgnm(
                 op._h.ptr,
@@ -208,15 +207,11 @@ class IRGNM:
             raise BartError("Gauss-Newton solve failed; see the log for BART's message")
         return x
 
-    def in_library(
+    def _in_library(
         self, y: torch.Tensor, F, x0: torch.Tensor, xref: torch.Tensor | None = None
     ) -> torch.Tensor:
-        """BART's second form with its own conjugate gradients, ``iter4_irgnm2``.
-
-        What :meth:`__call__` with ``inner=optim.CG()`` is held against: the loop
-        below is written out in Python so the inner problem can go elsewhere,
-        and this is the same loop inside the library.
-        """
+        """``iter4_irgnm2`` with BART's own conjugate gradients: the reference
+        ``inner=optim.CG()`` is held against."""
         from bartorch.linop.base import LinearOperator
 
         if isinstance(F, LinearOperator):
@@ -243,6 +238,78 @@ class IRGNM:
             raise BartError("Gauss-Newton solve failed; see the log for BART's message")
         return x
 
+    # --- BART's whole step, as an operator ---------------------------------
+
+    def operator(self, F, *, batch: int = 1, cg_lambda: float = 0.0):
+        """This schedule as one operator ``(y, xn, x0, alpha) -> x``, differentiable by all four.
+
+        BART's own step of ``nlinv`` (``noir/model_net.c``) for ``F`` a
+        :class:`~bartorch.nlop.NonlinearSense`; any other model solves through
+        :meth:`__call__`.  ``iterations`` steps, the weight decaying by
+        ``redu`` towards ``alpha_min``, each a conjugate-gradient solve whose
+        backward pass is another.  Cells chain into one operator with
+        :func:`~bartorch.nlop.chain`.
+
+        ``y`` is coil images, which ``prepare()`` makes from k-space and a
+        pattern; applying it is what gives the model its pattern, and a step
+        refuses until then.  ``xn`` and ``x0`` are the image and the coil
+        coefficients in one flat vector -- ``start()``, ``split()``, ``join()``
+        and ``decompose()`` make and read one -- and ``alpha`` may be a number.
+        ``batch`` copies of the model sit on BART's batch axis, the leading
+        axis of every argument; ``cg_lambda`` is the inner solve's ``l2lambda``.
+
+        Notes
+        -----
+        BART's default coil weighting, ``b = 32``, puts part of the coil half's
+        gradient below float32's smallest normal number, where ``checkeps``
+        leaves the solve untouched and the gradient is zeros; a gradient that
+        has to mean something there wants ``sobolev=(220.0, 8.0)``.  The network
+        model fits the coils on the image's grid, so ``F`` must have
+        ``oversampling_coils=1.0`` and none of ``optimized``,
+        ``oversampled_coils`` or a separate coefficient shape.
+
+        Examples
+        --------
+        >>> F = nlop.CartesianSense((coils, 256, 256), sobolev=(220.0, 8.0))
+        >>> cell = nlop.IRGNM(iterations=1).operator(F, batch=4)
+        >>> y = cell.prepare()(kspace, pattern)
+        >>> x1 = cell(y, cell.start(batch=4), cell.start(batch=4), 1.0)
+        """
+        from bartorch.nlop._newton import _Cell
+        from bartorch.nlop.mri import NonlinearSense
+
+        if not isinstance(F, NonlinearSense):
+            raise TypeError(
+                f"only BART's noir model builds its Gauss-Newton step as an operator, not "
+                f"{type(F).__name__}; any other model solves through IRGNM(...)(y, F, x0)"
+            )
+        if self.inner is not None or self.alpha_min0:
+            raise ValueError(
+                "the operator is BART's first form with its own conjugate gradients: it takes "
+                "no inner solver and no alpha_min0"
+            )
+        if 1 > self.iterations:
+            raise ValueError("a Gauss-Newton operator takes at least one step")
+        if 1 > int(batch):
+            raise ValueError("a batch is at least one")
+        beyond = [
+            name
+            for name, asked in (
+                ("oversampling_coils", 1.0 != F.oversampling_coils),
+                ("oversampled_coils", F.oversampled_coils),
+                ("optimized", F.optimized),
+                ("coefficient_shape", F.coefficient_shape != F.coil_shape),
+            )
+            if asked
+        ]
+        if beyond:
+            raise ValueError(
+                f"BART's network model fits the coils on the image's grid and cannot be given "
+                f"{', '.join(beyond)}; build the NonlinearSense with oversampling_coils=1.0 "
+                "and without the others"
+            )
+        return _Cell(F, self, batch=batch, cg_lambda=cg_lambda)
+
     # --- BART's second form, with the inner problem anywhere ---------------
 
     def _in_python(self, y, op, x, ref) -> torch.Tensor:
@@ -251,7 +318,7 @@ class IRGNM:
         Every line below is one of ``italgos.c``'s, in its order.  The
         arithmetic is a scale and an add, which ``vecops.c`` does with the
         same kernel torch does, so the bits are the library's -- that is what
-        ``inner=optim.CG()`` against :meth:`in_library` checks.
+        ``inner=optim.CG()`` against :meth:`_in_library` checks.
         """
         alpha = self.alpha
         # The derivative is a view of the operator's own, so it is built once
@@ -284,3 +351,8 @@ class IRGNM:
             f"IRGNM(iterations={self.iterations}, alpha={self.alpha}, "
             f"alpha_min={self.alpha_min}, redu={self.redu}{inner})"
         )
+
+
+def irgnm(y: torch.Tensor, F, *, x0=None, xref=None, inner=None, **settings):
+    """Gauss-Newton for a nonlinear ``F``.  See :class:`IRGNM`."""
+    return IRGNM(inner=inner, **settings)(y, F, x0=x0, xref=xref)

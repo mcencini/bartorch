@@ -12,7 +12,6 @@ from bartorch.optim.functional import (
     admm,
     cg,
     fista,
-    irgnm,
     ist,
     niht,
     pridu,
@@ -27,7 +26,6 @@ from bartorch.optim.linear import (
     Tikhonov,
     maxeigen,
 )
-from bartorch.optim.nonlinear import IRGNM
 from bartorch.optim.scaling import data_scaling
 
 __all__ = [
@@ -36,7 +34,6 @@ __all__ = [
     "CG",
     "FISTA",
     "FISTABlock",
-    "IRGNM",
     "IST",
     "ISTBlock",
     "NIHT",
@@ -47,7 +44,6 @@ __all__ = [
     "cg",
     "data_scaling",
     "fista",
-    "irgnm",
     "ist",
     "niht",
     "maxeigen",
