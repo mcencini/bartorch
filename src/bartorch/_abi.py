@@ -745,6 +745,7 @@ def bind(lib: ctypes.CDLL) -> ctypes.CDLL:
     lib.bartorch_maxeigen.restype = ctypes.c_int
     lib.bartorch_maxeigen.argtypes = [
         ctypes.c_void_p,
+        ctypes.c_void_p,
         ctypes.c_float,
         ctypes.c_int,
         ctypes.POINTER(ctypes.c_void_p),

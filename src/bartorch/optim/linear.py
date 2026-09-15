@@ -1,8 +1,8 @@
 """Least squares by the iterations ``pics`` runs.
 
 The proximal solvers loop a block from :mod:`bartorch.optim.blocks` to BART's
-schedule; conjugate gradients, and what a block does not take yet, go to
-BART's ``lsqr2`` through the ``italgo_config`` call ``pics`` makes.
+schedule; conjugate gradients, and a term that adds unknowns, go to BART's
+``lsqr2`` through the ``italgo_config`` call ``pics`` makes.
 """
 
 from __future__ import annotations
@@ -18,7 +18,14 @@ from bartorch import _marshal
 from bartorch._dispatch import BartError, _ensure_ready, _lock, _on_device
 from bartorch._lib import library
 from bartorch._operator import as_operand
-from bartorch.optim.blocks import ADMMBlock, FISTABlock, ISTBlock, PRIDUBlock, _empty
+from bartorch.optim.blocks import (
+    ADMMBlock,
+    FISTABlock,
+    ISTBlock,
+    PRIDUBlock,
+    _empty,
+    _preconditioner,
+)
 from bartorch.priors.base import Regularizer, _as_terms
 from bartorch.priors.terms import L2
 
@@ -162,7 +169,9 @@ def _stacked(A, y: torch.Tensor, terms: Sequence[Tikhonov]):
 Regularizers = Regularizer | Iterable[Regularizer] | None
 
 
-def maxeigen(A, terms: Terms = None, *, cclambda: float = 0.0, iterations: int = 30) -> float:
+def maxeigen(
+    A, terms: Terms = None, *, cclambda: float = 0.0, precond=None, iterations: int = 30
+) -> float:
     """BART's estimate of the largest eigenvalue of the operator a step divides by.
 
     What ``pics -e`` asks for.  It is a power iteration from a random start,
@@ -181,6 +190,9 @@ def maxeigen(A, terms: Terms = None, *, cclambda: float = 0.0, iterations: int =
         iteration estimates over; the proximal ones take the encoding alone.
     cclambda : float
         The quadratic weight (``pics -q``).
+    precond : LinearOperator, optional
+        Chained onto the normal before the terms are added, as ``lsqr2_create``
+        chains it.
     iterations : int
         Power iterations; BART takes thirty.
 
@@ -193,10 +205,12 @@ def maxeigen(A, terms: Terms = None, *, cclambda: float = 0.0, iterations: int =
     lib = library()
 
     handles = [term.build(op.ishape) for term in _as_terms(terms)]
+    conditioner = _conditioner(precond, op.ishape)
     value = _marshal.double_out()
     with _lock, _on_device(op.device or torch.device("cpu")):
         code = lib.bartorch_maxeigen(
             op._h.ptr,
+            None if conditioner is None else conditioner._h.ptr,
             float(cclambda),
             len(handles),
             _marshal.pointers(handles) if handles else None,
@@ -206,6 +220,14 @@ def maxeigen(A, terms: Terms = None, *, cclambda: float = 0.0, iterations: int =
     if code != 0:
         raise BartError("the largest eigenvalue could not be estimated")
     return float(value.value)
+
+
+def _conditioner(precond, shape):
+    """``precond`` as a BART operator, checked to map the image to itself."""
+    if precond is None:
+        return None
+    _preconditioner(precond, shape)
+    return precond._bart()
 
 
 def _solve(
@@ -259,14 +281,7 @@ def _solve(
     p, q, r = pqr if pqr is not None else (-1.0, -1.0, -1.0)
     # The preconditioner is one more BART operator, and it has to outlive the
     # call; the wrapper a Python-defined one produces is kept here for that.
-    conditioner = None if precond is None else precond._bart()
-    if conditioner is not None and (
-        conditioner.ishape != op.ishape or conditioner.oshape != op.ishape
-    ):
-        raise ValueError(
-            f"a preconditioner maps the image to itself, so it is {op.ishape} to "
-            f"{op.ishape}, not {conditioner.ishape} to {conditioner.oshape}"
-        )
+    conditioner = _conditioner(precond, op.ishape)
 
     # `opt_reg_configure` takes one block size, one wavelet family and one
     # shift mode for the whole set, and reaches for them only on the path that
@@ -370,7 +385,7 @@ def _extending(terms) -> bool:
 
 
 def _through_library(solver, y, A, x0):
-    """The library's loop, for what a block does not take yet.
+    """The library's loop, for a term that adds unknowns, which no block takes yet.
 
     That loop records nothing, so a tracked ``y`` is refused rather than
     answered with a tensor that has quietly lost its graph.
@@ -380,9 +395,9 @@ def _through_library(solver, y, A, x0):
     if not solver._foreign and _tracking(y):
         raise RuntimeError(
             f"{type(solver).__name__} cannot be differentiated through with a term that adds "
-            "unknowns or with a preconditioner: the solve runs inside the library, whose loop "
-            "records nothing.  Detach the data, or regularize with a term that walks the image "
-            "alone -- priors.TotalVariation is the one nearest to these"
+            "unknowns: the solve runs inside the library, whose loop records nothing.  Detach "
+            "the data, or regularize with a term that walks the image alone -- "
+            "priors.TotalVariation is the one nearest to these"
         )
     return solver._in_library(y, A, x0)
 
@@ -467,7 +482,7 @@ class _Solver:
         torch.Tensor
             Complex64 solution of ``A.ishape``.
         """
-        if self.precond is not None or _extending(self.regularizers):
+        if _extending(self.regularizers):
             return _through_library(self, y, A, x0)
         block = self._block()
         state = block.start(y, A, x0)
@@ -710,7 +725,11 @@ class IST(_Solver):
 
     def _block(self):
         return ISTBlock(
-            self.regularizers[0], step=self.step, eigen=self.eigen, cclambda=self.cclambda
+            self.regularizers[0],
+            step=self.step,
+            eigen=self.eigen,
+            cclambda=self.cclambda,
+            precond=self.precond,
         )
 
     def _declines(self, state) -> bool:
@@ -781,6 +800,7 @@ class FISTA(IST):
             hogwild=self.hogwild,
             pqr=self.pqr,
             cclambda=self.cclambda,
+            precond=self.precond,
         )
 
 
@@ -936,6 +956,7 @@ class ADMM(_Solver):
             tau_max=self.tau_max,
             abstol=self.abstol,
             reltol=self.reltol,
+            precond=self.precond,
         )
 
     def _stops(self, state) -> bool:
@@ -1028,6 +1049,7 @@ class PRIDU(_Solver):
             eigen=self.eigen,
             hogwild=self.hogwild,
             cclambda=self.cclambda,
+            precond=self.precond,
         )
 
 

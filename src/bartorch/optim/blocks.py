@@ -4,7 +4,9 @@ A block is the only copy of its iteration's step: a solver loops over one, and
 a network stacks several.  ``state = block.start(y, A, x0)`` sets a run up,
 ``state = block(state, A)`` takes a step, and ``block.output(state, A)`` is the
 image.  Step sizes and weights are parameters, frozen until ``requires_grad_()``;
-while frozen, a step answers with the library's bits.
+while frozen, a step answers with the library's bits.  ``cclambda`` and
+``precond`` are ``lsqr2_create``'s: the step sees ``M (A^H A + cclambda) x`` and
+``M A^H y``.
 """
 
 from __future__ import annotations
@@ -138,23 +140,35 @@ def _begin(y, A, x0):
     return y, torch.zeros((*batch, *A.ishape), dtype=torch.complex64, device=y.device)
 
 
-def _adjoint(A, y: torch.Tensor) -> torch.Tensor:
-    """``A^H y``, recorded when ``y`` is."""
+def _preconditioner(precond, shape):
+    """``precond``, checked to map the image to itself."""
+    if precond is not None and not (tuple(precond.ishape) == tuple(precond.oshape) == tuple(shape)):
+        raise ValueError(
+            f"a preconditioner maps the image to itself, so it is {tuple(shape)} to "
+            f"{tuple(shape)}, not {tuple(precond.ishape)} to {tuple(precond.oshape)}"
+        )
+    return precond
+
+
+def _adjoint(A, y: torch.Tensor, precond=None) -> torch.Tensor:
+    """``M A^H y``, recorded when ``y`` is."""
     from bartorch.linop.autograd import apply_adjoint
     from bartorch.linop.base import _tracking
 
     one = (lambda v: apply_adjoint(A, v)) if _tracking(y) else A.adjoint
-    return _batched(one, y, A.oshape)
+    out = _batched(one, y, A.oshape)
+    return out if precond is None else _batched(precond, out, A.ishape)
 
 
-def _normal(A, x: torch.Tensor, cclambda: float) -> torch.Tensor:
-    """``A^H A x + cclambda x``, the weight added last, as ``normaleq_l2_apply`` adds it."""
+def _normal(A, x: torch.Tensor, cclambda: float, precond=None) -> torch.Tensor:
+    """``M (A^H A x + cclambda x)``, in ``normaleq_l2_apply``'s order; recorded when ``x`` is."""
     from bartorch.linop.autograd import apply_normal
     from bartorch.linop.base import _tracking
 
     one = (lambda v: apply_normal(A, v)) if _tracking(x) else A.normal
     out = _batched(one, x, A.ishape)
-    return out + cclambda * x if cclambda else out
+    out = out + cclambda * x if cclambda else out
+    return out if precond is None else _batched(precond, out, A.ishape)
 
 
 def _prox(term, w: torch.Tensor, gamma, image_shape) -> torch.Tensor:
@@ -201,7 +215,15 @@ class ISTBlock(nn.Module):
         divisor: float = 1.0
         k: int = 0
 
-    def __init__(self, prior, *, step: float = 0.95, eigen: bool = False, cclambda: float = 0.0):
+    def __init__(
+        self,
+        prior,
+        *,
+        step: float = 0.95,
+        eigen: bool = False,
+        cclambda: float = 0.0,
+        precond=None,
+    ):
         super().__init__()
         terms = _terms(prior, type(self).__name__)
         if 1 != len(terms):
@@ -210,6 +232,7 @@ class ISTBlock(nn.Module):
         self.step = _setting(step)
         self.eigen = bool(eigen)
         self.cclambda = float(cclambda)
+        self.precond = precond
 
     def start(self, y: torch.Tensor, A, x0: torch.Tensor | None = None) -> State:
         """The run's state: the start, and ``A^H y`` kept for every step."""
@@ -217,10 +240,10 @@ class ISTBlock(nn.Module):
 
         y, x = _begin(y, A, x0)
         self.prior.rewind(A.ishape)
-        adjoint = _adjoint(A, y)
+        adjoint = _adjoint(A, y, _preconditioner(self.precond, A.ishape))
         divisor = 1.0
         if self.eigen and not _empty(adjoint):
-            divisor = maxeigen(A, cclambda=self.cclambda)
+            divisor = maxeigen(A, cclambda=self.cclambda, precond=self.precond)
         return self.State(x, adjoint, divisor)
 
     def _tau(self, state: State, k: int):
@@ -229,7 +252,7 @@ class ISTBlock(nn.Module):
     def forward(self, state: State, A) -> State:
         tau = self._tau(state, state.k)
         x = _prox(self.prior, state.x, tau, A.ishape)
-        x = x - tau * (_normal(A, x, self.cclambda) - state.adjoint)
+        x = x - tau * (_normal(A, x, self.cclambda, self.precond) - state.adjoint)
         return dataclasses.replace(state, x=x, k=state.k + 1)
 
     def output(self, state: State, A) -> torch.Tensor:
@@ -259,8 +282,9 @@ class FISTABlock(ISTBlock):
         hogwild: bool = False,
         pqr: tuple[float, float, float] | None = None,
         cclambda: float = 0.0,
+        precond=None,
     ):
-        super().__init__(prior, step=step, eigen=eigen, cclambda=cclambda)
+        super().__init__(prior, step=step, eigen=eigen, cclambda=cclambda, precond=precond)
         self.hogwild = bool(hogwild)
         self.pqr = (1.0, 1.0, 4.0) if pqr is None else tuple(float(v) for v in pqr)
 
@@ -284,7 +308,7 @@ class FISTABlock(ISTBlock):
         x = x + before * x
         x = x + after * z
 
-        x = x - tau * (_normal(A, x, self.cclambda) - state.adjoint)
+        x = x - tau * (_normal(A, x, self.cclambda, self.precond) - state.adjoint)
         return dataclasses.replace(state, x=x, previous=z, t=t, k=state.k + 1)
 
 
@@ -362,6 +386,7 @@ class ADMMBlock(nn.Module):
         tau_max: float = 20.0,
         abstol: float = 0.0,
         reltol: float = 0.0,
+        precond=None,
     ):
         super().__init__()
         self.terms = _as_terms(priors)
@@ -388,6 +413,7 @@ class ADMMBlock(nn.Module):
         self.tau_max = float(tau_max)
         self.abstol = float(abstol)
         self.reltol = float(reltol)
+        self.precond = precond
 
     def start(self, y: torch.Tensor, A, x0: torch.Tensor | None = None) -> State:
         """The run's state: the start, zero splits and duals, and ``A^H y``."""
@@ -401,7 +427,8 @@ class ADMMBlock(nn.Module):
             for t in self.terms
         )
         u = tuple(torch.zeros_like(zj) for zj in z)
-        return self.State(x, _adjoint(A, y), z, u, _single(_value(self.rho)))
+        adjoint = _adjoint(A, y, _preconditioner(self.precond, A.ishape))
+        return self.State(x, adjoint, z, u, _single(_value(self.rho)))
 
     def forward(self, state: State, A) -> State:
         shape = A.ishape
@@ -524,16 +551,10 @@ class ADMMBlock(nn.Module):
             return out
 
         def apply(v):
-            # `admm_normaleq`'s order: the terms summed first, each scaled by
-            # `rho`, and the encoding's normal with its weight added last.
-            out = None
-            for term in self.terms:
-                part = weight * term.apply_transform(v, shape, mode="normal")
-                out = part if out is None else out + part
-            normal = A.normal(v)
-            if self.cclambda:
-                normal = normal + self.cclambda * v
-            return normal if out is None else out + normal
+            return self._xupdate_normal(A, weight, v)
+
+        def transpose(v):
+            return self._xupdate_normal(A, weight, v, transposed=True)
 
         budget = self.cg_maxiter
         if first and self.cg_maxiter_first is not None:
@@ -545,7 +566,10 @@ class ADMMBlock(nn.Module):
             solver = CG(maxiter=budget, tol=self._cg_eps)
             if warm:
                 return solver(b, operator, x0=x.detach(), steps=steps)
-            return solver(b, operator)
+            if self.precond is None:
+                return solver(b, operator)
+            transposed = Callback(shape, shape, transpose, transpose, transpose)
+            return solver(b, _WithNormal(Identity(shape), transposed))
 
         learned = isinstance(rho, torch.Tensor) and rho.requires_grad
         if _tracking(rhs) or learned:
@@ -554,6 +578,25 @@ class ADMMBlock(nn.Module):
         else:
             out = solve(rhs, True)
         return out, steps[0]
+
+    def _xupdate_normal(self, A, rho: float, v: torch.Tensor, transposed: bool = False):
+        """``K v`` for ``K = rho sum_j G_j^H G_j + M (A^H A + cclambda)``, or ``K^H v``.
+
+        ``admm_normaleq``'s order: the terms summed first, each scaled by
+        ``rho``, and the data term added last.
+        """
+        out = None
+        for term in self.terms:
+            part = rho * term.apply_transform(v, A.ishape, mode="normal")
+            out = part if out is None else out + part
+        precond = self.precond
+        w = precond.adjoint(v) if transposed and precond is not None else v
+        normal = A.normal(w)
+        if self.cclambda:
+            normal = normal + self.cclambda * w
+        if not transposed and precond is not None:
+            normal = precond.forward(normal)
+        return normal if out is None else out + normal
 
     def _adapt(self, rho, tau, r_norm, s_norm, r_scaling, s_scaling, u, hogwild):
         """BART's ``tau`` and ``rho`` moves, and hogwild's doubling."""
@@ -634,6 +677,7 @@ class PRIDUBlock(nn.Module):
         hogwild: bool = False,
         cclambda: float = 0.0,
         tol: float = 1e-4,
+        precond=None,
     ):
         super().__init__()
         self.terms = _as_terms(priors)
@@ -647,6 +691,7 @@ class PRIDUBlock(nn.Module):
         self.hogwild = bool(hogwild)
         self.cclambda = float(cclambda)
         self.tol = float(tol)
+        self.precond = precond
 
     def start(self, y: torch.Tensor, A, x0: torch.Tensor | None = None) -> State:
         """The run's state: the split ``iter2_chambolle_pock`` makes, zero duals, and the steps."""
@@ -660,11 +705,13 @@ class PRIDUBlock(nn.Module):
         duals = self.terms[1:] if primal else self.terms
 
         # Estimated over the encoding and the dual terms' transforms together.
-        divisor = math.sqrt(maxeigen(A, duals, cclambda=self.cclambda)) if self.eigen else 1.0
+        divisor = 1.0
+        if self.eigen:
+            divisor = math.sqrt(maxeigen(A, duals, cclambda=self.cclambda, precond=self.precond))
         batch = x.shape[: x.ndim - len(A.ishape)]
         return self.State(
             x=x,
-            adjoint=_adjoint(A, y),
+            adjoint=_adjoint(A, y, _preconditioner(self.precond, A.ishape)),
             avg=x,
             adjoint_dual=torch.zeros_like(x),
             duals=tuple(
@@ -693,7 +740,7 @@ class PRIDUBlock(nn.Module):
         # The data term's dual, through its resolvent: both coefficients are
         # worked out in double and rounded to the float each vector is scaled by.
         previous = adjoint_dual
-        step = sigma * _normal(A, avg, self.cclambda) + adjoint_dual
+        step = sigma * _normal(A, avg, self.cclambda, self.precond) + adjoint_dual
         keep = _single(1.0 / (1.0 + sigma))
         pull = _single(-1.0 * sigma / (1.0 + sigma))
         fresh = keep * step + pull * state.adjoint
@@ -752,7 +799,7 @@ class PRIDUBlock(nn.Module):
         squared = 0.0
         for term in terms:
             squared = _single(squared + _norm(_transform(term, delta, shape)) ** 2)
-        squared = _single(squared + _dot(_normal(A, delta, self.cclambda), delta))
+        squared = _single(squared + _dot(_normal(A, delta, self.cclambda, self.precond), delta))
 
         norm_kx = _single(math.sqrt(max(squared, 0.0)))
         if 0.0 == norm_kx:

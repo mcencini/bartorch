@@ -31,6 +31,16 @@ def _ill_conditioned(n: int = 32):
     return linop.Diagonal(scale, (n,)), scale
 
 
+def _mixed(n: int = 16):
+    """An encoding whose normal does not commute with a diagonal preconditioner,
+    so the order the two are applied in shows in the answer."""
+    torch.manual_seed(0)
+    scale = torch.logspace(0, -1.5, n, dtype=torch.float32).to(torch.complex64)
+    A = linop.Diagonal(scale, (n,)) @ linop.FFT((n,), axes=-1)
+    M = linop.Diagonal(torch.linspace(0.5, 2.0, n).to(torch.complex64), (n,))
+    return A, M, A(_rand(n))
+
+
 # --- lsqr's preconditioner --------------------------------------------------
 
 
@@ -74,21 +84,75 @@ def test_a_preconditioner_of_the_wrong_shape_says_so():
 @pytest.mark.parametrize(
     "make",
     [
-        lambda M: optim.CG(maxiter=6, precond=M),
+        lambda M: optim.IST(priors.L1(0.001), maxiter=6, precond=M),
         lambda M: optim.FISTA(priors.L1(0.001), maxiter=6, precond=M),
-        lambda M: optim.ADMM(priors.L1(0.001), maxiter=6, precond=M),
+        lambda M: optim.FISTA(priors.L1(0.001), maxiter=6, cclambda=0.1, precond=M),
+        lambda M: optim.ADMM(priors.L1(0.001), maxiter=12, cg_maxiter=4, precond=M),
+        lambda M: optim.ADMM(
+            [priors.L1(0.001), priors.TotalVariation(-1, 0.001)],
+            maxiter=12,
+            cg_maxiter=4,
+            dynamic_rho=True,
+            precond=M,
+        ),
         lambda M: optim.PRIDU(priors.L1(0.001), maxiter=6, precond=M),
+        lambda M: optim.PRIDU(
+            priors.TotalVariation(-1, 0.001), maxiter=6, adaptive_step=True, precond=M
+        ),
     ],
-    ids=["cg", "fista", "admm", "pridu"],
+    ids=["ist", "fista", "fista weight", "admm", "admm two terms", "pridu", "pridu adaptive"],
 )
-def test_every_least_squares_solver_takes_one(make):
-    # lsqr2_create is where the preconditioner enters, and every one of these
-    # goes through it, so every one of them can be given one.
-    A, scale = _ill_conditioned(16)
-    y = A(_rand(16))
-    M = linop.Diagonal((1.0 / scale.abs() ** 2).to(torch.complex64), (16,))
-    made = make(M)._in_library(y, A)
-    assert torch.isfinite(made).all()
+def test_every_loop_is_the_library_with_a_preconditioner(make):
+    # lsqr2_create chains M onto the normal and the adjoint for every one of
+    # these; the block does the same, in the same order.
+    A, M, y = _mixed()
+    solver = make(M)
+    assert torch.equal(solver(y, A), solver._in_library(y, A))
+    assert not torch.equal(solver(y, A), make(None)(y, A)), "the preconditioner changed nothing"
+
+
+def test_conjugate_gradients_takes_one_too():
+    A, M, y = _mixed()
+    assert torch.isfinite(optim.CG(maxiter=6, precond=M)(y, A)).all()
+
+
+def test_the_estimate_is_over_the_preconditioned_normal():
+    from bartorch.optim.linear import maxeigen
+
+    shape = (1, 8, 8)
+    A = linop.FFT(shape, axes=(-1, -2))
+    M = linop.Diagonal(torch.full(shape, 2.0, dtype=torch.complex64), shape)
+    assert maxeigen(A) == pytest.approx(1.0, rel=1e-4)
+    assert maxeigen(A, precond=M) == pytest.approx(2.0, rel=1e-4)
+
+
+def test_a_step_from_the_estimate_is_the_librarys_with_a_preconditioner():
+    # The power iteration starts from a random vector, so the two paths are
+    # held close rather than to the bit.
+    A, M, y = _mixed()
+    solver = optim.FISTA(priors.L1(0.001), maxiter=8, eigen=True, precond=M)
+    torch.testing.assert_close(solver(y, A), solver._in_library(y, A), rtol=1e-4, atol=1e-6)
+
+
+def test_the_backward_solve_has_the_transposed_operator():
+    A, M, _ = _mixed()
+    block = optim.ADMMBlock(priors.TotalVariation(-1, 0.001), cclambda=0.1, precond=M)
+    u, v = _rand(16), _rand(16)
+    left = complex((v.conj() * block._xupdate_normal(A, 0.5, u)).sum())
+    right = complex((block._xupdate_normal(A, 0.5, v, transposed=True).conj() * u).sum())
+    assert abs(left - right) <= 1e-5 * abs(left)
+    assert not torch.allclose(
+        block._xupdate_normal(A, 0.5, u), block._xupdate_normal(A, 0.5, u, transposed=True)
+    )
+
+
+def test_a_preconditioned_solve_differentiates_to_its_data():
+    A, M, y = _mixed()
+    data = y.clone().requires_grad_()
+    # A frozen term's last threshold is a constant, so a denoiser stands in the slot.
+    made = optim.FISTA(priors.ImplicitPrior(lambda x: 0.9 * x), maxiter=4, precond=M)(data, A)
+    made.abs().square().sum().backward()
+    assert torch.isfinite(data.grad).all() and 0 < data.grad.abs().sum()
 
 
 def test_a_python_defined_preconditioner_is_called_back():
@@ -102,9 +166,11 @@ def test_a_python_defined_preconditioner_is_called_back():
         return weight * x
 
     M = linop.Callback((16,), (16,), forward, lambda v: weight.conj() * v)
-    made = optim.CG(maxiter=4, precond=M)(y, A)
-    assert seen, "the preconditioner was never applied"
-    assert torch.isfinite(made).all()
+    for solver in (optim.CG(maxiter=4, precond=M), optim.FISTA(priors.L1(0.001), precond=M)):
+        seen.clear()
+        made = solver(y, A)
+        assert seen, f"{solver!r} never applied the preconditioner"
+        assert torch.isfinite(made).all()
 
 
 # --- what pics calls preconditioning ----------------------------------------

@@ -372,8 +372,8 @@ static void maxeigen_del(const operator_data_t* _data)
  *
  * Returns 0 and writes `out`, or a negative code.
  */
-int bartorch_maxeigen(const bartorch_linop* handle, float cclambda,
-		int nprox, const bartorch_prox* const* proxes,
+int bartorch_maxeigen(const bartorch_linop* handle, const bartorch_linop* precond,
+		float cclambda, int nprox, const bartorch_prox* const* proxes,
 		int iterations, double* out)
 {
 	if ((NULL == handle) || (NULL == out) || (1 > iterations))
@@ -398,6 +398,22 @@ int bartorch_maxeigen(const bartorch_linop* handle, float cclambda,
 
 	const struct operator_s* normal = operator_create(iov->N, iov->dims, iov->N, iov->dims,
 			CAST_UP(PTR_PASS(data)), maxeigen_apply, maxeigen_del);
+
+	/* `lsqr2_create`'s chain, before `iter2_chambolle_pock` adds the terms. */
+	if (NULL != precond) {
+
+		const struct linop_s* m = bartorch_linop_unwrap(precond);
+
+		if (NULL == m) {
+
+			operator_free(normal);
+			return -1;
+		}
+
+		auto tmp = normal;
+		normal = operator_chain(normal, m->forward);
+		operator_free(tmp);
+	}
 
 	for (int i = 0; i < nprox; i++) {
 

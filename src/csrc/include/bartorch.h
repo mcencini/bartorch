@@ -495,14 +495,15 @@ BARTORCH_API void bartorch_linop_free(bartorch_linop* h);
  * a wavelet term's cycle spinning, say -- are different ones.
  *
  * `A` and `cclambda` are the encoding and the quadratic weight, which
- * together are the operator `lsqr` builds.  `proxes` are terms whose
- * transforms are added to it, which is what the primal-dual iteration
- * estimates over and the proximal ones do not.
+ * together are the operator `lsqr` builds, and `precond` (or NULL) is chained
+ * onto it as `lsqr2_create` chains it.  `proxes` are terms whose transforms
+ * are added after that, which is what the primal-dual iteration estimates
+ * over and the proximal ones do not.
  *
  * Returns 0 and writes `out`, or a negative code.
  */
-BARTORCH_API int bartorch_maxeigen(const bartorch_linop* A, float cclambda,
-		int nprox, const bartorch_prox* const* proxes,
+BARTORCH_API int bartorch_maxeigen(const bartorch_linop* A, const bartorch_linop* precond,
+		float cclambda, int nprox, const bartorch_prox* const* proxes,
 		int iterations, double* out);
 
 BARTORCH_API int bartorch_solve(const bartorch_linop* A,
