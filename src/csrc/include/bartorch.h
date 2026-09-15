@@ -287,6 +287,11 @@ struct bartorch_encoding {
 	/* A NUFFT's trajectory, in grid units. */
 	const long* traj_dims;
 	const void* traj;
+	/* A stack whose kz lies on the image's own z grid, decoupled: the
+	 * trajectory is one position's in-plane shots, kz zero, the transform
+	 * over x and y has z as a batch of it, and the coil images are
+	 * transformed along z around it. */
+	int stacked;
 
 	/* A table of the phase encodes that were sampled, instead of a dense
 	 * pattern: `frames` x `shots` places of `components` long indices
@@ -323,6 +328,12 @@ struct bartorch_encoding {
 	 * cannot serve every item of it: independent slices, each with their own
 	 * maps, over one trajectory. */
 	int batch_dim;
+
+	/* Encoding axes the image carries and each item of which has its own
+	 * trajectory: the extent of each such axis, and one elsewhere, or NULL
+	 * for none.  Every item is its own transform and normal kernel under one
+	 * coil loop. */
+	const long* item_dims;
 
 	/* A k-space factor that differs between sets of maps, applied after
 	 * the transform, with the sets summed over after it: the slice phase
@@ -366,6 +377,10 @@ enum bartorch_encoding_count {
 	BARTORCH_ENCODING_NORMAL = 5,
 	/* Forms built with a contraction over segments. */
 	BARTORCH_ENCODING_SEGMENTED = 6,
+	/* Forms built as a stack decoupled along z. */
+	BARTORCH_ENCODING_STACKED = 7,
+	/* Forms built with a transform per item. */
+	BARTORCH_ENCODING_ITEMS = 8,
 };
 BARTORCH_API long bartorch_encoding_counter(int which);
 BARTORCH_API void bartorch_encoding_reset_counters(void);

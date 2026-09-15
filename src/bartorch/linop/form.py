@@ -17,6 +17,7 @@ library.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field, replace
 
 import torch
@@ -125,6 +126,12 @@ class Plan:
         could not and BART's plain chain of operators answers instead.  Read
         back from the library after the operator is built, so it is what ran
         and not what was intended.
+    cartesian : tuple of str
+        Axes of a trajectory found on the image's own grid and transformed by
+        an FFT, the NUFFT then over the rest: ``("z",)`` for a stack.
+    items : int
+        Items along encoding axes the trajectory varies along, each its own
+        transform and normal kernel under the coil loop; one without them.
     """
 
     transform: str
@@ -136,6 +143,8 @@ class Plan:
     coil_batch: int = 1
     streamed: tuple[str, ...] = ()
     executor: str = "slab"
+    cartesian: tuple[str, ...] = ()
+    items: int = 1
 
     @property
     def fused(self) -> bool:
@@ -149,6 +158,10 @@ class Plan:
 
     def __repr__(self) -> str:
         parts = [f"transform={self.transform}"]
+        if self.cartesian:
+            parts.append("cartesian=" + ",".join(self.cartesian))
+        if self.items > 1:
+            parts.append(f"items={self.items}")
         if self.image:
             parts.append("image=" + "·".join(f.name for f in self.image))
         if self.kspace:
@@ -187,6 +200,12 @@ class Form:
         for padding, instead of a dense pattern.
     coeffs : int
         Coefficients the image carries, for the plan's report alone.
+    stacked : bool
+        A stack on the image's own z grid, decoupled: ``traj`` is its in-plane
+        part over one position's samples, and z is a batch of the transform.
+    item_vector : tuple of int, optional
+        The encoding axes each item of which has its own trajectory, in BART's
+        order: their extents, and one elsewhere.
     """
 
     transform: str
@@ -198,6 +217,8 @@ class Form:
     basis: Array | None = None
     weights: Array | None = None
     traj: Array | None = None
+    stacked: bool = False
+    item_vector: tuple[int, ...] | None = None
     positions: torch.Tensor | None = None
     frames: int = 1
     shots: int = 0
@@ -320,6 +341,8 @@ class Form:
             coil_batch=self.coil_batch,
             streamed=tuple(streamed),
             executor=executor,
+            cartesian=("z",) if self.stacked else (),
+            items=1 if self.item_vector is None else math.prod(self.item_vector),
         )
 
     # --- building ------------------------------------------------------------
@@ -351,6 +374,8 @@ class Form:
         s.bas_dims, s.basis = array(self.basis)
         s.wgh_dims, s.weights = array(self.weights)
         s.traj_dims, s.traj = array(self.traj)
+        s.stacked = int(self.stacked)
+        s.item_dims = 0 if self.item_vector is None else vector(self.item_vector)
 
         s.frames = int(self.frames)
         s.shots = int(self.shots)

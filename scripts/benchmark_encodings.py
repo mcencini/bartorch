@@ -3,7 +3,7 @@
     python scripts/benchmark_encodings.py CASE
 
 CASE is one of cart2d, cart2d_sub, cart3d, cart3d_sub, cart3d_sampled, wave3d,
-wave3d_sub, wave3d_sampled, noncart3d_sub, field_cart3d, field_noncart3d,
+wave3d_sub, wave3d_sampled, noncart3d_sub, sos3d, field_cart3d, field_noncart3d,
 field_wave3d.  Host arrays, the operator on the card: build, then forward,
 adjoint and normal (the 3D subspace cases over a dense pattern time the normal
 alone, their dense k-space not fitting in host memory), each after one warm-up
@@ -94,6 +94,13 @@ elif case == "noncart3d_sub":
     n, fr, shots = 256, 500, 48
     traj = bt.traj(x=n, y=shots * fr, r=True, flag_3=True).reshape(fr, shots, n, 3)
     make = lambda: linop.NoncartesianSense(kern(3), (R, n, n, n), traj=traj, basis=cosine_basis(fr), kernels=True, device="cuda")
+elif case == "sos3d":
+    # A stack of stars: the same 256^2 radial plane of 200 spokes at each of 64 kz.
+    n, nz, spokes = 256, 64, 200
+    traj = bt.traj(x=n, y=spokes, r=True).unsqueeze(0).repeat(nz, 1, 1, 1)
+    traj[..., 2] = (torch.arange(nz) - nz // 2).to(torch.float32)[:, None, None]
+    traj = traj.reshape(nz * spokes, n, 3)
+    make = lambda: linop.NoncartesianSense(kern(3), (nz, n, n), traj=traj, kernels=True, device="cuda")
 elif case == "field_noncart3d":
     n, spokes = 160, 8000
     traj = bt.traj(x=n, y=spokes, r=True, flag_3=True).reshape(spokes, n, 3)
@@ -164,6 +171,7 @@ try:
     # the plan is printed beside the times rather than left to be inferred.
     plan = op.plan
     parts.append(f"plan {plan.transform}/{plan.contraction}/{plan.normal}/{plan.executor}"
+                 + "".join(f"/cartesian {axis}" for axis in plan.cartesian)
                  + ("" if plan.fused else " NOT FUSED"))
     rest = held()
     x = torch.randn(*op.ishape, dtype=C64)

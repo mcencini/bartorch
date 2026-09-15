@@ -178,10 +178,11 @@ def materialise(description: Sum | Contract) -> LinearOperator:
 
     # The encoding inside still runs where its own plan says; what is not
     # fused is the sum, and the plan says so rather than reporting the
-    # encoding's own and leaving the sum invisible.
+    # encoding's own and leaving the sum invisible.  A sum of chains has no
+    # kernel of its own: its normal is the forward followed by the adjoint.
     inner = terms[0].encoding.plan
     if inner is not None:
-        out._plan = replace(inner, contraction="chained", terms=len(terms))
+        out._plan = replace(inner, contraction="chained", terms=len(terms), normal="applications")
     return out
 
 
