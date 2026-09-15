@@ -38,7 +38,9 @@
 #include "nlops/cast.h"
 #include "nlops/chain.h"
 #include "nlops/const.h"
+#include "nlops/checkpointing.h"
 #include "nlops/nlop.h"
+#include "nlops/norm_inv.h"
 #include "nlops/someops.h"
 #include "nlops/stack.h"
 #include "nlops/tenmul.h"
@@ -2016,6 +2018,58 @@ bartorch_nlop* bartorch_nlop_set_input_const(const bartorch_nlop* a, int i, int 
 	return (0 == guarded(nlop_set_input_const_worker, &v)) ? v.result : NULL;
 }
 
+
+struct nlop_checkpoint_args { const bartorch_nlop* x; int der_once; int clear_mem; bartorch_nlop* result; };
+
+static int nlop_checkpoint_worker(void* p)
+{
+	struct nlop_checkpoint_args* v = p;
+	v->result = wrap_nlop(nlop_checkpoint_create(v->x->op, v->der_once, v->clear_mem));
+	return 0;
+}
+
+bartorch_nlop* bartorch_nlop_checkpoint(const bartorch_nlop* x, int der_once, int clear_mem)
+{
+	if (NULL == x)
+		return NULL;
+
+	struct nlop_checkpoint_args v = { x, der_once, clear_mem, NULL };
+
+	return (0 == guarded(nlop_checkpoint_worker, &v)) ? v.result : NULL;
+}
+
+struct nlop_norm_inv_args { const bartorch_nlop* normal; int maxiter; float tol; float l2lambda; bartorch_nlop* result; };
+
+static int nlop_norm_inv_worker(void* p)
+{
+	struct nlop_norm_inv_args* v = p;
+
+	/* `noir_normal_inversion_create` fills these three and leaves the rest of
+	 * `iter_conjgrad_defaults` alone; the conf is read before this returns. */
+	struct iter_conjgrad_conf cgconf = iter_conjgrad_defaults;
+	cgconf.maxiter = v->maxiter;
+	cgconf.tol = v->tol;
+	cgconf.l2lambda = v->l2lambda;
+
+	struct nlop_norm_inv_conf conf = nlop_norm_inv_default;
+	conf.iter_conf = &cgconf;
+
+	/* Every axis of the vector takes its own weight, which is what
+	 * `model_net.c` asks for and what lets `lambda` arrive as a tensor. */
+	v->result = wrap_nlop(norm_inv_lambda_create(&conf, v->normal->op, ~0UL));
+
+	return 0;
+}
+
+bartorch_nlop* bartorch_nlop_norm_inv_lambda(const bartorch_nlop* normal, int maxiter, float tol, float l2lambda)
+{
+	if (NULL == normal)
+		return NULL;
+
+	struct nlop_norm_inv_args v = { normal, maxiter, tol, l2lambda, NULL };
+
+	return (0 == guarded(nlop_norm_inv_worker, &v)) ? v.result : NULL;
+}
 
 void bartorch_nlop_free(bartorch_nlop* h)
 {

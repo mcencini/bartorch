@@ -243,29 +243,35 @@ class IRGNM:
     def operator(self, F, *, batch: int = 1, cg_lambda: float = 0.0):
         """This schedule as one operator ``(y, xn, x0, alpha) -> x``, differentiable by all four.
 
-        BART's own step of ``nlinv`` (``noir/model_net.c``) for ``F`` a
-        :class:`~bartorch.nlop.NonlinearSense`; any other model solves through
-        :meth:`__call__`.  ``iterations`` steps, the weight decaying by
-        ``redu`` towards ``alpha_min``, each a conjugate-gradient solve whose
-        backward pass is another.  Cells chain into one operator with
+        ``iterations`` steps, the weight decaying by ``redu`` towards
+        ``alpha_min``, each a conjugate-gradient solve whose backward pass is
+        another.  Steps chain into one operator with
         :func:`~bartorch.nlop.chain`.
 
-        ``y`` is coil images, which ``prepare()`` makes from k-space and a
-        pattern; applying it is what gives the model its pattern, and a step
-        refuses until then.  ``xn`` and ``x0`` are the image and the coil
-        coefficients in one flat vector -- ``start()``, ``split()``, ``join()``
-        and ``decompose()`` make and read one -- and ``alpha`` may be a number.
-        ``batch`` copies of the model sit on BART's batch axis, the leading
-        axis of every argument; ``cg_lambda`` is the inner solve's ``l2lambda``.
+        ``F`` a :class:`~bartorch.nlop.NonlinearSense` is BART's own step of
+        ``nlinv`` (``noir/model_net.c``); any other model is that same
+        expression assembled over the derivative the model supplies as a
+        function of the point (:attr:`~bartorch.nlop.NonlinearOperator.bundle`),
+        and a model that supplies none solves through :meth:`__call__` instead.
+
+        ``xn``, ``x0`` and the answer are the model's unknowns in one flat
+        vector, which ``split()`` and ``join()`` read and write, and ``alpha``
+        may be a number.  ``cg_lambda`` is the inner solve's ``l2lambda``.
 
         Notes
         -----
+        For ``NonlinearSense``, ``y`` is coil images, which ``prepare()`` makes
+        from k-space and a pattern; applying it is what gives the model its
+        pattern, and a step refuses until then.  ``batch`` copies of the model
+        sit on BART's batch axis, the leading axis of every argument, and only
+        BART's own model carries one.
+
         BART's default coil weighting, ``b = 32``, puts part of the coil half's
         gradient below float32's smallest normal number, where ``checkeps``
         leaves the solve untouched and the gradient is zeros; a gradient that
         has to mean something there wants ``sobolev=(220.0, 8.0)``.  The network
-        model fits the coils on the image's grid, so ``F`` must have
-        ``oversampling_coils=1.0`` and none of ``optimized``,
+        model fits the coils on the image's grid, so a ``NonlinearSense`` must
+        have ``oversampling_coils=1.0`` and none of ``optimized``,
         ``oversampled_coils`` or a separate coefficient shape.
 
         Examples
@@ -278,11 +284,6 @@ class IRGNM:
         from bartorch.nlop._newton import _Cell
         from bartorch.nlop.mri import NonlinearSense
 
-        if not isinstance(F, NonlinearSense):
-            raise TypeError(
-                f"only BART's noir model builds its Gauss-Newton step as an operator, not "
-                f"{type(F).__name__}; any other model solves through IRGNM(...)(y, F, x0)"
-            )
         if self.inner is not None or self.alpha_min0:
             raise ValueError(
                 "the operator is BART's first form with its own conjugate gradients: it takes "
@@ -292,6 +293,15 @@ class IRGNM:
             raise ValueError("a Gauss-Newton operator takes at least one step")
         if 1 > int(batch):
             raise ValueError("a batch is at least one")
+        if not isinstance(F, NonlinearSense):
+            from bartorch.nlop.step import Step
+
+            if 1 != int(batch):
+                raise ValueError(
+                    "only BART's noir model carries a batch of its own; a model assembled "
+                    "here takes whatever axes it was built with"
+                )
+            return Step(F, self, cg_lambda=cg_lambda)
         beyond = [
             name
             for name, asked in (

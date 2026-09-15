@@ -298,9 +298,21 @@ def test_an_empty_batch_is_refused():
         _cell((COILS, 8, 8), batch=0)
 
 
-def test_only_barts_noir_model_builds_its_step_as_an_operator():
-    with pytest.raises(TypeError, match="only BART's noir model"):
-        nlop.IRGNM().operator(nlop.CoilSense(linop.FFT((COILS, 8, 8), axes=(-1, -2))))
+def test_a_model_of_the_algebra_builds_its_step_over_its_own_bundle():
+    made = nlop.IRGNM().operator(nlop.CoilSense(linop.FFT((COILS, 8, 8), axes=(-1, -2))))
+    assert 4 == len(made.ishapes)
+
+
+def test_a_model_with_no_bundle_is_refused():
+    """A tie has no chain rule of its own, so the composition carrying one has no step."""
+    made = nlop.combine(nlop.Exp((4,)), nlop.Log((4,))).link(1, 0)
+    with pytest.raises(TypeError, match="no derivative as a function of the point"):
+        nlop.IRGNM().operator(made)
+
+
+def test_only_barts_own_model_carries_a_batch():
+    with pytest.raises(ValueError, match="carries a batch of its own"):
+        nlop.IRGNM().operator(nlop.CoilSense(linop.FFT((COILS, 8, 8), axes=(-1, -2))), batch=2)
 
 
 def test_what_the_network_model_cannot_take_is_refused():

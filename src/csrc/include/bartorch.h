@@ -716,6 +716,22 @@ BARTORCH_API bartorch_nlop* bartorch_nlop_set_input_const(const bartorch_nlop* a
 
 BARTORCH_API void bartorch_nlop_free(bartorch_nlop* h);
 
+/* Two of the operators `noir/model_net.c` assembles its Gauss-Newton step out
+ * of, which a step assembled over any model needs just as much.
+ *
+ * `checkpoint` trades the recomputation of a forward pass against the memory a
+ * backward pass would otherwise hold on to.
+ *
+ * `norm_inv_lambda` inverts `normal + lambda` by conjugate gradients and
+ * differentiates through the solve implicitly rather than through its
+ * iterations.  `normal` takes the vector as input 0 and the linearisation
+ * point as the inputs after it; what comes back takes those and then `lambda`.
+ * A nonzero `tol` is refused by BART's own assertions once the result is
+ * differentiated.
+ */
+BARTORCH_API bartorch_nlop* bartorch_nlop_checkpoint(const bartorch_nlop* x, int der_once, int clear_mem);
+BARTORCH_API bartorch_nlop* bartorch_nlop_norm_inv_lambda(const bartorch_nlop* normal, int maxiter, float tol, float l2lambda);
+
 /* The nonlinear SENSE model `nlinv` inverts, from `noir/model2.c`.
  *
  *	kspace = A[ (mask * image) * ifftuc(weights * ksens) ]
