@@ -69,6 +69,7 @@ class Encoding(ctypes.Structure):
         ("segment_sample", ctypes.c_void_p),
         ("segment_image_dims", ctypes.c_void_p),
         ("segment_image", ctypes.c_void_p),
+        ("batch_dim", ctypes.c_int),
         ("slice_dims", ctypes.c_void_p),
         ("slice", ctypes.c_void_p),
         ("toeplitz", ctypes.c_int),

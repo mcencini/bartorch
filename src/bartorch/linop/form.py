@@ -208,6 +208,7 @@ class Form:
     centred: bool = False
     contraction: Contraction | None = None
     slice_phase: Array | None = None
+    batch_dim: int = -1
     toeplitz: bool = True
     modulated: bool = False
     coil_batch: int = 1
@@ -367,6 +368,7 @@ class Form:
             s.segment_image_dims, s.segment_image = array(self.contraction.image)
 
         s.slice_dims, s.slice = array(self.slice_phase)
+        s.batch_dim = int(self.batch_dim)
 
         s.toeplitz = int(self.toeplitz)
         s.modulated = int(self.modulated)

@@ -155,8 +155,8 @@ def test_a_readout_shorter_than_the_image_is_refused(wave_parts):
 def test_a_bank_that_is_neither_coils_nor_sets_of_them_is_refused(wave_parts):
     """The coils are the bank's to say, so what can be wrong with it is its rank."""
     _, psf, mask = wave_parts
-    with pytest.raises(ValueError, match="are neither"):
-        linop.WaveSense(_rand(2, 2, COILS, Z, 5, SX), SHAPE, psf=psf, readout=WX, pattern=mask)
+    with pytest.raises(ValueError, match="are none of"):
+        linop.WaveSense(_rand(2, 2, 2, COILS, Z, 5, SX), SHAPE, psf=psf, readout=WX, pattern=mask)
 
 
 # --- what both have to hold --------------------------------------------------

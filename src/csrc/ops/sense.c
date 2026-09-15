@@ -193,8 +193,6 @@ struct sense_s {
 	 * after another. */
 	bool coils_slowest;
 	long block_dims[DIMS];
-	long block_strs[DIMS];
-	long block_size;
 
 	/* The sensitivities, and whether they are ours to free: the Cartesian
 	 * operator scales and modulates a copy, the non-Cartesian one reads
@@ -586,11 +584,15 @@ static void put_samples(const struct sense_s* d, long coil, complex float* dst, 
 		return;
 	}
 
-	/* The slab's coils one after another, each into its block of the whole. */
+	/* The slab's coils one after another, each into its block of the whole.
+	 * The destination is walked by the whole's own strides rather than by a
+	 * block's, so an axis the whole carries above the coils lands where it
+	 * belongs instead of inside the block. */
 	long coil_step = d->out_strs[COIL_DIM] / (long)CFL_SIZE;
 
 	for (long b = 0; b < d->batch; b++)
-		md_copy2(DIMS, d->block_dims, d->block_strs, dst + (coil + b) * d->block_size,
+		md_copy2(DIMS, d->block_dims, d->full_out_strs,
+				dst + slab_at(d->out_slab_offset, coil + b),
 				d->out_strs, out + b * coil_step, CFL_SIZE);
 }
 
@@ -607,7 +609,7 @@ static void take_samples(const struct sense_s* d, long coil, complex float* out,
 
 	for (long b = 0; b < d->batch; b++)
 		md_copy2(DIMS, d->block_dims, d->out_strs, out + b * coil_step,
-				d->block_strs, src + (coil + b) * d->block_size, CFL_SIZE);
+				d->full_out_strs, src + slab_at(d->out_slab_offset, coil + b), CFL_SIZE);
 }
 
 static void forward_slab(const struct sense_s* d, long coil, const complex float* map,
@@ -994,8 +996,14 @@ static struct sense_s* sense_slabs(long batch, bool fold, const long max_dims[DI
  * basis contracts its coefficients away on the k-space side, so the samples
  * that come back are not the dimensions the operator was asked for.  The
  * whole is that shape with every coil in it: on COIL_DIM for BART's tools,
- * slowest for the torch layout. */
-static void sense_output_from(struct sense_s* d, bool coils_slowest)
+ * slowest for the torch layout.
+ *
+ * `outer` names the dimensions the torch layout puts above the coils -- a
+ * batch the sensitivities vary along, which is inside this operator rather
+ * than around it because one bank cannot serve every item.  They are still
+ * part of what a slab answers, so they stay in the block; what they must not
+ * do is push the coils above them. */
+static void sense_output_from(struct sense_s* d, bool coils_slowest, unsigned long outer)
 {
 	auto cod = linop_codomain(d->slab);
 
@@ -1015,15 +1023,18 @@ static void sense_output_from(struct sense_s* d, bool coils_slowest)
 
 	md_copy_dims(DIMS, d->block_dims, d->out_dims);
 	d->block_dims[COIL_DIM] = 1;
-	md_calc_strides(DIMS, d->block_strs, d->block_dims, CFL_SIZE);
-	d->block_size = md_calc_size(DIMS, d->block_dims);
 
 	/* The whole is the blocks one coil after another, so the coils go on the
-	 * first axis past everything a block has: BART's own coil axis where a
-	 * block has nothing beyond it, a later one where encoding axes lie there. */
+	 * first axis past everything a block has below them: BART's own coil axis
+	 * where a block has nothing beyond it, a later one where encoding axes
+	 * lie there, and never above an outer axis, which the torch layout puts
+	 * slower than the coils. */
+	long inner_dims[DIMS];
+	md_select_dims(DIMS, ~outer, inner_dims, d->block_dims);
+
 	int last = DIMS - 1;
 
-	while ((last > 0) && (1 == d->block_dims[last]))
+	while ((last > 0) && (1 == inner_dims[last]))
 		last--;
 
 	int coil_axis = (last < COIL_DIM) ? COIL_DIM : last + 1;
@@ -1031,8 +1042,18 @@ static void sense_output_from(struct sense_s* d, bool coils_slowest)
 	if (coil_axis >= DIMS)
 		error("bartorch: the samples leave no axis for the coils\n");
 
+	/* The coils were placed above every inner axis; an outer one that is not
+	 * above them too would be read in the wrong order rather than refused. */
+	unsigned long at_or_below = (1UL << (coil_axis + 1)) - 1UL;
+
+	if (0 != (outer & md_nontriv_dims(DIMS, d->block_dims) & at_or_below))
+		error("bartorch: a batch the sensitivities vary along lies slower than the coils, "
+			"and this one has been placed on a dimension below them\n");
+
 	md_copy_dims(DIMS, d->full_out_dims, d->block_dims);
 	d->full_out_dims[coil_axis] = d->coils;
+	md_calc_strides(DIMS, d->full_out_strs, d->full_out_dims, CFL_SIZE);
+	d->out_slab_offset = d->full_out_strs[coil_axis];
 }
 
 static struct linop_s* sense_operator(struct sense_s* d)
@@ -1080,7 +1101,7 @@ struct linop_s* sense_init(unsigned long shared_img_flags, const long max_dims[D
 	slab_ksp_dims[COIL_DIM] = d->batch;
 
 	d->slab = linop_fft_create(DIMS, slab_ksp_dims, FFT_FLAGS);
-	sense_output_from(d, false);
+	sense_output_from(d, false, 0UL);
 
 	return sense_operator(d);
 }
@@ -1119,7 +1140,7 @@ const struct linop_s* sense_nc_init(const long max_dims[DIMS], const long map_di
 			(weights ? wgs_dims : NULL), weights,
 			(basis ? basis_dims : NULL), basis, *_conf);
 
-	sense_output_from(d, false);
+	sense_output_from(d, false, 0UL);
 
 	/* The caller reads the point spread function off this and imports one
 	 * into it; a slab's transform carries the same one, because a point
@@ -1362,8 +1383,14 @@ const struct linop_s* bartorch_encoding_operator(const struct bartorch_encoding*
 	conf.os = 0.;
 	conf.width = 0.;
 
+	/* A batch the sensitivities vary along is one of their dimensions and one
+	 * of the image's, and the samples carry it too: the operator holds every
+	 * item of it rather than being applied once per item, because one bank
+	 * does not serve them all. */
+	unsigned long outer_flags = (0 <= f->batch_dim) ? MD_BIT(f->batch_dim) : 0UL;
+
 	long map_dims[DIMS];
-	md_select_dims(DIMS, FFT_FLAGS | COIL_FLAG | MAPS_FLAG, map_dims, max_dims);
+	md_select_dims(DIMS, FFT_FLAGS | COIL_FLAG | MAPS_FLAG | outer_flags, map_dims, max_dims);
 
 	/* What the transform is asked for.  Off a grid the samples are the
 	 * form's own, with the coefficients a basis contracts still on them;
@@ -1429,7 +1456,7 @@ const struct linop_s* bartorch_encoding_operator(const struct bartorch_encoding*
 
 	d->slab = contracted(f, summed_over_sets(f, form_transform(&slab, d->cim_dims, &conf)));
 
-	sense_output_from(d, true);
+	sense_output_from(d, true, outer_flags);
 
 	return sense_operator(d);
 }

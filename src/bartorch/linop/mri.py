@@ -104,7 +104,7 @@ class _Segmentable:
         return (2, 1, 0) if self.ndim == 3 else (1, 0)
 
     def _image_dims(self):
-        _, image = _layout.encoding_dims(len(self.encoding), self._has_basis())
+        _, image = self._encoding_placement()
         return (*image, *self._spatial_dims())
 
     def _sample_dims(self):
@@ -179,6 +179,7 @@ class _CartesianNative(_Segmentable, _GridSense):
             fold_maps=self.fold_maps,
             coils=self.coils,
             sets=self.sets,
+            batch_dim=self._batch_dim(),
             coeffs=1 if b is None else int(b.shape[0]),
         )
 
@@ -293,6 +294,7 @@ class _CartesianSampled(_GridSense):
             fold_maps=self.fold_maps,
             coils=self.coils,
             sets=self.sets,
+            batch_dim=self._batch_dim(),
             coeffs=1 if b is None else int(b.shape[0]),
         )
 
@@ -432,6 +434,7 @@ class _WaveNative(_Segmentable, _GridSense):
             fold_maps=self.fold_maps,
             coils=self.coils,
             sets=self.sets,
+            batch_dim=self._batch_dim(),
             coeffs=1 if b is None else int(b.shape[0]),
         )
 

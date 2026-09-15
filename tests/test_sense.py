@@ -588,9 +588,23 @@ def test_a_bank_of_one_set_is_read_either_way():
     torch.testing.assert_close(B(x.reshape(B.ishape)), A(x), rtol=0, atol=0)
 
 
-def test_a_bank_that_is_neither_shape_is_refused():
-    """A 2D bank with BART's singleton z still in it has an axis too many."""
-    with pytest.raises(ValueError, match="neither .coils, .spatial. nor"):
+def test_a_bank_deeper_than_a_batch_of_sets_is_refused():
+    """Three axes in front of the spatial ones are a batch, a set and the coils.
+
+    Four are nothing the bank can be read as.
+    """
+    with pytest.raises(ValueError, match="are none of"):
+        sense.Coils(torch.ones(2, 2, 3, 1, 16, 16, dtype=torch.complex64), (2, 16, 16))
+
+
+def test_a_two_dimensional_bank_keeping_barts_singleton_z_is_read_as_a_batch():
+    """The cost of the batch shape: a stray singleton is a legal bank rather than an error.
+
+    ``(2, 3, 1, 16, 16)`` for a two-dimensional transform was once refused as
+    having an axis too many.  It is now two batch items of three sets over one
+    coil, so what says the image was meant differently is the image.
+    """
+    with pytest.raises(ValueError, match="fewer than the 4 axes"):
         sense.Coils(torch.ones(2, 3, 1, 16, 16, dtype=torch.complex64), (2, 16, 16))
 
 
@@ -845,3 +859,97 @@ def test_a_kernel_cannot_carry_the_modulation():
     kernels, _ = _kernel_bank(1)
     with pytest.raises(BartError, match="cannot be done to a kernel"):
         linop.CartesianSense(kernels, (N_K, N_K), kernels=True, modulated=True)
+
+
+# --- a batch the sensitivities vary along -------------------------------------
+
+
+def _per_item_bank(items, n, coils, seed=11):
+    """``(items, 1, coils, n, n)``: independent slices, each with its own maps."""
+    torch.manual_seed(seed)
+    return torch.randn(items, 1, coils, n, n, dtype=torch.complex64)
+
+
+def test_a_batch_on_the_sensitivities_is_carried_by_the_image_and_the_samples():
+    """``(nz, 1, c, y, x)`` is nz items over one transform, each with its own bank."""
+    items, n, coils = 3, 12, 4
+    bank = _per_item_bank(items, n, coils)
+    A = sense.Coils(bank, (items, 1, n, n))
+
+    assert A.ishape == (items, 1, n, n)
+    assert A.oshape == (items, coils, n, n)
+
+    x = torch.randn(items, 1, n, n, dtype=torch.complex64)
+    want = torch.stack([bank[z, 0] * x[z, 0] for z in range(items)])
+    assert (A(x) - want).abs().max() / want.abs().max() < 1e-6
+
+
+def test_each_item_of_such_a_batch_is_its_own_operator():
+    """One operator over the whole dataset answers what one per item would.
+
+    The batch is inside the operator rather than around it, because
+    ``linop_blocks`` applies one operator to every block and one bank does not
+    serve every item.  What it computes must not differ for that.
+    """
+    items, n, coils = 3, 12, 4
+    bank = _per_item_bank(items, n, coils)
+    whole = sense.Coils(bank, (items, 1, n, n))
+
+    torch.manual_seed(12)
+    x = torch.randn(items, 1, n, n, dtype=torch.complex64)
+    got = whole(x)
+    for z in range(items):
+        one = sense.Coils(bank[z, 0], (n, n))
+        assert torch.equal(got[z], one(x[z, 0]))
+
+
+def test_a_batch_survives_the_coil_slab():
+    """The coils are walked a slab at a time under an axis that is slower than they are."""
+    items, n, coils = 2, 12, 4
+    bank = _per_item_bank(items, n, coils)
+    torch.manual_seed(13)
+    x = torch.randn(items, 1, n, n, dtype=torch.complex64)
+
+    whole = sense.Coils(bank, (items, 1, n, n))
+    for batch in (2, 4):
+        sliced = sense.Coils(bank, (items, 1, n, n), coil_batch=batch)
+        assert torch.equal(sliced(x), whole(x))
+        assert torch.equal(sliced.adjoint(whole(x)), whole.adjoint(whole(x)))
+
+
+def test_a_batch_and_an_outer_one_together():
+    """Batches the sensitivities do not vary along stay outside, one block each."""
+    outer, items, n, coils = 2, 3, 12, 4
+    bank = _per_item_bank(items, n, coils)
+    inner = sense.Coils(bank, (items, 1, n, n))
+    both = sense.Coils(bank, (outer, items, 1, n, n))
+
+    assert both.oshape == (outer, items, coils, n, n)
+    torch.manual_seed(14)
+    x = torch.randn(outer, items, 1, n, n, dtype=torch.complex64)
+    got = both(x)
+    for item in range(outer):
+        assert torch.equal(got[item], inner(x[item]))
+
+
+def test_a_batch_on_the_sensitivities_off_a_grid_is_refused():
+    """One plan over every sample cannot be a transform per item, so it says so."""
+    traj = bt.traj(x=16, y=9)
+    with pytest.raises(ValueError, match="transform per item"):
+        linop.NoncartesianSense(_per_item_bank(2, 16, 4), (2, 1, 16, 16), traj=traj)
+
+
+def test_a_batch_under_a_wave_transform_is_each_item_on_its_own():
+    """The wave front carries the batch as the grid transform does."""
+    items, z, y, x, readout = 2, 3, 8, 6, 12
+    torch.manual_seed(15)
+    bank = torch.randn(items, 1, 4, z, y, x, dtype=torch.complex64)
+    psf = torch.randn(z, y, readout, dtype=torch.complex64)
+    mask = (torch.rand(z, y, 1) > 0.3).to(torch.complex64)
+
+    whole = linop.WaveSense(bank, (items, 1, z, y, x), psf=psf, readout=readout, pattern=mask)
+    x_in = torch.randn(items, 1, z, y, x, dtype=torch.complex64)
+    got = whole(x_in)
+    for item in range(items):
+        one = linop.WaveSense(bank[item, 0], (z, y, x), psf=psf, readout=readout, pattern=mask)
+        assert torch.equal(got[item], one(x_in[item, 0]))
