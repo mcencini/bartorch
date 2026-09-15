@@ -274,6 +274,11 @@ class NoncartesianSense(_SensitivityBatch, LinearOperator):
     traj : tensor
         Trajectory ``(*encoding, shots, samples, ndim)`` in grid units, as
         :func:`bartorch.tools.traj` produces: ``kx, ky`` or ``kx, ky, kz``.
+
+        A stack on the image's z grid (``z`` blocks of shots at
+        ``kz = j - z // 2``, each with the same in-plane trajectory and weights)
+        is applied as an FFT along z over 2D transforms, given ``coil_batch=1``
+        and one set; ``plan.cartesian`` reports it.
     kspace_shape : tuple of int, optional
         Sample shape; by default ``(*batches, coils, *encoding, shots,
         samples)``, and on a grid ``(*batches, coils, *encoding, [z,] y, x)``.
