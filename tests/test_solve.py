@@ -346,22 +346,77 @@ def test_two_terms_cannot_ask_for_different_shared_options():
 
 
 def test_a_term_that_adds_unknowns_refuses_a_tracked_right_hand_side():
-    """The solve is the library's loop, which records nothing, so a gradient
-    asked of it would silently be lost; it says so instead."""
+    """Its penalties are BART's proximal operators, which carry no derivative;
+    frozen, the gradient is the one with them held fixed."""
     A = linop.FFT((1, 8, 8), axes=(-1, -2))
     y = _rand(1, 8, 8).requires_grad_()
-    solver = optim.ADMM(priors.TotalGeneralizedVariation((-1, -2), 0.01), maxiter=4)
-    with pytest.raises(RuntimeError, match="cannot be differentiated through"):
-        solver(y, A)
+    term = priors.TotalGeneralizedVariation((-1, -2), 0.01)
+    with pytest.raises(ValueError, match="carries no derivative"):
+        optim.ADMM(term, maxiter=4)(y, A)
+    made = optim.ADMM(priors.frozen(term), maxiter=4)(y, A)
+    made.abs().square().sum().backward()
+    assert torch.isfinite(y.grad).all() and 0 < y.grad.abs().sum()
 
 
-def test_a_block_does_not_take_a_term_that_adds_unknowns_yet():
-    """A block walks the image; this term walks the image and the fields
-    behind it, which only the library lays out so far."""
+@pytest.mark.parametrize(
+    "solver",
+    [
+        lambda t: optim.ADMM(t, maxiter=20),
+        lambda t: optim.PRIDU(t, maxiter=12),
+        lambda t: optim.PRIDU(t, maxiter=12, adaptive_step=True),
+    ],
+    ids=["admm", "pridu", "pridu adaptive"],
+)
+@pytest.mark.parametrize(
+    "term",
+    [
+        lambda coeffs: priors.TotalGeneralizedVariation((-1, -2), 0.01),
+        lambda coeffs: priors.InfimalConvolutionTV((-1, -2, coeffs), 0.01),
+        lambda coeffs: priors.InfimalConvolutionTGV((-1, -2, coeffs), 0.01),
+        lambda coeffs: [
+            priors.Wavelet((-1, -2), 0.01),
+            priors.TotalGeneralizedVariation((-1, -2), 0.01),
+        ],
+    ],
+    ids=["tgv", "ictv", "ictgv", "wavelet and tgv"],
+)
+def test_a_block_walks_the_unknowns_a_term_adds_as_the_library_does(solver, term):
+    """The image followed by the unknowns, in one vector, with the encoding
+    chained onto an extract of its front, as ``pics.c`` chains it."""
+    _, _, _, A, y = _subspace_problem()
+    configured = solver(term(_COEFFS))
+    assert torch.equal(configured(y, A), configured._in_library(y, A))
+
+
+def test_a_batch_walks_each_items_unknowns():
     A = linop.FFT((1, 8, 8), axes=(-1, -2))
-    block = optim.ADMMBlock(priors.TotalGeneralizedVariation((-1, -2), 0.01))
-    with pytest.raises(TypeError, match="adds unknowns"):
-        block.start(_rand(1, 8, 8), A)
+    data = torch.stack([A(_rand(1, 8, 8)) for _ in range(2)])
+    block = optim.ADMMBlock(priors.TotalGeneralizedVariation((-1, -2), 0.01), cg_maxiter=4)
+
+    def run(y):
+        state = block.start(y, A)
+        for _ in range(3):
+            state = block(state, A)
+        return block.output(state, A)
+
+    batched = run(data)
+    assert batched.shape == (2, 1, 8, 8)
+    for i in range(2):
+        assert torch.equal(batched[i], run(data[i]))
+
+
+def test_a_term_that_adds_unknowns_takes_no_preconditioner():
+    """The preconditioner maps the image, and the step walks a longer vector."""
+    A = linop.FFT((1, 8, 8), axes=(-1, -2))
+    solver = optim.ADMM(
+        priors.TotalGeneralizedVariation((-1, -2), 0.01),
+        maxiter=4,
+        precond=linop.Identity((1, 8, 8)),
+    )
+    with pytest.raises(ValueError, match="no preconditioner"):
+        solver(_rand(1, 8, 8), A)
+    with pytest.raises(ValueError, match="no preconditioner"):
+        solver._in_library(_rand(1, 8, 8), A)
 
 
 @pytest.mark.parametrize(

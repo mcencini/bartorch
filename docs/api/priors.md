@@ -101,8 +101,8 @@ is furniture.
 
 These split into several penalties over a variable larger than the image, so
 one cannot be built alone.  {func}`bartorch.tools.pics`,
-{class}`bartorch.optim.ADMM` and {class}`bartorch.optim.PRIDU` take them; the
-solve then runs in the library, and no block takes them yet.
+{class}`bartorch.optim.ADMM` and {class}`bartorch.optim.PRIDU` take them; their
+blocks walk the image followed by those unknowns, and output the image.
 
 ```{eval-rst}
 .. autosummary::

@@ -56,7 +56,7 @@ def _arity(ptr: int) -> tuple[tuple[Shape, ...], tuple[Shape, ...]]:
         each = []
         for at in range(count):
             vector = _marshal.wide_dim_vector()
-            rank = query(ptr, at, DIMS + 1, vector)
+            rank = query(ptr, at, len(vector), vector)
             if rank < 0:
                 raise BartError("BART would not report the shape of one of its arguments")
             each.append(tuple(int(vector[i]) for i in range(rank))[::-1])

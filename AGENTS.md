@@ -792,9 +792,9 @@ than no result.
 So `priors/` computes nothing, and `optim` writes out only the proximal
 steps: one block each in `optim/blocks.py`, every operator in it BART's, held
 to the library's bits by `tests/test_optim_iterators.py`, and looped by its
-solver.  Conjugate gradients, NIHT and what a block does not take yet go to
-`bartorch_solve` -- or `bartorch_irgnm`, for `IRGNM` -- which configures BART's
-iteration exactly as `pics` does. A term fills
+solver.  Conjugate gradients and NIHT go to `bartorch_solve` -- or
+`bartorch_irgnm`, for `IRGNM` -- which configures BART's iteration exactly as
+`pics` does. A term fills
 the table `opt_reg_configure` reads -- which kind, over which axes, with what
 weight -- from an object rather than from a `-R` string, and holds the
 proximal operator and the transform BART makes of it. The solver is handed
@@ -807,8 +807,10 @@ Three of BART's terms cannot be built alone: TGV and the two infimal
 convolutions extend the optimisation variable, and what they add is counted
 across the whole set (`ropts->svars`, and the assertion at the end of
 `opt_reg_configure`).  `bartorch_solve` configures the set itself when one is
-present, so `tools.pics`, `optim.ADMM` and `optim.PRIDU` all take them; the
-solve then runs inside the library, and no block takes them yet.
+present, so `tools.pics` takes them.  `optim.ADMMBlock` and `optim.PRIDUBlock`
+ask `bartorch_prox_set_create` for the same set and walk the image followed by
+the unknowns, with the encoding chained onto an extract of its front as
+`pics.c` chains it.
 
 **Two habits of BART's arithmetic** decide whether a loop written out in
 `optim/blocks.py` answers with the library's bits, and both are easy to

@@ -566,6 +566,21 @@ BARTORCH_API float bartorch_scaling_norm(long size, const void* image, float res
 BARTORCH_API int bartorch_prox_create(const char* kind, long xflags, long jflags,
 		float lambda, int k, int llr_blk, const char* wavelet, int shift_mode,
 		const long* img_dims, bartorch_prox** out);
+/* A set of terms configured together, as `bartorch_solve` configures a set
+ * holding a term that extends the optimisation variable.
+ *
+ * `opt_reg_configure` splits TGV and the infimal convolutions into several
+ * penalties at offsets into one vector: the image's entries followed by the
+ * `*svars` supporting ones.  The `*count` handles written to `out` (room for
+ * `max_out`) are those penalties, the terms' own first and in order; each
+ * transform maps from that vector, one axis long.  Free each handle with
+ * `bartorch_prox_free`.  `alpha` and `gamma` are the set's pairs, or NULL.
+ */
+BARTORCH_API int bartorch_prox_set_create(int n, const char* const* kinds,
+		const long* xflags, const long* jflags, const float* lambda, const int* k,
+		int llr_blk, const char* wavelet, int shift_mode,
+		const float* alpha, const float* gamma, const long* img_dims,
+		int max_out, bartorch_prox** out, int* count, long* svars);
 /* The shape a term's proximal operator works on -- the image's, or the
  * codomain of the transform the term applies first.  Returns the rank. */
 BARTORCH_API int bartorch_prox_domain(const bartorch_prox* h, int N, long* dims);

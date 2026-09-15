@@ -149,6 +149,79 @@ int bartorch_prox_create(const char* kind, long xflags, long jflags, float lambd
 	return 0;
 }
 
+int bartorch_prox_set_create(int n, const char* const* kinds,
+		const long* xflags, const long* jflags, const float* lambda, const int* k,
+		int llr_blk, const char* wavelet, int shift_mode,
+		const float* alpha, const float* gamma, const long* img_dims,
+		int max_out, bartorch_prox** out, int* count, long* svars)
+{
+	if ((0 > n) || (NUM_REGS < n) || (NULL == out) || (NULL == count) || (NULL == svars))
+		return -1;
+
+	struct opt_reg_s ropts;
+	(void)opt_reg_init(&ropts);
+
+	for (int i = 0; i < n; i++) {
+
+		int xform;
+
+		if (0 != xform_by_name(kinds[i], &xform))
+			return -4;
+
+		ropts.regs[i].xform = xform;
+		ropts.regs[i].xflags = (unsigned long)xflags[i];
+		ropts.regs[i].jflags = (unsigned long)jflags[i];
+		ropts.regs[i].lambda = lambda[i];
+		ropts.regs[i].k = k[i];
+		ropts.regs[i].graph_file = NULL;
+		ropts.regs[i].asl = false;
+	}
+
+	ropts.r = n;
+
+	if (NULL != alpha)
+		for (int i = 0; i < 2; i++)
+			ropts.alpha[i] = alpha[i];
+
+	if (NULL != gamma)
+		for (int i = 0; i < 2; i++)
+			ropts.gamma[i] = gamma[i];
+
+	const struct operator_p_s* prox_ops[NUM_REGS] = { NULL };
+	const struct linop_s* trafos[NUM_REGS] = { NULL };
+	const long (*sdims[NUM_REGS])[DIMS + 1] = { NULL };
+
+	long dims[DIMS];
+	md_copy_dims(DIMS, dims, img_dims);
+
+	opt_reg_configure(DIMS, dims, &ropts, prox_ops, trafos, sdims,
+			llr_blk, shift_mode, (NULL != wavelet) ? wavelet : "dau2", false, ITER_DIM);
+
+	int penalties = ropts.r + ropts.sr;
+
+	if (max_out < penalties) {
+
+		opt_reg_free(&ropts, prox_ops, trafos);
+		return -5;
+	}
+
+	/* A fresh set per solve, as `bartorch_solve` builds one, so nothing in it
+	 * is rewound: `xform` is left unset for every handle. */
+	for (int i = 0; i < penalties; i++) {
+
+		PTR_ALLOC(struct bartorch_prox_s, p);
+		p->op = prox_ops[i];
+		p->trafo = trafos[i];
+		p->xform = -1;
+		out[i] = PTR_PASS(p);
+	}
+
+	*count = penalties;
+	*svars = ropts.svars;
+
+	return 0;
+}
+
 /* The shape a term's proximal operator works on.
  *
  * Usually the image's.  A term with a transform in front of it -- total

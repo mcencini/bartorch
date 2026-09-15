@@ -242,6 +242,7 @@ SYMBOLS = (
     "bartorch_solve_error",
     "bartorch_scaling_norm",
     "bartorch_prox_create",
+    "bartorch_prox_set_create",
     "bartorch_prox_domain",
     "bartorch_prox_apply",
     "bartorch_prox_transform_apply",
@@ -813,6 +814,25 @@ def bind(lib: ctypes.CDLL) -> ctypes.CDLL:
         ctypes.c_int,
         ctypes.POINTER(ctypes.c_long),
         ctypes.POINTER(ctypes.c_void_p),
+    ]
+    lib.bartorch_prox_set_create.restype = ctypes.c_int
+    lib.bartorch_prox_set_create.argtypes = [
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_char_p),
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.POINTER(ctypes.c_float),
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_float),
+        ctypes.POINTER(ctypes.c_float),
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.POINTER(ctypes.c_long),
     ]
     lib.bartorch_prox_domain.restype = ctypes.c_int
     lib.bartorch_prox_domain.argtypes = [

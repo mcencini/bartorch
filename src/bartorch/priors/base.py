@@ -97,7 +97,7 @@ class Regularizer(abc.ABC):
         out = _marshal.wide_dim_vector()
 
         with _lock:
-            rank = library().bartorch_prox_domain(handle, DIMS + 1, out)
+            rank = library().bartorch_prox_domain(handle, len(out), out)
         if rank < 0:
             raise BartError(f"{self!r} would not say what it works on (code {rank})")
 
@@ -523,6 +523,33 @@ class _Frozen:
 
 
 Regularizer.register(_Frozen)
+
+
+class _Penalty(Regularizer):
+    """One penalty of a set BART configured together, over the image and the unknowns behind it.
+
+    Its proximal operator detaches first when every term the set came from was
+    :func:`frozen`.
+    """
+
+    kind = "penalty"
+
+    def __init__(self, handle: int, shape: tuple[int, ...], frozen: bool):
+        self._handles = {tuple(shape): handle}
+        self._frozen = bool(frozen)
+        weakref.finalize(self, _release, handle)
+
+    def build(self, shape: tuple[int, ...]) -> int:
+        shape = tuple(shape)
+        if shape not in self._handles:
+            raise ValueError(f"this penalty walks {next(iter(self._handles))}, not {shape}")
+        return self._handles[shape]
+
+    def prox(self, x, gamma: float = 1.0, *, image_shape=None):
+        return super().prox(x.detach() if self._frozen else x, gamma, image_shape=image_shape)
+
+    def __repr__(self) -> str:
+        return f"penalty over {next(iter(self._handles))}"
 
 
 def frozen(term: Regularizer) -> Regularizer:

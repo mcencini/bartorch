@@ -64,7 +64,7 @@ def _rank(op: NonlinearOperator, at: int, output: bool) -> int:
     lib = library()
     query = lib.bartorch_nlop_output_codomain if output else lib.bartorch_nlop_input_domain
     vector = _marshal.wide_dim_vector()
-    rank = query(op._h.ptr, at, DIMS + 1, vector)
+    rank = query(op._h.ptr, at, len(vector), vector)
     if rank < 0:
         raise BartError("BART would not report the rank of one of its arguments")
     return rank

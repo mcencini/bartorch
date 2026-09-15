@@ -190,10 +190,63 @@ def _terms(priors, name: str) -> list:
     terms = _as_terms(priors)
     if any(getattr(t, "_extends", False) for t in terms):
         raise TypeError(
-            f"{name} walks the image, and a term that adds unknowns walks the fields behind it "
-            "too; the solver runs that one inside the library"
+            f"{name} thresholds the image, and a term that adds unknowns walks the fields "
+            "behind it too; ADMMBlock and PRIDUBlock take it"
         )
     return terms
+
+
+def _refuse_preconditioner(precond, name: str) -> None:
+    if precond is not None:
+        raise ValueError(
+            f"{name} takes no preconditioner with a term that adds unknowns: it maps the "
+            "image, and the step walks the image and the fields behind it"
+        )
+
+
+@dataclasses.dataclass(frozen=True)
+class _Space:
+    """The vector a step walks with a term that adds unknowns: the image, then those unknowns."""
+
+    terms: list
+    A: object
+    image: tuple[int, ...]
+
+
+def _space(terms, A, precond, name: str) -> _Space | None:
+    """The set's penalties and the encoding over the longer vector, as ``pics.c`` chains it."""
+    if not any(getattr(t, "_extends", False) for t in terms):
+        return None
+    from bartorch.linop.shape import Extract, Reshape
+    from bartorch.optim.linear import _penalties
+
+    _refuse_preconditioner(precond, name)
+    total = math.prod(A.ishape)
+    penalties, svars = _penalties(terms, tuple(A.ishape))
+    encoding = A @ Reshape(A.ishape, (total,)) @ Extract((0,), (total,), (total + svars,))
+    return _Space(penalties, encoding, tuple(A.ishape))
+
+
+def _walked(terms, state, A):
+    """The terms and encoding a step walks: its own, or those ``start`` set up."""
+    space = state.space
+    return (terms, A) if space is None else (space.terms, space.A)
+
+
+def _lengthen(x: torch.Tensor, image: tuple[int, ...], shape: tuple[int, ...]) -> torch.Tensor:
+    """The image in front of zeros for the unknowns behind it, where ``pics`` starts them."""
+    batch = x.shape[: x.ndim - len(image)]
+    front = x.reshape(*batch, -1)
+    behind = torch.zeros((*batch, shape[0] - front.shape[-1]), dtype=x.dtype, device=x.device)
+    return torch.cat([front, behind], -1)
+
+
+def _front(state, A) -> torch.Tensor:
+    """The image: the state's ``x``, or the front of the longer vector."""
+    if state.space is None:
+        return state.x
+    batch = state.x.shape[:-1]
+    return state.x[..., : math.prod(A.ishape)].reshape(*batch, *A.ishape)
 
 
 # --- iterative soft thresholding ---------------------------------------------------
@@ -348,7 +401,8 @@ class ADMMBlock(nn.Module):
     term's split and dual.  The state's ``done`` is Boyd's residual test, and
     ``invokes`` counts inner iterations, which is what BART's ``maxiter`` budgets.
     Each step takes its own ``rho`` unless ``dynamic_rho`` or ``hogwild`` moves
-    it, and then the state carries it.
+    it, and then the state carries it.  With a term that adds unknowns the state
+    walks the image followed by them, and :meth:`output` is the image.
     """
 
     @dataclasses.dataclass(frozen=True)
@@ -363,6 +417,7 @@ class ADMMBlock(nn.Module):
         invokes: int = 0
         hogwild: tuple[int, int] = (0, 1)
         done: bool = False
+        space: _Space | None = None
 
     #: `cg_xupdate`'s tolerance, relative to the right-hand side.
     _cg_eps = 1e-3
@@ -417,20 +472,27 @@ class ADMMBlock(nn.Module):
 
     def start(self, y: torch.Tensor, A, x0: torch.Tensor | None = None) -> State:
         """The run's state: the start, zero splits and duals, and ``A^H y``."""
-        _terms(self.terms, type(self).__name__)
         y, x = _begin(y, A, x0)
-        for term in self.terms:
-            term.rewind(A.ishape)
-        batch = x.shape[: x.ndim - len(A.ishape)]
+        space = _space(self.terms, A, self.precond, type(self).__name__)
+        if space is not None and any(b is not None for b in self.biases):
+            raise ValueError("a set holding a term that adds unknowns takes no biases")
+        terms, walked = (self.terms, A) if space is None else (space.terms, space.A)
+        if space is not None:
+            x = _lengthen(x, A.ishape, walked.ishape)
+        for term in terms:
+            term.rewind(walked.ishape)
+        batch = x.shape[: x.ndim - len(walked.ishape)]
         z = tuple(
-            torch.zeros((*batch, *t.prox_shape(A.ishape)), dtype=x.dtype, device=x.device)
-            for t in self.terms
+            torch.zeros((*batch, *t.prox_shape(walked.ishape)), dtype=x.dtype, device=x.device)
+            for t in terms
         )
         u = tuple(torch.zeros_like(zj) for zj in z)
-        adjoint = _adjoint(A, y, _preconditioner(self.precond, A.ishape))
-        return self.State(x, adjoint, z, u, _single(_value(self.rho)))
+        adjoint = _adjoint(walked, y, _preconditioner(self.precond, A.ishape))
+        return self.State(x, adjoint, z, u, _single(_value(self.rho)), space=space)
 
     def forward(self, state: State, A) -> State:
+        terms, A = _walked(self.terms, state, A)
+        biases = self.biases if state.space is None else [None] * len(terms)
         shape = A.ishape
         moves = self.dynamic_rho or self.hogwild
         rho = state.rho if moves else _single(_value(self.rho))
@@ -439,21 +501,21 @@ class ADMMBlock(nn.Module):
         z, u = list(state.z), list(state.u)
 
         rhs = torch.zeros_like(state.x)
-        for j, term in enumerate(self.terms):
+        for j, term in enumerate(terms):
             r = z[j] - u[j]
-            if self.biases[j] is not None:
-                r = r + self.biases[j]
+            if biases[j] is not None:
+                r = r + biases[j]
             rhs = rhs + _transform(term, r, shape, "adjoint")
         rhs = rho * rhs + state.adjoint
 
-        x, spent = self._solve_x(state.x, rhs, rho, A, 0 == state.k)
+        x, spent = self._solve_x(terms, state.x, rhs, rho, A, 0 == state.k)
 
         n1 = n2 = r_sq = 0.0
         s = torch.zeros_like(x)
         gh_usum = torch.zeros_like(x)
 
-        for j, term in enumerate(self.terms):
-            bias = self.biases[j]
+        for j, term in enumerate(terms):
+            bias = biases[j]
             gx = _transform(term, x, shape)
             z_old = z[j]
 
@@ -487,12 +549,12 @@ class ADMMBlock(nn.Module):
             weight = _plain(rho)
             r_norm = _single(math.sqrt(r_sq))
             s_norm = _single(weight * _norm(s))
-            n3 = sum(_norm(b) ** 2 for b in self.biases if b is not None)
+            n3 = sum(_norm(b) ** 2 for b in biases if b is not None)
             r_scaling = math.sqrt(max(n1, n2, n3))
             s_scaling = weight * _norm(gh_usum)
 
             # BART counts real numbers, twice the complex ones.
-            m = 2 * sum(math.prod(t.prox_shape(shape)) for t in self.terms)
+            m = 2 * sum(math.prod(t.prox_shape(shape)) for t in terms)
             n = 2 * math.prod(tuple(x.shape))
             eps_pri = _single(self.abstol * math.sqrt(m) + self.reltol * r_scaling)
             eps_dual = _single(self.abstol * math.sqrt(n) + self.reltol * s_scaling)
@@ -518,9 +580,9 @@ class ADMMBlock(nn.Module):
         )
 
     def output(self, state: State, A) -> torch.Tensor:
-        return state.x
+        return _front(state, A)
 
-    def _solve_x(self, x, rhs, rho, A, first: bool):
+    def _solve_x(self, terms, x, rhs, rho, A, first: bool):
         """``cg_xupdate``: conjugate gradients from ``x``, and the iterations it took.
 
         A batch is solved item by item, so no item steers another's stopping;
@@ -529,7 +591,7 @@ class ADMMBlock(nn.Module):
         if x.ndim == len(A.ishape) + 1:
             made, worst = [], 0
             for item, side in zip(x, rhs):
-                out, spent = self._solve_x(item, side, rho, A, first)
+                out, spent = self._solve_x(terms, item, side, rho, A, first)
                 made.append(out)
                 worst = max(worst, spent)
             return torch.stack(made), worst
@@ -545,16 +607,16 @@ class ADMMBlock(nn.Module):
 
         def spread(v):
             out = None
-            for term in self.terms:
+            for term in terms:
                 part = term.apply_transform(v, shape, mode="normal")
                 out = part if out is None else out + part
             return out
 
         def apply(v):
-            return self._xupdate_normal(A, weight, v)
+            return self._xupdate_normal(A, weight, v, terms=terms)
 
         def transpose(v):
-            return self._xupdate_normal(A, weight, v, transposed=True)
+            return self._xupdate_normal(A, weight, v, transposed=True, terms=terms)
 
         budget = self.cg_maxiter
         if first and self.cg_maxiter_first is not None:
@@ -579,14 +641,14 @@ class ADMMBlock(nn.Module):
             out = solve(rhs, True)
         return out, steps[0]
 
-    def _xupdate_normal(self, A, rho: float, v: torch.Tensor, transposed: bool = False):
+    def _xupdate_normal(self, A, rho: float, v: torch.Tensor, transposed: bool = False, terms=None):
         """``K v`` for ``K = rho sum_j G_j^H G_j + M (A^H A + cclambda)``, or ``K^H v``.
 
         ``admm_normaleq``'s order: the terms summed first, each scaled by
         ``rho``, and the data term added last.
         """
         out = None
-        for term in self.terms:
+        for term in self.terms if terms is None else terms:
             part = rho * term.apply_transform(v, A.ishape, mode="normal")
             out = part if out is None else out + part
         precond = self.precond
@@ -650,6 +712,8 @@ class PRIDUBlock(nn.Module):
     eigenvalue; ``hogwild`` decays by 0.95 a step.  Each step takes its own
     ``sigma`` and ``tau`` unless ``adaptive_step`` moves them, and then the state
     carries them.  ``done`` is BART's absolute tolerance on the two residuals.
+    With a term that adds unknowns the state walks the image followed by them,
+    and :meth:`output` is the image.
     """
 
     @dataclasses.dataclass(frozen=True)
@@ -665,6 +729,7 @@ class PRIDUBlock(nn.Module):
         divisor: float = 1.0
         k: int = 0
         done: bool = False
+        space: _Space | None = None
 
     def __init__(
         self,
@@ -697,37 +762,44 @@ class PRIDUBlock(nn.Module):
         """The run's state: the split ``iter2_chambolle_pock`` makes, zero duals, and the steps."""
         from bartorch.optim.linear import maxeigen
 
-        _terms(self.terms, type(self).__name__)
         y, x = _begin(y, A, x0)
-        for term in self.terms:
-            term.rewind(A.ishape)
-        primal = bool(self.terms) and self.terms[0].transform_is_identity(A.ishape)
-        duals = self.terms[1:] if primal else self.terms
+        space = _space(self.terms, A, self.precond, type(self).__name__)
+        every, walked = (self.terms, A) if space is None else (space.terms, space.A)
+        if space is not None:
+            x = _lengthen(x, A.ishape, walked.ishape)
+        for term in every:
+            term.rewind(walked.ishape)
+        primal = bool(every) and every[0].transform_is_identity(walked.ishape)
+        duals = every[1:] if primal else every
 
         # Estimated over the encoding and the dual terms' transforms together.
         divisor = 1.0
         if self.eigen:
-            divisor = math.sqrt(maxeigen(A, duals, cclambda=self.cclambda, precond=self.precond))
-        batch = x.shape[: x.ndim - len(A.ishape)]
+            divisor = math.sqrt(
+                maxeigen(walked, duals, cclambda=self.cclambda, precond=self.precond)
+            )
+        batch = x.shape[: x.ndim - len(walked.ishape)]
         return self.State(
             x=x,
-            adjoint=_adjoint(A, y, _preconditioner(self.precond, A.ishape)),
+            adjoint=_adjoint(walked, y, _preconditioner(self.precond, A.ishape)),
             avg=x,
             adjoint_dual=torch.zeros_like(x),
             duals=tuple(
-                torch.zeros((*batch, *t.prox_shape(A.ishape)), dtype=x.dtype, device=x.device)
+                torch.zeros((*batch, *t.prox_shape(walked.ishape)), dtype=x.dtype, device=x.device)
                 for t in duals
             ),
             sigma=_over(_value(self.sigma), divisor),
             tau=_over(_value(self.tau), divisor),
             primal=primal,
             divisor=divisor,
+            space=space,
         )
 
     def forward(self, state: State, A) -> State:
+        every, A = _walked(self.terms, state, A)
         shape = A.ishape
-        primal = self.terms[0] if state.primal else None
-        terms = self.terms[1:] if state.primal else self.terms
+        primal = every[0] if state.primal else None
+        terms = every[1:] if state.primal else every
         x, avg, adjoint_dual, k = state.x, state.avg, state.adjoint_dual, state.k
         duals = list(state.duals)
         sigma, tau = state.sigma, state.tau
@@ -790,7 +862,7 @@ class PRIDUBlock(nn.Module):
         )
 
     def output(self, state: State, A) -> torch.Tensor:
-        return state.x
+        return _front(state, A)
 
     def _adapt(self, delta, sigma, tau, terms, A):
         """The move over what the operator makes of it, clipped under ``sqrt(sigma tau)``."""

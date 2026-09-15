@@ -1,8 +1,8 @@
 """Least squares by the iterations ``pics`` runs.
 
 The proximal solvers loop a block from :mod:`bartorch.optim.blocks` to BART's
-schedule; conjugate gradients, and a term that adds unknowns, go to BART's
-``lsqr2`` through the ``italgo_config`` call ``pics`` makes.
+schedule; conjugate gradients go to BART's ``lsqr2`` through the
+``italgo_config`` call ``pics`` makes.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ from bartorch.optim.blocks import (
     PRIDUBlock,
     _empty,
     _preconditioner,
+    _refuse_preconditioner,
 )
 from bartorch.priors.base import Regularizer, _as_terms
 from bartorch.priors.terms import L2
@@ -275,6 +276,8 @@ def _solve(
     # transforms sit at are worked out across the whole set -- so on that path
     # the solve configures the set itself and there is nothing to hand over.
     extends = _extending(terms)
+    if extends:
+        _refuse_preconditioner(precond, "BART's loop")
     for term in terms:
         term._check(ndim)
     handles = [] if extends else [term.build(op.ishape) for term in terms]
@@ -384,22 +387,55 @@ def _extending(terms) -> bool:
     return any(getattr(term, "_extends", False) for term in terms)
 
 
-def _through_library(solver, y, A, x0):
-    """The library's loop, for a term that adds unknowns, which no block takes yet.
+#: `NUM_REGS`, the most penalties `opt_reg_configure` makes of a set.
+_MAX_PENALTIES = 10
 
-    That loop records nothing, so a tracked ``y`` is refused rather than
-    answered with a tensor that has quietly lost its graph.
+
+def _penalties(terms, image_shape: tuple[int, ...]):
+    """The penalties BART splits a set holding a term that adds unknowns into, and how many it adds.
+
+    ``opt_reg_configure`` works the offsets out across the whole set, as
+    ``bartorch_solve`` does; each penalty's transform maps from the image's
+    entries followed by the supporting ones.
     """
-    from bartorch.linop.base import _tracking
+    from bartorch.priors.base import _Frozen, _Penalty
 
-    if not solver._foreign and _tracking(y):
-        raise RuntimeError(
-            f"{type(solver).__name__} cannot be differentiated through with a term that adds "
-            "unknowns: the solve runs inside the library, whose loop records nothing.  Detach "
-            "the data, or regularize with a term that walks the image alone -- "
-            "priors.TotalVariation is the one nearest to these"
+    ndim = len(image_shape)
+    for term in terms:
+        term._check(ndim)
+    flags = [term._flags(ndim) for term in terms]
+    block, family, shift_mode = _shared_options(terms)
+    alpha, gamma = _shared_pairs(terms)
+
+    _ensure_ready()
+    handles = _marshal.pointer_buffer(_MAX_PENALTIES)
+    count, svars = _marshal.int_out(), _marshal.long_out()
+    with _lock:
+        code = library().bartorch_prox_set_create(
+            len(terms),
+            _marshal.argv([term.kind for term in terms]),
+            _marshal.longs([f for f, _ in flags]),
+            _marshal.longs([j for _, j in flags]),
+            _marshal.floats([term.weight for term in terms]),
+            _marshal.ints([term.count for term in terms]),
+            block,
+            family.encode(),
+            shift_mode,
+            _marshal.floats(alpha),
+            _marshal.floats(gamma),
+            _marshal.padded_dims(tuple(image_shape)),
+            _MAX_PENALTIES,
+            handles,
+            _marshal.by_reference(count),
+            _marshal.by_reference(svars),
         )
-    return solver._in_library(y, A, x0)
+    if code != 0:
+        said = library().bartorch_solve_error(code).decode(errors="replace")
+        raise BartError(f"the terms could not be configured together: {said}")
+
+    frozen = all(isinstance(term, _Frozen) for term in terms)
+    shape = (math.prod(image_shape) + int(svars.value),)
+    return [_Penalty(handles[i], shape, frozen) for i in range(count.value)], int(svars.value)
 
 
 def _shared_options(terms) -> tuple[int, str, int]:
@@ -482,8 +518,6 @@ class _Solver:
         torch.Tensor
             Complex64 solution of ``A.ishape``.
         """
-        if _extending(self.regularizers):
-            return _through_library(self, y, A, x0)
         block = self._block()
         state = block.start(y, A, x0)
         if self._declines(state):
@@ -811,8 +845,8 @@ class ADMM(_Solver):
     ----------
     regularizers : Regularizer or ImplicitPrior, or an iterable of them
         Terms that add unknowns to the optimization -- total generalized
-        variation and the two infimal convolutions -- are solved inside the
-        library.
+        variation and the two infimal convolutions -- walk the image and the
+        fields behind it.
     maxiter : int
         A budget on conjugate-gradient iterations across the whole run, not a
         count of outer steps: ``admm`` breaks when ``nr_invokes > maxiter``.
@@ -982,8 +1016,8 @@ class PRIDU(_Solver):
     Parameters
     ----------
     regularizers : Regularizer or ImplicitPrior, or an iterable of them
-        Terms that add unknowns to the optimization are solved inside the
-        library, as :class:`ADMM` solves them.
+        Terms that add unknowns to the optimization walk the image and the
+        fields behind it, as in :class:`ADMM`.
     maxiter : int
     step : float
         Step size (``pics -s``); 0.95 is what ``pics`` uses when none is given.
