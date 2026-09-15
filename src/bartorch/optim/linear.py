@@ -21,7 +21,7 @@ from bartorch._operator import as_operand
 from bartorch.priors.base import Regularizer, _as_terms
 from bartorch.priors.terms import L2
 
-__all__ = ["ADMM", "CG", "PRIDU", "EulerMaruyama", "FISTA", "IST", "NIHT", "Tikhonov"]
+__all__ = ["ADMM", "CG", "PRIDU", "FISTA", "IST", "NIHT", "Tikhonov"]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -230,10 +230,6 @@ def _solve(
     sigma_tau_ratio: float = 1.0,
     adaptive_step: bool = False,
     precond=None,
-    sampler_precond=None,
-    sampler_precond_diag: float = 0.0,
-    sampler_precond_tol: float = 0.0,
-    sampler_precond_maxiter: int = 10,
     steps: list | None = None,
 ) -> torch.Tensor:
     """Run ``bartorch_solve``.  A negative ``step`` or ``rho``, a zero
@@ -270,7 +266,6 @@ def _solve(
             f"a preconditioner maps the image to itself, so it is {op.ishape} to "
             f"{op.ishape}, not {conditioner.ishape} to {conditioner.oshape}"
         )
-    sampler = None if sampler_precond is None else sampler_precond._bart()
 
     # `opt_reg_configure` takes one block size, one wavelet family and one
     # shift mode for the whole set, and reaches for them only on the path that
@@ -309,10 +304,6 @@ def _solve(
             int(adaptive_step),
             int(x0 is not None),
             None if conditioner is None else conditioner._h.ptr,
-            None if sampler is None else sampler._h.ptr,
-            float(sampler_precond_diag),
-            float(sampler_precond_tol),
-            int(sampler_precond_maxiter),
             block,
             family.encode(),
             shift_mode,
@@ -1495,78 +1486,3 @@ class NIHT(_Solver):
             "priors.WaveletNIHT and priors.ImageNIHT still reach tools.pics, which catches "
             "the assertion rather than ending the process"
         )
-
-
-class EulerMaruyama(_Solver):
-    """BART's Euler-Maruyama iteration (``pics --eulermaruyama``).
-
-    Parameters
-    ----------
-    regularizers : Regularizer or iterable of Regularizer, optional
-        Terms from :mod:`bartorch.priors`.
-    step : float
-        Step size (``pics -s``).  Required: ``pics`` supplies no default for
-        this iteration.
-    maxiter : int
-    eigen : bool
-        Scale the step by the largest eigenvalue of the normal operator,
-        estimated with 30 power iterations (``pics -e``).
-    cclambda : float
-        Weight of an identity added to the normal operator (``pics -q``).
-    precond : LinearOperator, optional
-        Left preconditioner, ``lsqr2_create``'s ``precond_op``: chained onto
-        the normal operator and onto the adjoint, so the iteration sees
-        ``M(A^H A + lambda) x = M A^H y``.  Must be positive definite --
-        BART composes it without symmetrizing.  ``pics`` passes NULL, so
-        nothing on the command line has used it.
-    sampler_precond : LinearOperator, optional
-        A different thing: ``eulermaruyama_precond``, the one place in BART
-        where a preconditioned conjugate-gradient solve really runs.  Every
-        step solves ``(M^H M + diag) o = x``.  ``pics`` has no flag for it.
-    sampler_precond_diag : float
-        The ``diag`` above.  BART enters that path on a positive diagonal
-        rather than on the operator, so a preconditioner without one would be
-        ignored; this refuses it instead.
-    sampler_precond_tol, sampler_precond_maxiter : float, int
-        That solve's tolerance and iteration count.
-    """
-
-    _algorithm = "eulermaruyama"
-
-    def __init__(
-        self,
-        regularizers: Regularizers = None,
-        *,
-        step: float,
-        maxiter: int = 30,
-        eigen: bool = False,
-        cclambda: float = 0.0,
-        precond=None,
-        sampler_precond=None,
-        sampler_precond_diag: float = 0.0,
-        sampler_precond_tol: float = 0.0,
-        sampler_precond_maxiter: int = 10,
-    ):
-        super().__init__(regularizers, maxiter, cclambda, precond)
-        self.step = float(step)
-        self.eigen = bool(eigen)
-        self.sampler_precond = sampler_precond
-        self.sampler_precond_diag = float(sampler_precond_diag)
-        self.sampler_precond_tol = float(sampler_precond_tol)
-        self.sampler_precond_maxiter = int(sampler_precond_maxiter)
-        if sampler_precond is not None and 0.0 >= self.sampler_precond_diag:
-            raise ValueError(
-                "the sampler's preconditioner is used only when its diagonal is "
-                "positive; BART reads the diagonal first and leaves the plain "
-                "iteration when it is zero"
-            )
-
-    def _settings(self) -> dict:
-        return {
-            "step": self.step,
-            "eigen": self.eigen,
-            "sampler_precond": self.sampler_precond,
-            "sampler_precond_diag": self.sampler_precond_diag,
-            "sampler_precond_tol": self.sampler_precond_tol,
-            "sampler_precond_maxiter": self.sampler_precond_maxiter,
-        }

@@ -10,10 +10,10 @@ from __future__ import annotations
 
 import torch
 
-from bartorch.optim.linear import ADMM, CG, FISTA, IST, NIHT, PRIDU, EulerMaruyama
+from bartorch.optim.linear import ADMM, CG, FISTA, IST, NIHT, PRIDU
 from bartorch.priors.base import Regularizer
 
-__all__ = ["admm", "cg", "eulermaruyama", "fista", "irgnm", "ist", "niht", "pridu"]
+__all__ = ["admm", "cg", "fista", "irgnm", "ist", "niht", "pridu"]
 
 
 def _priors(regularizers, g_param: float | None):
@@ -75,14 +75,6 @@ def niht(y: torch.Tensor, A, regularizers, *, x0=None, **settings):
     :class:`~bartorch.priors.ImageNIHT` terms and nothing else.
     """
     return NIHT(regularizers, **settings)(y, A, x0)
-
-
-def eulermaruyama(y: torch.Tensor, A, regularizers=None, *, x0=None, g_param=None, **settings):
-    """Euler-Maruyama sampling.  See :class:`~bartorch.optim.EulerMaruyama`.
-
-    ``step`` is required: ``pics`` supplies no default for this iteration.
-    """
-    return EulerMaruyama(_priors(regularizers, g_param), **settings)(y, A, x0)
 
 
 def cg(y: torch.Tensor, A, lambda_: float = 0.0, *, x0=None, **settings):

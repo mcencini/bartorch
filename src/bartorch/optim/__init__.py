@@ -13,7 +13,6 @@ from __future__ import annotations
 from bartorch.optim.functional import (
     admm,
     cg,
-    eulermaruyama,
     fista,
     irgnm,
     ist,
@@ -27,7 +26,6 @@ from bartorch.optim.linear import (
     IST,
     NIHT,
     PRIDU,
-    EulerMaruyama,
     Tikhonov,
     maxeigen,
 )
@@ -37,7 +35,6 @@ from bartorch.optim.scaling import data_scaling
 __all__ = [
     "ADMM",
     "CG",
-    "EulerMaruyama",
     "FISTA",
     "IRGNM",
     "IST",
@@ -46,7 +43,6 @@ __all__ = [
     "Tikhonov",
     "admm",
     "cg",
-    "eulermaruyama",
     "data_scaling",
     "fista",
     "irgnm",

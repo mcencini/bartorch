@@ -448,8 +448,8 @@ BARTORCH_API void bartorch_linop_free(bartorch_linop* h);
  * weight, and the count an NIHT term takes.  They fill the table BART's own
  * parser would have filled, so what `opt_reg_configure` builds from them is
  * what it builds for the tool.
- * `algorithm` is one of "cg", "ist", "fista", "admm", "pridu", "niht",
- * "eulermaruyama", or NULL to let BART choose as it does for the tool.
+ * `algorithm` is one of "cg", "ist", "fista", "admm", "pridu", "niht", or
+ * NULL to let BART choose as it does for the tool.
  * A negative `step` or fista parameter leaves BART its own default, which for
  * the proximal-gradient iterations is the 0.95 `pics` settles on.  `cclambda`
  * is the weight in the normal equations, which is `pics -q`; the regularizers'
@@ -521,12 +521,6 @@ BARTORCH_API int bartorch_solve(const bartorch_linop* A,
 		 * passes and what every solve did before.  `conjgrad` has no
 		 * preconditioner of its own; this is the only place one enters. */
 		const bartorch_linop* precond,
-		/* The Euler-Maruyama sampler's own preconditioner, which is a
-		 * different thing: `eulermaruyama_precond` solves `(M^H M + diag) o = x`
-		 * with `conjgrad` every step, and `pics` has no flag for it.  A
-		 * `diag` of zero leaves the plain sampler. */
-		const bartorch_linop* em_precond, float em_precond_diag, float em_precond_tol,
-		int em_precond_maxiter,
 		/* What `opt_reg_configure` needs when the set has to be built here:
 		 * one block size, one wavelet family and one shift mode for the whole
 		 * of it, as `pics` has one `-b` and one `-w`; and the two pairs

@@ -32,7 +32,6 @@ with the same bits.
    ADMM
    PRIDU
    NIHT
-   EulerMaruyama
    maxeigen
 ```
 
@@ -54,7 +53,6 @@ to be *held*: to unroll it, to drive it to a fixed point, or to hand it to
    admm
    pridu
    niht
-   eulermaruyama
    irgnm
 ```
 
@@ -83,10 +81,9 @@ the stopping test.
 
 ## Preconditioning
 
-BART calls three unrelated things preconditioning.  `precond=` is
+BART calls two unrelated things preconditioning.  `precond=` is
 `lsqr2_create`'s `precond_op`, which every solver here takes; `pics --precond`
-reformulates the data fidelity instead; and {class}`EulerMaruyama`'s
-`sampler_precond=` is the one preconditioned solve BART really runs.
+reformulates the data fidelity instead.
 
 ## Nonlinear least squares
 

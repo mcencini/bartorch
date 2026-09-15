@@ -87,7 +87,6 @@ static enum algo_t algo_by_name(const char* name)
 	if (0 == strcmp(name, "admm"))		return ALGO_ADMM;
 	if (0 == strcmp(name, "pridu"))		return ALGO_PRIDU;
 	if (0 == strcmp(name, "niht"))		return ALGO_NIHT;
-	if (0 == strcmp(name, "eulermaruyama"))	return ALGO_EULERMARUYAMA;
 	return (enum algo_t)-1;
 }
 
@@ -360,7 +359,7 @@ static void maxeigen_del(const operator_data_t* _data)
 /* The largest eigenvalue of the operator an iteration divides its step by.
  *
  * `pics -e` asks for it, and every iteration that takes a step -- `ist`,
- * `fista`, `eulermaruyama`, `chambolle_pock` -- divides by what comes back.
+ * `fista`, `chambolle_pock` -- divides by what comes back.
  * It is a power iteration from a random start, so it draws on BART's own
  * generator: a loop written outside the library has to ask for it here, at
  * the point in the sequence the library would have asked, or the draws that
@@ -432,8 +431,6 @@ int bartorch_solve(const bartorch_linop* handle,
 		float sigma_tau_ratio, int adaptive_step,
 		int warmstart,
 		const bartorch_linop* precond,
-		const bartorch_linop* em_precond, float em_precond_diag, float em_precond_tol,
-		int em_precond_maxiter,
 		int llr_blk, const char* wavelet, int shift_mode,
 		const float* alpha, const float* gamma,
 		void* x, const void* y, long* iterations)
@@ -606,22 +603,6 @@ int bartorch_solve(const bartorch_linop* handle,
 
 		CAST_DOWN(iter_conjgrad_conf, CAST_DOWN(iter_call_s, it.iconf)->_conf)->tol = cg_tol;
 		nr_penalties = 0;
-	}
-
-	/* The sampler's own preconditioner, which is a different thing from
-	 * `lsqr`'s and the only genuinely preconditioned conjugate gradients in
-	 * BART: `eulermaruyama_precond` solves `(M^H M + diag) o = x` with
-	 * `conjgrad` at every step.  `italgo_config` cannot be told about it and
-	 * `pics` has no flag for it, so this is the only way to reach it. */
-	if ((ALGO_EULERMARUYAMA == algo) && (0. < em_precond_diag)) {
-
-		struct iter_eulermaruyama_conf* em =
-			CAST_DOWN(iter_eulermaruyama_conf, CAST_DOWN(iter_call_s, it.iconf)->_conf);
-
-		em->precond_diag = em_precond_diag;
-		em->precond_tol = em_precond_tol;
-		em->precond_max_iter = em_precond_maxiter;
-		em->precond_linop = (NULL == em_precond) ? NULL : bartorch_linop_unwrap(em_precond);
 	}
 
 	/* Only three of the iterations take the regularizers' transforms; the

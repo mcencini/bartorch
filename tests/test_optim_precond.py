@@ -12,9 +12,6 @@ linear solvers:
   ``prox_weighted_leastsquares`` term with the inverse sampling pattern as
   weights and chains it through the model operator.  It is reachable through
   :func:`bartorch.tools.pics`, where it belongs.
-* ``eulermaruyama_precond``, a genuinely preconditioned sampler that runs a
-  conjugate-gradient solve of its own at every step.  ``pics`` has no flag for
-  it; ``sampler_precond=`` is the only way to reach it.
 """
 
 import pytest
@@ -107,46 +104,6 @@ def test_a_python_defined_preconditioner_is_called_back():
     M = linop.Callback((16,), (16,), forward, lambda v: weight.conj() * v)
     made = optim.CG(maxiter=4, precond=M)(y, A)
     assert seen, "the preconditioner was never applied"
-    assert torch.isfinite(made).all()
-
-
-# --- the sampler's own ------------------------------------------------------
-
-
-def test_the_sampler_takes_a_preconditioner_pics_cannot_reach():
-    A = linop.FFT((8, 8), axes=-1)
-    y = A(_rand(8, 8))
-    settings = dict(step=0.1, maxiter=5)
-    plain = optim.EulerMaruyama(priors.L2(0.01), **settings)(y, A)
-    preconditioned = optim.EulerMaruyama(
-        priors.L2(0.01),
-        **settings,
-        sampler_precond=linop.Identity((8, 8)),
-        sampler_precond_diag=1.0,
-        sampler_precond_tol=1e-4,
-        sampler_precond_maxiter=5,
-    )(y, A)
-    assert torch.isfinite(preconditioned).all()
-    assert not torch.equal(plain, preconditioned)
-
-
-def test_the_sampler_reads_its_diagonal_first():
-    # eulermaruyama_precond is entered on a positive diagonal and not on a
-    # preconditioner, so one without the other would be silently ignored.
-    with pytest.raises(ValueError, match="diagonal is positive"):
-        optim.EulerMaruyama(priors.L2(0.01), step=0.1, sampler_precond=linop.Identity((8, 8)))
-
-
-def test_a_zero_diagonal_leaves_the_plain_sampler():
-    # A sampler draws from BART's own generator, so two runs never agree bit
-    # for bit; what is checked is that a zero diagonal is the default and
-    # takes the plain path rather than being refused or half-applied.
-    A = linop.FFT((8, 8), axes=-1)
-    y = A(_rand(8, 8))
-    solver = optim.EulerMaruyama(priors.L2(0.01), step=0.1, maxiter=5)
-    assert 0.0 == solver.sampler_precond_diag
-    assert solver.sampler_precond is None
-    made = optim.EulerMaruyama(priors.L2(0.01), step=0.1, maxiter=5, sampler_precond_diag=0.0)(y, A)
     assert torch.isfinite(made).all()
 
 

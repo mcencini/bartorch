@@ -237,18 +237,6 @@ def test_niht_is_refused_the_way_its_class_is():
         optim.niht(y, A, term, maxiter=6)
 
 
-def test_eulermaruyama_forwards_to_its_class():
-    # A sampler draws from BART's own generator, so two runs never agree bit
-    # for bit; what is checked is that the settings reach the class, which a
-    # missing `step` shows because the class requires one.
-    A = linop.FFT((8, 8), axes=(-1, -2))
-    y = A(_rand(8, 8))
-    made = optim.eulermaruyama(y, A, priors.L2(0.01), step=0.1, maxiter=5)
-    assert tuple(made.shape) == (8, 8) and torch.isfinite(made).all()
-    with pytest.raises(TypeError):
-        optim.eulermaruyama(y, A, maxiter=5)
-
-
 def test_irgnm_is_its_class():
     A = linop.FFT((4, 4), axes=-1)
     x = _rand(4, 4)
