@@ -188,7 +188,9 @@ One C slab executor runs every matched form. It is today's pieces parameterised 
    the trajectory is shared across the batch, so it is an axis the trajectory
    does not index and FINUFFT plans it as a batch of transforms against one
    point set.
-3. **Kernel stacks and Cartesian-aligned axes.**
+3. **Kernel stacks and Cartesian-aligned axes.**  See
+   [the phase 3 handover](composed-encodings-phase-3.md) for what each of these
+   needs and what was established about them without a card.
    - Stacked kernels for per-item trajectories.
    - Detection of Cartesian-aligned trajectory axes, with fewer cosets and, for pure stacks, decoupling along the axis.
 
