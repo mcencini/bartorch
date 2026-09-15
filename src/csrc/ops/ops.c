@@ -299,6 +299,28 @@ bartorch_linop* bartorch_linop_sampling(const long* dims, const long* pat_dims, 
 	return (0 == guarded(linop_sampling_worker, &a)) ? a.result : NULL;
 }
 
+struct linop_set_diag_args { const bartorch_linop* h; int N; const long* ddims; const void* diag; };
+
+static int linop_set_diag_worker(void* p)
+{
+	struct linop_set_diag_args* a = p;
+
+	if ((NULL == a->h) || (NULL == a->h->op))
+		error("no operator to write a diagonal into\n");
+
+	/* `cdiag_s` is private to `linops/someops.c`, so there is no type check to
+	 * make here: `linop_gdiag_set_diag` asserts, and an assert is an error
+	 * under `bartorch_api`'s catcher rather than an abort. */
+	linop_gdiag_set_diag(a->h->op, a->N, a->ddims, a->diag);
+	return 0;
+}
+
+int bartorch_linop_set_diagonal(const bartorch_linop* h, int N, const long* ddims, const void* diag)
+{
+	struct linop_set_diag_args a = { h, N, ddims, diag };
+	return guarded(linop_set_diag_worker, &a);
+}
+
 struct linop_nufft_args {
 
 	int N; const long* ksp_dims; const long* cim_dims; const long* traj_dims; const void* traj;

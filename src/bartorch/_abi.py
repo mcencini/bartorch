@@ -193,6 +193,7 @@ SYMBOLS = (
     "bartorch_linop_fmac",
     "bartorch_linop_sampling",
     "bartorch_linop_nufft",
+    "bartorch_linop_set_diagonal",
     "bartorch_linop_blocks",
     "bartorch_linop_reshaped",
     "bartorch_linop_encoding",
@@ -539,6 +540,13 @@ def bind(lib: ctypes.CDLL) -> ctypes.CDLL:
         ctypes.c_int,
         ctypes.c_float,
         ctypes.c_float,
+    ]
+    lib.bartorch_linop_set_diagonal.restype = ctypes.c_int
+    lib.bartorch_linop_set_diagonal.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_long),
+        ctypes.c_void_p,
     ]
     lib.bartorch_linop_blocks.restype = ctypes.c_void_p
     lib.bartorch_linop_blocks.argtypes = [

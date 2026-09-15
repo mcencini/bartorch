@@ -306,3 +306,46 @@ def test_the_planner_lowers_the_model_bart_left_paired():
     assert not Step(
         nlop.CartesianSense((4, 16, 16))._composition(), schedule, fuse=False
     ).plan.fused
+
+
+# --- a pattern rewritten under a built step ------------------------------------
+
+
+def _assembled(pattern, shape, schedule):
+    """A step over a coil model whose encoding carries ``pattern``, and that pattern."""
+    from bartorch.linop.basic import Sampling
+
+    sampling = Sampling(pattern, shape)
+    model = nlop.CoilSense(sampling @ linop.FFT(shape, axes=(-1, -2)))
+    return sampling, Step(model, schedule)
+
+
+def test_a_step_answers_for_a_pattern_set_after_it_was_assembled():
+    """The reuse ``_Cell`` had, without its model: a new mask costs no reassembly.
+
+    Held against a step assembled over the second pattern from the start, which
+    is the answer the caller would have got by rebuilding.
+    """
+    torch.manual_seed(0)
+    coils, n = 4, 16
+    shape = (coils, n, n)
+    schedule = nlop.IRGNM(iterations=2, alpha=1.0, redu=2.0, cg_maxiter=15, cg_tol=0.0)
+
+    first = (torch.rand(1, n, n) > 0.3).to(torch.complex64)
+    second = (torch.rand(1, n, n) > 0.3).to(torch.complex64)
+    kspace = torch.randn(*shape, dtype=torch.complex64)
+
+    def solve(step, pattern):
+        state = torch.zeros(step.state_shape, dtype=torch.complex64)
+        state[: n * n] = 1.0
+        return step(step.prepare(kspace * pattern), state, state, 1.0)
+
+    sampling, step = _assembled(first, shape, schedule)
+    on_first = solve(step, first)
+
+    sampling.set(second)
+    reused = solve(step, second)
+
+    _, rebuilt = _assembled(second, shape, schedule)
+    assert not torch.allclose(on_first, reused), "the swap changed nothing"
+    assert torch.equal(reused, solve(rebuilt, second))

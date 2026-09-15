@@ -7,6 +7,7 @@ from collections.abc import Callable
 import torch
 
 from bartorch import _marshal
+from bartorch._dispatch import BartError
 from bartorch._lib import DIMS, library
 from bartorch._operator import (
     Built,
@@ -80,7 +81,46 @@ class FFT(LinearOperator):
         return Built(ptr, self._shape, self._shape)
 
 
-class Diagonal(LinearOperator):
+class _SettableDiagonal(LinearOperator):
+    """A BART ``cdiag`` whose values can be rewritten after it was built.
+
+    ``linop_gdiag_set_diag`` writes into the operator that exists and drops its
+    cached normal, so every composition and gram standing on this one answers
+    for the new values from the next application.  The values are copied, so
+    the tensor passed to :meth:`set` need not outlive the call.
+    """
+
+    #: The attribute holding the values, named for what the subclass calls them.
+    _values: str
+
+    def set(self, values: torch.Tensor) -> None:
+        """Replace the values, in place, keeping the operator's identity.
+
+        ``values`` has the shape the operator was built with.  A solve or a
+        step assembled over this operator is unaffected structurally and needs
+        no rebuild; what changes is what it computes.
+        """
+        current = getattr(self, self._values)
+        made = as_operand(values, tuple(current.shape), self._values)
+        if "_h" not in self.__dict__:
+            # Not built yet, so there is nothing to write into: the constructor
+            # will read this when it is.
+            setattr(self, self._values, made)
+            return
+        failed = self._under_lock(
+            library().bartorch_linop_set_diagonal,
+            self._h.ptr,
+            DIMS,
+            dims(tuple(current.shape)),
+            made.data_ptr(),
+            device=made.device,
+        )
+        if failed:
+            raise BartError("BART would not write the diagonal; see the log for its message")
+        setattr(self, self._values, made)
+
+
+class Diagonal(_SettableDiagonal):
     """Pointwise multiplication by ``diag``, broadcast over the axes where it is one.
 
     BART's ``cdiag``.
@@ -93,6 +133,8 @@ class Diagonal(LinearOperator):
     shape : tuple of int
         The shape the operator works on, C order.
     """
+
+    _values = "diag"
 
     def __init__(self, diag: torch.Tensor, shape: Shape):
         self._shape = tuple(shape)
@@ -160,7 +202,7 @@ class ComponentDiagonal(LinearOperator):
         return Built(ptr, self._shape, self._shape, keep=(self.diag,))
 
 
-class Sampling(LinearOperator):
+class Sampling(_SettableDiagonal):
     """Multiplication by a sampling pattern, broadcast over the axes where it is one.
 
     Parameters
@@ -170,6 +212,8 @@ class Sampling(LinearOperator):
     shape : tuple of int
         The k-space shape, C order.
     """
+
+    _values = "pattern"
 
     def __init__(self, pattern: torch.Tensor, shape: Shape):
         self._shape = tuple(shape)

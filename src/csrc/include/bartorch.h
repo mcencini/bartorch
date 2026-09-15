@@ -219,6 +219,15 @@ BARTORCH_API bartorch_linop* bartorch_linop_sampling(const long* dims, const lon
 BARTORCH_API bartorch_linop* bartorch_linop_nufft(int N, const long* ksp_dims, const long* cim_dims, const long* traj_dims,
 		const void* traj, const long* wgh_dims, const void* weights,
 		const long* bas_dims, const void* basis, int toeplitz, float os, float width);
+/* Write a new diagonal into a `cdiag` or a sampling operator, which is the
+ * one already built rather than a second one.  The values are copied and the
+ * cached normal is dropped, so an operator this is applied to -- and every
+ * composition and normal standing on it -- answers for the new diagonal from
+ * the next application.  `ddims` is what the operator was built with: the
+ * shape selected by the broadcast flags, not the operator's own.  Returns
+ * non-zero where the operator is not a diagonal or the shape disagrees. */
+BARTORCH_API int bartorch_linop_set_diagonal(const bartorch_linop* op, int N, const long* ddims,
+		const void* diag);
 /* SENSE, over sensitivities held as maps or as k-space kernels, walking the
  * coils a slab at a time.  A NULL trajectory makes the Cartesian operator,
  * and `modulated` asks that one for BART's own sample convention -- a scale
