@@ -106,7 +106,8 @@ The rest of what needs declaring is not diagonal:
 | `Add` | `zsadd`, which is `zaxpbz` against a constant (`someops.c:218`) | the identity |
 | `FromLinear(L)` | `nlop_from_linop` | `L` and `L^H`, the point unused |
 | `Constant` | `nlop_const` | no input, so no tangent |
-| `FromTorch`, `FromTorchSim` | callbacks | `torch.func.jvp` and the reverse-mode vjp, evaluated at the point given as an argument rather than at the stored one |
+| `FromTorch` | callbacks | `torch.func.jvp` and the reverse-mode vjp, evaluated at the point given as an argument rather than at the stored one |
+| `FromTorchSim` | TorchSim | ``A_jvp(x, dx)`` and ``A_vjp(x, dy)``, which take the point as an argument already and build no Jacobian |
 
 `Multiply`'s row is what `noir_get_adjoint` and `noir_get_derivative` build by
 hand (`model_net.c:269-287`, `:299-315`), and it is the product rule; nothing
