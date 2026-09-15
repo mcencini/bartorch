@@ -827,27 +827,6 @@ BARTORCH_API void bartorch_noir_free(bartorch_noir* h);
  * What shape each of them takes is read off the operator itself, with the
  * arity queries above; there is no second place here that says so.
  */
-typedef struct bartorch_noir_net_s bartorch_noir_net;
-
-BARTORCH_API bartorch_noir_net* bartorch_noir_net_create(int N,
-		const long* ksp_dims, const long* cim_dims,
-		const long* img_dims, const long* col_dims,
-		const long* trj_dims, const long* wgh_dims,
-		const long* bas_dims, const void* basis,
-		const long* msk_dims, const void* mask,
-		unsigned long batch_flag, int batch,
-		unsigned long fft_flags, unsigned long wght_flags,
-		int rvc, int sos, float a, float b, float c, int toeplitz);
-BARTORCH_API bartorch_nlop* bartorch_noir_net_step(const bartorch_noir_net* h,
-		int cgiter, float cgtol, float l2lambda);
-BARTORCH_API bartorch_nlop* bartorch_noir_net_iterations(const bartorch_noir_net* h,
-		int cgiter, float cgtol, float l2lambda,
-		int iterations, float redu, float alpha_min);
-BARTORCH_API bartorch_nlop* bartorch_noir_net_adjoint(const bartorch_noir_net* h);
-BARTORCH_API bartorch_nlop* bartorch_noir_net_decompose(const bartorch_noir_net* h);
-BARTORCH_API bartorch_nlop* bartorch_noir_net_split(const bartorch_noir_net* h);
-BARTORCH_API bartorch_nlop* bartorch_noir_net_join(const bartorch_noir_net* h);
-BARTORCH_API void bartorch_noir_net_free(bartorch_noir_net* h);
 
 /* Iteratively regularised Gauss-Newton: x starts at its initial value and returns the solution. */
 BARTORCH_API int bartorch_irgnm(const bartorch_nlop* F, int iter, float alpha, float alpha_min, float redu,

@@ -2,9 +2,9 @@
 
 The step is held against a Gauss-Newton loop written out in torch, whose inner
 problem is solved exactly rather than by conjugate gradients -- so what is
-compared is the method and not two paths through the same iteration.  The
-comparison with ``_Cell`` is BART against BART and says only that the assembly
-here and BART's own are the same expression.
+compared is the method and not two paths through the same iteration.  What
+pins the noir composition is the reconstruction in
+``tests/test_nlop_newton.py``, measured against a phantom rather than BART.
 """
 
 import pytest
@@ -12,7 +12,6 @@ import torch
 
 from bartorch import linop, nlop
 from bartorch.linop.basic import Identity
-from bartorch.nlop._newton import _Cell
 from bartorch.nlop.base import chain
 from bartorch.nlop.basic import Multiply
 from bartorch.nlop.bundle import Asymmetric
@@ -160,31 +159,6 @@ def _normal_domain(F):
     return chain(made, stage, output=0, input=0)
 
 
-@pytest.mark.parametrize("iterations", [1, 2])
-def test_the_assembly_is_barts_own_over_the_noir_composition(iterations):
-    """An agreement check between two routes into BART, not a numerical test."""
-    F = nlop.CartesianSense((4, 8, 8), sobolev=(220.0, 8.0), oversampling_coils=1.0)
-    schedule = nlop.IRGNM(
-        iterations=iterations, alpha=1.0, redu=2.0, alpha_min=0.0, cg_maxiter=30, cg_tol=0.0
-    )
-    cell = _Cell(F, schedule, batch=1, cg_lambda=0.0)
-    step = Step(_normal_domain(F), schedule)
-
-    kspace = torch.randn(F.oshapes[0], dtype=torch.complex64)
-    pattern = torch.ones((1, 1, 8, 8), dtype=torch.complex64)
-    data = cell.prepare()(kspace.reshape(cell.data_shape), pattern)
-    start = cell.start()
-
-    got = step(
-        data.reshape(step.data_shape),
-        start.reshape(step.state_shape),
-        start.reshape(step.state_shape),
-        1.0,
-    )
-    want = cell(data, start, start, 1.0)
-    assert torch.equal(got.reshape(-1), want.reshape(-1))
-
-
 # --- what reaches it ---------------------------------------------------------
 
 
@@ -322,7 +296,7 @@ def _assembled(pattern, shape, schedule):
 
 
 def test_a_step_answers_for_a_pattern_set_after_it_was_assembled():
-    """The reuse ``_Cell`` had, without its model: a new mask costs no reassembly.
+    """A new mask costs no reassembly, which is the reuse BART's noir model had.
 
     Held against a step assembled over the second pattern from the start, which
     is the answer the caller would have got by rebuilding.
@@ -408,26 +382,3 @@ def test_a_batched_step_carries_a_gradient():
 def test_a_batch_below_one_is_refused():
     with pytest.raises(ValueError):
         Step(Multiply((1, 4), (3, 4)), nlop.IRGNM(iterations=1), batch=0)
-
-
-def test_a_batched_step_is_barts_own_batched_step_for_the_noir_model():
-    """BART against BART: the assembly here and ``noir_gauss_newton_step_create``."""
-    torch.manual_seed(0)
-    coils, n, batch = 4, 16, 3
-    model = nlop.CartesianSense((coils, n, n), sobolev=(220.0, 8.0))
-    schedule = nlop.IRGNM(iterations=2, alpha=1.0, redu=2.0, cg_maxiter=20, cg_tol=0.0)
-
-    cell = _Cell(model, schedule, batch=batch, cg_lambda=0.0)
-    step = Step(model, schedule, batch=batch)
-
-    kspace = torch.randn(batch, coils, n, n, dtype=torch.complex64)
-    pattern = torch.ones(batch, n, n, dtype=torch.complex64)
-
-    start = cell.start(batch=batch)
-    theirs = cell(cell.prepare()(kspace, pattern), start, start, 1.0)
-
-    state = torch.zeros(step.state_shape, dtype=torch.complex64)
-    state[:, : n * n] = 1.0
-    ours = step(step.prepare(kspace * pattern.reshape(batch, 1, n, n)), state, state, 1.0)
-
-    assert torch.equal(theirs.reshape(batch, -1), ours.reshape(batch, -1))
