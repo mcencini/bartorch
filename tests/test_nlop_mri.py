@@ -398,3 +398,91 @@ def test_the_library_reports_the_model_it_built():
     assert "cartesian" in repr(F)
     assert "noncartesian" in repr(nlop.NoncartesianSense(bt.traj(x=8, y=11), (4, 8, 8)))
     assert bartorch is not None
+
+
+# --- the model as a composition ----------------------------------------------
+
+
+def _models():
+    return {
+        "cartesian": nlop.CartesianSense((4, 16, 16)),
+        "noncartesian": nlop.NoncartesianSense(bt.traj(x=16, y=21), (4, 16, 16)),
+    }
+
+
+@pytest.mark.parametrize("where", sorted(_models()))
+def test_the_model_is_the_composition_it_says_it_is(where):
+    """``noir2_join`` written out here answers what BART's own model answers."""
+    F = _models()[where]
+    xs = [_rand(*shape) for shape in F.ishapes]
+    assert torch.equal(F.forward(*xs), F._composition().forward(*xs))
+
+
+@pytest.mark.parametrize("where", sorted(_models()))
+def test_the_models_bundle_is_the_derivative_bart_takes_for_itself(where):
+    """An agreement check: the chain rule over the parts against ``nlop_get_derivative``."""
+    F = _models()[where]
+    xs = [_rand(*shape) for shape in F.ishapes]
+    dxs = [_rand(*shape) for shape in F.ishapes]
+    dz = _rand(*F.oshapes[0])
+
+    F.forward(*xs)
+    jacobians = [F.jacobian(0, at) for at in range(len(F.ishapes))]
+    want = sum(one.forward(dx) for one, dx in zip(jacobians, dxs))
+    assert torch.allclose(F.bundle.derivative(*dxs, *xs), want, atol=1e-5, rtol=1e-4)
+    for got, one in zip(F.bundle.adjoint(dz, *xs), jacobians):
+        assert torch.allclose(got, one.adjoint(dz), atol=1e-5, rtol=1e-4)
+
+
+def test_on_the_grid_the_models_bundle_satisfies_the_adjoint_identity():
+    F = _models()["cartesian"]
+    xs = [_rand(*shape) for shape in F.ishapes]
+    dxs = [_rand(*shape) for shape in F.ishapes]
+    dz = _rand(*F.oshapes[0])
+    forward = (F.bundle.derivative(*dxs, *xs).conj() * dz).sum()
+    back = sum((dx.conj() * one).sum() for dx, one in zip(dxs, F.bundle.adjoint(dz, *xs)))
+    assert abs(forward - back) < 1e-4 * abs(forward)
+
+
+def test_off_the_grid_the_adjoint_is_not_the_adjoint_of_the_derivative():
+    """And BART's own is not either: the asymmetry is the model, not a mistake."""
+    F = _models()["noncartesian"]
+    xs = [_rand(*shape) for shape in F.ishapes]
+    dxs = [_rand(*shape) for shape in F.ishapes]
+    dz = _rand(*F.oshapes[0])
+
+    F.forward(*xs)
+    for at in range(len(F.ishapes)):
+        one = F.jacobian(0, at)
+        assert not torch.isclose(
+            torch.vdot(one(dxs[at]).flatten(), dz.flatten()),
+            torch.vdot(dxs[at].flatten(), one.adjoint(dz).flatten()),
+            rtol=1e-2,
+        )
+
+    forward = (F.bundle.derivative(*dxs, *xs).conj() * dz).sum()
+    back = sum((dx.conj() * one).sum() for dx, one in zip(dxs, F.bundle.adjoint(dz, *xs)))
+    assert abs(forward - back) > 1e-2 * abs(forward)
+
+
+@pytest.mark.parametrize("where", sorted(_models()))
+def test_the_normal_is_self_adjoint_either_way(where):
+    """What an inner conjugate-gradient solve needs, and what the asymmetry preserves."""
+    F = _models()[where]
+    xs = [_rand(*shape) for shape in F.ishapes]
+    dxs = [_rand(*shape) for shape in F.ishapes]
+    dys = [_rand(*shape) for shape in F.ishapes]
+
+    forward = sum((one.conj() * dy).sum() for one, dy in zip(F.bundle.normal(*dxs, *xs), dys))
+    back = sum((dx.conj() * one).sum() for dx, one in zip(dxs, F.bundle.normal(*dys, *xs)))
+    assert abs(forward - back) < 1e-3 * abs(forward)
+
+
+def test_off_the_grid_the_last_stage_carries_the_normal_and_its_adjoint_carries_nothing():
+    """``noir2_join``'s asymmetry: the measurement has already been through ``E^H``."""
+    F = nlop.NoncartesianSense(bt.traj(x=16, y=21), (4, 16, 16))
+    written = F._composition()
+    stage = written.b
+    coil_images = _rand(*F.oshapes[0])
+    assert torch.allclose(stage.forward(coil_images), F.transform.normal(coil_images), atol=1e-5)
+    assert torch.equal(stage.bundle.adjoint(coil_images, coil_images), coil_images)

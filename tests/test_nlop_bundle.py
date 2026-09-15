@@ -186,3 +186,109 @@ def test_the_bundle_agrees_with_the_derivative_at_the_stored_point(name, generat
     assert torch.allclose(op.bundle.derivative(dx, x), op.derivative(dx), atol=1e-5, rtol=1e-5)
     dz = rand(SHAPE, generator)
     assert torch.allclose(op.bundle.adjoint(dz, x), op.adjoint(dz), atol=1e-5, rtol=1e-5)
+
+
+# --- the chain rule ----------------------------------------------------------
+
+
+def jacobians(op, xs, dxs, dzs):
+    """What BART's own derivative at the stored point answers, summed over arguments."""
+    op.forward(*xs)
+    jac = [[op.jacobian(o, i) for i in range(len(op.ishapes))] for o in range(len(op.oshapes))]
+    forward = [
+        sum(jac[o][i].forward(dxs[i]) for i in range(len(op.ishapes)))
+        for o in range(len(op.oshapes))
+    ]
+    back = [
+        sum(jac[o][i].adjoint(dzs[o]) for o in range(len(op.oshapes)))
+        for i in range(len(op.ishapes))
+    ]
+    return forward, back
+
+
+def tupled(made):
+    return (made,) if isinstance(made, torch.Tensor) else tuple(made)
+
+
+def composed(generator):
+    """One composition per node of the algebra, each with a bundle."""
+    from bartorch.nlop.base import chain, combine
+
+    exp, log = nlop.Exp(SHAPE), nlop.Log(SHAPE)
+    return {
+        "chain": nlop.Exp(SHAPE) @ nlop.Log(SHAPE),
+        "chain2": chain(nlop.Exp(SHAPE), nlop.Multiply(SHAPE, SHAPE), output=0, input=1),
+        "combine": combine(exp, log),
+        "dup": nlop.Multiply(SHAPE, SHAPE).dup(0, 1),
+        "permute_inputs": nlop.Multiply((1, 6), (3, 6)).permute_inputs([1, 0]),
+        "reshape_input": nlop.Exp(SHAPE).reshape_input(0, (1, 6)),
+        "reshape_output": nlop.Exp(SHAPE).reshape_output(0, (1, 6)),
+        "del_out": combine(nlop.Exp(SHAPE), nlop.Log(SHAPE)).del_out(1),
+        "pin": nlop.Multiply(SHAPE, SHAPE).pin(1, rand(SHAPE, generator) + 3.0),
+        "nested": chain(
+            nlop.Exp(SHAPE) @ nlop.Log(SHAPE), nlop.Multiply(SHAPE, SHAPE), output=0, input=1
+        ),
+    }
+
+
+@pytest.mark.parametrize("name", sorted(composed(torch.Generator().manual_seed(0))))
+def test_a_composed_bundle_is_barts_own_derivative(name, generator):
+    """An agreement check: the chain rule against what BART differentiates for itself."""
+    op = composed(generator)[name]
+    xs = [rand(s, generator) + 3.0 for s in op.ishapes]
+    dxs = [rand(s, generator) for s in op.ishapes]
+    dzs = [rand(s, generator) for s in op.oshapes]
+    want_d, want_a = jacobians(op, xs, dxs, dzs)
+
+    for got, want in zip(tupled(op.bundle.derivative(*dxs, *xs)), want_d):
+        assert torch.allclose(got, want, atol=1e-5, rtol=1e-4)
+    for got, want in zip(tupled(op.bundle.adjoint(*dzs, *xs)), want_a):
+        assert torch.allclose(got, want, atol=1e-5, rtol=1e-4)
+
+
+@pytest.mark.parametrize("name", sorted(composed(torch.Generator().manual_seed(0))))
+def test_a_composed_bundle_satisfies_the_adjoint_identity(name, generator):
+    op = composed(generator)[name]
+    xs = [rand(s, generator) + 3.0 for s in op.ishapes]
+    dxs = [rand(s, generator) for s in op.ishapes]
+    dzs = [rand(s, generator) for s in op.oshapes]
+    forward = tupled(op.bundle.derivative(*dxs, *xs))
+    back = tupled(op.bundle.adjoint(*dzs, *xs))
+    paired = sum((one.conj() * dz).sum() for one, dz in zip(forward, dzs))
+    other = sum((dx.conj() * one).sum() for dx, one in zip(dxs, back))
+    assert abs(paired - other) < 1e-4 * abs(paired)
+
+
+def test_the_chain_rule_is_torchs_own_over_the_written_out_composition(generator):
+    from bartorch.nlop.base import chain
+
+    op = chain(nlop.Exp(SHAPE), nlop.Multiply(SHAPE, SHAPE), output=0, input=1)
+    fn = lambda a, x: a * torch.exp(x)  # noqa: E731
+
+    a, x = rand(SHAPE, generator), rand(SHAPE, generator)
+    da, dx = rand(SHAPE, generator), rand(SHAPE, generator)
+    want = torch.func.jvp(fn, (a, x), (da, dx))[1]
+    assert torch.allclose(op.bundle.derivative(da, dx, a, x), want, atol=1e-5, rtol=1e-4)
+
+    dz = rand(SHAPE, generator)
+    back = torch.func.vjp(fn, a, x)[1](dz)
+    for got, one in zip(op.bundle.adjoint(dz, a, x), back):
+        assert torch.allclose(got, one, atol=1e-5, rtol=1e-4)
+
+
+def test_a_composed_bundle_does_not_move_with_a_forward_elsewhere(generator):
+    op = nlop.Exp(SHAPE) @ nlop.Log(SHAPE)
+    x, dx = rand(SHAPE, generator) + 3.0, rand(SHAPE, generator)
+    want = op.bundle.derivative(dx, x)
+    op.forward(rand(SHAPE, generator) + 3.0)
+    assert torch.equal(op.bundle.derivative(dx, x), want)
+
+
+def test_a_link_has_no_bundle():
+    """A tie is a feedback edge, and its rule needs the whole graph rather than the node."""
+    from bartorch.nlop.base import combine
+
+    # BART applies a combination back to front, so `Log` produces before `Exp`
+    # consumes and the tie is the one the algebra allows.
+    made = combine(nlop.Exp(SHAPE), nlop.Log(SHAPE)).link(1, 0)
+    assert made.bundle is None

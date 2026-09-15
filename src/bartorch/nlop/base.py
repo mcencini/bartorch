@@ -91,6 +91,29 @@ def _agree(a: NonlinearOperator, output: int, b: NonlinearOperator, input: int):
     return a, b.reshape_input(input, padded)
 
 
+def arity(ptr: int) -> tuple[tuple[Shape, ...], tuple[Shape, ...]]:
+    """What BART says an operator built by the library takes and returns.
+
+    Read rather than worked out: an operator BART assembled for itself puts its
+    arguments at whatever rank it needs, and the shapes are not ours to predict.
+    """
+    lib = library()
+    shapes: list[tuple[Shape, ...]] = []
+    for count, query in (
+        (lib.bartorch_nlop_inputs(ptr), lib.bartorch_nlop_input_domain),
+        (lib.bartorch_nlop_outputs(ptr), lib.bartorch_nlop_output_codomain),
+    ):
+        each = []
+        for at in range(count):
+            vector = _marshal.wide_dim_vector()
+            rank = query(ptr, at, len(vector), vector)
+            if rank < 0:
+                raise BartError("BART would not report the shape of one of its arguments")
+            each.append(tuple(int(vector[i]) for i in range(rank))[::-1])
+        shapes.append(tuple(each))
+    return shapes[0], shapes[1]
+
+
 def _bart_axis(axis: int, shape: Shape) -> int:
     """The BART dimension a C-order axis of ``shape`` is."""
     at = axis + len(shape) if axis < 0 else axis
@@ -531,6 +554,11 @@ class Chain(NonlinearOperator):
             device=self.a.device or self.b.device,
         )
 
+    def _bundle(self):
+        from bartorch.nlop.bundle import of_chain
+
+        return of_chain(self, self.b, self.a, 0, 0)
+
     def __repr__(self) -> str:
         return f"({self.a!r} @ {self.b!r})"
 
@@ -575,6 +603,11 @@ class _Combine(_Binary):
         ao, ai = _after((ao, ai), (bo, bi))
         return ao + bo, ai + bi
 
+    def _bundle(self):
+        from bartorch.nlop.bundle import of_combine
+
+        return of_combine(self, self.a, self.b)
+
     def __repr__(self) -> str:
         return f"combine({self.a!r}, {self.b!r})"
 
@@ -616,6 +649,11 @@ class _Chain2(_Binary):
         # nlop_chain2 combines b with a, so a runs first, as it must.
         bo, bi = _after((bo, bi), (ao, ai))
         return bo + _without(ao, self.output), _without(bi, self.input) + ai
+
+    def _bundle(self):
+        from bartorch.nlop.bundle import of_chain
+
+        return of_chain(self, self.a, self.b, self.output, self.input)
 
     def __repr__(self) -> str:
         return f"chain({self.a!r}, {self.b!r}, output={self.output}, input={self.input})"
@@ -677,6 +715,11 @@ class _Reshape(_Unary):
         # Losing this would make a link over a combination look as though its
         # producer and its consumer ran together, and be refused.
         return self.x._stages
+
+    def _bundle(self):
+        from bartorch.nlop.bundle import of_reshape
+
+        return of_reshape(self, self.x, self.at, self.shape, output=self.output)
 
     def __repr__(self) -> str:
         which = "reshape_output" if self.output else "reshape_input"
@@ -771,6 +814,11 @@ class _Dup(_Unary):
         kept = list(i)
         kept[self.a] = min(i[self.a], i[self.b])
         return o, _without(tuple(kept), self.b)
+
+    def _bundle(self):
+        from bartorch.nlop.bundle import of_dup
+
+        return of_dup(self, self.x, self.a, self.b)
 
     def __repr__(self) -> str:
         return f"{self.x!r}.dup({self.a}, {self.b})"
@@ -879,6 +927,11 @@ class _Permute(_Unary):
         moved = tuple((o if self.outputs else i)[p] for p in self.perm)
         return (moved, i) if self.outputs else (o, moved)
 
+    def _bundle(self):
+        from bartorch.nlop.bundle import of_permute
+
+        return of_permute(self, self.x, self.perm, outputs=self.outputs)
+
     def __repr__(self) -> str:
         what = "permute_outputs" if self.outputs else "permute_inputs"
         return f"{self.x!r}.{what}({list(self.perm)})"
@@ -909,6 +962,11 @@ class _DelOut(_Unary):
     def _stages(self):
         o, i = self.x._stages
         return _without(o, self.output), i
+
+    def _bundle(self):
+        from bartorch.nlop.bundle import of_del_out
+
+        return of_del_out(self, self.x, self.output)
 
     def __repr__(self) -> str:
         return f"{self.x!r}.del_out({self.output})"
@@ -985,6 +1043,11 @@ class _Pinned(_Unary):
     def _stages(self):
         o, i = self.x._stages
         return o, _without(i, self.input)
+
+    def _bundle(self):
+        from bartorch.nlop.bundle import of_pinned
+
+        return of_pinned(self, self.x, self.input, self.value)
 
     def __repr__(self) -> str:
         return f"{self.x!r}.pin({self.input}, ...)"

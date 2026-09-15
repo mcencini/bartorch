@@ -97,6 +97,9 @@ class Bundle:
     normal : NonlinearOperator, optional
         ``DF^H DF`` where the operator has a cheaper one than the two chained;
         by default they are chained, as ``noir_get_normal`` chains them.
+    source : str
+        Where the bundle came from, for :attr:`bartorch.nlop.plan.Plan.bundle`:
+        ``"declared"``, ``"linear"``, ``"torch"`` or ``"chain rule"``.
     """
 
     def __init__(
@@ -105,10 +108,12 @@ class Bundle:
         derivative: NonlinearOperator,
         adjoint: NonlinearOperator | None,
         normal: NonlinearOperator | None = None,
+        source: str = "declared",
     ):
         self.operator = operator
         self.derivative = derivative
         self.adjoint = adjoint
+        self.source = source
         self._normal = normal
         self._check()
 
@@ -163,6 +168,204 @@ class Bundle:
         return f"Bundle({self.operator!r})"
 
 
+class Asymmetric(FromLinear):
+    """A linear stage whose bundle's adjoint is not the adjoint of its forward.
+
+    ``noir2_join`` builds the non-Cartesian model's last stage as
+    ``linop_from_ops(lop_fft->normal, identity->adjoint)`` (``model2.c:176``):
+    the forward carries ``E^H E`` and the adjoint carries nothing, because the
+    measurement has already been through ``E^H``.  That pair is not one linear
+    operator's forward and adjoint, so it is declared here rather than built as
+    one.
+    """
+
+    def __init__(self, forward, adjoint, source=None):
+        self.backward = adjoint._bart()
+        #: The encoding the forward is the normal of, where one is known.
+        self.source = None if source is None else source._bart()
+        super().__init__(forward)
+
+    def _bundle(self) -> Bundle:
+        return linear(self, FromLinear(self.op), FromLinear(self.backward))
+
+    def __repr__(self) -> str:
+        return f"Asymmetric({self.op!r}, {self.backward!r})"
+
+
+def _only_output(op: NonlinearOperator, at: int) -> NonlinearOperator:
+    """``op`` with every output but ``at`` dropped, which leaves its inputs alone."""
+    made = op
+    for output in reversed(range(len(op.oshapes))):
+        if output != at:
+            made = made.del_out(output)
+    return made
+
+
+def of_chain(node, first, second, output: int, at: int) -> Bundle | None:
+    """The chain rule for ``first``'s output ``output`` feeding ``second``'s input ``at``.
+
+    The point ``second`` is linearized at is ``first(x)``, recomputed from the
+    point rather than carried, which is what ``noir_get_derivative`` does with
+    the coil model's linear parts.  ``None`` where either operand has no
+    bundle, or where ``first`` takes no input and so returns no cotangent.
+    """
+    one, two = first.bundle, second.bundle
+    if one is None or two is None or one.adjoint is None or two.adjoint is None:
+        return None
+
+    na, ma = len(first.ishapes), len(first.oshapes)
+    nb, mb = len(second.ishapes), len(second.oshapes)
+    if 1 > na:
+        return None
+
+    # `first` appears in both members, and in the normal in one graph twice.
+    # Both copies are handed the same point by construction -- that is what
+    # the duplications below are for -- so the derivative BART stores in it is
+    # the same either way.
+    made = chain(one.derivative, two.derivative, output=output, input=at)
+    made = chain(_only_output(first, output), made, output=0, input=(nb - 1) + at)
+    base = 2 * nb - 2
+    for j in range(na):
+        made = made.dup(base + na + j, base + 2 * na)
+    derivative = made.permute_inputs(
+        [
+            *range(nb - 1),
+            *range(base, base + na),
+            *range(nb - 1, base),
+            *range(base + na, base + 2 * na),
+        ]
+    )
+
+    p, q = ma - 1, ma - 1 + na
+    r, s = q + mb, q + mb + nb - 1
+    made = chain(two.adjoint, one.adjoint, output=at, input=output)
+    made = chain(_only_output(first, output), made, output=0, input=p + na + mb + at)
+    for j in range(na):
+        made = made.dup(p + j, s)
+    adjoint = made.permute_inputs([*range(q, r), *range(p), *range(r, s), *range(p, q)])
+    # The chain returns `first`'s cotangents first and the node's inputs put
+    # `second`'s first, so the outputs are read the other way round.
+    adjoint = adjoint.permute_outputs([*range(na, na + nb - 1), *range(na)])
+
+    return Bundle(node, derivative, adjoint, source="chain rule")
+
+
+def of_combine(node, a, b) -> Bundle | None:
+    """The chain rule for two operators side by side: block diagonal in both members."""
+    one, two = a.bundle, b.bundle
+    if one is None or two is None or one.adjoint is None or two.adjoint is None:
+        return None
+
+    na, ma = len(a.ishapes), len(a.oshapes)
+    nb, mb = len(b.ishapes), len(b.oshapes)
+
+    # Each member lays its own tangents and point end to end, and the node
+    # wants every tangent before every point.
+    derivative = combine(one.derivative, two.derivative).permute_inputs(
+        [
+            *range(na),
+            *range(2 * na, 2 * na + nb),
+            *range(na, 2 * na),
+            *range(2 * na + nb, 2 * na + 2 * nb),
+        ]
+    )
+    adjoint = combine(one.adjoint, two.adjoint).permute_inputs(
+        [
+            *range(ma),
+            *range(ma + na, ma + na + mb),
+            *range(ma, ma + na),
+            *range(ma + na + mb, ma + na + mb + nb),
+        ]
+    )
+    return Bundle(node, derivative, adjoint, source="chain rule")
+
+
+def of_dup(node, x, a: int, b: int) -> Bundle | None:
+    """The chain rule for two inputs made one: the tangent paths add, the point is shared."""
+    from bartorch.nlop.basic import Weighted
+
+    inner = x.bundle
+    if inner is None or inner.adjoint is None:
+        return None
+
+    n, m = len(x.ishapes), len(x.oshapes)
+    # The later of a pair goes, so the point's pair is merged first and the
+    # tangents' own indices do not move under it.
+    derivative = inner.derivative.dup(n + a, n + b).dup(a, b)
+
+    made = inner.adjoint.dup(m + a, m + b)
+    # Both cotangents survive `nlop_dup`, and the one the merged input takes
+    # is their sum.
+    made = chain(made, Weighted(x.ishapes[a], 1.0, 1.0), output=a, input=0)
+    # The sum leads the outputs and the other cotangent has moved up one.
+    made = made.link(b, 0)
+
+    rest = [at for at in range(n) if at not in (a, b)]
+    target = [at for at in range(n) if at != b]
+    adjoint = made.permute_outputs([0 if at == a else 1 + rest.index(at) for at in target])
+    return Bundle(node, derivative, adjoint, source="chain rule")
+
+
+def of_permute(node, x, perm, *, outputs: bool) -> Bundle | None:
+    """The chain rule for reordered arguments: the tangents move with them."""
+    inner = x.bundle
+    if inner is None or inner.adjoint is None:
+        return None
+
+    n, m = len(x.ishapes), len(x.oshapes)
+    if outputs:
+        derivative = inner.derivative.permute_outputs(perm)
+        adjoint = inner.adjoint.permute_inputs([*perm, *range(m, m + n)])
+    else:
+        derivative = inner.derivative.permute_inputs([*perm, *(n + p for p in perm)])
+        adjoint = inner.adjoint.permute_inputs([*range(m), *(m + p for p in perm)]).permute_outputs(
+            perm
+        )
+    return Bundle(node, derivative, adjoint, source="chain rule")
+
+
+def of_reshape(node, x, at: int, shape: Shape, *, output: bool) -> Bundle | None:
+    """The chain rule for one argument written at another rank, which moves no bytes."""
+    inner = x.bundle
+    if inner is None or inner.adjoint is None:
+        return None
+
+    n, m = len(x.ishapes), len(x.oshapes)
+    if output:
+        derivative = inner.derivative.reshape_output(at, shape)
+        adjoint = inner.adjoint.reshape_input(at, shape)
+    else:
+        derivative = inner.derivative.reshape_input(at, shape).reshape_input(n + at, shape)
+        adjoint = inner.adjoint.reshape_input(m + at, shape).reshape_output(at, shape)
+    return Bundle(node, derivative, adjoint, source="chain rule")
+
+
+def of_pinned(node, x, at: int, value) -> Bundle | None:
+    """The chain rule for an input held fixed: no tangent of its own, and the point is the value."""
+    inner = x.bundle
+    if inner is None or inner.adjoint is None:
+        return None
+
+    n, m = len(x.ishapes), len(x.oshapes)
+    zero = torch.zeros_like(value)
+    # The point first, so pinning it does not move the tangent's index.
+    derivative = inner.derivative.pin(n + at, value).pin(at, zero)
+    adjoint = inner.adjoint.pin(m + at, value).del_out(at)
+    return Bundle(node, derivative, adjoint, source="chain rule")
+
+
+def of_del_out(node, x, at: int) -> Bundle | None:
+    """The chain rule for a dropped output: it carries no tangent and its cotangent is zero."""
+    inner = x.bundle
+    if inner is None or inner.adjoint is None:
+        return None
+
+    derivative = inner.derivative.del_out(at)
+    zero = torch.zeros(x.oshapes[at], dtype=torch.complex64)
+    adjoint = inner.adjoint.pin(at, zero)
+    return Bundle(node, derivative, adjoint, source="chain rule")
+
+
 def diagonal(operator: NonlinearOperator, diag: NonlinearOperator) -> Bundle:
     """The bundle of an elementwise operator whose derivative multiplies by ``diag(x)``.
 
@@ -184,6 +387,7 @@ def linear(operator: NonlinearOperator, forward, adjoint) -> Bundle:
         operator,
         ignoring(forward, operator.ishapes),
         ignoring(adjoint, operator.ishapes),
+        source="linear",
     )
 
 
@@ -214,4 +418,5 @@ def from_torch(operator: NonlinearOperator, fn) -> Bundle:
         operator,
         FromTorch(derivative, [*ins, *ins], outs[0] if one_out else list(outs)),
         FromTorch(adjoint, [*outs, *ins], ins[0] if one_in else list(ins)),
+        source="torch",
     )

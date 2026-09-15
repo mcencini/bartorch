@@ -165,9 +165,14 @@ is one of the two entry points this design adds to the ABI.
 
 `noir2_net` never applies the transform. `noir_get_forward` is a `tenmul` chained
 into `linop_get_normal(model->lop_fft)` (`model_net.c:255-256`), and
-`noir_get_adjoint` carries no transform at all. `noir2` -- what `NonlinearSense`
-is built on -- chains the whole `lop_fft` instead (`model2.c:185`). The two
-models differ in exactly this.
+`noir_get_adjoint` carries no transform at all.
+
+`noir2` -- what `NonlinearSense` is built on -- does the same off the grid and
+not on it. `noir2_join(ret, asym)` (`model2.c:164`) ends the model with
+`linop_from_ops(lop_fft->normal, identity->adjoint)` when `asym` is set and with
+`lop_fft` itself otherwise (`:180`, `:185`). So this is not a rewrite BART lacks;
+it is one BART applies where the transform is expensive, and the planner's work
+is to apply it wherever it pays.
 
 Write `F = E ∘ G` with `E` linear. Then for the step's three quantities:
 
@@ -181,6 +186,12 @@ Write `F = E ∘ G` with `E` linear. Then for the step's three quantities:
 Every appearance of `E` has become one appearance of `E^H E`, and the residual
 `E^H y - E^H E G(xn)` is `E^H (y - E G(xn))` -- the rewrite is exact, not an
 approximation.
+
+What it costs is the adjoint identity: the model's Jacobian is no longer the
+adjoint of its own derivative, because `E^H` sits in the data rather than in the
+adjoint. BART's own non-Cartesian model fails that identity for the same reason.
+What survives, and what the inner solve needs, is that
+`DG^H (E^H E) DG` is Hermitian.
 
 | | Transforms per normal application | Data argument |
 | --- | --- | --- |
