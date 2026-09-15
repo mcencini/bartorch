@@ -738,10 +738,16 @@ block that is *not* one of these, and the samples are copied by the whole's
 own strides rather than a block's, so an axis slower than the coils lands
 where it belongs.
 
-Off a grid it is refused.  The substitution plans one transform over every
-sample an operator has, and a batch is a transform per item; the message says
-to build one operator per item.  On a grid and under the wave front each item
-answers exactly what its own operator would.
+Off a grid the trajectory is shared, so the batch is one of the axes it does
+not index -- which is what FINUFFT's `ntrans` is for, a batch of transforms
+against one point set.  It costs one plan rather than one per item.  The
+trajectory's own dimension vector therefore does *not* carry the batch, while
+the image's and the samples' do: saying the trajectory varies across it would
+make it a sample axis the image varies along too, which is a transform per
+frame and declined.
+
+On a grid, under the wave front and off the grid alike, each item answers
+exactly what its own operator would.
 
 Picking a slice whole is the only image factor the sets can carry.  An image
 factor is applied to the coil images, where `md_ztenmul2` has already

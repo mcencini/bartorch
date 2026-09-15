@@ -12,7 +12,7 @@ import torch
 
 import bartorch
 import bartorch.tools as bt
-from bartorch import _dispatch, linop, optim
+from bartorch import _dispatch, _layout, linop, optim
 from bartorch._dispatch import BartError
 from bartorch._lib import library
 from bartorch.linop import sense
@@ -932,11 +932,48 @@ def test_a_batch_and_an_outer_one_together():
         assert torch.equal(got[item], inner(x[item]))
 
 
-def test_a_batch_on_the_sensitivities_off_a_grid_is_refused():
-    """One plan over every sample cannot be a transform per item, so it says so."""
-    traj = bt.traj(x=16, y=9)
-    with pytest.raises(ValueError, match="transform per item"):
-        linop.NoncartesianSense(_per_item_bank(2, 16, 4), (2, 1, 16, 16), traj=traj)
+def test_a_batch_on_the_sensitivities_off_a_grid_is_each_item_on_its_own():
+    """The trajectory is shared, so the batch is what FINUFFT plans several transforms for.
+
+    Every axis the trajectory does not index is a separate transform against
+    one point set, which is what ``ntrans`` is: the batch costs one plan, not
+    one per item.  Each item has to answer what its own operator does.
+    """
+    items, n, coils = 2, 16, 4
+    bank = _per_item_bank(items, n, coils)
+    traj = bt.traj(x=n, y=9)
+    whole = linop.NoncartesianSense(bank, (items, 1, n, n), traj=traj)
+
+    torch.manual_seed(16)
+    x = torch.randn(items, 1, n, n, dtype=torch.complex64)
+    got = whole(x)
+    for item in range(items):
+        one = linop.NoncartesianSense(bank[item, 0], (n, n), traj=traj)
+        assert torch.equal(got[item], one(x[item, 0]))
+
+    y = torch.randn(*whole.oshape, dtype=torch.complex64)
+    lhs = torch.vdot(whole(x).reshape(-1), y.reshape(-1))
+    rhs = torch.vdot(x.reshape(-1), whole.adjoint(y).reshape(-1))
+    assert abs(lhs - rhs) / abs(lhs) < 1e-4
+
+
+def test_the_trajectory_of_a_batch_is_shared_rather_than_one_per_item():
+    """The batch is on the samples and the image, and not on the trajectory.
+
+    Putting it on the trajectory's dimensions would say the trajectory varies
+    across the batch, which is a sample axis the image also varies along --
+    and that is a transform per item rather than one plan, which the
+    substitution declines.
+    """
+    items, n = 2, 16
+    bank = _per_item_bank(items, n, 4)
+    traj = bt.traj(x=n, y=9)
+    A = linop.NoncartesianSense(bank, (items, 1, n, n), traj=traj)
+
+    form = A._form()
+    assert form.traj.vector[_layout.SENS_BATCH] == 1
+    assert form.max_vector[_layout.SENS_BATCH] == items
+    assert form.kspace_vector[_layout.SENS_BATCH] == items
 
 
 def test_a_batch_under_a_wave_transform_is_each_item_on_its_own():

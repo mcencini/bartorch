@@ -185,7 +185,9 @@ One C slab executor runs every matched form. It is today's pieces parameterised 
    The batch axis is a dimension of the operator rather than a block of it,
    because one bank does not serve every block; it is the slowest dimension
    BART has, and the coils are placed above every axis below it.  Off a grid
-   it is refused: one plan over every sample cannot be a transform per item.
+   the trajectory is shared across the batch, so it is an axis the trajectory
+   does not index and FINUFFT plans it as a batch of transforms against one
+   point set.
 3. **Kernel stacks and Cartesian-aligned axes.**
    - Stacked kernels for per-item trajectories.
    - Detection of Cartesian-aligned trajectory axes, with fewer cosets and, for pure stacks, decoupling along the axis.

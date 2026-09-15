@@ -262,9 +262,9 @@ class NoncartesianSense(_SensitivityBatch, LinearOperator):
         and its sets axis is written even where there is one set: independent
         slices each with their own maps are ``(nz, 1, coils, y, x)``, where
         ``(nz, coils, y, x)`` would be one set of maps per slice summed
-        together.  Both the image and the samples carry a batch.  It is
-        refused off a grid, where the substitution plans one transform over
-        every sample rather than one per item.
+        together.  Both the image and the samples carry a batch; the
+        trajectory does not, being shared across the items, which is what lets
+        one plan serve them all.
     image_shape : tuple of int
         Image shape ``(*batches, [batch,] [sets,] *encoding, [z,] y, x)``: the
         batches first, then the one the sensitivities vary along and the sets
@@ -391,13 +391,6 @@ class NoncartesianSense(_SensitivityBatch, LinearOperator):
             self.sens_batch,
         ) = _bank(sensitivities, self.ndim)
         self.sensitivities = s
-
-        if self.traj is not None and self.sens_batch > 1:
-            raise ValueError(
-                "a batch the sensitivities vary along is a transform per item, and off a "
-                "grid the substitution plans one over every sample of the operator at once; "
-                "build one operator per item, or hold the items on a grid"
-            )
 
         self.basis = None
         self.coeffs = None
@@ -533,9 +526,9 @@ class NoncartesianSense(_SensitivityBatch, LinearOperator):
             }
         )
 
-    def _encoding_vector(self, base: dict, sizes) -> tuple[int, ...]:
+    def _encoding_vector(self, base: dict, sizes, batch: bool = True) -> tuple[int, ...]:
         kdims, _ = self._encoding_placement()
-        v = {**base, **self._batch_placed()}
+        v = {**base, **(self._batch_placed() if batch else {})}
         for dim, n in zip(kdims, sizes):
             v[dim] = n
         return _layout.vector(v)
@@ -572,11 +565,11 @@ class NoncartesianSense(_SensitivityBatch, LinearOperator):
         tvec = wvec = None
         if t is not None:
             shots, samples, d = (int(n) for n in t.shape[-3:])
-            tvec = self._encoding_vector({0: d, 1: samples, 2: shots}, self.encoding)
+            tvec = self._encoding_vector({0: d, 1: samples, 2: shots}, self.encoding, batch=False)
         if w is not None:
             wshape = tuple(w.shape)
             base = {1: wshape[-1], 2: wshape[-2]} if t is not None else {}
-            wvec = self._encoding_vector(base, wshape[: len(self.encoding)])
+            wvec = self._encoding_vector(base, wshape[: len(self.encoding)], batch=False)
         return Form(
             transform="nufft" if t is not None else "fft",
             max_vector=self._max_vector(),
