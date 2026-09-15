@@ -128,7 +128,7 @@ def _term_prior() -> type:
     _, Prior, _ = _classes()
 
     class TermPrior(Prior):
-        """A :class:`bartorch.prox.Regularizer` as a ``deepinv`` prior.
+        """A :class:`bartorch.priors.Regularizer` as a ``deepinv`` prior.
 
         ``prox`` is BART's own proximal operator for the term, so an iteration
         driven by this prior calls what the library would have called.
@@ -136,7 +136,7 @@ def _term_prior() -> type:
         Parameters
         ----------
         term : Regularizer
-            The term from :mod:`bartorch.prox`.
+            The term from :mod:`bartorch.priors`.
         image_shape : tuple of int
             What the term was configured for.  Needed because a tensor with a
             leading batch axis is applied item by item: BART builds a term's
@@ -165,7 +165,7 @@ def _as_term() -> type:
     _, Prior, _ = _classes()
 
     class AsTerm(torch.nn.Module):
-        """A ``deepinv`` prior or denoiser where a :mod:`bartorch.prox` term goes.
+        """A ``deepinv`` prior or denoiser where a :mod:`bartorch.priors` term goes.
 
         The iterations here ask a term for four things: the transform in front
         of its proximal operator, the shape that transform lands in, the
@@ -198,7 +198,7 @@ def _as_term() -> type:
             if not hasattr(prior, "prox"):
                 if not callable(prior):
                     raise TypeError(
-                        f"a regularizer is a term from bartorch.prox, a deepinv prior, "
+                        f"a regularizer is a term from bartorch.priors, a deepinv prior, "
                         f"or a denoiser -- not {prior!r}"
                     )
                 from deepinv.optim import PnP

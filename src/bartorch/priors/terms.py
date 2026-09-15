@@ -10,7 +10,7 @@ the library's own loop over the enlarged variable, so it does not unroll.
 
 from __future__ import annotations
 
-from bartorch.prox.base import Regularizer
+from bartorch.priors.base import Regularizer
 
 __all__ = [
     "FourierL1",

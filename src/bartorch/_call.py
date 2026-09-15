@@ -3,7 +3,7 @@
 A derived wrapper has a real signature, BART's help as a numpydoc docstring, and
 each keyword routed to the flag BART spells it with.  An argument BART takes
 as a dimension number or a bitmask is taken here as axes, indices or
-:mod:`bartorch.prox` terms, as :data:`TRANSLATED` says.
+:mod:`bartorch.priors` terms, as :data:`TRANSLATED` says.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ class _Takes:
     ``what`` is ``"axes"`` (C-order axes, sent as a bitmask), ``"axis"`` (one
     C-order axis, sent as BART's dimension number), ``"indices"`` (a set of
     indices that are not axes, sent as a bitmask) or ``"regularizers"``
-    (:mod:`bartorch.prox` terms, sent as ``-R`` arguments).  Axes count along
+    (:mod:`bartorch.priors` terms, sent as ``-R`` arguments).  Axes count along
     the command's input number ``input``; with None, or with that input not
     given, only negative axes are accepted.  ``kinds`` lists the terms a
     command's parser knows.
@@ -71,7 +71,7 @@ class _Takes:
         array = inputs[self.input] if self.input is not None and self.input < len(inputs) else None
         ndim = array.ndim if isinstance(array, torch.Tensor) else None
         if self.what == "regularizers":
-            from bartorch.prox.base import _as_terms, _command_line
+            from bartorch.priors.base import _as_terms, _command_line
 
             arguments, shared = _command_line(_as_terms(value), ndim, command, self.kinds)
             if shared:

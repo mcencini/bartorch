@@ -9,7 +9,7 @@ import torch
 from bartorch import _call
 from bartorch._call import curated
 from bartorch._dispatch import dispatch
-from bartorch.prox.base import Regularizer, _as_terms, _command_line
+from bartorch.priors.base import Regularizer, _as_terms, _command_line
 
 __all__ = ["nlinv", "pics"]
 
@@ -66,10 +66,10 @@ def pics(
     sensitivities : torch.Tensor
         Coil sensitivities, as :func:`ecalib` or :func:`caldir` produce them.
     regularizers : Regularizer or iterable of Regularizer, optional
-        :mod:`bartorch.prox` terms (``-R``).  Their axes index ``kspace``'s
+        :mod:`bartorch.priors` terms (``-R``).  Their axes index ``kspace``'s
         shape, negative ones counting from the last axis.  A setting ``pics``
         takes once for every term -- ``randshift``, ``family``, a
-        :class:`~bartorch.prox.LocallyLowRank` ``block`` -- has to agree
+        :class:`~bartorch.priors.LocallyLowRank` ``block`` -- has to agree
         across the terms.
     l2 : float, optional
         Plain Tikhonov weight (``-r``).
@@ -116,7 +116,7 @@ def pics(
     Examples
     --------
     >>> image = pics(kspace, maps, l2=0.01, maxiter=50)
-    >>> image = pics(kspace, maps, regularizers=prox.Wavelet((-1, -2), 0.005), solver="fista")
+    >>> image = pics(kspace, maps, regularizers=priors.Wavelet((-1, -2), 0.005), solver="fista")
     >>> image = pics(kspace, maps, traj=trajectory, basis=subspace)
     """
     for keyword in sorted(_SET_BY_TERMS.keys() & extra.keys()):

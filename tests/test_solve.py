@@ -15,7 +15,7 @@ import torch
 
 import bartorch
 import bartorch.tools as bt
-from bartorch import _dispatch, linop, optim, prox
+from bartorch import _dispatch, linop, optim, priors
 from bartorch.linop import basic
 
 
@@ -99,7 +99,7 @@ def test_the_solve_builds_no_operator_of_its_own():
     maps = maps / maps.abs().square().sum(0, keepdim=True).sqrt()
     A = linop.NoncartesianSense(maps, (n, n), traj=traj)
     y = A(_rand(n, n))
-    term = prox.Wavelet(axes=(-1, -2), weight=0.01)
+    term = priors.Wavelet(axes=(-1, -2), weight=0.01)
     term.build(A.ishape)
 
     finufft.reset_counters()
@@ -178,7 +178,7 @@ def test_an_orthonormal_encoding_gives_back_what_it_was_given():
 def test_every_iteration_bart_has_is_reachable(make):
     A = _unitary()
     y = _rand(8, 8)
-    got = make(prox.Wavelet(axes=(-1, -2), weight=0.01))(y, A)
+    got = make(priors.Wavelet(axes=(-1, -2), weight=0.01))(y, A)
     assert got.shape == A.ishape
     assert torch.isfinite(got.abs()).all()
 
@@ -187,15 +187,15 @@ def test_a_heavier_weight_shrinks_the_answer():
     A = _unitary()
     y = _rand(8, 8)
     # This operator's normal is the identity, so one is the right step.
-    light = optim.FISTA(prox.Wavelet(axes=(-1, -2), weight=0.001), maxiter=30, step=1.0)(y, A)
-    heavy = optim.FISTA(prox.Wavelet(axes=(-1, -2), weight=0.5), maxiter=30, step=1.0)(y, A)
+    light = optim.FISTA(priors.Wavelet(axes=(-1, -2), weight=0.001), maxiter=30, step=1.0)(y, A)
+    heavy = optim.FISTA(priors.Wavelet(axes=(-1, -2), weight=0.5), maxiter=30, step=1.0)(y, A)
     assert heavy.abs().sum() < light.abs().sum()
 
 
 def test_several_terms_are_taken_together():
     terms = [
-        prox.Wavelet(axes=(-1, -2), weight=0.01),
-        prox.TotalVariation(axes=(-1, -2), weight=0.01),
+        priors.Wavelet(axes=(-1, -2), weight=0.01),
+        priors.TotalVariation(axes=(-1, -2), weight=0.01),
     ]
     got = optim.ADMM(terms, maxiter=5)(_rand(8, 8), _unitary())
     assert torch.isfinite(got.abs()).all()
@@ -204,14 +204,14 @@ def test_several_terms_are_taken_together():
 @pytest.mark.parametrize(
     "term",
     [
-        prox.Wavelet(axes=(-1, -2), weight=0.01),
-        prox.TotalVariation(axes=(-1, -2), weight=0.01),
-        prox.LocallyLowRank(axes=(-1, -2), weight=0.01),
-        prox.Laplace(axes=(-1, -2), weight=0.01),
-        prox.L1(weight=0.01),
-        prox.L2(weight=0.1),
-        prox.NonNegative(),
-        prox.ImaginaryL1(weight=0.01),
+        priors.Wavelet(axes=(-1, -2), weight=0.01),
+        priors.TotalVariation(axes=(-1, -2), weight=0.01),
+        priors.LocallyLowRank(axes=(-1, -2), weight=0.01),
+        priors.Laplace(axes=(-1, -2), weight=0.01),
+        priors.L1(weight=0.01),
+        priors.L2(weight=0.1),
+        priors.NonNegative(),
+        priors.ImaginaryL1(weight=0.01),
     ],
     ids=lambda t: type(t).__name__,
 )
@@ -222,7 +222,7 @@ def test_every_term_bart_has_can_be_asked_for(term):
 
 def test_a_term_is_built_once_and_handed_over_as_it_stands():
     """The object owns what BART made of it, so a second solve builds nothing."""
-    term = prox.Wavelet(axes=(-1, -2), weight=0.01)
+    term = priors.Wavelet(axes=(-1, -2), weight=0.01)
     first = term.build((8, 8))
     assert term.build((8, 8)) == first
 
@@ -237,9 +237,9 @@ def test_a_term_is_built_once_and_handed_over_as_it_stands():
 
 def _extending():
     return [
-        prox.TotalGeneralizedVariation((-1, -2), 0.01),
-        prox.InfimalConvolutionTV((-1, -2, -7), 0.01),
-        prox.InfimalConvolutionTGV((-1, -2, -7), 0.01),
+        priors.TotalGeneralizedVariation((-1, -2), 0.01),
+        priors.InfimalConvolutionTV((-1, -2, -7), 0.01),
+        priors.InfimalConvolutionTGV((-1, -2, -7), 0.01),
     ]
 
 
@@ -265,7 +265,7 @@ def test_no_other_iteration_takes_a_term_that_adds_unknowns(term, solver):
 
 @pytest.mark.parametrize(
     "term",
-    [prox.InfimalConvolutionTV((-1, -2), 0.01), prox.InfimalConvolutionTGV((-1, -2), 0.01)],
+    [priors.InfimalConvolutionTV((-1, -2), 0.01), priors.InfimalConvolutionTGV((-1, -2), 0.01)],
     ids=repr,
 )
 def test_an_infimal_convolution_needs_an_axis_of_each_kind(term):
@@ -283,13 +283,13 @@ def test_an_infimal_convolution_needs_an_axis_of_each_kind(term):
     "term,other,flag",
     [
         (
-            lambda coeffs: prox.TotalGeneralizedVariation((-1, -2), 0.01, alpha=(2.0, 0.5)),
-            lambda coeffs: prox.TotalGeneralizedVariation((-1, -2), 0.01),
+            lambda coeffs: priors.TotalGeneralizedVariation((-1, -2), 0.01, alpha=(2.0, 0.5)),
+            lambda coeffs: priors.TotalGeneralizedVariation((-1, -2), 0.01),
             {"alpha": (2.0, 0.5)},
         ),
         (
-            lambda coeffs: prox.InfimalConvolutionTV((-1, -2, coeffs), 0.01, gamma=(0.3, 2.0)),
-            lambda coeffs: prox.InfimalConvolutionTV((-1, -2, coeffs), 0.01),
+            lambda coeffs: priors.InfimalConvolutionTV((-1, -2, coeffs), 0.01, gamma=(0.3, 2.0)),
+            lambda coeffs: priors.InfimalConvolutionTV((-1, -2, coeffs), 0.01),
             {"gamma": (0.3, 2.0)},
         ),
     ],
@@ -318,8 +318,8 @@ def test_two_terms_cannot_ask_for_different_pairs():
     A = linop.FFT((1, 8, 8), axes=(-1, -2))
     solver = optim.ADMM(
         [
-            prox.TotalGeneralizedVariation((-1, -2), 0.01, alpha=(2.0, 0.5)),
-            prox.TotalGeneralizedVariation(0, 0.01),
+            priors.TotalGeneralizedVariation((-1, -2), 0.01, alpha=(2.0, 0.5)),
+            priors.TotalGeneralizedVariation(0, 0.01),
         ],
         maxiter=4,
     )
@@ -335,9 +335,9 @@ def test_two_terms_cannot_ask_for_different_shared_options():
     A = linop.FFT((1, 8, 8), axes=(-1, -2))
     solver = optim.ADMM(
         [
-            prox.TotalGeneralizedVariation((-1, -2), 0.01),
-            prox.Wavelet((-1, -2), 0.01, family="haar"),
-            prox.LocallyLowRank((-1, -2), 0.01, block=4),
+            priors.TotalGeneralizedVariation((-1, -2), 0.01),
+            priors.Wavelet((-1, -2), 0.01, family="haar"),
+            priors.LocallyLowRank((-1, -2), 0.01, block=4),
         ],
         maxiter=4,
     )
@@ -350,7 +350,7 @@ def test_a_term_that_adds_unknowns_refuses_a_tracked_right_hand_side():
     asked of it would silently be lost; it says so instead."""
     A = linop.FFT((1, 8, 8), axes=(-1, -2))
     y = _rand(1, 8, 8).requires_grad_()
-    solver = optim.ADMM(prox.TotalGeneralizedVariation((-1, -2), 0.01), maxiter=4)
+    solver = optim.ADMM(priors.TotalGeneralizedVariation((-1, -2), 0.01), maxiter=4)
     with pytest.raises(RuntimeError, match="cannot be differentiated through"):
         solver(y, A)
 
@@ -359,7 +359,7 @@ def test_a_term_that_adds_unknowns_does_not_unroll():
     """The step written out in ``bartorch.optim._iterators`` walks the image;
     this one walks the image and the fields behind it, and BART is where that
     vector is laid out."""
-    solver = optim.ADMM(prox.TotalGeneralizedVariation((-1, -2), 0.01), maxiter=4)
+    solver = optim.ADMM(priors.TotalGeneralizedVariation((-1, -2), 0.01), maxiter=4)
     with pytest.raises(TypeError, match="does not unroll"):
         solver.unrolled((1, 8, 8))
 
@@ -367,14 +367,14 @@ def test_a_term_that_adds_unknowns_does_not_unroll():
 @pytest.mark.parametrize(
     "term,ndim,string",
     [
-        (prox.Wavelet(axes=(-1, -2), weight=0.01), 2, "W:3:0:0.01"),
-        (prox.Wavelet(axes=(-1, -2), weight=0.01, joint_axes=0), 3, "W:3:4:0.01"),
-        (prox.Wavelet(axes=0, weight=0.01), 3, "W:4:0:0.01"),
-        (prox.L1(0.02, joint_axes=-3), 3, "I:4:0.02"),
-        (prox.L2(0.5), 2, "Q:0.5"),
-        (prox.NonNegative(), 2, "S"),
-        (prox.WaveletNIHT(axes=(-1, -2), count=10), 2, "H:3:0:10"),
-        (prox.TotalGeneralizedVariation((-1, -2), 0.01), 2, "G:3:0:0.01"),
+        (priors.Wavelet(axes=(-1, -2), weight=0.01), 2, "W:3:0:0.01"),
+        (priors.Wavelet(axes=(-1, -2), weight=0.01, joint_axes=0), 3, "W:3:4:0.01"),
+        (priors.Wavelet(axes=0, weight=0.01), 3, "W:4:0:0.01"),
+        (priors.L1(0.02, joint_axes=-3), 3, "I:4:0.02"),
+        (priors.L2(0.5), 2, "Q:0.5"),
+        (priors.NonNegative(), 2, "S"),
+        (priors.WaveletNIHT(axes=(-1, -2), count=10), 2, "H:3:0:10"),
+        (priors.TotalGeneralizedVariation((-1, -2), 0.01), 2, "G:3:0:0.01"),
     ],
     ids=lambda v: v if isinstance(v, str) else "",
 )
@@ -385,14 +385,14 @@ def test_a_term_is_the_string_the_parser_reads(term, ndim, string):
 
 
 def test_an_axis_is_an_axis_and_not_a_bitmask():
-    term = prox.Wavelet(axes=(-1, -2), weight=0.01)
+    term = priors.Wavelet(axes=(-1, -2), weight=0.01)
     assert term._flags(ndim=2) == (3, 0)
     assert term._flags(ndim=3) == (3, 0)
-    assert prox.Wavelet(axes=0, weight=0.01)._flags(ndim=3) == (4, 0)
+    assert priors.Wavelet(axes=0, weight=0.01)._flags(ndim=3) == (4, 0)
 
 
 def test_a_string_says_what_to_use_instead():
-    with pytest.raises(TypeError, match="prox.Wavelet"):
+    with pytest.raises(TypeError, match="priors.Wavelet"):
         optim.FISTA("W:3:0:0.01")
 
 
@@ -407,30 +407,30 @@ def test_niht_cannot_run_because_bart_asserts_against_its_own_iteration():
     solve here does not, so the assertion would end the process."""
     A = _unitary()
     with pytest.raises(NotImplementedError, match="iter/niht.c"):
-        optim.NIHT(prox.ImageNIHT((-1, -2), count=8), maxiter=4)(_rand(8, 8), A)
+        optim.NIHT(priors.ImageNIHT((-1, -2), count=8), maxiter=4)(_rand(8, 8), A)
 
 
 def test_the_tool_reaches_the_same_assertion_and_survives_it():
     kspace = bt.phantom(16, coils=2, kspace=True)
     maps = bt.ecalib(kspace, maps=1)
     with pytest.raises(bartorch.BartError, match="lsqr.c"):
-        bt.pics(kspace, maps, regularizers=prox.WaveletNIHT((-1, -2), count=20), maxiter=5)
+        bt.pics(kspace, maps, regularizers=priors.WaveletNIHT((-1, -2), count=20), maxiter=5)
 
 
 def test_niht_takes_only_hard_thresholding_terms():
     with pytest.raises(TypeError, match="NIHT"):
-        optim.NIHT(prox.Wavelet(axes=(-1, -2), weight=0.01))
+        optim.NIHT(priors.Wavelet(axes=(-1, -2), weight=0.01))
 
 
 def test_something_that_is_not_a_term_is_refused():
-    with pytest.raises(TypeError, match="bartorch.prox"):
+    with pytest.raises(TypeError, match="bartorch.priors"):
         optim.ADMM(object())
 
 
 def test_a_wavelet_family_bart_does_not_have_is_refused_here():
     """``opt_reg_configure`` answers an unknown family with ``error()``."""
     with pytest.raises(ValueError, match="family"):
-        prox.Wavelet(axes=(-1, -2), weight=0.01, family="db4")
+        priors.Wavelet(axes=(-1, -2), weight=0.01, family="db4")
 
 
 def test_the_terms_are_the_ones_barts_parser_knows():
@@ -446,9 +446,9 @@ def test_the_terms_are_the_ones_barts_parser_knows():
         pytest.skip("the BART submodule is not checked out")
     bart_knows = set(re.findall(r'strcmp\(rt, "([A-Za-z0-9]+)"\)', source.read_text()))
     offered = {
-        getattr(prox, name).kind
-        for name in prox.__all__
-        if isinstance(getattr(prox, name), type) and getattr(prox, name).kind
+        getattr(priors, name).kind
+        for name in priors.__all__
+        if isinstance(getattr(priors, name), type) and getattr(priors, name).kind
     }
     assert offered <= bart_knows
 
@@ -505,19 +505,19 @@ def _pics_problem(size=24, coils=4, accel=2):
 
 
 def _wavelet(**kwargs):
-    return prox.Wavelet(axes=(-1, -2), weight=0.01, **kwargs)
+    return priors.Wavelet(axes=(-1, -2), weight=0.01, **kwargs)
 
 
 def _tv(weight=0.01):
-    return prox.TotalVariation(axes=(-1, -2), weight=weight)
+    return priors.TotalVariation(axes=(-1, -2), weight=weight)
 
 
 def _llr():
-    return prox.LocallyLowRank(axes=(-1, -2), weight=0.01, block=4)
+    return priors.LocallyLowRank(axes=(-1, -2), weight=0.01, block=4)
 
 
 def _tgv(weight=0.01):
-    return prox.TotalGeneralizedVariation(axes=(-1, -2), weight=weight)
+    return priors.TotalGeneralizedVariation(axes=(-1, -2), weight=weight)
 
 
 #: One configuration of ``pics``, as the tool's arguments and as a solver built
@@ -662,10 +662,10 @@ def _subspace_problem(size=16, coils=4, frames=4, coeffs=2):
 @pytest.mark.parametrize(
     "term",
     [
-        lambda coeffs: prox.Wavelet((-1, -2), 0.01),
-        lambda coeffs: prox.TotalGeneralizedVariation((-1, -2), 0.01),
-        lambda coeffs: prox.InfimalConvolutionTV((-1, -2, coeffs), 0.01),
-        lambda coeffs: prox.InfimalConvolutionTGV((-1, -2, coeffs), 0.01),
+        lambda coeffs: priors.Wavelet((-1, -2), 0.01),
+        lambda coeffs: priors.TotalGeneralizedVariation((-1, -2), 0.01),
+        lambda coeffs: priors.InfimalConvolutionTV((-1, -2, coeffs), 0.01),
+        lambda coeffs: priors.InfimalConvolutionTGV((-1, -2, coeffs), 0.01),
     ],
     ids=["wavelet", "tgv", "ictv", "ictgv"],
 )
@@ -719,15 +719,15 @@ def test_cycle_spinning_is_on_as_it_is_for_the_tool():
     """``pics -n`` turns it off there, and it changes the answer."""
     A = _unitary()
     y = _rand(8, 8)
-    spun = optim.FISTA(prox.Wavelet((-1, -2), 0.05), maxiter=20, step=1.0)(y, A)
-    still = optim.FISTA(prox.Wavelet((-1, -2), 0.05, randshift=False), maxiter=20, step=1.0)(y, A)
+    spun = optim.FISTA(priors.Wavelet((-1, -2), 0.05), maxiter=20, step=1.0)(y, A)
+    still = optim.FISTA(priors.Wavelet((-1, -2), 0.05, randshift=False), maxiter=20, step=1.0)(y, A)
     assert not torch.equal(spun, still)
 
 
 def test_pridu_is_given_the_scaling_the_data_was_divided_by(_whole_coil_operator):
     """It balances its two steps with it, so it changes the iteration."""
     kspace, maps, A, y, scale = _pics_problem()
-    term = prox.TotalVariation(axes=(-1, -2), weight=0.01)
+    term = priors.TotalVariation(axes=(-1, -2), weight=0.01)
     assert not torch.equal(
         optim.PRIDU(term, maxiter=20, sigma_tau_ratio=scale)(y, A),
         optim.PRIDU(term, maxiter=20)(y, A),
@@ -885,7 +885,7 @@ def test_a_negative_weight_is_not_a_penalty():
 def test_cg_takes_quadratic_terms_and_not_proximal_ones(_small_encoding):
     A, y = _small_encoding
     with pytest.raises(TypeError, match="takes Tikhonov terms"):
-        optim.CG(terms=prox.L1(0.1))(y, A)
+        optim.CG(terms=priors.L1(0.1))(y, A)
 
 
 def test_a_solver_says_what_it_was_given():

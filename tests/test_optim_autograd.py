@@ -25,7 +25,7 @@ import warnings
 import pytest
 import torch
 
-from bartorch import linop, optim, prox
+from bartorch import linop, optim, priors
 from bartorch.optim._iterators import AsTerm
 
 SHAPE = (1, 8, 8)
@@ -254,13 +254,13 @@ def test_a_bart_term_refuses_rather_than_giving_a_wrong_gradient(problem):
     A, y = problem
     data = y.clone().requires_grad_(True)
     with pytest.raises(ValueError, match="carries no derivative"):
-        optim.admm(data, A, prox.L1(0.01), maxiter=2, cg_maxiter=8)
+        optim.admm(data, A, priors.L1(0.01), maxiter=2, cg_maxiter=8)
 
 
 def test_a_frozen_term_says_that_is_what_was_meant(problem):
     A, y = problem
     data = y.clone().requires_grad_(True)
-    made = optim.admm(data, A, prox.frozen(prox.L1(0.01)), maxiter=2, cg_maxiter=8)
+    made = optim.admm(data, A, priors.frozen(priors.L1(0.01)), maxiter=2, cg_maxiter=8)
     made.abs().square().sum().backward()
     assert torch.isfinite(data.grad).all()
 
@@ -270,8 +270,8 @@ def test_freezing_a_term_changes_no_numbers(problem):
     arithmetic -- so the library route is still there and still exact."""
     A, y = problem
     settings = dict(maxiter=3, cg_maxiter=8)
-    plain = optim.ADMM(prox.L1(0.01), **settings)
-    frozen = optim.ADMM(prox.frozen(prox.L1(0.01)), **settings)
+    plain = optim.ADMM(priors.L1(0.01), **settings)
+    frozen = optim.ADMM(priors.frozen(priors.L1(0.01)), **settings)
     assert torch.equal(frozen(y, A), plain(y, A))
     assert torch.equal(frozen.in_library(y, A), plain.in_library(y, A))
 
@@ -281,7 +281,7 @@ def test_the_transform_in_front_of_a_term_is_recorded(problem):
     applies a finite difference to the iterate and its adjoint on the way
     back.  Both are BART's, and both are in the graph."""
     A, y = problem
-    term = prox.frozen(prox.TotalVariation((-1, -2), 0.01))
+    term = priors.frozen(priors.TotalVariation((-1, -2), 0.01))
     weight = torch.nn.Parameter(torch.tensor(0.8))
     # `maxiter` is a budget on conjugate-gradient iterations across the whole
     # run, not a count of steps, and a gradient needs more than one step.

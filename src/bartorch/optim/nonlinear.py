@@ -107,7 +107,7 @@ class IRGNM:
 
     Wavelet-regularized, which is what ``moba -l1`` runs:
 
-    >>> IRGNM(inner=optim.FISTA(prox.Wavelet((-1, -2), 0.001), maxiter=30))(
+    >>> IRGNM(inner=optim.FISTA(priors.Wavelet((-1, -2), 0.001), maxiter=30))(
     ...     kspace, F, x0=start
     ... )
 
@@ -115,7 +115,7 @@ class IRGNM:
 
     >>> IRGNM(
     ...     inner=optim.ADMM(
-    ...         [prox.Wavelet((-1, -2), 0.001), prox.TotalVariation((-1, -2), 0.01)]
+    ...         [priors.Wavelet((-1, -2), 0.001), priors.TotalVariation((-1, -2), 0.01)]
     ...     )
     ... )(kspace, F, x0=start)
 

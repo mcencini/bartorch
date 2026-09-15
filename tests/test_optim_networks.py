@@ -20,7 +20,7 @@ import pytest
 import torch
 
 import bartorch
-from bartorch import linop, optim, prox
+from bartorch import linop, optim, priors
 from bartorch.optim._iterators import AsTerm
 
 SHAPE = (1, 8, 8)
@@ -63,8 +63,8 @@ _TRAINS = {"ist": ["stepsize"], "fista": ["stepsize"], "admm": ["rho"], "pridu":
 @pytest.mark.parametrize("name", list(_SOLVERS))
 def test_a_network_with_nothing_to_learn_is_the_solver_to_the_bit(problem, name):
     A, y, physics = problem
-    direct = _SOLVERS[name](prox.L1(0.05))(y, A)
-    network = _SOLVERS[name](prox.L1(0.05)).unrolled(SHAPE)
+    direct = _SOLVERS[name](priors.L1(0.05))(y, A)
+    network = _SOLVERS[name](priors.L1(0.05)).unrolled(SHAPE)
     with torch.no_grad():
         through = network(y[None], physics)
     assert torch.equal(direct, through[0])
@@ -78,11 +78,11 @@ def test_a_batch_is_the_same_answers_side_by_side(problem, name):
     # items steer each other.
     A, _, physics = problem
     data = torch.stack([A(_rand(*SHAPE)) for _ in range(3)])
-    network = _SOLVERS[name](prox.L1(0.05)).unrolled(SHAPE)
+    network = _SOLVERS[name](priors.L1(0.05)).unrolled(SHAPE)
     with torch.no_grad():
         batched = network(data, physics)
     for i in range(3):
-        assert torch.equal(batched[i], _SOLVERS[name](prox.L1(0.05))(data[i], A))
+        assert torch.equal(batched[i], _SOLVERS[name](priors.L1(0.05))(data[i], A))
 
 
 def test_a_network_starts_where_bart_starts(problem):
@@ -90,7 +90,7 @@ def test_a_network_starts_where_bart_starts(problem):
     # is what makes the answers above the same.  The other start is one
     # keyword away, because a network about to be trained usually wants it.
     A, y, physics = problem
-    solver = optim.IST(prox.L1(0.05), maxiter=5, step=0.7)
+    solver = optim.IST(priors.L1(0.05), maxiter=5, step=0.7)
     with torch.no_grad():
         ours = solver.unrolled(SHAPE)(y[None], physics)
         theirs = solver.unrolled(SHAPE, custom_init=None)(y[None], physics)
@@ -127,7 +127,7 @@ def test_a_step_size_that_is_learned_is_no_longer_the_libraries(problem):
     # precision throughout rather than in a double rounded at the end.  The
     # answer moves, and saying so is the point of the test.
     _, y, physics = problem
-    solver = optim.IST(prox.frozen(prox.L1(0.05)), maxiter=5, step=0.7)
+    solver = optim.IST(priors.frozen(priors.L1(0.05)), maxiter=5, step=0.7)
     plain = solver.unrolled(SHAPE)
     learned = solver.unrolled(SHAPE, trainable=["stepsize"])
     with torch.no_grad():
@@ -136,7 +136,7 @@ def test_a_step_size_that_is_learned_is_no_longer_the_libraries(problem):
 
 def test_a_parameter_that_is_not_one_says_so(problem):
     with pytest.raises(ValueError, match="no parameter called 'rho' to learn"):
-        optim.IST(prox.L1(0.05), maxiter=4).unrolled(SHAPE, trainable=["rho"])
+        optim.IST(priors.L1(0.05), maxiter=4).unrolled(SHAPE, trainable=["rho"])
 
 
 def test_a_solver_that_runs_in_the_library_has_nothing_to_unroll():
@@ -146,9 +146,9 @@ def test_a_solver_that_runs_in_the_library_has_nothing_to_unroll():
 
 def test_a_step_from_a_power_iteration_needs_an_encoding_a_network_has_not_got():
     with pytest.raises(ValueError, match="power iteration over the encoding"):
-        optim.FISTA(prox.L1(0.05), maxiter=4, eigen=True).unrolled(SHAPE)
+        optim.FISTA(priors.L1(0.05), maxiter=4, eigen=True).unrolled(SHAPE)
     with pytest.raises(ValueError, match="power iteration over the encoding"):
-        optim.PRIDU(prox.L1(0.05), maxiter=4, eigen=True).unrolled(SHAPE)
+        optim.PRIDU(priors.L1(0.05), maxiter=4, eigen=True).unrolled(SHAPE)
 
 
 # --- at a fixed point ---------------------------------------------------------
@@ -159,14 +159,14 @@ def test_the_fixed_point_is_one(problem, name):
     """What comes back is a point the step leaves where it is."""
     A, y, physics = problem
     solver = {
-        "ist": optim.IST(prox.L1(0.02), maxiter=300, step=0.7),
-        "pridu": optim.PRIDU(prox.L1(0.02), maxiter=300, step=0.95),
+        "ist": optim.IST(priors.L1(0.02), maxiter=300, step=0.7),
+        "pridu": optim.PRIDU(priors.L1(0.02), maxiter=300, step=0.95),
     }[name]
     with torch.no_grad():
         point = solver.fixed_point(SHAPE)(y[None], physics)[0]
         moved = {
-            "ist": optim.IST(prox.L1(0.02), maxiter=1, step=0.7),
-            "pridu": optim.PRIDU(prox.L1(0.02), maxiter=1, step=0.95),
+            "ist": optim.IST(priors.L1(0.02), maxiter=1, step=0.7),
+            "pridu": optim.PRIDU(priors.L1(0.02), maxiter=1, step=0.95),
         }[name]
         again = moved(y, A, point)
     assert (again - point).abs().max() < 1e-2 * point.abs().max()
@@ -182,9 +182,9 @@ def test_a_fixed_point_model_trains_through_the_point_it_found(problem):
 
 def test_fista_says_why_it_has_no_fixed_point():
     with pytest.raises(TypeError, match="no fixed point"):
-        optim.FISTA(prox.L1(0.05), maxiter=8).fixed_point(SHAPE)
+        optim.FISTA(priors.L1(0.05), maxiter=8).fixed_point(SHAPE)
 
 
 def test_alternating_directions_says_where_its_fixed_point_is_instead():
     with pytest.raises(TypeError, match=r"fixed point is in \(x, z, u\)"):
-        optim.ADMM(prox.L1(0.05), maxiter=8).fixed_point(SHAPE)
+        optim.ADMM(priors.L1(0.05), maxiter=8).fixed_point(SHAPE)

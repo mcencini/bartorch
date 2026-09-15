@@ -12,7 +12,7 @@ loop to the bit.
 import pytest
 import torch
 
-from bartorch import linop, nlop, optim, prox
+from bartorch import linop, nlop, optim, priors
 
 
 def _rand(*shape):
@@ -104,7 +104,7 @@ def test_a_proximal_inner_solver_reaches_the_same_answer_at_no_threshold(solver)
     F, data, _ = _decay()
     start = torch.full((24,), 0.1, dtype=torch.complex64)
     reference = optim.IRGNM(**_SETTINGS, inner=optim.CG())(data, F, x0=start.clone())
-    inner = getattr(optim, solver)(prox.L1(0.0), maxiter=80)
+    inner = getattr(optim, solver)(priors.L1(0.0), maxiter=80)
     made = optim.IRGNM(**_SETTINGS, inner=inner)(data, F, x0=start.clone())
     torch.testing.assert_close(made, reference, rtol=2e-2, atol=2e-3)
 
@@ -115,7 +115,7 @@ def test_a_threshold_pulls_the_answer_away_from_the_unregularized_one():
     plain = optim.IRGNM(**_SETTINGS, inner=optim.CG())(data, F, x0=start.clone())
     apart = None
     for weight in (1e-5, 1e-3, 1e-1):
-        made = optim.IRGNM(**_SETTINGS, inner=optim.FISTA(prox.L1(weight), maxiter=60))(
+        made = optim.IRGNM(**_SETTINGS, inner=optim.FISTA(priors.L1(weight), maxiter=60))(
             data, F, x0=start.clone()
         )
         distance = (made - plain).abs().max().item()
@@ -130,14 +130,14 @@ def test_the_inner_step_is_scaled_by_a_power_iteration_as_barts_own_is():
     # whose largest eigenvalue is near five diverges outright.
     F, data, _ = _decay()
     start = torch.full((24,), 0.1, dtype=torch.complex64)
-    made = optim.IRGNM(**_SETTINGS, inner=optim.FISTA(prox.L1(0.0), maxiter=40, eigen=False))(
+    made = optim.IRGNM(**_SETTINGS, inner=optim.FISTA(priors.L1(0.0), maxiter=40, eigen=False))(
         data, F, x0=start.clone()
     )
     assert torch.isfinite(made).all()
 
 
 def test_a_solver_handed_in_is_not_changed_by_the_run():
-    inner = optim.FISTA(prox.L1(0.001), maxiter=20, eigen=False, cclambda=0.0)
+    inner = optim.FISTA(priors.L1(0.001), maxiter=20, eigen=False, cclambda=0.0)
     F, data, _ = _decay()
     optim.IRGNM(**_SETTINGS, inner=inner)(data, F, x0=torch.full((24,), 0.1, dtype=torch.complex64))
     assert inner.eigen is False

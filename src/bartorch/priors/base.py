@@ -143,7 +143,7 @@ class Regularizer(abc.ABC):
 
         Examples
         --------
-        >>> prox.Wavelet((-1, -2), 0.01).prox(image, gamma=0.95)
+        >>> priors.Wavelet((-1, -2), 0.01).prox(image, gamma=0.95)
         """
         from bartorch.linop.base import _tracking
 
@@ -153,7 +153,7 @@ class Regularizer(abc.ABC):
                 "`operator_p_fun_t` is (data, mu, dst, src), with nowhere for one to live, "
                 "so an iteration with this term in it cannot be differentiated.  Put a "
                 "denoiser where the term goes -- `optim.admm(y, A, denoiser)` differentiates "
-                "end to end -- or `prox.frozen(term)` to say that this one is meant to be a "
+                "end to end -- or `priors.frozen(term)` to say that this one is meant to be a "
                 "constant in the graph"
             )
 
@@ -213,7 +213,7 @@ class Regularizer(abc.ABC):
         from bartorch.linop.base import _tracking
 
         if _tracking(x):
-            from bartorch.prox.autograd import apply_transform
+            from bartorch.priors.autograd import apply_transform
 
             return apply_transform(
                 self, x, tuple(image_shape if image_shape is not None else x.shape), mode
@@ -433,8 +433,8 @@ def _as_terms(regularizers) -> list[Regularizer]:
     """``regularizers`` -- None, one term or an iterable of them -- as a list of terms."""
     if isinstance(regularizers, str):
         raise TypeError(
-            f"a regularizer is a term from bartorch.prox, not the string {regularizers!r}; "
-            "`prox.Wavelet(axes=(-1, -2), weight=...)` is what `-R W:3:0:...` says"
+            f"a regularizer is a term from bartorch.priors, not the string {regularizers!r}; "
+            "`priors.Wavelet(axes=(-1, -2), weight=...)` is what `-R W:3:0:...` says"
         )
     if regularizers is None:
         return []
@@ -443,7 +443,7 @@ def _as_terms(regularizers) -> list[Regularizer]:
     terms = list(regularizers) if isinstance(regularizers, Iterable) else [regularizers]
     for term in terms:
         if not isinstance(term, Regularizer) and not _term_shaped(term):
-            raise TypeError(f"a regularizer is a term from bartorch.prox, not {term!r}")
+            raise TypeError(f"a regularizer is a term from bartorch.priors, not {term!r}")
     return terms
 
 
@@ -542,6 +542,6 @@ def frozen(term: Regularizer) -> Regularizer:
 
     Examples
     --------
-    >>> optim.admm(y, A, [denoiser, prox.frozen(prox.Wavelet((-1, -2), 0.01))])
+    >>> optim.admm(y, A, [denoiser, priors.frozen(priors.Wavelet((-1, -2), 0.01))])
     """
     return _Frozen(term)

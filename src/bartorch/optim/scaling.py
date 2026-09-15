@@ -58,7 +58,7 @@ def data_scaling(
     --------
     >>> y = bartorch.fftmod(kspace * pattern, axes=(-1, -2, -3), inverse=True)
     >>> scale = optim.data_scaling(y)
-    >>> x = optim.FISTA(prox.Wavelet((-1, -2), 0.01))((y / scale).squeeze(1), A)
+    >>> x = optim.FISTA(priors.Wavelet((-1, -2), 0.01))((y / scale).squeeze(1), A)
     """
     import bartorch.tools as bt
 

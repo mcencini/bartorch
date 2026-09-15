@@ -58,7 +58,7 @@ to be *held*: to unroll it, to drive it to a fixed point, or to hand it to
    irgnm
 ```
 
-A `deepinv` prior or a bare denoiser goes wherever a {mod}`bartorch.prox` term
+A `deepinv` prior or a bare denoiser goes wherever a {mod}`bartorch.priors` term
 goes, which the classes do not take.  `niht` and {class}`NIHT` refuse: BART's
 own iteration asserts against the operator `lsqr2` hands it, so no NIHT solve
 runs, `bart pics -R H` included.
@@ -96,7 +96,7 @@ whose linearized problem goes to any solver here.
 
 ```python
 optim.IRGNM(inner=optim.CG())                               # iter4_irgnm2, to the bit
-optim.IRGNM(inner=optim.FISTA(prox.Wavelet(axes, 0.001)))   # moba -l1's shape
+optim.IRGNM(inner=optim.FISTA(priors.Wavelet(axes, 0.001)))   # moba -l1's shape
 ```
 
 ```{eval-rst}

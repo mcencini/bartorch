@@ -21,7 +21,7 @@ import pytest
 import torch
 
 import bartorch.tools as bt
-from bartorch import linop, optim, prox
+from bartorch import linop, optim, priors
 
 
 def _rand(*shape):
@@ -78,9 +78,9 @@ def test_a_preconditioner_of_the_wrong_shape_says_so():
     "make",
     [
         lambda M: optim.CG(maxiter=6, precond=M),
-        lambda M: optim.FISTA(prox.L1(0.001), maxiter=6, precond=M),
-        lambda M: optim.ADMM(prox.L1(0.001), maxiter=6, precond=M),
-        lambda M: optim.PRIDU(prox.L1(0.001), maxiter=6, precond=M),
+        lambda M: optim.FISTA(priors.L1(0.001), maxiter=6, precond=M),
+        lambda M: optim.ADMM(priors.L1(0.001), maxiter=6, precond=M),
+        lambda M: optim.PRIDU(priors.L1(0.001), maxiter=6, precond=M),
     ],
     ids=["cg", "fista", "admm", "pridu"],
 )
@@ -117,9 +117,9 @@ def test_the_sampler_takes_a_preconditioner_pics_cannot_reach():
     A = linop.FFT((8, 8), axes=-1)
     y = A(_rand(8, 8))
     settings = dict(step=0.1, maxiter=5)
-    plain = optim.EulerMaruyama(prox.L2(0.01), **settings)(y, A)
+    plain = optim.EulerMaruyama(priors.L2(0.01), **settings)(y, A)
     preconditioned = optim.EulerMaruyama(
-        prox.L2(0.01),
+        priors.L2(0.01),
         **settings,
         sampler_precond=linop.Identity((8, 8)),
         sampler_precond_diag=1.0,
@@ -134,7 +134,7 @@ def test_the_sampler_reads_its_diagonal_first():
     # eulermaruyama_precond is entered on a positive diagonal and not on a
     # preconditioner, so one without the other would be silently ignored.
     with pytest.raises(ValueError, match="diagonal is positive"):
-        optim.EulerMaruyama(prox.L2(0.01), step=0.1, sampler_precond=linop.Identity((8, 8)))
+        optim.EulerMaruyama(priors.L2(0.01), step=0.1, sampler_precond=linop.Identity((8, 8)))
 
 
 def test_a_zero_diagonal_leaves_the_plain_sampler():
@@ -143,10 +143,10 @@ def test_a_zero_diagonal_leaves_the_plain_sampler():
     # takes the plain path rather than being refused or half-applied.
     A = linop.FFT((8, 8), axes=-1)
     y = A(_rand(8, 8))
-    solver = optim.EulerMaruyama(prox.L2(0.01), step=0.1, maxiter=5)
+    solver = optim.EulerMaruyama(priors.L2(0.01), step=0.1, maxiter=5)
     assert 0.0 == solver.sampler_precond_diag
     assert solver.sampler_precond is None
-    made = optim.EulerMaruyama(prox.L2(0.01), step=0.1, maxiter=5, sampler_precond_diag=0.0)(y, A)
+    made = optim.EulerMaruyama(priors.L2(0.01), step=0.1, maxiter=5, sampler_precond_diag=0.0)(y, A)
     assert torch.isfinite(made).all()
 
 
@@ -164,7 +164,7 @@ def test_the_tool_flag_is_a_regularizer_and_not_a_preconditioner():
     maps = torch.ones(coils, 1, n, n, dtype=torch.complex64)
     kspace = _rand(coils, 1, n, n)
     pattern = torch.ones(1, 1, n, n, dtype=torch.complex64)
-    regularized = dict(regularizers=prox.Wavelet((-1, -2), 0.001), i=5, m=True)
+    regularized = dict(regularizers=priors.Wavelet((-1, -2), 0.001), i=5, m=True)
     plain = bt.pics(kspace, maps, **regularized)
     flagged = bt.pics(kspace, maps, **regularized, p=pattern, precond=True)
     assert torch.isfinite(flagged).all()

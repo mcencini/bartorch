@@ -10,11 +10,11 @@ API = Path(__file__).resolve().parent.parent / "docs" / "api"
 
 #: Public modules and the names of theirs that are modules or data, not entries.
 MODULES = {
-    "bartorch": {"__version__", "io", "linop", "nlop", "optim", "prox", "tools"},
+    "bartorch": {"__version__", "io", "linop", "nlop", "optim", "priors", "tools"},
     "bartorch.linop": set(),
     "bartorch.nlop": set(),
     "bartorch.optim": set(),
-    "bartorch.prox": set(),
+    "bartorch.priors": set(),
     "bartorch.tools": set(),
     "bartorch.io": set(),
 }

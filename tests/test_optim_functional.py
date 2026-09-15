@@ -3,7 +3,7 @@
 Two claims.  That `optim.fista(y, A, term, ...)` is `optim.FISTA(term,
 ...)(y, A)` and nothing else -- so the one-line form costs nothing and the
 configured form stays the one to keep.  And that a ``deepinv`` prior goes
-wherever a :mod:`bartorch.prox` term goes, which is what makes a plug-and-play
+wherever a :mod:`bartorch.priors` term goes, which is what makes a plug-and-play
 reconstruction BART's iteration with the threshold replaced rather than a
 second implementation of it.
 """
@@ -11,7 +11,7 @@ second implementation of it.
 import pytest
 import torch
 
-from bartorch import linop, optim, prox
+from bartorch import linop, optim, priors
 
 SHAPE = (1, 8, 8)
 
@@ -54,7 +54,7 @@ def problem():
 )
 def test_the_function_is_the_class_configured_and_called(call, build, problem):
     A, y = problem
-    term = prox.L1(0.05)
+    term = priors.L1(0.05)
     assert torch.equal(call(y, A, term), build(term)(y, A))
 
 
@@ -65,7 +65,7 @@ def test_conjugate_gradients_too(problem):
 
 def test_a_warm_start_goes_through(problem):
     A, y = problem
-    term = prox.L1(0.05)
+    term = priors.L1(0.05)
     x0 = _rand(*SHAPE)
     assert torch.equal(
         optim.fista(y, A, term, maxiter=8, step=0.7, x0=x0),
@@ -79,7 +79,7 @@ def test_a_warm_start_goes_through(problem):
 
 def test_several_terms_are_taken_as_a_list(problem):
     A, y = problem
-    terms = [prox.L1(0.05), prox.TotalVariation((-1, -2), 0.01)]
+    terms = [priors.L1(0.05), priors.TotalVariation((-1, -2), 0.01)]
     assert torch.equal(
         optim.admm(y, A, terms, maxiter=8, cg_maxiter=4),
         optim.ADMM(terms, maxiter=8, cg_maxiter=4)(y, A),
@@ -132,7 +132,7 @@ def test_a_denoiser_and_a_term_split_apart_in_the_same_solve(problem):
     got = optim.admm(
         y,
         A,
-        [_denoiser(), prox.TotalVariation((-1, -2), 0.01)],
+        [_denoiser(), priors.TotalVariation((-1, -2), 0.01)],
         maxiter=6,
         cg_maxiter=3,
         g_param=0.05,
@@ -168,7 +168,7 @@ def test_there_is_no_library_route_for_a_denoiser(problem):
 def test_a_terms_own_weight_is_not_a_priors_parameter(problem):
     A, y = problem
     with pytest.raises(ValueError, match="carries its weight"):
-        optim.fista(y, A, prox.L1(0.05), maxiter=6, g_param=0.05)
+        optim.fista(y, A, priors.L1(0.05), maxiter=6, g_param=0.05)
 
 
 def test_something_that_is_neither_is_still_refused(problem):
@@ -212,7 +212,7 @@ def test_the_function_runs_the_iteration_and_not_a_second_implementation(
     )
 
     A, y = problem
-    call(y, A, prox.L1(0.01))
+    call(y, A, priors.L1(0.01))
     assert seen, f"{iteration} was never stepped, so something else ran the iteration"
 
 
@@ -232,7 +232,7 @@ def test_niht_is_refused_the_way_its_class_is():
     see `tests/test_solve.py`."""
     A = linop.FFT((8, 8), axes=(-1, -2))
     y = A(_rand(8, 8))
-    term = prox.WaveletNIHT((-1, -2), count=12)
+    term = priors.WaveletNIHT((-1, -2), count=12)
     with pytest.raises(NotImplementedError, match="applies the normal operator in place"):
         optim.niht(y, A, term, maxiter=6)
 
@@ -243,7 +243,7 @@ def test_eulermaruyama_forwards_to_its_class():
     # missing `step` shows because the class requires one.
     A = linop.FFT((8, 8), axes=(-1, -2))
     y = A(_rand(8, 8))
-    made = optim.eulermaruyama(y, A, prox.L2(0.01), step=0.1, maxiter=5)
+    made = optim.eulermaruyama(y, A, priors.L2(0.01), step=0.1, maxiter=5)
     assert tuple(made.shape) == (8, 8) and torch.isfinite(made).all()
     with pytest.raises(TypeError):
         optim.eulermaruyama(y, A, maxiter=5)

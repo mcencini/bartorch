@@ -43,7 +43,7 @@ would otherwise have been linked against.
 | `src/csrc/substitute/backend.[ch]`, `ref_blas.c`, `cblas_shim.c`, `lapacke_shim.c` | CBLAS and LAPACKE as BART calls them, forwarded to a table of Fortran-ABI routines with reference BLAS as the fallback. |
 | `src/csrc/substitute/finufft.c`, `nufft_finufft.c` | FINUFFT's and cuFINUFFT's entry points, and BART's NUFFT operator built out of a pair of their plans -- and the normal, which stores one of those in BART's operator through `noncart/nufft_priv.h` rather than letting it grid one. |
 | `src/csrc/substitute/psf.c` | The three `compute_psf*` entry points, so that the adjoint transform a point spread function is comes from the substitution. |
-| `src/bartorch/` | The package.  Public: the functions in `fourier.py`, `wavelet.py`, `thresh.py`, `util.py`, `interp.py`, `registration.py`, `metrics.py` and `_settings.py`, re-exported flat as `bartorch.*`; `linop/` and `nlop/` (a class per operator); `optim/` (a class per BART iteration); `prox/` (BART's regularization terms, and its denoisers); `tools/` (BART's applications, in four sections); `io.py` (CFL files).  Private: `_abi.py` (the ctypes signatures, generated from the header), `_lib.py` (finding and loading the library), `_marshal.py` (what an ABI argument looks like), `_backend.py` (which library serves BLAS and LAPACK), `_buffer.py` (a tensor over one of BART's buffers, host or device), `_dispatch.py` (running a command on tensors), `_operator.py` (what every operator shares), `_finufft.py` and `_cuda.py` (the substitution's and the card's controls), `_deepinv.py` (the adapter), `_catalogue.py` and `_options.py` (what BART declares, and what each option is called here), `_call.py` (the mark on a hand-written wrapper, and wrappers built from the catalogue), `_coverage.py` (where each command is exposed, or why not), `_macos_openmp.py` (pointing FINUFFT's OpenMP runtime at torch's, so one is loaded); inside `linop/`, `form.py` (the encoding form and the plan it reports) and `plan.py` (matching a composition against that form). |
+| `src/bartorch/` | The package.  Public: the functions in `fourier.py`, `wavelet.py`, `thresh.py`, `util.py`, `interp.py`, `registration.py`, `metrics.py` and `_settings.py`, re-exported flat as `bartorch.*`; `linop/` and `nlop/` (a class per operator); `optim/` (a class per BART iteration); `priors/` (BART's regularization terms, and its denoisers); `tools/` (BART's applications, in four sections); `io.py` (CFL files).  Private: `_abi.py` (the ctypes signatures, generated from the header), `_lib.py` (finding and loading the library), `_marshal.py` (what an ABI argument looks like), `_backend.py` (which library serves BLAS and LAPACK), `_buffer.py` (a tensor over one of BART's buffers, host or device), `_dispatch.py` (running a command on tensors), `_operator.py` (what every operator shares), `_finufft.py` and `_cuda.py` (the substitution's and the card's controls), `_deepinv.py` (the adapter), `_catalogue.py` and `_options.py` (what BART declares, and what each option is called here), `_call.py` (the mark on a hand-written wrapper, and wrappers built from the catalogue), `_coverage.py` (where each command is exposed, or why not), `_macos_openmp.py` (pointing FINUFFT's OpenMP runtime at torch's, so one is loaded); inside `linop/`, `form.py` (the encoding form and the plan it reports) and `plan.py` (matching a composition against that form). |
 | `scripts/gen_abi.py` | Generates `_abi.py` from `src/csrc/include/bartorch.h`. Run after changing the header; `tests/test_abi.py` fails when the checked-in file is not what it writes. |
 | `scripts/gen_catalogue.py` | Generates `_catalogue.py` from the BART sources: every command, its arguments, and every option with both spellings. Run after a submodule bump. |
 | `scripts/run_tests.sh` | Builds whatever changed on the C side, then runs the suite against `src/`, without installing. |
@@ -789,7 +789,7 @@ operators beside them. Anything else written here would be a second
 implementation that drifts, and a result that is nearly BART's is worth less
 than no result.
 
-So `optim` iterates nothing, and `prox/` computes nothing.  Each class in
+So `optim` iterates nothing, and `priors/` computes nothing.  Each class in
 `optim` hands its algorithm's name and settings to `bartorch_solve` -- or
 `bartorch_irgnm`, for `IRGNM` -- which configures BART's iteration exactly as
 `pics` does. A term fills
@@ -955,7 +955,7 @@ public argument takes a bitmask or a `-R` string. Hand-written wrappers
 convert their own; derived wrappers and what a curated one passes through by
 name follow `_call.TRANSLATED`, and `test_tools` fails on a dimension-like
 argument that is in neither. `pics`, `sqpics`, `wshfl` and `moba` take
-`bartorch.prox` terms, serialized by `Regularizer._argument`. A flag's value can be an
+`bartorch.priors` terms, serialized by `Regularizer._argument`. A flag's value can be an
 array rather than a number -- `pics(kspace, maps, t=traj)`, `-p` for a
 sampling pattern, `-B` for a basis -- and is registered and copied like any
 other input. BART's `fft` tool is

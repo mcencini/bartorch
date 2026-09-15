@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from bartorch._dispatch import BartError
-from bartorch.prox import nlmeans, rof, tgv
+from bartorch.priors import nlmeans, rof, tgv
 
 N = 16
 

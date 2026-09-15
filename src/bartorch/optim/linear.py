@@ -1,7 +1,7 @@
 """Regularized least squares by the iterations ``pics`` runs.
 
 Each solver hands BART's ``lsqr2`` the encoding, the operators BART built for
-the :mod:`bartorch.prox` terms, and its settings, through the same
+the :mod:`bartorch.priors` terms, and its settings, through the same
 ``italgo_config`` call ``pics`` makes.
 """
 
@@ -18,8 +18,8 @@ from bartorch import _marshal
 from bartorch._dispatch import BartError, _ensure_ready, _lock, _on_device
 from bartorch._lib import library
 from bartorch._operator import as_operand
-from bartorch.prox.base import Regularizer, _as_terms
-from bartorch.prox.terms import L2
+from bartorch.priors.base import Regularizer, _as_terms
+from bartorch.priors.terms import L2
 
 __all__ = ["ADMM", "CG", "PRIDU", "EulerMaruyama", "FISTA", "IST", "NIHT", "Tikhonov"]
 
@@ -442,7 +442,7 @@ def _in_library(solver, y, A, x0):
             "adds unknowns to the optimization: the solve runs inside the library, which "
             "is where BART lays that larger vector out, and the library's loop records "
             "nothing.  Detach the data, or regularize with a term that walks the image "
-            "alone -- prox.TotalVariation is the one nearest to these"
+            "alone -- priors.TotalVariation is the one nearest to these"
         )
     return solver.in_library(y, A, x0)
 
@@ -846,7 +846,7 @@ class IST(_Solver):
     Parameters
     ----------
     regularizers : Regularizer or iterable of Regularizer, optional
-        Terms from :mod:`bartorch.prox`.
+        Terms from :mod:`bartorch.priors`.
     maxiter : int
     step : float
         Step size (``pics -s``); 0.95 is what ``pics`` uses when none is given.
@@ -975,7 +975,7 @@ class FISTA(IST):
     Parameters
     ----------
     regularizers : Regularizer or iterable of Regularizer, optional
-        Terms from :mod:`bartorch.prox`.
+        Terms from :mod:`bartorch.priors`.
     maxiter : int
     step : float
         Step size (``pics -s``); 0.95 is what ``pics`` uses when none is given.
@@ -1058,7 +1058,7 @@ class ADMM(_Solver):
     Parameters
     ----------
     regularizers : Regularizer or iterable of Regularizer, optional
-        Terms from :mod:`bartorch.prox`.  Terms that add unknowns to the
+        Terms from :mod:`bartorch.priors`.  Terms that add unknowns to the
         optimization -- total generalized variation and the two infimal
         convolutions -- are taken here and solved inside the library.
     maxiter : int
@@ -1302,7 +1302,7 @@ class PRIDU(_Solver):
     Parameters
     ----------
     regularizers : Regularizer or iterable of Regularizer, optional
-        Terms from :mod:`bartorch.prox`.  Terms that add unknowns to the
+        Terms from :mod:`bartorch.priors`.  Terms that add unknowns to the
         optimization are taken here and solved inside the library, as
         :class:`ADMM` takes them.
     maxiter : int
@@ -1450,7 +1450,7 @@ class NIHT(_Solver):
     Parameters
     ----------
     regularizers : WaveletNIHT or ImageNIHT, or an iterable of them
-        The hard-thresholding terms from :mod:`bartorch.prox`.
+        The hard-thresholding terms from :mod:`bartorch.priors`.
     maxiter : int
     cclambda : float
         Weight of an identity added to the normal operator (``pics -q``).
@@ -1492,7 +1492,7 @@ class NIHT(_Solver):
             "(iter/niht.c:85, :212) and the operator `lsqr2` hands it asserts that it "
             "is not (iter/lsqr.c:60), so every solve ends in an assertion -- `bart pics "
             "-R H` included.  Nothing here can work around it; it needs a BART fix.  "
-            "prox.WaveletNIHT and prox.ImageNIHT still reach tools.pics, which catches "
+            "priors.WaveletNIHT and priors.ImageNIHT still reach tools.pics, which catches "
             "the assertion rather than ending the process"
         )
 
@@ -1503,7 +1503,7 @@ class EulerMaruyama(_Solver):
     Parameters
     ----------
     regularizers : Regularizer or iterable of Regularizer, optional
-        Terms from :mod:`bartorch.prox`.
+        Terms from :mod:`bartorch.priors`.
     step : float
         Step size (``pics -s``).  Required: ``pics`` supplies no default for
         this iteration.

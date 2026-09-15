@@ -2,7 +2,7 @@
 
 ``optim.fista(y, A, term, maxiter=30)`` is ``optim.FISTA(term,
 maxiter=30)(y, A)``.  They take one argument the classes do not: a ``deepinv``
-prior or a bare denoiser goes wherever a :mod:`bartorch.prox` term goes, with
+prior or a bare denoiser goes wherever a :mod:`bartorch.priors` term goes, with
 ``g_param`` as its own parameter.  What runs is the class.
 """
 
@@ -11,7 +11,7 @@ from __future__ import annotations
 import torch
 
 from bartorch.optim.linear import ADMM, CG, FISTA, IST, NIHT, PRIDU, EulerMaruyama
-from bartorch.prox.base import Regularizer
+from bartorch.priors.base import Regularizer
 
 __all__ = ["admm", "cg", "eulermaruyama", "fista", "irgnm", "ist", "niht", "pridu"]
 
@@ -71,8 +71,8 @@ def pridu(y: torch.Tensor, A, regularizers=None, *, x0=None, g_param=None, **set
 def niht(y: torch.Tensor, A, regularizers, *, x0=None, **settings):
     """Normalized iterative hard thresholding.  See :class:`~bartorch.optim.NIHT`.
 
-    Takes :class:`~bartorch.prox.WaveletNIHT` and
-    :class:`~bartorch.prox.ImageNIHT` terms and nothing else.
+    Takes :class:`~bartorch.priors.WaveletNIHT` and
+    :class:`~bartorch.priors.ImageNIHT` terms and nothing else.
     """
     return NIHT(regularizers, **settings)(y, A, x0)
 

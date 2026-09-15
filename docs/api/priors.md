@@ -1,11 +1,11 @@
 # Regularization and denoising
 
-`bartorch.prox`.  A regularization term is what a solver in
+`bartorch.priors`.  A regularization term is what a solver in
 {mod}`bartorch.optim` takes; BART builds its proximal operator.  The denoisers
 are functions on images.
 
 ```{eval-rst}
-.. currentmodule:: bartorch.prox
+.. currentmodule:: bartorch.priors
 ```
 
 ## Regularizer class
