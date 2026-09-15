@@ -194,3 +194,79 @@ def test_the_two_domains_agree_on_the_card_as_they_do_on_the_host():
     one = fused(fused.prepare(kspace), start, start, weight)
     other = paired(paired.prepare(kspace), start, start, weight)
     assert (one - other).abs().max() < 1e-3 * other.abs().max()
+
+
+# --- the surface the retirement of _Cell rests on ------------------------------
+
+
+@requires_cuda
+def test_a_diagonal_set_on_the_card_is_what_the_operator_applies():
+    """``multiplace`` moves the values to wherever the operator lives."""
+    from bartorch.linop.basic import Sampling
+
+    torch.manual_seed(0)
+    shape = (2, 8, 8)
+    first = (torch.rand(1, 8, 8) > 0.4).to(torch.complex64).cuda()
+    second = (torch.rand(1, 8, 8) > 0.4).to(torch.complex64).cuda()
+    x = _rand(*shape).cuda()
+
+    A = Sampling(first, shape)
+    gram = A.gram()
+    torch.testing.assert_close(A(x), x * first)
+
+    A.set(second)
+    assert A(x).device.type == "cuda"
+    torch.testing.assert_close(A(x), x * second)
+    torch.testing.assert_close(gram(x), x * second.abs() ** 2, rtol=1e-4, atol=1e-5)
+
+
+@requires_cuda
+def test_a_step_on_the_card_answers_for_a_pattern_set_after_assembly():
+    from bartorch.linop.basic import Sampling
+
+    torch.manual_seed(0)
+    coils, n = 4, 16
+    shape = (coils, n, n)
+    schedule = nlop.IRGNM(iterations=2, alpha=1.0, redu=2.0, cg_maxiter=15, cg_tol=0.0)
+    kspace = _rand(*shape).cuda()
+
+    def assembled(pattern):
+        sampling = Sampling(pattern, shape)
+        model = nlop.CoilSense(sampling @ linop.FFT(shape, axes=(-1, -2)))
+        return sampling, schedule.operator(model)
+
+    first = (torch.rand(1, n, n) > 0.3).to(torch.complex64).cuda()
+    second = (torch.rand(1, n, n) > 0.3).to(torch.complex64).cuda()
+
+    def solve(step):
+        state = step.start(device="cuda")
+        return step(step.prepare(kspace), state, state, step.weight(1.0, device="cuda"))
+
+    sampling, step = assembled(first)
+    solve(step)
+    sampling.set(second)
+    reused = solve(step)
+
+    _, rebuilt = assembled(second)
+    assert reused.device.type == "cuda"
+    assert torch.equal(reused, solve(rebuilt))
+
+
+@requires_cuda
+def test_a_batched_step_on_the_card_answers_what_each_item_answers_alone():
+    """``nlop_stack_multiple`` is given ``multigpu = 0``, so the stack stays on one card."""
+    torch.manual_seed(0)
+    batch = 3
+    schedule = nlop.IRGNM(iterations=2, alpha=1.0, redu=2.0, cg_maxiter=15, cg_tol=0.0)
+    model = nlop.Multiply((1, 4), (3, 4))
+    one = schedule.operator(model)
+    many = schedule.operator(model, batch=batch)
+
+    data = _rand(batch, *one.data_shape).cuda()
+    state = (_rand(batch, *one.state_shape) * 0.3 + 1.0).cuda()
+
+    weight = one.weight(1.0, device="cuda")
+    alone = torch.stack([one(data[i], state[i], state[i], weight) for i in range(batch)])
+    together = many(data, state, state, many.weight(1.0, device="cuda"))
+    assert together.device.type == "cuda"
+    assert torch.equal(alone, together)
