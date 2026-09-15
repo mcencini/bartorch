@@ -100,27 +100,17 @@ class FromTorchSim(_Callback):
         self.contrasts = int(contrasts)
 
         state: dict[str, torch.Tensor] = {}
-        channels, voxels = self.channels, self.voxels
-
-        def to_maps(x: torch.Tensor) -> torch.Tensor:
-            """BART's ``(channels, *voxels)`` complex to TorchSim's real ``(*voxels, channels)``."""
-            return x.reshape(channels, *voxels).movedim(0, -1).real.contiguous()
-
-        def to_bart(x: torch.Tensor) -> torch.Tensor:
-            """The way back, into the real part of a complex buffer."""
-            return x.movedim(-1, 0).to(torch.complex64).contiguous()
 
         def forward(x: torch.Tensor) -> torch.Tensor:
-            maps = to_maps(x)
+            maps = self._to_maps(x)
             state["x"] = maps
-            return to_bart(model.A(maps))
+            return self._to_bart(model.A(maps))
 
         def derivative(dx: torch.Tensor) -> torch.Tensor:
-            return to_bart(model.A_jvp(state["x"], to_maps(dx)))
+            return self._to_bart(model.A_jvp(state["x"], self._to_maps(dx)))
 
         def adjoint(dy: torch.Tensor) -> torch.Tensor:
-            cotangent = dy.reshape(self.contrasts, *voxels).movedim(0, -1).contiguous()
-            return to_bart(model.A_vjp(state["x"], cotangent))
+            return self._to_bart(model.A_vjp(state["x"], self._cotangent(dy)))
 
         super().__init__(
             (self.contrasts, *self.voxels),
@@ -128,6 +118,47 @@ class FromTorchSim(_Callback):
             forward,
             derivative,
             adjoint,
+        )
+
+    # --- the two layouts ---------------------------------------------------
+
+    def _to_maps(self, x: torch.Tensor) -> torch.Tensor:
+        """BART's ``(channels, *voxels)`` complex to TorchSim's real ``(*voxels, channels)``."""
+        return x.reshape(self.channels, *self.voxels).movedim(0, -1).real.contiguous()
+
+    def _to_bart(self, x: torch.Tensor) -> torch.Tensor:
+        """The way back, into the real part of a complex buffer."""
+        return x.movedim(-1, 0).to(torch.complex64).contiguous()
+
+    def _cotangent(self, dy: torch.Tensor) -> torch.Tensor:
+        """One image per contrast, in TorchSim's layout."""
+        return dy.reshape(self.contrasts, *self.voxels).movedim(0, -1).contiguous()
+
+    def _bundle(self):
+        """TorchSim takes the point as an argument already, so the bundle is its own pair.
+
+        ``A_jvp`` and ``A_vjp`` are ``(x, v)`` throughout -- no Jacobian is
+        built and no point is stored -- which is what a bundle asks for; the
+        members are torch operators so that a step differentiating by the point
+        differentiates them again rather than reading a derivative this
+        recorded.
+        """
+        from bartorch.nlop.bundle import Bundle
+        from bartorch.nlop.callback import FromTorch
+
+        model = self.model
+
+        def derivative(dx: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+            return self._to_bart(model.A_jvp(self._to_maps(x), self._to_maps(dx)))
+
+        def adjoint(dy: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+            return self._to_bart(model.A_vjp(self._to_maps(x), self._cotangent(dy)))
+
+        return Bundle(
+            self,
+            FromTorch(derivative, [self.ishape, self.ishape], self.oshape),
+            FromTorch(adjoint, [self.oshape, self.ishape], self.ishape),
+            source="torch",
         )
 
     @property

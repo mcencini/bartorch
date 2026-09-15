@@ -363,3 +363,101 @@ def test_the_multi_echo_offset_is_a_baseline_and_not_a_frequency():
     flat = M(M.initial(T2=50.0, offset=0.0))[:, 0, 0]
     raised = M(M.initial(T2=50.0, offset=20.0))[:, 0, 0]
     torch.testing.assert_close(raised - flat, torch.full((2,), 20.0 + 0j), rtol=1e-5, atol=1e-4)
+
+
+# --- the derivative as an operator of the point --------------------------------
+
+
+def _models():
+    return {
+        "multi-echo": nlop.MultiEcho([10.0, 30.0, 60.0], (6, 6)),
+        "inversion recovery": nlop.InversionRecovery([0.1, 0.5, 1.0, 2.0], (6, 6)),
+    }
+
+
+@pytest.mark.parametrize("which", sorted(_models()))
+def test_the_bundle_is_torchsims_own_pair(which):
+    """``A_jvp`` and ``A_vjp`` take the point already, so nothing is recomputed."""
+    torch.manual_seed(0)
+    M = _models()[which]
+    x = M.initial()
+    dx = _rand(*M.ishape) * 0.01
+    dz = _rand(*M.oshape)
+
+    M.forward(x)
+    assert torch.equal(M.bundle.derivative(dx, x), M.derivative(dx))
+    assert torch.equal(M.bundle.adjoint(dz, x), M.adjoint(dz))
+
+
+@pytest.mark.parametrize("which", sorted(_models()))
+def test_the_bundle_does_not_move_with_a_forward_elsewhere(which):
+    torch.manual_seed(0)
+    M = _models()[which]
+    x, dx = M.initial(), _rand(*M.ishape) * 0.01
+    want = M.bundle.derivative(dx, x)
+    M.forward(M.initial() * 1.5)
+    assert torch.equal(M.bundle.derivative(dx, x), want)
+
+
+@pytest.mark.parametrize("which", sorted(_models()))
+def test_the_bundles_adjoint_is_adjoint_over_the_reals(which):
+    """The maps are real, so what the model is linear over is the reals."""
+    torch.manual_seed(0)
+    M = _models()[which]
+    x = M.initial()
+    dx, dz = _rand(*M.ishape) * 0.01, _rand(*M.oshape)
+    forward = M.bundle.derivative(dx, x)
+    back = M.bundle.adjoint(dz, x)
+    assert _inner(forward, dz) == pytest.approx(_inner(dx, back), rel=1e-4, abs=1e-8)
+
+
+def test_a_relaxation_fit_reaches_the_gauss_newton_operator():
+    """Which is what the bundle is for: the step is an operator, not a loop."""
+    torch.manual_seed(0)
+    M = nlop.MultiEcho([10.0, 30.0, 60.0], (6, 6))
+    data = M(M.initial(T2=80.0))
+    start = M.initial(T2=40.0).reshape(-1)
+
+    errors = []
+    for steps in (2, 6, 14):
+        step = nlop.IRGNM(
+            iterations=steps, alpha=1.0, redu=2.0, cg_maxiter=30, cg_tol=0.0
+        ).operator(M)
+        assert "torch" == step.plan.bundle
+        made = step(step.prepare(data), start, start, 1.0)
+        fitted = M.split(made.reshape(M.ishape))["T2"].mean().item()
+        errors.append(abs(fitted - 80.0))
+
+    # It recovers the relaxation time it was made from, and more steps get closer.
+    assert errors[0] > errors[1] > errors[2]
+    assert errors[-1] < 1.0
+
+
+def test_the_step_over_a_model_under_an_encoding_answers_the_same():
+    """A unitary transform leaves the normal equations alone, so the fit is the same one."""
+    torch.manual_seed(0)
+    M = nlop.MultiEcho([10.0, 30.0, 60.0], (6, 6))
+    E = linop.FFT(M.oshape, axes=(-1, -2))
+    data = M(M.initial(T2=80.0))
+    start = M.initial(T2=40.0).reshape(-1)
+    schedule = nlop.IRGNM(iterations=6, alpha=1.0, redu=2.0, cg_maxiter=30, cg_tol=0.0)
+
+    plain = schedule.operator(M)
+    under = schedule.operator(nlop.chain(M, E.to_nonlinear(), output=0, input=0))
+
+    one = plain(plain.prepare(data), start, start, 1.0)
+    other = under(under.prepare(E.forward(data)), start, start, 1.0)
+    assert (one - other).abs().max() < 1e-4 * one.abs().max()
+
+
+def test_the_step_over_a_model_carries_a_gradient_by_its_iterate():
+    torch.manual_seed(0)
+    M = nlop.MultiEcho([10.0, 30.0, 60.0], (4, 4))
+    data = M(M.initial(T2=80.0))
+    start = M.initial(T2=40.0).reshape(-1)
+    step = nlop.IRGNM(iterations=2, cg_maxiter=20, cg_tol=0.0).operator(M)
+
+    iterate = start.clone().requires_grad_(True)
+    step(step.prepare(data), iterate, start, 1.0).abs().square().sum().backward()
+    assert torch.isfinite(iterate.grad).all()
+    assert iterate.grad.abs().max() > 0
