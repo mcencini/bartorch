@@ -33,12 +33,16 @@ _SCHEDULE = {"iterations", "redu", "alpha_min", "cg_maxiter", "cg_tol"}
 
 
 def _cell(image_shape, **settings):
-    """A noir model, a schedule of one step unless told otherwise, and the operator of the two."""
+    """A noir model, a schedule of one step unless told otherwise, and the operator of the two.
+
+    The sampling pattern is the model's, so a step is assembled over an
+    encoding that already carries it.
+    """
     model = {k: settings.pop(k) for k in list(settings) if k in _MODEL}
     schedule = {k: settings.pop(k) for k in list(settings) if k in _SCHEDULE}
     schedule.setdefault("iterations", 1)
-    if model.get("trajectory") is not None:
-        model["oversampling_coils"] = 1.0
+    if model.get("trajectory") is None:
+        model.setdefault("pattern", _ones(image_shape[-1]))
     return nlop.IRGNM(**schedule).operator(nlop.NonlinearSense(image_shape, **model), **settings)
 
 
@@ -64,66 +68,45 @@ def _ones(n: int = N):
     return torch.ones(1, n, n, dtype=torch.complex64)
 
 
+def _decompose(newton, x):
+    """A state through the model's own linear parts: an image and coil profiles.
+
+    What ``noir``'s ``decompose`` does -- the coils go through the Sobolev
+    weighting, so what comes back is profiles rather than the coefficients
+    that were fitted.
+    """
+    image, coefficients = newton.split(x)
+    model = newton.model
+    return model.image(image), model.coils(coefficients)
+
+
 # --- what it takes and returns ------------------------------------------------
 
 
 @pytest.mark.parametrize("batch", [1, 3])
-def test_the_batch_is_barts_own(batch):
-    """Everywhere else here a leading axis is applied item by item from
-    Python.  This is the one operator whose batch BART carries itself, because
-    ``nlinvnet`` needed it."""
+def test_the_batch_is_the_leading_axis_of_every_argument(batch):
     newton = _cell((COILS, 8, 8), batch=batch)
-    assert (batch, COILS, 1, 8, 8) == newton.data_shape
-    assert batch == newton.state_shape[0]
-    assert 1 == len(newton.output_shapes)
-    assert newton.state_shape == newton.output_shapes[0]
+    expected = (COILS, 1, 8, 8) if 1 == batch else (batch, COILS, 1, 8, 8)
+    assert expected == tuple(newton.data_shape)
+    assert 1 == len(newton.oshapes)
+    if 1 < batch:
+        assert batch == newton.state_shape[0]
 
 
-def test_the_short_shapes_are_the_long_ones_written_without_the_empty_axes():
-    # BART's sixteen axes are what the operator records, because that is what
-    # the arity check holds it to; the short form is the same memory.
-    newton = _cell((COILS, 8, 8), batch=2)
-    assert 16 == len(newton.ishapes[0])
-    assert (2, COILS, 1, 8, 8) == newton.shapes[0]
-    assert math.prod(newton.ishapes[0]) == math.prod(newton.shapes[0])
-
-
-def test_the_companions_say_what_they_take(problem):
+def test_the_unknowns_are_the_models_own():
     newton = _cell((COILS, 8, 8))
-    assert 2 == len(newton.prepare().shapes)
-    assert (1, newton.state_shape[1]) == newton.decompose().shapes[0]
-    assert 2 == len(newton.decompose().output_shapes)
-    assert newton.join().output_shapes == (newton.state_shape,)
+    model = newton.model
+    assert (model._image_only(), model.coefficient_shape) == newton.lowered.ishapes
+    assert math.prod(newton.state_shape) == sum(
+        math.prod(shape) for shape in newton.lowered.ishapes
+    )
 
 
-def test_off_the_grid_the_gridding_takes_the_trajectory_too():
+def test_off_the_grid_the_step_is_assembled_over_the_asymmetric_stage():
     trajectory = bt.traj(x=16, y=8, r=True)
     newton = _cell((COILS, 8, 8), trajectory=trajectory)
-    assert 3 == len(newton.prepare().shapes)
-    assert (1, *tuple(trajectory.shape)) == newton.prepare().shapes[2]
-
-
-# --- the model has to be given a pattern first --------------------------------
-
-
-def test_a_step_before_the_gridding_says_so_rather_than_taking_the_process(problem):
-    _, _, kspace = problem
-    newton = _cell((COILS, N, N))
-    y = torch.zeros(newton.data_shape, dtype=torch.complex64)
-    x0 = newton.start()
-    with pytest.raises(BartError, match="no sampling pattern yet"):
-        newton(y, x0, x0, 1.0)
-
-
-def test_two_operators_do_not_share_a_model(problem):
-    _, _, kspace = problem
-    first = _cell((COILS, N, N))
-    second = _cell((COILS, N, N))
-    y = first.prepare()(kspace, _ones())
-    x0 = first.start()
-    assert torch.isfinite(first(y, x0, x0, 1.0)).all()
-    with pytest.raises(BartError, match="no sampling pattern yet"):
-        second(y, x0, x0, 1.0)
+    assert newton.plan.fused
+    assert "normal" == newton.plan.domain
 
 
 # --- the iterate ---------------------------------------------------------------
@@ -131,7 +114,7 @@ def test_two_operators_do_not_share_a_model(problem):
 
 def test_the_start_is_an_image_of_ones_and_no_coils():
     newton = _cell((COILS, 8, 8))
-    image, coils = newton.split()(newton.start())
+    image, coils = newton.split(newton.start())
     torch.testing.assert_close(image, torch.ones_like(image), rtol=0, atol=0)
     torch.testing.assert_close(coils, torch.zeros_like(coils), rtol=0, atol=0)
 
@@ -139,8 +122,8 @@ def test_the_start_is_an_image_of_ones_and_no_coils():
 def test_split_and_join_are_each_other():
     newton = _cell((COILS, 8, 8))
     x = torch.randn(newton.state_shape, dtype=torch.complex64)
-    image, coils = newton.split()(x)
-    torch.testing.assert_close(newton.join()(image, coils), x, rtol=0, atol=0)
+    image, coils = newton.split(x)
+    torch.testing.assert_close(newton.join(image, coils), x, rtol=0, atol=0)
 
 
 def test_decompose_carries_the_transforms_and_split_does_not():
@@ -148,7 +131,7 @@ def test_decompose_carries_the_transforms_and_split_does_not():
     # back is profiles rather than the coefficients that were fitted.
     newton = _cell((COILS, 8, 8))
     x = torch.randn(newton.state_shape, dtype=torch.complex64)
-    assert not torch.equal(newton.decompose()(x)[1], newton.split()(x)[1])
+    assert not torch.equal(_decompose(newton, x)[1], newton.split(x)[1])
 
 
 # --- it reconstructs ------------------------------------------------------------
@@ -157,9 +140,9 @@ def test_decompose_carries_the_transforms_and_split_does_not():
 def test_it_recovers_the_image_as_well_as_the_tool_does(problem):
     image, _, kspace = problem
     newton = _cell((COILS, N, N), iterations=8, redu=2.0)
-    y = newton.prepare()(kspace, _ones())
+    y = newton.prepare(kspace)
     x0 = newton.start()
-    made, sensitivities = newton.decompose()(newton(y, x0, x0, 1.0))
+    made, sensitivities = _decompose(newton, newton(y, x0, x0, 1.0))
 
     combined = made[0].abs() * sensitivities[0].abs().square().sum(0).sqrt().reshape(N, N)
     truth = image.abs()
@@ -183,9 +166,9 @@ def test_more_steps_fit_better(problem):
     errors = []
     for steps in (2, 5, 9):
         newton = _cell((COILS, N, N), iterations=steps)
-        y = newton.prepare()(kspace, _ones())
+        y = newton.prepare(kspace)
         x0 = newton.start()
-        made, sens = newton.decompose()(newton(y, x0, x0, 1.0))
+        made, sens = _decompose(newton, newton(y, x0, x0, 1.0))
         errors.append(
             _relative(made[0].abs() * sens[0].abs().square().sum(0).sqrt().reshape(N, N), truth)
         )
@@ -200,14 +183,14 @@ def test_the_steps_compose_the_way_the_unrolled_form_does(problem):
     """
     _, _, kspace = problem
     both = _cell((COILS, N, N), iterations=2, redu=3.0)
-    y = both.prepare()(kspace, _ones())
+    y = both.prepare(kspace)
     x0 = both.start()
     together = both(y, x0, x0, 1.0)
 
     apart = x0
     for alpha in (1.0, 1.0 / 3.0):
         cell = _cell((COILS, N, N), iterations=1)
-        apart = cell(cell.prepare()(kspace, _ones()), apart, x0, alpha)
+        apart = cell(cell.prepare(kspace), apart, x0, alpha)
     torch.testing.assert_close(together, apart, rtol=1e-4, atol=1e-5)
 
 
@@ -230,7 +213,7 @@ _HOLDS = (220.0, 8.0)
 def test_every_argument_carries_a_gradient(problem, at):
     _, _, kspace = problem
     newton = _cell((COILS, N, N), iterations=2, sobolev=_HOLDS)
-    y = newton.prepare()(kspace, _ones())
+    y = newton.prepare(kspace)
     x0 = newton.start()
 
     order = {"data": 0, "iterate": 1, "centre": 2, "weight": 3}[at]
@@ -254,7 +237,7 @@ def test_a_gentler_weighting_keeps_the_whole_gradient_in_range(problem):
     """
     _, _, kspace = problem
     newton = _cell((COILS, N, N), iterations=2, sobolev=_HOLDS)
-    y = newton.prepare()(kspace, _ones())
+    y = newton.prepare(kspace)
     x0 = newton.start()
     tracked = x0.clone().requires_grad_(True)
     newton(y, tracked, x0, newton.weight(1.0)).abs().square().sum().backward()
@@ -272,7 +255,7 @@ def test_a_denoiser_between_two_cells_trains(problem):
         x = cells[0].start()
         alpha = 1.0
         for cell in cells:
-            x = cell(cell.prepare()(kspace, _ones()), x, x, alpha)
+            x = cell(cell.prepare(kspace), x, x, alpha)
             x = weight * x
             alpha = alpha / 2.0
         return x.abs().square().sum()
@@ -310,15 +293,21 @@ def test_a_model_with_no_bundle_is_refused():
         nlop.IRGNM().operator(made)
 
 
-def test_only_barts_own_model_carries_a_batch():
-    with pytest.raises(ValueError, match="carries a batch of its own"):
-        nlop.IRGNM().operator(nlop.CoilSense(linop.FFT((COILS, 8, 8), axes=(-1, -2))), batch=2)
+def test_a_model_of_the_algebra_carries_a_batch_too():
+    """The batch is the assembly's, not ``noir2_net``'s, so every model has one."""
+    made = nlop.IRGNM().operator(nlop.CoilSense(linop.FFT((COILS, 8, 8), axes=(-1, -2))), batch=2)
+    assert 2 == made.state_shape[0]
 
 
-def test_what_the_network_model_cannot_take_is_refused():
+def test_the_coil_configurations_barts_network_model_refused_are_taken():
+    """``noir2_net`` fits coils on the image's grid; the assembly here does not care."""
     trajectory = bt.traj(x=16, y=8, r=True)
-    with pytest.raises(ValueError, match="oversampling_coils"):
-        nlop.IRGNM().operator(nlop.NoncartesianSense(trajectory, (COILS, 8, 8)))
+    for extra in ({}, {"oversampling_coils": 1.5}, {"oversampled_coils": True}):
+        made = nlop.IRGNM().operator(nlop.NoncartesianSense(trajectory, (COILS, 8, 8), **extra))
+        assert made.plan.fused
+
+
+def test_a_second_solver_inside_the_step_is_refused():
     with pytest.raises(ValueError, match="no inner solver"):
         nlop.IRGNM(inner=optim.CG()).operator(nlop.CartesianSense((COILS, 8, 8)))
 
@@ -336,7 +325,7 @@ def test_two_cells_chain_into_one_operator(problem):
     """
     _, _, kspace = problem
     first, second = _cells()
-    ya, yb = first.prepare()(kspace, _ones()), second.prepare()(kspace, _ones())
+    ya, yb = first.prepare(kspace), second.prepare(kspace)
     x0 = first.start()
 
     whole = nlop.chain(first, second, output=0, input=1)
@@ -352,7 +341,7 @@ def test_a_torch_denoiser_goes_between_them_inside_the_one_operator(problem):
     """
     _, _, kspace = problem
     first, second = _cells()
-    ya, yb = first.prepare()(kspace, _ones()), second.prepare()(kspace, _ones())
+    ya, yb = first.prepare(kspace), second.prepare(kspace)
     x0 = first.start()
     state = first.state_shape
 
@@ -377,7 +366,7 @@ def test_a_torch_denoiser_goes_between_them_inside_the_one_operator(problem):
 def test_the_composed_network_differentiates_by_its_own_arguments(problem, at):
     _, _, kspace = problem
     first, second = _cells()
-    ya, yb = first.prepare()(kspace, _ones()), second.prepare()(kspace, _ones())
+    ya, yb = first.prepare(kspace), second.prepare(kspace)
     x0 = first.start()
     state = first.state_shape
 
@@ -403,7 +392,7 @@ def test_a_weight_the_prior_closed_over_does_not_train_through_the_one_operator(
     """
     _, _, kspace = problem
     first, second = _cells()
-    ya, yb = first.prepare()(kspace, _ones()), second.prepare()(kspace, _ones())
+    ya, yb = first.prepare(kspace), second.prepare(kspace)
     x0 = first.start()
     state = first.state_shape
 
@@ -423,7 +412,7 @@ def _trainable(problem):
     """The two-cell network with the prior's weight as an argument of it."""
     _, _, kspace = problem
     first, second = _cells()
-    ya, yb = first.prepare()(kspace, _ones()), second.prepare()(kspace, _ones())
+    ya, yb = first.prepare(kspace), second.prepare(kspace)
     x0 = first.start()
     state = first.state_shape
 
@@ -464,7 +453,7 @@ def test_the_trained_network_answers_what_the_loop_answers(problem):
     _, _, kspace = problem
     whole, run = _trainable(problem)
     first, second = _cells()
-    ya, yb = first.prepare()(kspace, _ones()), second.prepare()(kspace, _ones())
+    ya, yb = first.prepare(kspace), second.prepare(kspace)
     x0 = first.start()
 
     torch.testing.assert_close(
@@ -528,7 +517,7 @@ def test_a_convolutional_denoiser_trains_inside_the_one_operator(problem):
     image, _, kspace = problem
     torch.manual_seed(0)
     cells = _cells()
-    prepared = [cell.prepare()(kspace, _ones()) for cell in cells]
+    prepared = [cell.prepare(kspace) for cell in cells]
     x0 = cells[0].start()
     state = cells[0].state_shape
     pixels = N * N
@@ -539,8 +528,8 @@ def test_a_convolutional_denoiser_trains_inside_the_one_operator(problem):
     def prior(x, w):
         # The denoiser touches the image half of the state; the coil
         # coefficients go through untouched.
-        made = torch.func.functional_call(net, weights.unpack(w), (x[:, :pixels].reshape(1, N, N),))
-        return torch.cat([made.reshape(1, pixels), x[:, pixels:]], dim=1)
+        made = torch.func.functional_call(net, weights.unpack(w), (x[:pixels].reshape(1, N, N),))
+        return torch.cat([made.reshape(pixels), x[pixels:]])
 
     operator = nlop.FromTorch(prior, [state, weights.shape], state)
     whole = nlop.chain(
@@ -549,7 +538,7 @@ def test_a_convolutional_denoiser_trains_inside_the_one_operator(problem):
 
     trained = torch.nn.Parameter(weights.pack())
     optimiser = torch.optim.Adam([trained], lr=1e-2)
-    truth = image.abs().reshape(1, pixels)
+    truth = image.abs().reshape(pixels)
 
     losses = []
     for _ in range(6):
@@ -563,7 +552,7 @@ def test_a_convolutional_denoiser_trains_inside_the_one_operator(problem):
             x0,
             x0,
             cells[0].weight(1.0),
-        )[:, :pixels].abs()
+        )[:pixels].abs()
         scale = (made * truth).sum() / (made * made).sum().clamp_min(1e-12)
         loss = ((scale * made - truth) ** 2).sum()
         loss.backward()

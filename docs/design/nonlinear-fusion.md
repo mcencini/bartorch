@@ -42,8 +42,8 @@ state:
 This is why `noir/model_net.c` writes the point out. `noir_get_adjoint`
 (`model_net.c:266`) takes `(dz, xn)` and returns `dx`; `noir_get_derivative`
 (`:295`) takes `(dx, xn)`; `noir_get_normal` (`:324`) is the two chained with the
-point duplicated. `_Cell` exists because those three exist for BART's coil model
-and for nothing else.
+point duplicated. BART writes those three by hand for its coil model and for
+nothing else, and all three are `static`.
 
 A **derivative bundle** is that record, supplied by the operator rather than
 built for one model:
@@ -229,8 +229,7 @@ plan says which happened.
 This is also where the step's own companions come from. `Step.prepare` is `E^H`
 applied once, which any linear operator has, and `split` and `join` are the
 laying out of a multi-unknown state. Neither needs the noir model to exist, which
-is why they are the step's rather than a model's; what `_Cell` keeps that they do
-not replace is in [Fusion of the coil model](#fusion-of-the-coil-model).
+is why they are the step's rather than a model's.
 
 ## The generic step
 
@@ -243,7 +242,7 @@ x = xn + ( DF(xn)^H DF(xn) + alpha )^-1 [ DF(xn)^H (y - F(xn)) - alpha (xn - x0)
 
 `alpha` is a vector as long as the state, multiplied by --
 `norm_inv_lambda_create(..., ~0UL)` selects every axis (`norm_inv.c:425`), which
-is what `_Cell.weight` already builds.
+is what `Step.weight` builds.
 
 | `noir_gauss_newton_step_create_s` | Over a bundle |
 | --- | --- |
@@ -258,7 +257,7 @@ is what `_Cell.weight` already builds.
 Three substitutions in an expression that is otherwise BART's own calls in BART's
 own order -- which is what "no noir code is copied" means here, and what makes
 the same reading hold for `noir_gauss_newton_iter_create_s` (`:402`), the
-decaying-`alpha` loop `_Cell` already exposes.
+decaying-`alpha` loop around it.
 
 The step asserts its state is one flat vector (`model_net.c:367`), so each
 member is laid out first, as `noir_get_forward` lays out its own two:
@@ -325,16 +324,44 @@ list the network model imposed -- `oversampling_coils=1.0`, no `optimized`, no
 `oversampled_coils`, no separate coefficient shape -- applies only to the model
 that imposes it.
 
-**`_Cell` stays, and for two reasons that are `noir2_net`'s rather than the
-expression's.** It carries BART's own batch axis, which is
-`nlop_stack_multiple` over one model per item; and its `prepare()` takes the
-sampling pattern as an *argument*, which is what lets one trained network answer
-for several patterns -- `noir2` bakes the pattern into `lop_pattern` at
-construction, so a `Step` over a `NonlinearSense` is one model per pattern.
-Neither is reachable by assembling the expression differently. So
-`IRGNM.operator` sends a `NonlinearSense` to `_Cell` and everything else to
-`Step`, and a test holds the two to the same numbers over the composition BART's
-own model writes.
+**`_Cell` is retired.** The two things it had that the assembly did not were
+`noir2_net`'s rather than the expression's, and both are BART constructs that
+needed exposing rather than reasons to keep a second step.
+
+A batch is `nlop_stack_multiple_F`, which is what
+`noir_gauss_newton_step_create` (`model_net.c:425`) itself calls: one build of
+the whole step per item, stacked. Items sharing nothing is the point --
+conjugate gradients couple through global inner products, so a batch laid into
+one long state answers something else, and a batch axis in the encoding
+describes a different model, one shared image with per-item coils. The cost is
+linear in the batch because BART's is: 25.7 ms at one item and 179.2 ms at
+eight, for BART's own.
+
+A sampling pattern is `linop_gdiag_set_diag`, which writes into the `cdiag` that
+exists and drops its cached normal, so a composition, a gram and a step
+assembled over the operator all answer for the new pattern without being
+rebuilt. BART's own sampling operator is already a settable diagonal --
+`linop_sampling_create` (`sense/model.c:48`) is `linop_cdiag_create(NULL)`
+followed by `linop_gdiag_set_diag_ref` -- and `noir_adjoint_fft_fun`
+(`model_net.c:729`) is what wrote a pattern into `noir`'s model between calls.
+On a 32 by 32 four-coil model at two iterations, a swap and a solve is 10.9 ms
+against 36.0 ms to rebuild, and the two answers are equal under `torch.equal`.
+
+What `_Cell`'s pattern argument was *not* is differentiable: BART refuses the
+adjoint derivative of `noir_adjoint_fft_s` by its second input. So nothing is
+lost by the pattern belonging to the model instead.
+
+Retiring it removes `_newton.py`, eight ABI entry points and their
+implementation, and leaves one step class. `Step` also takes the coil
+configurations `noir2_net` refused, which off the grid includes BART's own
+default coil oversampling -- a plainly built `NoncartesianSense` had to be told
+`oversampling_coils=1.0` before `_Cell` would take it.
+
+Before it went, the assembly was held against it at one and two iterations and
+at a batch of three, with a real sampling pattern and with ones, and was equal
+under `torch.equal` every time. What pins the noir composition now is the
+reconstruction of a phantom, which is measured against the truth rather than
+against BART.
 
 ## Outside the form
 
@@ -370,10 +397,11 @@ that is torch, which can differentiate every primitive in the table:
 | the normal-equation rewrite | the same step assembled with `fuse=False`: to single precision on a grid, and off it to a distance that closes as the transform's tolerance is tightened, which is what says the transform and not the rewrite is what separates them |
 | fusion | the plan asserted by `Step.plan`, on a coil composition and on one that is not |
 
-Two agreement checks are BART against BART and are labelled as such rather than
-counted as numerical tests: a bundle's `derivative` against `nlop_get_derivative`
-at the same point, and the generic step against `_Cell` for the noir composition.
-They say the two routes have not diverged; they do not say either is right.
+One agreement check is BART against BART and is labelled as such rather than
+counted as a numerical test: a bundle's `derivative` against
+`nlop_get_derivative` at the same point. It says the two routes have not
+diverged; it does not say either is right. The noir composition is pinned
+instead by the reconstruction of a phantom, against the truth.
 
 ## Phases
 
@@ -394,13 +422,13 @@ They say the two routes have not diverged; they do not say either is right.
      header, `_abi.py` regenerated; `IRGNM.operator(F)` assembled over any
      bundle.
    - Done when it matches the written-out torch loop, carries gradients by all
-     four arguments, and reproduces `_Cell` for the noir composition.
+     four arguments, and reproduces BART's own step for the noir composition.
 4. **The planner and fusion.**
    - The normal-equation rewrite, `Step.plan`, and the `NonlinearSense`-only
      restriction removed.
    - Done when the fused and unfused results agree, the fused plan is asserted,
      and the benchmark in [Targets](#targets) is filled in.
-   - `_Cell` is not retired; see [Fusion of the coil model](#fusion-of-the-coil-model).
+   - `_Cell` is retired; see [Fusion of the coil model](#fusion-of-the-coil-model).
 
 Names that appear: `nlop.Derivative` keeps its meaning; `IRGNM.operator(F)` loses
 its type restriction; `F.bundle`, `nlop.Bundle`, `nlop.Plan` and `Step.plan` are

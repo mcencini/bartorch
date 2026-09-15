@@ -219,6 +219,15 @@ BARTORCH_API bartorch_linop* bartorch_linop_sampling(const long* dims, const lon
 BARTORCH_API bartorch_linop* bartorch_linop_nufft(int N, const long* ksp_dims, const long* cim_dims, const long* traj_dims,
 		const void* traj, const long* wgh_dims, const void* weights,
 		const long* bas_dims, const void* basis, int toeplitz, float os, float width);
+/* Write a new diagonal into a `cdiag` or a sampling operator, which is the
+ * one already built rather than a second one.  The values are copied and the
+ * cached normal is dropped, so an operator this is applied to -- and every
+ * composition and normal standing on it -- answers for the new diagonal from
+ * the next application.  `ddims` is what the operator was built with: the
+ * shape selected by the broadcast flags, not the operator's own.  Returns
+ * non-zero where the operator is not a diagonal or the shape disagrees. */
+BARTORCH_API int bartorch_linop_set_diagonal(const bartorch_linop* op, int N, const long* ddims,
+		const void* diag);
 /* SENSE, over sensitivities held as maps or as k-space kernels, walking the
  * coils a slab at a time.  A NULL trajectory makes the Cartesian operator,
  * and `modulated` asks that one for BART's own sample convention -- a scale
@@ -676,6 +685,15 @@ BARTORCH_API bartorch_nlop* bartorch_nlop_link(const bartorch_nlop* x, int oo, i
 BARTORCH_API bartorch_nlop* bartorch_nlop_dup(const bartorch_nlop* x, int a, int b);
 BARTORCH_API bartorch_nlop* bartorch_nlop_stack_inputs(const bartorch_nlop* x, int a, int b, int dim);
 BARTORCH_API bartorch_nlop* bartorch_nlop_stack_outputs(const bartorch_nlop* x, int a, int b, int dim);
+/* `n` operators of the same arity applied together, each argument stacked
+ * along the axis `in_stack_dim` or `out_stack_dim` names for it, in BART's
+ * dimension order.  This is how `noir_gauss_newton_step_create` gives the
+ * noir step its batch: one operator built per item and the set stacked, so
+ * the items share nothing and answer exactly as they would alone.
+ * The operators are referenced, so the caller still frees them. */
+BARTORCH_API bartorch_nlop* bartorch_nlop_stack_multiple(int n, const bartorch_nlop* const* ops,
+		int II, const int* in_stack_dim, int OO, const int* out_stack_dim,
+		int container, int multigpu);
 /* `outputs` non-zero permutes the outputs, zero the inputs. */
 BARTORCH_API bartorch_nlop* bartorch_nlop_permute(const bartorch_nlop* x, int outputs, int n, const int* perm);
 BARTORCH_API bartorch_nlop* bartorch_nlop_del_out(const bartorch_nlop* x, int o);
@@ -809,27 +827,6 @@ BARTORCH_API void bartorch_noir_free(bartorch_noir* h);
  * What shape each of them takes is read off the operator itself, with the
  * arity queries above; there is no second place here that says so.
  */
-typedef struct bartorch_noir_net_s bartorch_noir_net;
-
-BARTORCH_API bartorch_noir_net* bartorch_noir_net_create(int N,
-		const long* ksp_dims, const long* cim_dims,
-		const long* img_dims, const long* col_dims,
-		const long* trj_dims, const long* wgh_dims,
-		const long* bas_dims, const void* basis,
-		const long* msk_dims, const void* mask,
-		unsigned long batch_flag, int batch,
-		unsigned long fft_flags, unsigned long wght_flags,
-		int rvc, int sos, float a, float b, float c, int toeplitz);
-BARTORCH_API bartorch_nlop* bartorch_noir_net_step(const bartorch_noir_net* h,
-		int cgiter, float cgtol, float l2lambda);
-BARTORCH_API bartorch_nlop* bartorch_noir_net_iterations(const bartorch_noir_net* h,
-		int cgiter, float cgtol, float l2lambda,
-		int iterations, float redu, float alpha_min);
-BARTORCH_API bartorch_nlop* bartorch_noir_net_adjoint(const bartorch_noir_net* h);
-BARTORCH_API bartorch_nlop* bartorch_noir_net_decompose(const bartorch_noir_net* h);
-BARTORCH_API bartorch_nlop* bartorch_noir_net_split(const bartorch_noir_net* h);
-BARTORCH_API bartorch_nlop* bartorch_noir_net_join(const bartorch_noir_net* h);
-BARTORCH_API void bartorch_noir_net_free(bartorch_noir_net* h);
 
 /* Iteratively regularised Gauss-Newton: x starts at its initial value and returns the solution. */
 BARTORCH_API int bartorch_irgnm(const bartorch_nlop* F, int iter, float alpha, float alpha_min, float redu,

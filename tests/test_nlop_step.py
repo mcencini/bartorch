@@ -2,9 +2,9 @@
 
 The step is held against a Gauss-Newton loop written out in torch, whose inner
 problem is solved exactly rather than by conjugate gradients -- so what is
-compared is the method and not two paths through the same iteration.  The
-comparison with ``_Cell`` is BART against BART and says only that the assembly
-here and BART's own are the same expression.
+compared is the method and not two paths through the same iteration.  What
+pins the noir composition is the reconstruction in
+``tests/test_nlop_newton.py``, measured against a phantom rather than BART.
 """
 
 import pytest
@@ -159,31 +159,6 @@ def _normal_domain(F):
     return chain(made, stage, output=0, input=0)
 
 
-@pytest.mark.parametrize("iterations", [1, 2])
-def test_the_assembly_is_barts_own_over_the_noir_composition(iterations):
-    """An agreement check between two routes into BART, not a numerical test."""
-    F = nlop.CartesianSense((4, 8, 8), sobolev=(220.0, 8.0), oversampling_coils=1.0)
-    schedule = nlop.IRGNM(
-        iterations=iterations, alpha=1.0, redu=2.0, alpha_min=0.0, cg_maxiter=30, cg_tol=0.0
-    )
-    cell = schedule.operator(F, batch=1)
-    step = Step(_normal_domain(F), schedule)
-
-    kspace = torch.randn(F.oshapes[0], dtype=torch.complex64)
-    pattern = torch.ones((1, 1, 8, 8), dtype=torch.complex64)
-    data = cell.prepare()(kspace.reshape(cell.data_shape), pattern)
-    start = cell.start()
-
-    got = step(
-        data.reshape(step.data_shape),
-        start.reshape(step.state_shape),
-        start.reshape(step.state_shape),
-        1.0,
-    )
-    want = cell(data, start, start, 1.0)
-    assert torch.equal(got.reshape(-1), want.reshape(-1))
-
-
 # --- what reaches it ---------------------------------------------------------
 
 
@@ -306,3 +281,104 @@ def test_the_planner_lowers_the_model_bart_left_paired():
     assert not Step(
         nlop.CartesianSense((4, 16, 16))._composition(), schedule, fuse=False
     ).plan.fused
+
+
+# --- a pattern rewritten under a built step ------------------------------------
+
+
+def _assembled(pattern, shape, schedule):
+    """A step over a coil model whose encoding carries ``pattern``, and that pattern."""
+    from bartorch.linop.basic import Sampling
+
+    sampling = Sampling(pattern, shape)
+    model = nlop.CoilSense(sampling @ linop.FFT(shape, axes=(-1, -2)))
+    return sampling, Step(model, schedule)
+
+
+def test_a_step_answers_for_a_pattern_set_after_it_was_assembled():
+    """A new mask costs no reassembly, which is the reuse BART's noir model had.
+
+    Held against a step assembled over the second pattern from the start, which
+    is the answer the caller would have got by rebuilding.
+    """
+    torch.manual_seed(0)
+    coils, n = 4, 16
+    shape = (coils, n, n)
+    schedule = nlop.IRGNM(iterations=2, alpha=1.0, redu=2.0, cg_maxiter=15, cg_tol=0.0)
+
+    first = (torch.rand(1, n, n) > 0.3).to(torch.complex64)
+    second = (torch.rand(1, n, n) > 0.3).to(torch.complex64)
+    kspace = torch.randn(*shape, dtype=torch.complex64)
+
+    def solve(step, pattern):
+        state = torch.zeros(step.state_shape, dtype=torch.complex64)
+        state[: n * n] = 1.0
+        return step(step.prepare(kspace * pattern), state, state, 1.0)
+
+    sampling, step = _assembled(first, shape, schedule)
+    on_first = solve(step, first)
+
+    sampling.set(second)
+    reused = solve(step, second)
+
+    _, rebuilt = _assembled(second, shape, schedule)
+    assert not torch.allclose(on_first, reused), "the swap changed nothing"
+    assert torch.equal(reused, solve(rebuilt, second))
+
+
+# --- a batch of independent items ----------------------------------------------
+
+
+def test_a_batched_step_answers_what_each_item_answers_alone():
+    """The claim the batch makes: items share nothing, not even the inner solve.
+
+    Conjugate gradients couple through global inner products, so a batch laid
+    into one state would *not* answer this; ``nlop_stack_multiple`` builds the
+    whole expression per item, which does.
+    """
+    torch.manual_seed(0)
+    batch = 4
+    schedule = nlop.IRGNM(iterations=2, alpha=1.0, redu=2.0, cg_maxiter=15, cg_tol=0.0)
+    model = Multiply((1, 4), (3, 4))
+    one, many = Step(model, schedule), Step(model, schedule, batch=batch)
+
+    assert (batch, *one.state_shape) == tuple(many.state_shape)
+    assert (batch, *one.data_shape) == tuple(many.data_shape)
+
+    data = torch.randn(batch, *one.data_shape, dtype=torch.complex64)
+    state = torch.randn(batch, *one.state_shape, dtype=torch.complex64) * 0.3 + 1.0
+
+    alone = torch.stack([one(data[i], state[i], state[i], 1.0) for i in range(batch)])
+    together = many(data, state, state, many.weight(1.0))
+    assert torch.equal(alone, together)
+
+
+def test_a_batched_state_splits_and_joins_with_the_batch_in_front():
+    torch.manual_seed(0)
+    schedule = nlop.IRGNM(iterations=1, cg_maxiter=5, cg_tol=0.0)
+    step = Step(Multiply((1, 4), (3, 4)), schedule, batch=3)
+    state = torch.randn(*step.state_shape, dtype=torch.complex64)
+
+    parts = step.split(state)
+    assert [(3, *shape) for shape in step.lowered.ishapes] == [tuple(p.shape) for p in parts]
+    assert torch.equal(step.join(*parts), state)
+
+
+def test_a_batched_step_carries_a_gradient():
+    torch.manual_seed(0)
+    schedule = nlop.IRGNM(iterations=1, cg_maxiter=10, cg_tol=0.0)
+    step = Step(Multiply((1, 4), (3, 4)), schedule, batch=2)
+    data = torch.randn(*step.data_shape, dtype=torch.complex64)
+    start = torch.randn(*step.state_shape, dtype=torch.complex64) * 0.3
+    iterate = (torch.randn(*step.state_shape, dtype=torch.complex64) * 0.3 + 1.0).requires_grad_(
+        True
+    )
+
+    step(data, iterate, start, step.weight(1.0)).abs().square().sum().backward()
+    assert torch.isfinite(iterate.grad).all()
+    assert 0 < iterate.grad.abs().max()
+
+
+def test_a_batch_below_one_is_refused():
+    with pytest.raises(ValueError):
+        Step(Multiply((1, 4), (3, 4)), nlop.IRGNM(iterations=1), batch=0)

@@ -7,6 +7,8 @@ BART's and composes and solves with it, and that a backward pass is the adjoint
 a transpose.
 """
 
+import gc
+
 import numpy as np
 import pytest
 import torch
@@ -568,3 +570,65 @@ def test_an_operator_carrying_a_normal_still_composes():
 
     x = torch.randn(1, n, n, dtype=torch.complex64)
     torch.testing.assert_close((D @ A)(x), D(F(x)))
+
+
+# --- a diagonal rewritten in place ---------------------------------------------
+
+
+def _pattern(shape):
+    return (torch.rand(*shape) > 0.4).to(torch.complex64)
+
+
+@pytest.mark.parametrize("make", ["sampling", "diagonal"])
+def test_a_diagonal_set_in_place_is_what_the_operator_applies(make):
+    """Against torch's own multiplication, not against BART before the change."""
+    shape, dshape = (2, 8, 8), (1, 8, 8)
+    first, second = _pattern(dshape), _pattern(dshape)
+    A = basic.Sampling(first, shape) if "sampling" == make else basic.Diagonal(first, shape)
+    x = _rand(*shape)
+    torch.testing.assert_close(A(x), x * first)
+    A.set(second)
+    torch.testing.assert_close(A(x), x * second)
+
+
+def test_a_composition_built_before_the_change_answers_for_the_new_diagonal():
+    """``linop_gdiag_set_diag`` writes into the operator a composition holds, not a copy."""
+    shape = (2, 8, 8)
+    first, second = _pattern((1, 8, 8)), _pattern((1, 8, 8))
+    S = basic.Sampling(first, shape)
+    F = linop.FFT(shape, axes=(-1, -2))
+    E = S @ F
+    x = _rand(*shape)
+    E(x)  # built, and its handle taken, before the diagonal moves
+
+    S.set(second)
+    torch.testing.assert_close(E(x), F(x) * second, rtol=1e-4, atol=1e-5)
+
+
+def test_the_gram_drops_its_cached_normal_when_the_diagonal_moves():
+    """``cdiag_normal`` caches ``conj(d) d``; setting the diagonal has to invalidate it."""
+    shape = (2, 8, 8)
+    first, second = _pattern((1, 8, 8)), _pattern((1, 8, 8))
+    S = basic.Sampling(first, shape)
+    gram = S.gram()
+    x = _rand(*shape)
+    torch.testing.assert_close(gram(x), x * first.abs() ** 2, rtol=1e-4, atol=1e-5)
+
+    S.set(second)
+    torch.testing.assert_close(gram(x), x * second.abs() ** 2, rtol=1e-4, atol=1e-5)
+
+
+def test_a_diagonal_of_the_wrong_shape_is_refused():
+    S = basic.Sampling(_pattern((1, 8, 8)), (2, 8, 8))
+    with pytest.raises(ValueError):
+        S.set(_pattern((1, 8, 9)))
+
+
+def test_the_values_are_copied_rather_than_held():
+    """``linop_gdiag_set_diag`` is the copying half of the pair, so no lifetime is owed."""
+    shape = (2, 8, 8)
+    S = basic.Sampling(_pattern((1, 8, 8)), shape)
+    x = _rand(*shape)
+    S.set(torch.full((1, 8, 8), 3.0, dtype=torch.complex64))
+    gc.collect()
+    torch.testing.assert_close(S(x), x * 3.0)
