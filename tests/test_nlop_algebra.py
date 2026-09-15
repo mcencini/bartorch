@@ -435,7 +435,9 @@ def test_a_derivative_agrees_with_a_finite_difference(make):
     d = _rand(6)
     F.forward(x)
     predicted = F.derivative(d)
-    h = 1e-4
+    # The operators are float32: at h = 1e-4 rounding over h failed 22 random
+    # draws in 500 for the cube and 7 for exp; at 1e-2 none of them did.
+    h = 1e-2
     taken = (F.forward(x + h * d) - F.forward(x - h * d)) / (2 * h)
     torch.testing.assert_close(predicted, taken, rtol=2e-2, atol=2e-3)
 
