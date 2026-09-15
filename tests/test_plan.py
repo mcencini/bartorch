@@ -993,6 +993,52 @@ def test_an_odd_stack_is_decoupled_about_the_same_centre():
     assert _off(A(x), _dft3(traj, maps * x)) < 5 * _finufft.tolerance()
 
 
+def _partial_stack(positions, n, spokes):
+    """``(len(positions) * spokes, n, 3)``: one radial plane at each whole kz, block after block."""
+    plane = bartorch.tools.traj(x=n, y=spokes, r=True)
+    traj = plane.unsqueeze(0).repeat(len(positions), 1, 1, 1)
+    traj[..., 2] = torch.tensor(positions, dtype=torch.float32)[:, None, None]
+    return traj.reshape(len(positions) * spokes, n, 3)
+
+
+# kz of each block, out of order, with kz = -1 of the four positions not sampled.
+SOME_KZ = (1, -2, 0)
+
+
+def test_a_stack_over_some_of_the_image_grid_is_decoupled_about_the_planes_it_samples():
+    """Blocks at a few whole kz, out of order, against the 3D sum written out."""
+    torch.manual_seed(67)
+    maps = _rand(COILS, STACK, PLANE, PLANE)
+    traj = _partial_stack(SOME_KZ, PLANE, SPOKES)
+    A = linop.NoncartesianSense(maps, (STACK, PLANE, PLANE), traj=traj)
+    assert A.plan.cartesian == ("z",)
+
+    x, y = _rand(STACK, PLANE, PLANE), _rand(*A.oshape)
+    assert _off(A(x), _dft3(traj, maps * x)) < 5 * _finufft.tolerance()
+    lhs = torch.vdot(A(x).reshape(-1), y.reshape(-1))
+    rhs = torch.vdot(x.reshape(-1), A.adjoint(y).reshape(-1))
+    assert abs(lhs - rhs) / abs(lhs) < 1e-4
+    assert _off(A.normal(x), A.adjoint(A(x))) < 1e-2
+
+
+@requires_cuda
+def test_on_a_card_a_stack_over_some_of_the_image_grid_is_the_host_one():
+    torch.manual_seed(68)
+    maps = _rand(COILS, STACK, PLANE, PLANE)
+    traj = _partial_stack(SOME_KZ, PLANE, SPOKES)
+    host = linop.NoncartesianSense(maps, (STACK, PLANE, PLANE), traj=traj)
+    card = linop.NoncartesianSense(maps, (STACK, PLANE, PLANE), traj=traj, device="cuda")
+    assert card.plan.cartesian == ("z",)
+
+    x, y = _rand(*host.ishape), _rand(*host.oshape)
+    for one, other in (
+        (card(x), host(x)),
+        (card.adjoint(y), host.adjoint(y)),
+        (card.normal(x), host.normal(x)),
+    ):
+        assert _off(one, other) < 1e-2
+
+
 def test_a_decoupled_stack_has_the_adjoint_it_claims():
     torch.manual_seed(51)
     A = linop.NoncartesianSense(

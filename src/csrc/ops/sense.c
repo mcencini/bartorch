@@ -218,9 +218,18 @@ struct sense_s {
 
 	/* The slab is a NUFFT over x and y with z a batch of it, and the coil
 	 * images are transformed along z around it: a stack whose kz lies on
-	 * the image's own grid.  The normal needs no transform along z, since
-	 * the slab's is the same at every position along it. */
+	 * the image's own grid.  With every position sampled the normal needs no
+	 * transform along z, since the slab's is the same at every position. */
 	bool stacked;
+
+	/* Where a stack samples only some positions along z: the positions of
+	 * its blocks, and the planes the slab's transform works on are gathered
+	 * out of a coil image transformed along z and put back into one.  The
+	 * normal then takes the transform along z too.  NULL is every position. */
+	long stack_count;
+	long* stack_positions;
+	long plane_elems;
+	long sub_dims[DIMS];
 
 	/* A contraction whose image weight differs between sets: each term's
 	 * image weight goes on before the sensitivities contract the sets and its
@@ -605,6 +614,8 @@ struct slab_ctx {
 	complex float* nrm;	/* what the normal convolves, per slab */
 	complex float* img;	/* one term's weighted image */
 	complex float* acc;	/* the terms' samples added up */
+	complex float* sub;	/* the planes a partial stack samples */
+	complex float* sub_nrm;	/* what its normal answers over them */
 
 	/* Where there are several items: the one a slab function works on, what
 	 * each does, and how far an item steps the source and the destination. */
@@ -618,6 +629,33 @@ struct slab_ctx {
 static const struct linop_s* slab_of(const struct sense_s* d, const struct slab_ctx* c)
 {
 	return (NULL == d->item_slabs) ? d->slab : d->item_slabs[c->item];
+}
+
+/* The planes a partial stack samples, out of a coil image transformed along z,
+ * and back into one that is otherwise zero.  Everything slower than z -- the
+ * coefficients -- steps over the planes, a position after another. */
+static void planes_take(const struct sense_s* d, complex float* sub, const complex float* cim)
+{
+	long z = d->cim_dims[PHS2_DIM];
+	long outer = md_calc_size(DIMS, d->cim_dims) / (z * d->plane_elems);
+
+	for (long o = 0; o < outer; o++)
+		for (long j = 0; j < d->stack_count; j++)
+			md_copy(1, MD_DIMS(d->plane_elems), sub + (o * d->stack_count + j) * d->plane_elems,
+					cim + (o * z + d->stack_positions[j]) * d->plane_elems, CFL_SIZE);
+}
+
+static void planes_put(const struct sense_s* d, complex float* cim, const complex float* sub)
+{
+	long z = d->cim_dims[PHS2_DIM];
+	long outer = md_calc_size(DIMS, d->cim_dims) / (z * d->plane_elems);
+
+	md_clear(DIMS, d->cim_dims, cim, CFL_SIZE);
+
+	for (long o = 0; o < outer; o++)
+		for (long j = 0; j < d->stack_count; j++)
+			md_copy(1, MD_DIMS(d->plane_elems), cim + (o * z + d->stack_positions[j]) * d->plane_elems,
+					sub + (o * d->stack_count + j) * d->plane_elems, CFL_SIZE);
 }
 
 /* Each item in turn under one slab of coils. */
@@ -692,7 +730,15 @@ static void forward_slab(const struct sense_s* d, long coil, const complex float
 	if (d->stacked)
 		fftuc(DIMS, d->cim_dims, PHS2_FLAG, c->cim, c->cim);
 
-	linop_forward(slab_of(d, c), DIMS, d->out_dims, c->out, DIMS, linop_domain(slab_of(d, c))->dims, c->cim);
+	const complex float* planes = c->cim;
+
+	if (NULL != d->stack_positions) {
+
+		planes_take(d, c->sub, c->cim);
+		planes = c->sub;
+	}
+
+	linop_forward(slab_of(d, c), DIMS, d->out_dims, c->out, DIMS, linop_domain(slab_of(d, c))->dims, planes);
 
 	put_samples(d, coil, c->dst, c->out);
 }
@@ -705,7 +751,12 @@ static void adjoint_slab(const struct sense_s* d, long coil, const complex float
 
 	take_samples(d, coil, c->out, c->src);
 
-	linop_adjoint(slab_of(d, c), DIMS, linop_domain(slab_of(d, c))->dims, c->cim, DIMS, d->out_dims, c->out);
+	complex float* planes = (NULL != d->stack_positions) ? c->sub : c->cim;
+
+	linop_adjoint(slab_of(d, c), DIMS, linop_domain(slab_of(d, c))->dims, planes, DIMS, d->out_dims, c->out);
+
+	if (NULL != d->stack_positions)
+		planes_put(d, c->cim, c->sub);
 
 	if (d->stacked)
 		ifftuc(DIMS, d->cim_dims, PHS2_FLAG, c->cim, c->cim);
@@ -747,7 +798,18 @@ static void normal_slab(const struct sense_s* d, long coil, const complex float*
 
 	md_ztenmul2(DIMS, d->slab_dims, d->cim_strs, c->cim, d->img_strs, c->src, mstrs, map);
 
-	linop_normal_unchecked(slab_of(d, c), c->nrm, c->cim);
+	if (NULL != d->stack_positions) {
+
+		fftuc(DIMS, d->cim_dims, PHS2_FLAG, c->cim, c->cim);
+		planes_take(d, c->sub, c->cim);
+		linop_normal_unchecked(slab_of(d, c), c->sub_nrm, c->sub);
+		planes_put(d, c->nrm, c->sub_nrm);
+		ifftuc(DIMS, d->cim_dims, PHS2_FLAG, c->nrm, c->nrm);
+
+	} else {
+
+		linop_normal_unchecked(slab_of(d, c), c->nrm, c->cim);
+	}
 
 	md_zfmacc2(DIMS, d->slab_dims, d->img_strs, c->dst, d->cim_strs, c->nrm, mstrs, map);
 }
@@ -767,8 +829,20 @@ static void normal_slab_coset(const struct sense_s* d, long coil, const complex 
 
 	md_ztenmul2(DIMS, d->slab_dims, d->cim_strs, c->cim, d->img_strs, c->src, mstrs, map);
 
-	md_clear(DIMS, d->cim_dims, c->nrm, CFL_SIZE);
-	bartorch_nufft_coset_normal(slab_of(d, c), c->nrm, c->cim, last);
+	if (NULL != d->stack_positions) {
+
+		fftuc(DIMS, d->cim_dims, PHS2_FLAG, c->cim, c->cim);
+		planes_take(d, c->sub, c->cim);
+		md_clear(DIMS, d->sub_dims, c->sub_nrm, CFL_SIZE);
+		bartorch_nufft_coset_normal(slab_of(d, c), c->sub_nrm, c->sub, last);
+		planes_put(d, c->nrm, c->sub_nrm);
+		ifftuc(DIMS, d->cim_dims, PHS2_FLAG, c->nrm, c->nrm);
+
+	} else {
+
+		md_clear(DIMS, d->cim_dims, c->nrm, CFL_SIZE);
+		bartorch_nufft_coset_normal(slab_of(d, c), c->nrm, c->cim, last);
+	}
 
 	md_zfmacc2(DIMS, d->slab_dims, d->img_strs, c->dst, d->cim_strs, c->nrm, mstrs, map);
 }
@@ -901,6 +975,7 @@ static void sense_forward(const linop_data_t* _d, complex float* dst, const comp
 		.out = md_alloc_sameplace(DIMS, d->out_dims, CFL_SIZE, src_on),
 		.img = terms ? md_alloc_sameplace(DIMS, d->img_dims, CFL_SIZE, src_on) : NULL,
 		.acc = terms ? md_alloc_sameplace(DIMS, d->out_dims, CFL_SIZE, src_on) : NULL,
+		.sub = (NULL != d->stack_positions) ? md_alloc_sameplace(DIMS, d->sub_dims, CFL_SIZE, src_on) : NULL,
 	};
 
 	c.fn = terms ? forward_slab_terms : gridded ? forward_slab_gridded : forward_slab;
@@ -912,6 +987,8 @@ static void sense_forward(const linop_data_t* _d, complex float* dst, const comp
 	md_free(c.out);
 	md_free(c.img);
 	md_free(c.acc);
+	md_free(c.sub);
+	md_free(c.sub_nrm);
 
 	if (NULL != c.cim)
 		md_free(c.cim);
@@ -946,6 +1023,7 @@ static void sense_adjoint(const linop_data_t* _d, complex float* dst, const comp
 		.out = md_alloc_sameplace(DIMS, d->out_dims, CFL_SIZE, dst_on),
 		.img = terms ? md_alloc_sameplace(DIMS, d->img_dims, CFL_SIZE, dst_on) : NULL,
 		.acc = terms ? md_alloc_sameplace(DIMS, d->out_dims, CFL_SIZE, dst_on) : NULL,
+		.sub = (NULL != d->stack_positions) ? md_alloc_sameplace(DIMS, d->sub_dims, CFL_SIZE, dst_on) : NULL,
 	};
 
 	md_clear(DIMS, d->whole_img_dims, dst_on, CFL_SIZE);
@@ -959,6 +1037,8 @@ static void sense_adjoint(const linop_data_t* _d, complex float* dst, const comp
 	md_free(c.out);
 	md_free(c.img);
 	md_free(c.acc);
+	md_free(c.sub);
+	md_free(c.sub_nrm);
 
 	if (NULL != c.cim)
 		md_free(c.cim);
@@ -1018,6 +1098,8 @@ static void sense_normal(const linop_data_t* _d, complex float* dst, const compl
 		.out = terms ? md_alloc_sameplace(DIMS, d->out_dims, CFL_SIZE, dst_on) : NULL,
 		.img = terms ? md_alloc_sameplace(DIMS, d->img_dims, CFL_SIZE, dst_on) : NULL,
 		.acc = terms ? md_alloc_sameplace(DIMS, d->out_dims, CFL_SIZE, dst_on) : NULL,
+		.sub = (NULL != d->stack_positions) ? md_alloc_sameplace(DIMS, d->sub_dims, CFL_SIZE, dst_on) : NULL,
+		.sub_nrm = (NULL != d->stack_positions) ? md_alloc_sameplace(DIMS, d->sub_dims, CFL_SIZE, dst_on) : NULL,
 	};
 
 	md_clear(DIMS, d->whole_img_dims, dst_on, CFL_SIZE);
@@ -1081,6 +1163,8 @@ static void sense_normal(const linop_data_t* _d, complex float* dst, const compl
 	md_free(c.out);
 	md_free(c.img);
 	md_free(c.acc);
+	md_free(c.sub);
+	md_free(c.sub_nrm);
 
 	if (NULL != c.cim)
 		md_free(c.cim);
@@ -1118,6 +1202,7 @@ static void sense_del(const linop_data_t* _d)
 	}
 
 	md_free(d->owned);
+	xfree(d->stack_positions);
 	multiplace_free(d->term_image);
 	multiplace_free(d->term_sample);
 	xfree(d);
@@ -1178,6 +1263,9 @@ static struct sense_s* sense_slabs(long batch, bool fold, const long max_dims[DI
 	d->batch = slab_size(d->coils, batch);
 	d->fold = fold;
 	d->stacked = false;
+	d->stack_count = 0;
+	d->stack_positions = NULL;
+	d->plane_elems = 0;
 	d->terms = 0;
 	d->term_image_item_step = 0;
 	d->term_sample_item_step = 0;
@@ -1792,17 +1880,37 @@ const struct linop_s* bartorch_encoding_operator(const struct bartorch_encoding*
 	if (d->stacked) {
 
 		long z = d->cim_dims[PHS2_DIM];
+		long blocks = (NULL == f->stack_positions) ? z : f->stack_count;
 
 		if ((1 != d->batch) || (1 != d->cim_dims[MAPS_DIM]) || (1 != slab_ksp_dims[MAPS_DIM])
-				|| (0 != slab_ksp_dims[PHS2_DIM] % z) || (NULL != f->slice) || (0 != f->segments))
+				|| (blocks < 1) || (0 != slab_ksp_dims[PHS2_DIM] % blocks)
+				|| (NULL != f->slice) || (0 != f->segments))
 			error("bartorch: a stack lays z out where the sets would be, which takes a slab of "
 				"one coil and no sets, segments or slice phase\n");
 
 		slab_cim_dims[PHS2_DIM] = 1;
-		slab_cim_dims[MAPS_DIM] = z;
-		slab_ksp_dims[PHS2_DIM] /= z;
-		slab_ksp_dims[MAPS_DIM] = z;
+		slab_cim_dims[MAPS_DIM] = blocks;
+		slab_ksp_dims[PHS2_DIM] /= blocks;
+		slab_ksp_dims[MAPS_DIM] = blocks;
+
+		if (NULL != f->stack_positions) {
+
+			d->stack_count = blocks;
+			d->stack_positions = xmalloc((size_t)blocks * sizeof(long));
+			d->plane_elems = d->cim_dims[READ_DIM] * d->cim_dims[PHS1_DIM];
+
+			for (long j = 0; j < blocks; j++) {
+
+				if ((f->stack_positions[j] < 0) || (f->stack_positions[j] >= z))
+					error("bartorch: a stack's position %ld is off a z grid of %ld\n",
+						f->stack_positions[j], z);
+
+				d->stack_positions[j] = f->stack_positions[j];
+			}
+		}
 	}
+
+	md_copy_dims(DIMS, d->sub_dims, slab_cim_dims);
 
 	/* An image weight that differs between sets goes on before the
 	 * sensitivities contract them, so those terms are the slab loop's rather
