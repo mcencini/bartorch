@@ -35,6 +35,7 @@ itself.
    Chain
    FromLinear
    Derivative
+   Bundle
 ```
 
 ## Basic

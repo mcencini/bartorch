@@ -36,6 +36,7 @@ from bartorch.nlop.basic import (
     Sum,
     Weighted,
 )
+from bartorch.nlop.bundle import Bundle
 from bartorch.nlop.callback import FromTorch, Parameters
 from bartorch.nlop.derivative import Derivative
 from bartorch.nlop.irgnm import IRGNM, irgnm
@@ -56,6 +57,7 @@ __all__ = [
     "Abs",
     "Add",
     "Bloch",
+    "Bundle",
     "CartesianSense",
     "Chain",
     "CoilSense",

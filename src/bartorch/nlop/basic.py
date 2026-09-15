@@ -73,17 +73,36 @@ class Exp(_Elementwise):
 
     _fn = "bartorch_nlop_zexp"
 
+    def _bundle(self):
+        from bartorch.nlop.bundle import diagonal
+
+        return diagonal(self, Exp(self._shape))
+
 
 class Log(_Elementwise):
     """``log(x)``, elementwise.  BART's ``zlog``."""
 
     _fn = "bartorch_nlop_zlog"
 
+    def _bundle(self):
+        from bartorch.nlop.bundle import diagonal
+
+        return diagonal(self, Inverse(self._shape))
+
 
 class Sqrt(_Elementwise):
     """``sqrt(x)``, elementwise.  BART's ``zsqrt``."""
 
     _fn = "bartorch_nlop_zsqrt"
+
+    def _bundle(self):
+        from bartorch.nlop.base import chain
+        from bartorch.nlop.bundle import diagonal, scaled
+
+        # `zsqrt_apply` fills the diagonal with 0.5 and divides it by the
+        # value, so it is half the inverse of the root and not of the point.
+        half = chain(chain(Sqrt(self._shape), Inverse(self._shape)), scaled(self._shape, 0.5))
+        return diagonal(self, half)
 
 
 class Abs(_Elementwise):
@@ -135,6 +154,16 @@ class Inverse(_Elementwise):
     def _extra(self) -> tuple:
         return (self.eps,)
 
+    def _bundle(self):
+        from bartorch.nlop.base import chain
+        from bartorch.nlop.bundle import diagonal, scaled
+
+        # `zinv_reg_fun` squares the value and negates it, so the diagonal is
+        # minus the square of the regularised inverse rather than of `1 / x`.
+        squared = Multiply(self._shape, self._shape).dup(0, 1)
+        made = chain(chain(Inverse(self._shape, self.eps), squared), scaled(self._shape, -1.0))
+        return diagonal(self, made)
+
     def __repr__(self) -> str:
         return f"Inverse({self._shape}, eps={self.eps})"
 
@@ -150,6 +179,18 @@ class Power(_Elementwise):
 
     def _extra(self) -> tuple:
         return (self.exponent.real, self.exponent.imag)
+
+    def _bundle(self):
+        from bartorch.nlop.base import chain
+        from bartorch.nlop.bundle import diagonal, scaled
+
+        # `zspow_fun` divides the value by the point rather than raising the
+        # point to one power less, which differs where the point is zero.
+        # BART divides with `md_zdiv` and `Divide` multiplies by the inverse,
+        # so this is that diagonal to within one rounding rather than to the
+        # bit.
+        ratio = chain(Power(self._shape, self.exponent), Divide(self._shape)).dup(0, 1)
+        return diagonal(self, chain(ratio, scaled(self._shape, self.exponent)))
 
     def __repr__(self) -> str:
         return f"Power({self._shape}, {self.exponent})"
@@ -170,6 +211,14 @@ class Add(_Elementwise):
 
     def _extra(self) -> tuple:
         return (self.value.real, self.value.imag)
+
+    def _bundle(self):
+        from bartorch.linop.basic import Identity
+        from bartorch.nlop.base import FromLinear
+        from bartorch.nlop.bundle import linear
+
+        one = FromLinear(Identity(self._shape))
+        return linear(self, one, one)
 
     def __repr__(self) -> str:
         return f"Add({self._shape}, {self.value})"
@@ -256,6 +305,28 @@ class Multiply(NonlinearOperator):
         )
         return _built(ptr, (self._a, self._b), (self._out,))
 
+    def _bundle(self):
+        from bartorch.linop.basic import Conj
+        from bartorch.nlop.base import FromLinear, chain, combine
+        from bartorch.nlop.bundle import Bundle, _TenMul
+
+        a, b, out = self._a, self._b, self._out
+
+        # `da * b + a * db`, which is `noir_get_derivative` without the
+        # linear parts of the coil model around it.
+        made = combine(_TenMul(out, a, b), _TenMul(out, a, b))  # in: a, db, da, b
+        made = made.permute_inputs([2, 1, 0, 3])  # in: da, db, a, b
+        derivative = chain(made, Weighted(out, 1.0, 1.0), output=0, input=0).link(1, 0)
+
+        # `conj(b) * dz` summed onto the image and `conj(a) * dz` onto the
+        # coils, which is `noir_get_adjoint`'s pair and its permutation.
+        first = chain(FromLinear(Conj(b)), _TenMul(a, b, out), output=0, input=0)
+        second = chain(FromLinear(Conj(a)), _TenMul(b, a, out), output=0, input=0)
+        adjoint = combine(first, second)  # in: dz, b, dz, a
+        adjoint = adjoint.permute_inputs([0, 2, 3, 1]).dup(0, 1)  # in: dz, a, b
+
+        return Bundle(self, derivative, adjoint)
+
     def __repr__(self) -> str:
         return f"Multiply({self._a}, {self._b})"
 
@@ -292,6 +363,15 @@ class Weighted(NonlinearOperator):
             library().bartorch_nlop_zaxpbz, DIMS, dims(self._shape), self.a, self.b
         )
         return _built(ptr, (self._shape, self._shape), (self._shape,))
+
+    def _bundle(self):
+        from bartorch.nlop.base import combine
+        from bartorch.nlop.bundle import linear, scaled
+
+        # `a` and `b` are real, so the adjoint scales by them rather than by
+        # their conjugates.
+        adjoint = combine(scaled(self._shape, self.a), scaled(self._shape, self.b)).dup(0, 1)
+        return linear(self, Weighted(self._shape, self.a, self.b), adjoint)
 
     def __repr__(self) -> str:
         return f"Weighted({self._shape}, a={self.a}, b={self.b})"
@@ -334,6 +414,12 @@ class Constant(NonlinearOperator):
             self.value.data_ptr(),
         )
         return _built(ptr, (), (shape,))
+
+    def _bundle(self):
+        from bartorch.nlop.bundle import Bundle
+
+        # No input, so no tangent to carry and no cotangent to return.
+        return Bundle(self, Constant(torch.zeros_like(self.value)), None)
 
     def __repr__(self) -> str:
         return f"Constant({tuple(self.value.shape)})"

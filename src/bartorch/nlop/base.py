@@ -308,6 +308,20 @@ class NonlinearOperator(Operator):
 
         return Derivative(self, output, input)
 
+    def _bundle(self):
+        """This operator's :class:`~bartorch.nlop.bundle.Bundle`, or ``None`` where it has none."""
+        return None
+
+    @cached_property
+    def bundle(self):
+        """The derivative and adjoint with the linearization point as an argument.
+
+        ``None`` where the operator has none, which leaves it able to solve
+        but not to be a Gauss-Newton step; see
+        :class:`~bartorch.nlop.bundle.Bundle`.
+        """
+        return self._bundle()
+
     def linearize(self, *xs: torch.Tensor):
         """The derivative at ``x``, as a :class:`~bartorch.linop.LinearOperator`.
 
@@ -485,6 +499,11 @@ class FromLinear(NonlinearOperator):
             library().bartorch_nlop_from_linop, self.op._h.ptr, device=self.op.device
         )
         return Built(ptr, self.op.ishape, self.op.oshape, keep=(self.op,), device=self.op.device)
+
+    def _bundle(self):
+        from bartorch.nlop.bundle import linear
+
+        return linear(self, FromLinear(self.op), FromLinear(self.op.H))
 
     def __repr__(self) -> str:
         return f"{self.op!r}.to_nonlinear()"
