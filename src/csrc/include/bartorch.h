@@ -329,6 +329,12 @@ struct bartorch_encoding {
 	 * maps, over one trajectory. */
 	int batch_dim;
 
+	/* Encoding axes the image carries and each item of which has its own
+	 * trajectory: the extent of each such axis, and one elsewhere, or NULL
+	 * for none.  Every item is its own transform and normal kernel under one
+	 * coil loop. */
+	const long* item_dims;
+
 	/* A k-space factor that differs between sets of maps, applied after
 	 * the transform, with the sets summed over after it: the slice phase
 	 * of a simultaneous-multislice acquisition.  The sets then survive the
@@ -373,6 +379,8 @@ enum bartorch_encoding_count {
 	BARTORCH_ENCODING_SEGMENTED = 6,
 	/* Forms built as a stack decoupled along z. */
 	BARTORCH_ENCODING_STACKED = 7,
+	/* Forms built with a transform per item. */
+	BARTORCH_ENCODING_ITEMS = 8,
 };
 BARTORCH_API long bartorch_encoding_counter(int which);
 BARTORCH_API void bartorch_encoding_reset_counters(void);

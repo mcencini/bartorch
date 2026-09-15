@@ -118,7 +118,7 @@ int bartorch_sense_fold_maps(void)
 /* What the executor has built and run, by the header's own names
  * (bartorch_encoding_count).  bartorch_sense_counter is the first three of
  * them under the slab loop's own name. */
-enum { SN_COUNTS = BARTORCH_ENCODING_STACKED + 1 };
+enum { SN_COUNTS = BARTORCH_ENCODING_ITEMS + 1 };
 static long sense_counters[SN_COUNTS];
 
 static void counted(int which)
@@ -233,6 +233,16 @@ struct sense_s {
 	long term_sample_strs[DIMS];
 	long term_image_step;
 	long term_sample_step;
+
+	/* Items that each have a trajectory of their own: `slab` is the first of
+	 * `item_slabs`, which is NULL with one item.  `img_dims` and a coil's
+	 * samples are one item's, and the whole is the items one after another,
+	 * so an item is an offset into both. */
+	long items;
+	const struct linop_s** item_slabs;
+	long item_image_step;
+	long item_sample_step;
+	long whole_img_dims[DIMS];
 };
 
 static DEF_TYPEID(sense_s);
@@ -593,7 +603,43 @@ struct slab_ctx {
 	complex float* nrm;	/* what the normal convolves, per slab */
 	complex float* img;	/* one term's weighted image */
 	complex float* acc;	/* the terms' samples added up */
+
+	/* Where there are several items: the one a slab function works on, what
+	 * each does, and how far an item steps the source and the destination. */
+	long item;
+	slab_fn fn;
+	long src_step;
+	long dst_step;
 };
+
+/* The transform an item's slab function applies. */
+static const struct linop_s* slab_of(const struct sense_s* d, const struct slab_ctx* c)
+{
+	return (NULL == d->item_slabs) ? d->slab : d->item_slabs[c->item];
+}
+
+/* Each item in turn under one slab of coils. */
+static void each_item(const struct sense_s* d, long coil, const complex float* map,
+		const long* mstrs, bool last, void* _c)
+{
+	struct slab_ctx* c = _c;
+
+	complex float* dst = c->dst;
+	const complex float* src = c->src;
+
+	for (long t = 0; t < d->items; t++) {
+
+		c->item = t;
+		c->dst = dst + t * c->dst_step;
+		c->src = src + t * c->src_step;
+
+		c->fn(d, coil, map, mstrs, last, c);
+	}
+
+	c->dst = dst;
+	c->src = src;
+	c->item = 0;
+}
 
 /* A slab's samples into their place in the whole, and back out of it. */
 static void put_samples(const struct sense_s* d, long coil, complex float* dst, const complex float* out)
@@ -644,7 +690,7 @@ static void forward_slab(const struct sense_s* d, long coil, const complex float
 	if (d->stacked)
 		fftuc(DIMS, d->cim_dims, PHS2_FLAG, c->cim, c->cim);
 
-	linop_forward(d->slab, DIMS, d->out_dims, c->out, DIMS, linop_domain(d->slab)->dims, c->cim);
+	linop_forward(slab_of(d, c), DIMS, d->out_dims, c->out, DIMS, linop_domain(slab_of(d, c))->dims, c->cim);
 
 	put_samples(d, coil, c->dst, c->out);
 }
@@ -657,7 +703,7 @@ static void adjoint_slab(const struct sense_s* d, long coil, const complex float
 
 	take_samples(d, coil, c->out, c->src);
 
-	linop_adjoint(d->slab, DIMS, linop_domain(d->slab)->dims, c->cim, DIMS, d->out_dims, c->out);
+	linop_adjoint(slab_of(d, c), DIMS, linop_domain(slab_of(d, c))->dims, c->cim, DIMS, d->out_dims, c->out);
 
 	if (d->stacked)
 		ifftuc(DIMS, d->cim_dims, PHS2_FLAG, c->cim, c->cim);
@@ -699,7 +745,7 @@ static void normal_slab(const struct sense_s* d, long coil, const complex float*
 
 	md_ztenmul2(DIMS, d->slab_dims, d->cim_strs, c->cim, d->img_strs, c->src, mstrs, map);
 
-	linop_normal_unchecked(d->slab, c->nrm, c->cim);
+	linop_normal_unchecked(slab_of(d, c), c->nrm, c->cim);
 
 	md_zfmacc2(DIMS, d->slab_dims, d->img_strs, c->dst, d->cim_strs, c->nrm, mstrs, map);
 }
@@ -720,7 +766,7 @@ static void normal_slab_coset(const struct sense_s* d, long coil, const complex 
 	md_ztenmul2(DIMS, d->slab_dims, d->cim_strs, c->cim, d->img_strs, c->src, mstrs, map);
 
 	md_clear(DIMS, d->cim_dims, c->nrm, CFL_SIZE);
-	bartorch_nufft_coset_normal(d->slab, c->nrm, c->cim, last);
+	bartorch_nufft_coset_normal(slab_of(d, c), c->nrm, c->cim, last);
 
 	md_zfmacc2(DIMS, d->slab_dims, d->img_strs, c->dst, d->cim_strs, c->nrm, mstrs, map);
 }
@@ -738,7 +784,7 @@ static void normal_slab_folded(const struct sense_s* d, long coil, const complex
 	(void)coil;
 	struct slab_ctx* c = _c;
 
-	bartorch_nufft_coset_normal_sense(d->slab, c->dst, c->src, mstrs, map, last);
+	bartorch_nufft_coset_normal_sense(slab_of(d, c), c->dst, c->src, mstrs, map, last);
 }
 
 /* The same for a Cartesian transform: the sensitivity goes on as a
@@ -771,7 +817,7 @@ static void terms_forward(const struct sense_s* d, const complex float* map, con
 
 		md_ztenmul2(DIMS, d->slab_dims, d->cim_strs, c->cim, d->img_strs, c->img, mstrs, map);
 
-		linop_forward(d->slab, DIMS, d->out_dims, c->out, DIMS, linop_domain(d->slab)->dims, c->cim);
+		linop_forward(slab_of(d, c), DIMS, d->out_dims, c->out, DIMS, linop_domain(slab_of(d, c))->dims, c->cim);
 
 		md_zmul2(DIMS, d->out_dims, d->out_strs, c->out, d->out_strs, c->out,
 				d->term_sample_strs, sample + l * d->term_sample_step);
@@ -791,7 +837,7 @@ static void terms_adjoint(const struct sense_s* d, const complex float* map, con
 		md_zmulc2(DIMS, d->out_dims, d->out_strs, c->out, d->out_strs, samples,
 				d->term_sample_strs, sample + l * d->term_sample_step);
 
-		linop_adjoint(d->slab, DIMS, linop_domain(d->slab)->dims, c->cim, DIMS, d->out_dims, c->out);
+		linop_adjoint(slab_of(d, c), DIMS, linop_domain(slab_of(d, c))->dims, c->cim, DIMS, d->out_dims, c->out);
 
 		md_clear(DIMS, d->img_dims, c->img, CFL_SIZE);
 		md_zfmacc2(DIMS, d->slab_dims, d->img_strs, c->img, d->cim_strs, c->cim, mstrs, map);
@@ -838,7 +884,7 @@ static void sense_forward(const linop_data_t* _d, complex float* dst, const comp
 
 	counted(BARTORCH_ENCODING_FORWARD);
 
-	complex float* src_on = onto_card(d->img_dims, src, true);
+	complex float* src_on = onto_card(d->whole_img_dims, src, true);
 
 	/* A sampled-only Cartesian transform folds the sensitivity into its
 	 * transforms, where they run through cuFFT on the card. */
@@ -855,7 +901,11 @@ static void sense_forward(const linop_data_t* _d, complex float* dst, const comp
 		.acc = terms ? md_alloc_sameplace(DIMS, d->out_dims, CFL_SIZE, src_on) : NULL,
 	};
 
-	drive_slabs(d, src_on, terms ? forward_slab_terms : gridded ? forward_slab_gridded : forward_slab, &c, NULL);
+	c.fn = terms ? forward_slab_terms : gridded ? forward_slab_gridded : forward_slab;
+	c.src_step = d->item_image_step;
+	c.dst_step = d->item_sample_step;
+
+	drive_slabs(d, src_on, (1 < d->items) ? each_item : c.fn, &c, NULL);
 
 	md_free(c.out);
 	md_free(c.img);
@@ -864,7 +914,7 @@ static void sense_forward(const linop_data_t* _d, complex float* dst, const comp
 	if (NULL != c.cim)
 		md_free(c.cim);
 
-	off_card(d->img_dims, (complex float*)src, src_on, false);
+	off_card(d->whole_img_dims, (complex float*)src, src_on, false);
 
 #ifdef USE_CUDA
 	if (crosses(src))
@@ -878,10 +928,10 @@ static void sense_adjoint(const linop_data_t* _d, complex float* dst, const comp
 
 	counted(BARTORCH_ENCODING_ADJOINT);
 
-	complex float* dst_on = onto_card(d->img_dims, dst, false);
+	complex float* dst_on = onto_card(d->whole_img_dims, dst, false);
 
 	/* The caller's pages are faulted in while the card works (cuda.c). */
-	void* faulting = (dst_on != dst) ? bartorch_host_prefault_begin(dst, md_calc_size(DIMS, d->img_dims) * (long)CFL_SIZE) : NULL;
+	void* faulting = (dst_on != dst) ? bartorch_host_prefault_begin(dst, md_calc_size(DIMS, d->whole_img_dims) * (long)CFL_SIZE) : NULL;
 
 	bool terms = (0 != d->terms);
 	bool gridded = !terms && d->fold && (1 == d->slab_dims[MAPS_DIM])
@@ -896,9 +946,13 @@ static void sense_adjoint(const linop_data_t* _d, complex float* dst, const comp
 		.acc = terms ? md_alloc_sameplace(DIMS, d->out_dims, CFL_SIZE, dst_on) : NULL,
 	};
 
-	md_clear(DIMS, d->img_dims, dst_on, CFL_SIZE);
+	md_clear(DIMS, d->whole_img_dims, dst_on, CFL_SIZE);
 
-	drive_slabs(d, dst_on, terms ? adjoint_slab_terms : gridded ? adjoint_slab_gridded : adjoint_slab, &c, NULL);
+	c.fn = terms ? adjoint_slab_terms : gridded ? adjoint_slab_gridded : adjoint_slab;
+	c.src_step = d->item_sample_step;
+	c.dst_step = d->item_image_step;
+
+	drive_slabs(d, dst_on, (1 < d->items) ? each_item : c.fn, &c, NULL);
 
 	md_free(c.out);
 	md_free(c.img);
@@ -908,7 +962,7 @@ static void sense_adjoint(const linop_data_t* _d, complex float* dst, const comp
 		md_free(c.cim);
 
 	bartorch_host_prefault_end(faulting);
-	off_card(d->img_dims, dst, dst_on, true);
+	off_card(d->whole_img_dims, dst, dst_on, true);
 
 #ifdef USE_CUDA
 	if (crosses(dst))
@@ -943,8 +997,8 @@ static void sense_normal(const linop_data_t* _d, complex float* dst, const compl
 	if (folds)
 		counted(BARTORCH_ENCODING_FOLDED);
 
-	complex float* src_on = onto_card(d->img_dims, src, true);
-	complex float* dst_on = onto_card(d->img_dims, dst, false);
+	complex float* src_on = onto_card(d->whole_img_dims, src, true);
+	complex float* dst_on = onto_card(d->whole_img_dims, dst, false);
 
 	/* A Cartesian transform folds the sensitivity in the same way, where its
 	 * normal runs through cuFFT on the card the image is on. */
@@ -952,7 +1006,7 @@ static void sense_normal(const linop_data_t* _d, complex float* dst, const compl
 			&& (0 != bartorch_grid_folds(d->slab, dst_on));
 
 	/* The caller's pages are faulted in while the card works (cuda.c). */
-	void* faulting = (dst_on != dst) ? bartorch_host_prefault_begin(dst, md_calc_size(DIMS, d->img_dims) * (long)CFL_SIZE) : NULL;
+	void* faulting = (dst_on != dst) ? bartorch_host_prefault_begin(dst, md_calc_size(DIMS, d->whole_img_dims) * (long)CFL_SIZE) : NULL;
 
 	struct slab_ctx c = {
 
@@ -964,7 +1018,7 @@ static void sense_normal(const linop_data_t* _d, complex float* dst, const compl
 		.acc = terms ? md_alloc_sameplace(DIMS, d->out_dims, CFL_SIZE, dst_on) : NULL,
 	};
 
-	md_clear(DIMS, d->img_dims, dst_on, CFL_SIZE);
+	md_clear(DIMS, d->whole_img_dims, dst_on, CFL_SIZE);
 
 	/* Terms are the forward followed by the adjoint, a slab at a time: the sum
 	 * has no kernel of its own. */
@@ -978,23 +1032,38 @@ static void sense_normal(const linop_data_t* _d, complex float* dst, const compl
 
 	} else if (0 == cosets) {
 
-		drive_slabs(d, dst_on, normal_slab, &c, NULL);
+		c.fn = normal_slab;
+		c.src_step = d->item_image_step;
+		c.dst_step = d->item_image_step;
+
+		drive_slabs(d, dst_on, (1 < d->items) ? each_item : normal_slab, &c, NULL);
 
 	} else {
 
 		/* Each set walks the coils the other way round from the one
-		 * before, so it starts on the slab the last one ended on. */
+		 * before, so it starts on the slab the last one ended on.  Items
+		 * are outside the sets, so an item's function crosses once for
+		 * the item rather than once for every coil. */
 		struct slab_walk walk = { { NULL, NULL }, { -1, -1 }, false };
 
-		bartorch_nufft_coset_begin(d->slab, dst_on);
+		for (long t = 0; t < d->items; t++) {
 
-		for (int i = 0; i < cosets; i++) {
+			const struct linop_s* slab = (NULL == d->item_slabs) ? d->slab : d->item_slabs[t];
 
-			bartorch_nufft_coset_use(d->slab, i);
-			drive_slabs(d, dst_on, folds ? normal_slab_folded : normal_slab_coset, &c, &walk);
+			c.item = t;
+			c.src = src_on + t * d->item_image_step;
+			c.dst = dst_on + t * d->item_image_step;
+
+			bartorch_nufft_coset_begin(slab, dst_on);
+
+			for (int i = 0; i < cosets; i++) {
+
+				bartorch_nufft_coset_use(slab, i);
+				drive_slabs(d, dst_on, folds ? normal_slab_folded : normal_slab_coset, &c, &walk);
+			}
+
+			bartorch_nufft_coset_end(slab);
 		}
-
-		bartorch_nufft_coset_end(d->slab);
 
 		md_free(walk.buf[1]);
 		md_free(walk.buf[0]);
@@ -1010,9 +1079,9 @@ static void sense_normal(const linop_data_t* _d, complex float* dst, const compl
 	if (NULL != c.cim)
 		md_free(c.cim);
 
-	off_card(d->img_dims, (complex float*)src, src_on, false);
+	off_card(d->whole_img_dims, (complex float*)src, src_on, false);
 	bartorch_host_prefault_end(faulting);
-	off_card(d->img_dims, dst, dst_on, true);
+	off_card(d->whole_img_dims, dst, dst_on, true);
 
 	/* BART keeps every block it frees for the next application, which
 	 * serves the hundreds of transform workspaces an application asks for
@@ -1030,7 +1099,18 @@ static void sense_del(const linop_data_t* _d)
 {
 	const auto d = CAST_DOWN(sense_s, _d);
 
-	linop_free(d->slab);
+	if (NULL == d->item_slabs) {
+
+		linop_free(d->slab);
+
+	} else {
+
+		for (long t = 0; t < d->items; t++)
+			linop_free(d->item_slabs[t]);
+
+		xfree(d->item_slabs);
+	}
+
 	md_free(d->owned);
 	multiplace_free(d->term_image);
 	multiplace_free(d->term_sample);
@@ -1116,6 +1196,12 @@ static struct sense_s* sense_slabs(long batch, bool fold, const long max_dims[DI
 	md_calc_strides(DIMS, d->cim_strs, d->cim_dims, CFL_SIZE);
 	md_calc_strides(DIMS, d->img_strs, d->img_dims, CFL_SIZE);
 
+	d->items = 1;
+	d->item_slabs = NULL;
+	md_copy_dims(DIMS, d->whole_img_dims, d->img_dims);
+	d->item_image_step = md_calc_size(DIMS, d->img_dims);
+	d->item_sample_step = 0;
+
 	/* The sensitivities and the output are read and written in place, so a
 	 * slab steps along the strides of the whole. */
 	md_calc_strides(DIMS, d->map_strs, map_dims, CFL_SIZE);
@@ -1140,7 +1226,7 @@ static struct sense_s* sense_slabs(long batch, bool fold, const long max_dims[DI
  * than around it because one bank cannot serve every item.  They are still
  * part of what a slab answers, so they stay in the block; what they must not
  * do is push the coils above them. */
-static void sense_output_from(struct sense_s* d, bool coils_slowest, unsigned long outer)
+static void sense_output_from(struct sense_s* d, bool coils_slowest, unsigned long outer, const long* item_dims)
 {
 	auto cod = linop_codomain(d->slab);
 
@@ -1161,13 +1247,22 @@ static void sense_output_from(struct sense_s* d, bool coils_slowest, unsigned lo
 	md_copy_dims(DIMS, d->block_dims, d->out_dims);
 	d->block_dims[COIL_DIM] = 1;
 
+	/* A block is one item's; a coil holds the items one after another. */
+	long whole_dims[DIMS];
+	md_copy_dims(DIMS, whole_dims, d->block_dims);
+
+	if (NULL != item_dims)
+		md_max_dims(DIMS, ~0UL, whole_dims, whole_dims, item_dims);
+
+	d->item_sample_step = md_calc_size(DIMS, d->block_dims);
+
 	/* The whole is the blocks one coil after another, so the coils go on the
 	 * first axis past everything a block has below them: BART's own coil axis
 	 * where a block has nothing beyond it, a later one where encoding axes
 	 * lie there, and never above an outer axis, which the torch layout puts
 	 * slower than the coils. */
 	long inner_dims[DIMS];
-	md_select_dims(DIMS, ~outer, inner_dims, d->block_dims);
+	md_select_dims(DIMS, ~outer, inner_dims, whole_dims);
 
 	int last = DIMS - 1;
 
@@ -1183,11 +1278,11 @@ static void sense_output_from(struct sense_s* d, bool coils_slowest, unsigned lo
 	 * above them too would be read in the wrong order rather than refused. */
 	unsigned long at_or_below = (1UL << (coil_axis + 1)) - 1UL;
 
-	if (0 != (outer & md_nontriv_dims(DIMS, d->block_dims) & at_or_below))
+	if (0 != (outer & md_nontriv_dims(DIMS, whole_dims) & at_or_below))
 		error("bartorch: a batch the sensitivities vary along lies slower than the coils, "
 			"and this one has been placed on a dimension below them\n");
 
-	md_copy_dims(DIMS, d->full_out_dims, d->block_dims);
+	md_copy_dims(DIMS, d->full_out_dims, whole_dims);
 	d->full_out_dims[coil_axis] = d->coils;
 	md_calc_strides(DIMS, d->full_out_strs, d->full_out_dims, CFL_SIZE);
 	d->out_slab_offset = d->full_out_strs[coil_axis];
@@ -1199,7 +1294,7 @@ static struct linop_s* sense_operator(struct sense_s* d)
 
 	counted(BARTORCH_ENCODING_BUILT);
 
-	return linop_create(DIMS, d->full_out_dims, DIMS, d->img_dims, CAST_UP(d),
+	return linop_create(DIMS, d->full_out_dims, DIMS, d->whole_img_dims, CAST_UP(d),
 			sense_forward, sense_adjoint, sense_normal, NULL, sense_del);
 }
 
@@ -1238,7 +1333,7 @@ struct linop_s* sense_init(unsigned long shared_img_flags, const long max_dims[D
 	slab_ksp_dims[COIL_DIM] = d->batch;
 
 	d->slab = linop_fft_create(DIMS, slab_ksp_dims, FFT_FLAGS);
-	sense_output_from(d, false, 0UL);
+	sense_output_from(d, false, 0UL, NULL);
 
 	return sense_operator(d);
 }
@@ -1277,7 +1372,7 @@ const struct linop_s* sense_nc_init(const long max_dims[DIMS], const long map_di
 			(weights ? wgs_dims : NULL), weights,
 			(basis ? basis_dims : NULL), basis, *_conf);
 
-	sense_output_from(d, false, 0UL);
+	sense_output_from(d, false, 0UL, NULL);
 
 	/* The caller reads the point spread function off this and imports one
 	 * into it; a slab's transform carries the same one, because a point
@@ -1567,6 +1662,39 @@ const struct linop_s* bartorch_encoding_operator(const struct bartorch_encoding*
 		md_select_dims(DIMS, (NULL != f->slice) ? ~0UL : ~MAPS_FLAG, out_dims, max_dims);
 	}
 
+	/* Items with a trajectory of their own: the operator is built for one,
+	 * and each gets its own transform over its part of the trajectory. */
+	long items = 1;
+	long item_max_dims[DIMS];
+	long item_out_dims[DIMS];
+
+	md_copy_dims(DIMS, item_max_dims, max_dims);
+	md_copy_dims(DIMS, item_out_dims, out_dims);
+
+	if (NULL != f->item_dims) {
+
+		if ((BARTORCH_ENCODING_NUFFT != f->transform) || (0 != f->segments)
+				|| (NULL != f->slice) || (0 <= f->batch_dim))
+			error("bartorch: a trajectory per item is a NUFFT's, without segments, a slice "
+				"phase or a batch on the sensitivities\n");
+
+		for (int i = 0; i < DIMS; i++) {
+
+			if (1 == f->item_dims[i])
+				continue;
+
+			if ((max_dims[i] != f->item_dims[i]) || (out_dims[i] != f->item_dims[i]))
+				error("bartorch: an item axis is the image's and the samples' alike\n");
+
+			items *= f->item_dims[i];
+			item_max_dims[i] = 1;
+			item_out_dims[i] = 1;
+		}
+	}
+
+	max_dims = item_max_dims;
+	md_copy_dims(DIMS, out_dims, item_out_dims);
+
 	/* A k-space factor laid out along the coils would have to be sliced
 	 * with them, which the loop cannot do. */
 	bool sliced = sliceable((long)f->coil_batch, max_dims, map_dims, out_dims, 0UL)
@@ -1575,8 +1703,8 @@ const struct linop_s* bartorch_encoding_operator(const struct bartorch_encoding*
 
 	if (!sliced) {
 
-		if (0 != f->stacked)
-			error("bartorch: a stack is transformed along z inside the coil loop, "
+		if ((0 != f->stacked) || (1 < items))
+			error("bartorch: a stack and a trajectory per item are the coil loop's, "
 				"and this form cannot be sliced into one\n");
 
 		return form_chain(f, max_dims, map_dims, out_dims, &conf);
@@ -1586,6 +1714,9 @@ const struct linop_s* bartorch_encoding_operator(const struct bartorch_encoding*
 			max_dims, map_dims, out_dims, 0UL, NULL != f->slice);
 
 	sense_hold(d, f->sens_dims, f->sens, f->kernels);
+
+	md_select_dims(DIMS, ~COIL_FLAG, d->whole_img_dims, f->max_dims);
+	d->items = items;
 
 	d->stacked = (0 != f->stacked);
 
@@ -1657,14 +1788,61 @@ const struct linop_s* bartorch_encoding_operator(const struct bartorch_encoding*
 	struct bartorch_encoding slab = *f;
 	slab.ksp_dims = slab_ksp_dims;
 
-	const struct linop_s* transform = summed_over_sets(f, form_transform(&slab, slab_cim_dims, &conf));
+	if (1 < items) {
 
-	d->slab = before_maps ? transform : contracted(f, transform);
+		counted(BARTORCH_ENCODING_ITEMS);
 
-	if (before_maps)
-		hold_terms(d, f);
+		/* An item's part of the trajectory and of the weights is contiguous:
+		 * the item axes are the slowest either array has. */
+		long trj_dims[DIMS];
+		long trj_strs[DIMS];
+		md_select_dims(DIMS, ~md_nontriv_dims(DIMS, f->item_dims), trj_dims, f->traj_dims);
+		md_calc_strides(DIMS, trj_strs, f->traj_dims, CFL_SIZE);
 
-	sense_output_from(d, true, outer_flags);
+		long wgh_dims[DIMS];
+		long wgh_strs[DIMS];
+
+		if (NULL != f->weights) {
+
+			md_select_dims(DIMS, ~md_nontriv_dims(DIMS, f->item_dims), wgh_dims, f->wgh_dims);
+			md_calc_strides(DIMS, wgh_strs, f->wgh_dims, CFL_SIZE);
+		}
+
+		d->item_slabs = xmalloc((size_t)items * sizeof(d->item_slabs[0]));
+		d->item_image_step = md_calc_size(DIMS, d->img_dims);
+
+		long pos[DIMS];
+		md_set_dims(DIMS, pos, 0);
+
+		for (long t = 0; t < items; t++) {
+
+			slab.traj_dims = trj_dims;
+			slab.traj = (const char*)f->traj + md_calc_offset(DIMS, trj_strs, pos);
+
+			if (NULL != f->weights) {
+
+				slab.wgh_dims = wgh_dims;
+				slab.weights = (const char*)f->weights + md_calc_offset(DIMS, wgh_strs, pos);
+			}
+
+			d->item_slabs[t] = form_transform(&slab, slab_cim_dims, &conf);
+
+			md_next(DIMS, f->item_dims, ~0UL, pos);
+		}
+
+		d->slab = d->item_slabs[0];
+
+	} else {
+
+		const struct linop_s* transform = summed_over_sets(f, form_transform(&slab, slab_cim_dims, &conf));
+
+		d->slab = before_maps ? transform : contracted(f, transform);
+
+		if (before_maps)
+			hold_terms(d, f);
+	}
+
+	sense_output_from(d, true, outer_flags, f->item_dims);
 
 	return sense_operator(d);
 }

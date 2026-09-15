@@ -279,6 +279,9 @@ class NoncartesianSense(_SensitivityBatch, LinearOperator):
         ``kz = j - z // 2``, each with the same in-plane trajectory and weights)
         is applied as an FFT along z over 2D transforms, given ``coil_batch=1``
         and one set; ``plan.cartesian`` reports it.
+        Encoding axes the image also carries are items, each with its own
+        trajectory and normal kernel under one coil loop; ``plan.items``
+        reports them.
     kspace_shape : tuple of int, optional
         Sample shape; by default ``(*batches, coils, *encoding, shots,
         samples)``, and on a grid ``(*batches, coils, *encoding, [z,] y, x)``.
@@ -547,6 +550,19 @@ class NoncartesianSense(_SensitivityBatch, LinearOperator):
         axis = values.ndim - 2 - tail
         return values.narrow(axis, 0, min(spokes, int(values.shape[axis]))).contiguous()
 
+    def _item_vector(self):
+        """BART vector of the encoding axes the image and the trajectory both carry, or ``None``.
+
+        Every item along them has a trajectory of its own, so each is its own
+        transform; a basis contracts the last encoding axis instead.
+        """
+        if self.traj is None:
+            return None
+        carried = len(self.encoding) - (1 if self._has_basis() else 0)
+        kspace, _ = self._encoding_placement()
+        placed = {kspace[j]: self.encoding[j] for j in range(carried) if self.encoding[j] > 1}
+        return _layout.vector(placed) if placed else None
+
     def _sample_dims(self):
         """BART dimensions of one coil's samples, in torch order."""
         kspace, _ = self._encoding_placement()
@@ -666,6 +682,7 @@ class NoncartesianSense(_SensitivityBatch, LinearOperator):
             coeffs=1 if b is None else int(b.shape[0]),
             batch_dim=self._batch_dim(),
             stacked=bool(self.stack),
+            item_vector=self._item_vector(),
         )
 
 

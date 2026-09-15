@@ -1084,3 +1084,106 @@ def test_on_a_card_a_decoupled_stack_is_the_host_one():
         (card.normal(x), host.normal(x)),
     ):
         assert _off(one, other) < 1e-2
+
+
+# --- a trajectory per item ----------------------------------------------------
+
+
+def _per_item_radial(items, n, spokes):
+    """``(items, spokes, n, 3)``: a different set of spokes for each item."""
+    return bartorch.tools.traj(x=n, y=spokes * items, r=True).reshape(items, spokes, n, 3)
+
+
+FRAMES = 3
+
+
+def test_a_trajectory_per_frame_is_a_transform_per_frame():
+    """Frames that each have their own spokes, against each frame's sum written out."""
+    torch.manual_seed(60)
+    maps = _rand(COILS, PLANE, PLANE)
+    traj = _per_item_radial(FRAMES, PLANE, SPOKES)
+
+    library().bartorch_encoding_reset_counters()
+    A = linop.NoncartesianSense(maps, (FRAMES, PLANE, PLANE), traj=traj)
+    assert A.plan.items == FRAMES and A.plan.fused
+    assert _counter(_abi.BARTORCH_ENCODING_ITEMS) == 1
+
+    x = _rand(FRAMES, PLANE, PLANE)
+    want = torch.stack([_dft3(traj[t], (maps * x[t])[:, None]) for t in range(FRAMES)], dim=1)
+    assert _off(A(x), want) < 5 * _finufft.tolerance()
+
+
+def test_a_trajectory_per_frame_has_the_adjoint_and_the_normal_it_claims():
+    """Each frame's normal is its own function, which a shared one would miss by far."""
+    torch.manual_seed(61)
+    A = linop.NoncartesianSense(
+        _rand(COILS, PLANE, PLANE),
+        (FRAMES, PLANE, PLANE),
+        traj=_per_item_radial(FRAMES, PLANE, SPOKES),
+    )
+    assert A.plan.normal == "kernel"
+
+    x, y = _rand(*A.ishape), _rand(*A.oshape)
+    lhs = torch.vdot(A(x).reshape(-1), y.reshape(-1))
+    rhs = torch.vdot(x.reshape(-1), A.adjoint(y).reshape(-1))
+    assert abs(lhs - rhs) / abs(lhs) < 1e-4
+    assert _off(A.normal(x), A.adjoint(A(x))) < 1e-2
+
+
+def test_items_carry_a_subspace_over_their_own_frames():
+    """Slices, each with a trajectory per frame and one basis over the frames."""
+    torch.manual_seed(62)
+    slices, frames, coeffs = 2, 4, 2
+    maps = _rand(COILS, PLANE, PLANE)
+    traj = _per_item_radial(slices * frames, PLANE, SPOKES).reshape(
+        slices, frames, SPOKES, PLANE, 3
+    )
+    basis = _rand(coeffs, frames)
+    A = linop.NoncartesianSense(maps, (slices, coeffs, PLANE, PLANE), traj=traj, basis=basis)
+    assert A.plan.items == slices and A.plan.contraction == "subspace"
+
+    x = _rand(slices, coeffs, PLANE, PLANE)
+    want = torch.zeros(*A.oshape, dtype=torch.complex128)
+    for s in range(slices):
+        for t in range(frames):
+            for a in range(coeffs):
+                want[:, s, t] += basis[a, t] * _dft3(traj[s, t], (maps * x[s, a])[:, None])
+    assert _off(A(x), want) < 5 * _finufft.tolerance()
+    assert _off(A.normal(x), A.adjoint(A(x))) < 1e-2
+
+
+def test_a_stack_per_frame_is_decoupled_in_every_frame():
+    torch.manual_seed(63)
+    maps = _rand(COILS, STACK, PLANE, PLANE)
+    planes = _per_item_radial(2, PLANE, SPOKES)
+    traj = torch.stack(
+        [
+            _stack_of_stars(STACK, PLANE, SPOKES, planes=planes[f].expand(STACK, -1, -1, -1))
+            for f in range(2)
+        ]
+    )
+    A = linop.NoncartesianSense(maps, (2, STACK, PLANE, PLANE), traj=traj)
+    assert A.plan.items == 2 and A.plan.cartesian == ("z",)
+
+    x = _rand(2, STACK, PLANE, PLANE)
+    want = torch.stack([_dft3(traj[f], maps * x[f]) for f in range(2)], dim=1)
+    assert _off(A(x), want) < 5 * _finufft.tolerance()
+    assert _off(A.normal(x), A.adjoint(A(x))) < 1e-2
+
+
+@requires_cuda
+def test_on_a_card_a_trajectory_per_frame_is_the_host_one():
+    torch.manual_seed(64)
+    maps = _rand(COILS, PLANE, PLANE)
+    traj = _per_item_radial(FRAMES, PLANE, SPOKES)
+    host = linop.NoncartesianSense(maps, (FRAMES, PLANE, PLANE), traj=traj)
+    card = linop.NoncartesianSense(maps, (FRAMES, PLANE, PLANE), traj=traj, device="cuda")
+    assert card.plan.items == FRAMES
+
+    x, y = _rand(*host.ishape), _rand(*host.oshape)
+    for one, other in (
+        (card(x), host(x)),
+        (card.adjoint(y), host.adjoint(y)),
+        (card.normal(x), host.normal(x)),
+    ):
+        assert _off(one, other) < 1e-2

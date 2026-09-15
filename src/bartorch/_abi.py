@@ -37,6 +37,7 @@ BARTORCH_ENCODING_ADJOINT = 4
 BARTORCH_ENCODING_NORMAL = 5
 BARTORCH_ENCODING_SEGMENTED = 6
 BARTORCH_ENCODING_STACKED = 7
+BARTORCH_ENCODING_ITEMS = 8
 
 
 class Encoding(ctypes.Structure):
@@ -72,6 +73,7 @@ class Encoding(ctypes.Structure):
         ("segment_image_dims", ctypes.c_void_p),
         ("segment_image", ctypes.c_void_p),
         ("batch_dim", ctypes.c_int),
+        ("item_dims", ctypes.c_void_p),
         ("slice_dims", ctypes.c_void_p),
         ("slice", ctypes.c_void_p),
         ("toeplitz", ctypes.c_int),
