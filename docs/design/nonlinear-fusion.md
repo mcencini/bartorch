@@ -430,11 +430,16 @@ solves and not the rewrite that a training step spends its time in.
 ## Working constraints
 
 - **Environment.** The implementing session has no GPU. Everything above is
-  checked in the CPU suite as `AGENTS.md` describes; the card tests are written
-  alongside the code and marked as needing one. What needs a card run: the fused
-  plan on device memory, the coil slab loop's counters inside a Newton solve, and
-  [Targets](#targets) again, where the host numbers there are what a four-core
-  container measured rather than what the design is worth.
+  checked in the CPU suite as `AGENTS.md` describes, and `tests/test_nlop_cuda.py`
+  is what wants a card: a bundle, a composed bundle, a step and the fused coil
+  step all answering on device memory what they answer on the host, the gradient
+  arriving there, and the counters saying the normal off the grid was the point
+  spread function rather than the pair. Written without a card they were run
+  against the host with the device substituted out, which exercises every
+  assertion and leaves only the dispatch untried -- which is the one thing the
+  card is for. What else wants one: [Targets](#targets) again, where the host
+  numbers are what a four-core container measured rather than what the design is
+  worth.
 - **BART.** Not edited. The two new entry points wrap public constructors in
   `src/csrc/ops/`; nothing is compiled in BART's place.
 - **Docstrings.** Two to four lines of contract for each addition. Documentation
