@@ -1919,22 +1919,68 @@ static int spread_mask(struct nufft_data* data, const complex float* traj, long*
 
 	int device = bartorch_on_device(traj) ? 1 : 0;
 
+	int transformed = 0;
+
+	for (int i = 0; i < 3; i++)
+		if (MD_IS_SET(data->flags, i) && (1 < data->img_dims[i]))
+			transformed++;
+
+	if (0 == transformed)
+		return -1;
+
+	/* The width to spread the mask with.
+	 *
+	 * A kernel of ns cells on a grid oversampled by sigma covers ns/sigma
+	 * cells of the grid underneath it, and that is the footprint the mask
+	 * has to have -- BART says the same thing as a width of K/2 at os 1 for
+	 * a transform of width K at os 2.  FINUFFT will not be asked for an
+	 * upsampling of one, and takes no width, so the width is asked for as
+	 * the tolerance that buys it.
+	 */
+	/* The kernel the function was spread with, which is the one the mask has
+	 * to cover.  `compute_psf2` asks for it the way any transform here does,
+	 * so it is the configured one and not the operator's: a caller's `-o` or
+	 * `-w` reaches the transform pair, and BART's own point spread function
+	 * ignores them too. */
+	double upsampling = bartorch_finufft_upsampling();
+
+	if (upsampling <= 1.)
+		upsampling = 2.;
+
+	int spread = fi_measure_width(device, transformed, bartorch_finufft_tolerance(), upsampling);
+
+	if (spread < 0)
+		return -1;
+
+	double width = ceil((double)spread / upsampling);
+
+	if (width < 2.)
+		width = 2.;
+
+	/* FINUFFT spreads the mask on the grid itself, and refuses an axis shorter
+	 * than twice the kernel.  Along such an axis the mask is kept whole: the
+	 * kernel reaches most or all of it anyway, and a mask that keeps more
+	 * than it needs costs compression and never accuracy. */
 	int dim = 0;
 	int axis[3];
 	int64_t n_modes[3];
+	unsigned long whole = 0UL;
 
 	for (int i = 0; i < 3; i++) {
 
 		if (!MD_IS_SET(data->flags, i) || (1 == data->img_dims[i]))
 			continue;
 
+		if ((double)data->img_dims[i] < 2. * width) {
+
+			whole = MD_SET(whole, i);
+			continue;
+		}
+
 		axis[dim] = i;
 		n_modes[dim] = data->img_dims[i];
 		dim++;
 	}
-
-	if (0 == dim)
-		return -1;
 
 	long factors[N];
 
@@ -1977,54 +2023,29 @@ static int spread_mask(struct nufft_data* data, const complex float* traj, long*
 	else
 		md_copy2(ND, one_dims, one_strs, samples_in, wgh_strs, pattern, CFL_SIZE);
 
-	complex float* reach = alloc_on(device, ND, data->com_dims, CFL_SIZE);
-	complex float* mask = alloc_on(device, ND, data->com_dims, CFL_SIZE);
-	md_clear(ND, data->com_dims, mask, CFL_SIZE);
+	long spread_dims[ND];
+	md_select_dims(ND, ~whole, spread_dims, data->com_dims);
+
+	complex float* reach = alloc_on(device, ND, spread_dims, CFL_SIZE);
+	complex float* mask = alloc_on(device, ND, spread_dims, CFL_SIZE);
+	md_clear(ND, spread_dims, mask, CFL_SIZE);
 
 	float* coord[3] = { NULL, NULL, NULL };
 
 	for (int i = 0; i < dim; i++)
 		coord[i] = alloc_on(device, ND, one_dims, FL_SIZE);
 
-	long com_strs[ND];
-	md_calc_strides(ND, com_strs, data->com_dims, CFL_SIZE);
-
-	/* The width to spread the mask with.
-	 *
-	 * A kernel of ns cells on a grid oversampled by sigma covers ns/sigma
-	 * cells of the grid underneath it, and that is the footprint the mask
-	 * has to have -- BART says the same thing as a width of K/2 at os 1 for
-	 * a transform of width K at os 2.  FINUFFT will not be asked for an
-	 * upsampling of one, and takes no width, so the width is asked for as
-	 * the tolerance that buys it.
-	 */
-	/* The kernel the function was spread with, which is the one the mask has
-	 * to cover.  `compute_psf2` asks for it the way any transform here does,
-	 * so it is the configured one and not the operator's: a caller's `-o` or
-	 * `-w` reaches the transform pair, and BART's own point spread function
-	 * ignores them too. */
-	double upsampling = bartorch_finufft_upsampling();
-
-	if (upsampling <= 1.)
-		upsampling = 2.;
-
-	int spread = fi_measure_width(device, dim, bartorch_finufft_tolerance(), upsampling);
-
-	if (spread < 0)
-		return -1;
-
-	double width = ceil((double)spread / upsampling);
-
-	if (width < 2.)
-		width = 2.;
-
-	double mask_eps = fi_tolerance_for(device, dim, width, upsampling);
+	double mask_eps = (0 == dim) ? 0. : fi_tolerance_for(device, dim, width, upsampling);
 
 	debug_printf(DP_DEBUG2, "PSF mask spread at width %g, tolerance %g\n", width, mask_eps);
 
 	int ret = 0;
 
-	for (long set = 0; (0 == ret) && (set < sets); set++) {
+	/* Kept whole along every axis: every point is reached. */
+	if (0 == dim)
+		md_zfill(ND, spread_dims, mask, 1.);
+
+	for (long set = 0; (0 < dim) && (0 == ret) && (set < sets); set++) {
 
 		float shift[3];
 		bartorch_psf_shift(3, shift, N, factors, (int)set);
@@ -2041,7 +2062,7 @@ static int spread_mask(struct nufft_data* data, const complex float* traj, long*
 			md_sadd(ND, one_dims, coord[i], coord[i], (float)((shift[a] + odd) * scale));
 		}
 
-		md_clear(ND, data->com_dims, reach, CFL_SIZE);
+		md_clear(ND, spread_dims, reach, CFL_SIZE);
 
 		void* plan = NULL;
 
@@ -2059,8 +2080,8 @@ static int spread_mask(struct nufft_data* data, const complex float* traj, long*
 		if (0 != ret)
 			break;
 
-		md_zabs(ND, data->com_dims, reach, reach);
-		md_zmax(ND, data->com_dims, mask, mask, reach);
+		md_zabs(ND, spread_dims, reach, reach);
+		md_zmax(ND, spread_dims, mask, mask, reach);
 	}
 
 	md_free(samples_in);
@@ -2079,7 +2100,8 @@ static int spread_mask(struct nufft_data* data, const complex float* traj, long*
 	}
 
 	complex float* mask_cpu = md_alloc(ND, data->com_dims, CFL_SIZE);
-	md_copy(ND, data->com_dims, mask_cpu, mask, CFL_SIZE);
+	md_copy2(ND, data->com_dims, MD_STRIDES(ND, data->com_dims, CFL_SIZE), mask_cpu,
+			MD_STRIDES(ND, spread_dims, CFL_SIZE), mask, CFL_SIZE);
 	md_free(mask);
 
 	long* idx = md_alloc(ND, data->com_dims, sizeof(long));

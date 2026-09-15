@@ -1020,10 +1020,7 @@ def test_a_decoupled_stack_has_the_normal_of_its_two_applications():
 
 
 def _three_dimensional(maps, traj, **kwargs):
-    """The encoding without the Toeplitz normal: a 3D function over a volume this thin
-    is not something FINUFFT will spread a mask for, and these cases ask only about
-    the plan and the transform."""
-    return linop.NoncartesianSense(maps, (STACK, PLANE, PLANE), traj=traj, toeplitz=False, **kwargs)
+    return linop.NoncartesianSense(maps, (STACK, PLANE, PLANE), traj=traj, **kwargs)
 
 
 def test_a_stack_off_the_image_grid_along_kz_stays_three_dimensional():
@@ -1084,6 +1081,35 @@ def test_on_a_card_a_decoupled_stack_is_the_host_one():
         (card.normal(x), host.normal(x)),
     ):
         assert _off(one, other) < 1e-2
+
+
+@pytest.mark.parametrize("z", [4, 8])
+def test_a_function_over_a_volume_too_thin_to_spread_along_is_compressed(z):
+    """A volume only a few slices deep, with a function worth compressing.
+
+    FINUFFT spreads the mask of the places the samples reach on the grid
+    itself, and refuses an axis shorter than twice its kernel; the mask is
+    kept whole along such an axis, which costs compression and not accuracy.
+    """
+    torch.manual_seed(59)
+    frames, coeffs, spokes = 4, 2, 6
+    # Half the plane's extent, so most of each plane goes unreached.
+    traj = bartorch.tools.traj(x=PLANE // 2, y=spokes * frames * z, r=True)
+    traj = traj.reshape(frames, spokes * z, PLANE // 2, 3).clone()
+    traj[..., 2] = (torch.rand(frames, spokes * z, 1) - 0.5) * z
+    basis = _rand(coeffs, frames)
+
+    before = _finufft.functions_compressed()
+    A = linop.NoncartesianSense(
+        _rand(COILS, z, PLANE, PLANE), (coeffs, z, PLANE, PLANE), traj=traj, basis=basis
+    )
+    assert A.plan.cartesian == ()
+    assert _finufft.functions_compressed() > before
+
+    # Compressing costs about 3e-02 on this grid at every depth, thin or not;
+    # uncompressed the normal closes to 7e-04.
+    x = _rand(*A.ishape)
+    assert _off(A.normal(x), A.adjoint(A(x))) < 5e-2
 
 
 # --- a trajectory per item ----------------------------------------------------
