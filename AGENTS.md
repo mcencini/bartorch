@@ -789,10 +789,12 @@ operators beside them. Anything else written here would be a second
 implementation that drifts, and a result that is nearly BART's is worth less
 than no result.
 
-So `optim` iterates nothing, and `priors/` computes nothing.  Each class in
-`optim` hands its algorithm's name and settings to `bartorch_solve` -- or
-`bartorch_irgnm`, for `IRGNM` -- which configures BART's iteration exactly as
-`pics` does. A term fills
+So `priors/` computes nothing, and `optim` writes out only the proximal
+steps: one block each in `optim/blocks.py`, every operator in it BART's, held
+to the library's bits by `tests/test_optim_iterators.py`, and looped by its
+solver.  Conjugate gradients, NIHT and what a block does not take yet go to
+`bartorch_solve` -- or `bartorch_irgnm`, for `IRGNM` -- which configures BART's
+iteration exactly as `pics` does. A term fills
 the table `opt_reg_configure` reads -- which kind, over which axes, with what
 weight -- from an object rather than from a `-R` string, and holds the
 proximal operator and the transform BART makes of it. The solver is handed
@@ -806,10 +808,10 @@ convolutions extend the optimisation variable, and what they add is counted
 across the whole set (`ropts->svars`, and the assertion at the end of
 `opt_reg_configure`).  `bartorch_solve` configures the set itself when one is
 present, so `tools.pics`, `optim.ADMM` and `optim.PRIDU` all take them; the
-solve then runs inside the library and does not unroll.
+solve then runs inside the library, and no block takes them yet.
 
 **Two habits of BART's arithmetic** decide whether a loop written out in
-`optim/iterators.py` answers with the library's bits, and both are easy to
+`optim/blocks.py` answers with the library's bits, and both are easy to
 undo by accident.  Every scalar is a C `float` unless the library declares a
 `double`, and a scalar worked out in a double and rounded once at the end is a
 different number.  And a vector is scaled by a coefficient rather than divided

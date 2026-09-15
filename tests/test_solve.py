@@ -355,13 +355,13 @@ def test_a_term_that_adds_unknowns_refuses_a_tracked_right_hand_side():
         solver(y, A)
 
 
-def test_a_term_that_adds_unknowns_does_not_unroll():
-    """The step written out in ``bartorch.optim._iterators`` walks the image;
-    this one walks the image and the fields behind it, and BART is where that
-    vector is laid out."""
-    solver = optim.ADMM(priors.TotalGeneralizedVariation((-1, -2), 0.01), maxiter=4)
-    with pytest.raises(TypeError, match="does not unroll"):
-        solver.unrolled((1, 8, 8))
+def test_a_block_does_not_take_a_term_that_adds_unknowns_yet():
+    """A block walks the image; this term walks the image and the fields
+    behind it, which only the library lays out so far."""
+    A = linop.FFT((1, 8, 8), axes=(-1, -2))
+    block = optim.ADMMBlock(priors.TotalGeneralizedVariation((-1, -2), 0.01))
+    with pytest.raises(TypeError, match="adds unknowns"):
+        block.start(_rand(1, 8, 8), A)
 
 
 @pytest.mark.parametrize(
@@ -448,7 +448,7 @@ def test_the_terms_are_the_ones_barts_parser_knows():
     offered = {
         getattr(priors, name).kind
         for name in priors.__all__
-        if isinstance(getattr(priors, name), type) and getattr(priors, name).kind
+        if isinstance(getattr(priors, name), type) and getattr(getattr(priors, name), "kind", "")
     }
     assert offered <= bart_knows
 

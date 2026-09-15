@@ -27,14 +27,16 @@ term.
 
 BART's proximal operators carry no derivative, so
 {meth}`Regularizer.prox` refuses a tensor that does; a denoiser is what goes
-in that slot instead.  {func}`frozen` is for the mixed solve, where the
-gradient is meant to reach the denoiser and another term is furniture.
+in that slot instead, as an {class}`ImplicitPrior`.  {func}`frozen` is for the
+mixed solve, where the gradient is meant to reach the denoiser and another term
+is furniture.
 
 ```{eval-rst}
 .. autosummary::
    :toctree: generated
    :nosignatures:
 
+   ImplicitPrior
    frozen
 ```
 
@@ -100,7 +102,7 @@ gradient is meant to reach the denoiser and another term is furniture.
 These split into several penalties over a variable larger than the image, so
 one cannot be built alone.  {func}`bartorch.tools.pics`,
 {class}`bartorch.optim.ADMM` and {class}`bartorch.optim.PRIDU` take them; the
-solve then runs in the library and does not unroll.
+solve then runs in the library, and no block takes them yet.
 
 ```{eval-rst}
 .. autosummary::

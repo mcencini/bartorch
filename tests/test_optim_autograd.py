@@ -26,7 +26,6 @@ import pytest
 import torch
 
 from bartorch import linop, optim, priors
-from bartorch.optim._iterators import AsTerm
 
 SHAPE = (1, 8, 8)
 
@@ -55,7 +54,7 @@ class _Scale:
     def __init__(self, weight):
         self.weight = weight
 
-    def prox(self, x, *args, gamma=1.0, **kwargs):
+    def __call__(self, x, sigma=None):
         return self.weight * x
 
 
@@ -193,7 +192,7 @@ def test_every_iteration_reaches_a_parameter_in_the_denoiser_slot(problem, call)
     network around it."""
     A, y = problem
     weight = torch.nn.Parameter(torch.tensor(0.8))
-    made = call(y, A, AsTerm(_Scale(weight)))
+    made = call(y, A, priors.ImplicitPrior(_Scale(weight)))
     assert made.grad_fn is not None
     made.abs().square().sum().backward()
     assert weight.grad is not None
@@ -213,7 +212,7 @@ def test_the_unrolled_gradient_is_the_one_finite_differences_measure(problem, ca
 
     def loss(value):
         weight = torch.as_tensor(value, dtype=torch.float32)
-        return call(y, A, AsTerm(_Scale(weight))).abs().square().sum()
+        return call(y, A, priors.ImplicitPrior(_Scale(weight))).abs().square().sum()
 
     weight = torch.tensor(0.8, requires_grad=True)
     loss(weight).backward()
@@ -226,7 +225,9 @@ def test_the_unrolled_gradient_is_the_one_finite_differences_measure(problem, ca
 def test_the_data_carries_a_gradient_through_a_whole_unrolled_solve(problem):
     A, y = problem
     data = y.clone().requires_grad_(True)
-    made = optim.admm(data, A, AsTerm(_Scale(torch.tensor(0.8))), maxiter=2, cg_maxiter=8)
+    made = optim.admm(
+        data, A, priors.ImplicitPrior(_Scale(torch.tensor(0.8))), maxiter=2, cg_maxiter=8
+    )
     made.abs().square().sum().backward()
     assert data.grad is not None
     assert torch.isfinite(data.grad).all()
@@ -241,9 +242,9 @@ def test_a_first_admm_step_does_not_depend_on_the_prior_and_says_nothing_else():
     A = linop.FFT(SHAPE, axes=(-1, -2))
     y = A(_rand(*SHAPE))
     weight = torch.nn.Parameter(torch.tensor(0.8))
-    one = optim.admm(y, A, AsTerm(_Scale(weight)), maxiter=1, cg_maxiter=8)
+    one = optim.admm(y, A, priors.ImplicitPrior(_Scale(weight)), maxiter=1, cg_maxiter=8)
     assert one.grad_fn is None
-    two = optim.admm(y, A, AsTerm(_Scale(weight)), maxiter=2, cg_maxiter=8)
+    two = optim.admm(y, A, priors.ImplicitPrior(_Scale(weight)), maxiter=2, cg_maxiter=8)
     assert two.grad_fn is not None
 
 
@@ -273,7 +274,7 @@ def test_freezing_a_term_changes_no_numbers(problem):
     plain = optim.ADMM(priors.L1(0.01), **settings)
     frozen = optim.ADMM(priors.frozen(priors.L1(0.01)), **settings)
     assert torch.equal(frozen(y, A), plain(y, A))
-    assert torch.equal(frozen.in_library(y, A), plain.in_library(y, A))
+    assert torch.equal(frozen._in_library(y, A), plain._in_library(y, A))
 
 
 def test_the_transform_in_front_of_a_term_is_recorded(problem):
@@ -285,7 +286,7 @@ def test_the_transform_in_front_of_a_term_is_recorded(problem):
     weight = torch.nn.Parameter(torch.tensor(0.8))
     # `maxiter` is a budget on conjugate-gradient iterations across the whole
     # run, not a count of steps, and a gradient needs more than one step.
-    made = optim.admm(y, A, [AsTerm(_Scale(weight)), term], maxiter=24, cg_maxiter=4)
+    made = optim.admm(y, A, [priors.ImplicitPrior(_Scale(weight)), term], maxiter=24, cg_maxiter=4)
     made.abs().square().sum().backward()
     assert weight.grad is not None and 0.0 != weight.grad
 
@@ -298,6 +299,6 @@ def test_the_iteration_does_not_warn_about_its_own_residuals(problem):
     weight = torch.nn.Parameter(torch.tensor(0.8))
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        optim.admm(y, A, AsTerm(_Scale(weight)), maxiter=2, cg_maxiter=8, rho=0.5)
-        optim.pridu(y, A, AsTerm(_Scale(weight)), maxiter=3, step=0.95)
+        optim.admm(y, A, priors.ImplicitPrior(_Scale(weight)), maxiter=2, cg_maxiter=8, rho=0.5)
+        optim.pridu(y, A, priors.ImplicitPrior(_Scale(weight)), maxiter=3, step=0.95)
     assert [] == [w for w in caught if "requires_grad" in str(w.message)]

@@ -7,15 +7,10 @@ for the platforms FINUFFT ships a wheel for too -- installing one never starts
 a build, and anywhere else the install is from the sdist, where compiling BART
 is already the price of entry.
 
-deepinv is a dependency for a different reason.  It was an extra while it was
-only an adapter -- `to_deepinv` handed an operator over and nothing imported
-deepinv until someone asked -- and it stopped being that when `optim.IST`,
-`optim.FISTA`, `optim.ADMM` and `optim.PRIDU` started running the iterations in
-`bartorch.optim._iterators`, which are written as deepinv optimizers.  A solver
-that runs a different loop depending on whether an extra happens to be
-installed is worse than the install it saves.
+deepinv is a dependency while `bartorch.to_deepinv` hands operators to its
+losses and samplers.
 
-torchsim is a dependency for the same reason deepinv is: `nlop.FromTorchSim`
+torchsim is a dependency because `nlop.FromTorchSim`
 turns any of its simulators into a BART nonlinear operator, and
 `nlop.InversionRecovery`, `nlop.MultiEcho` and `nlop.Bloch` are `moba`'s
 families written on it, so every quantitative reconstruction here imports it.
@@ -62,14 +57,14 @@ def test_finufft_is_a_dependency_and_not_an_extra():
 
 
 def test_deepinv_is_a_dependency_and_not_an_extra():
-    """The ordinary way to run a regularized reconstruction imports it."""
+    """The adapter imports it."""
     project = _pyproject()["project"]
     assert _requirements(project["dependencies"], "deepinv"), (
-        "the proximal solvers run iterations written as deepinv optimizers; "
+        "bartorch.to_deepinv hands operators to deepinv; "
         "deepinv belongs in dependencies, not in optional-dependencies"
     )
     assert "deepinv" not in project["optional-dependencies"], (
-        "an extra named deepinv says the solvers are optional, and they are not"
+        "an extra named deepinv says the adapter is optional, and it is not"
     )
 
 
@@ -94,20 +89,6 @@ def test_the_models_really_do_reach_torchsim():
 
     model = nlop.MultiEcho((10.0, 40.0), (2,))
     assert isinstance(model.model, ModelOperator)
-
-
-def test_the_solvers_really_do_reach_deepinv():
-    """The claim the requirement rests on, rather than the requirement alone.
-
-    If the iterations ever stop being deepinv's, this is the test that says so
-    and the dependency can go back to being an extra.
-    """
-    import deepinv.optim.optim_iterators as di
-
-    from bartorch.optim import _iterators as iterators
-
-    assert issubclass(iterators.ADMMIteration, di.OptimIterator)
-    assert issubclass(iterators.FISTAIteration, di.OptimIterator)
 
 
 def test_the_finufft_requirement_holds_on_every_platform():

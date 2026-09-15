@@ -1,9 +1,9 @@
 # Optimization
 
-`bartorch.optim`.  A solver is configured once and called as
-`solver(y, A, x0=None)`; the iteration is BART's, the one `pics` or `nlinv`
-runs.  `solver.in_library(y, A)` runs BART's own loop instead, and answers
-with the same bits.
+`bartorch.optim`.  A block is one step of a BART iteration as a torch module; a
+solver loops a block to BART's schedule and is called as
+`solver(y, A, x0=None)`; the function `optim.fista(y, A, term)` is that call in
+one expression.
 
 ```{eval-rst}
 .. currentmodule:: bartorch.optim
@@ -35,12 +35,48 @@ with the same bits.
    maxeigen
 ```
 
+A {class}`~bartorch.priors.ImplicitPrior` goes wherever a term goes.
+{class}`NIHT` refuses: BART's own iteration asserts against the operator
+`lsqr2` hands it, so no NIHT solve runs, `bart pics -R H` included.
+
+## Blocks
+
+`state = block.start(y, A, x0)` sets a run up, `state = block(state, A)` takes a
+step, and `block.output(state, A)` is the image.  A solver is these three
+calls in a loop, so a stack of frozen blocks answers with the solver's bits.
+Step sizes and weights are parameters, frozen until `requires_grad_()`.
+
+```python
+blocks = nn.ModuleList(
+    optim.FISTABlock(priors.ImplicitPrior(UNet(), sigma=0.05), step=0.9) for _ in range(10)
+)
+for block in blocks:
+    block.step.requires_grad_()
+
+state = blocks[0].start(kspace, A)
+for block in blocks:
+    state = block(state, A)
+image = blocks[-1].output(state, A)
+```
+
+BART's proximal operators and the residual norms that steer the schedule
+carry no derivative; everything else a step applies is recorded.
+
+```{eval-rst}
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   ISTBlock
+   FISTABlock
+   ADMMBlock
+   PRIDUBlock
+```
+
 ## Functional wrappers
 
-`optim.fista(y, A, term, maxiter=30)` is `optim.FISTA(term, maxiter=30)(y, A)`,
-and is the ordinary way to run one.  Reach for the class when the solver has
-to be *held*: to unroll it, to drive it to a fixed point, or to hand it to
-{class}`IRGNM` as `inner=`.
+`optim.fista(y, A, term, maxiter=30)` is `optim.FISTA(term, maxiter=30)(y, A)`.
+Reach for the class to hand a solver to {class}`IRGNM` as `inner=`.
 
 ```{eval-rst}
 .. autosummary::
@@ -55,29 +91,6 @@ to be *held*: to unroll it, to drive it to a fixed point, or to hand it to
    niht
    irgnm
 ```
-
-A `deepinv` prior or a bare denoiser goes wherever a {mod}`bartorch.priors` term
-goes, which the classes do not take.  `niht` and {class}`NIHT` refuse: BART's
-own iteration asserts against the operator `lsqr2` hands it, so no NIHT solve
-runs, `bart pics -R H` included.
-
-## Unrolling
-
-{meth}`~CG.unrolled` makes a solver a torch network and {meth}`~CG.fixed_point`
-drives it to a fixed point.  Both build the step themselves; there is no
-iteration class to name.
-
-```python
-net = optim.FISTA(denoiser, maxiter=10, step=0.9).unrolled(
-    (1, 256, 256), trainable=["stepsize"]
-)
-image = net(kspace[None], bartorch.to_deepinv(A))
-```
-
-Every operator a step applies is recorded, so the graph is over BART's own
-arithmetic.  Two things are deliberately not in it: BART's proximal operators,
-which carry no derivative, and the residual norms that steer $\rho$, $\tau$ and
-the stopping test.
 
 ## Preconditioning
 

@@ -87,7 +87,7 @@ def test_every_least_squares_solver_takes_one(make):
     A, scale = _ill_conditioned(16)
     y = A(_rand(16))
     M = linop.Diagonal((1.0 / scale.abs() ** 2).to(torch.complex64), (16,))
-    made = make(M).in_library(y, A)
+    made = make(M)._in_library(y, A)
     assert torch.isfinite(made).all()
 
 
