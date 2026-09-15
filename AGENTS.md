@@ -1003,6 +1003,19 @@ is `compress_psf`, `decomposed_psf` and `lowmem`, and its own overlap:
 `bartorch.set_cuda_streams` sets `cuda_num_streams`, which is what puts BART's
 transfers and its arithmetic on different streams.
 
+A Cartesian trajectory axis costing no set of frequencies of its own.  BART
+doubles and decomposes the axes in `conf.flags` and nothing else per axis
+(`conf.decomp` is one boolean for all of them), and `flags` is also what
+`nufft_create2` checks the sample count against -- so an axis taken out of it
+to skip the doubling is an axis BART then measures the image by, and refuses.
+`conf.cfft` has the right shape but wants the axis to be a k-space axis of the
+data rather than a component of the trajectory.  So it needs the samples
+lifted out of the raveled point set, or a BART edit.
+
+An image that varies along an axis the trajectory indexes: one plan per item,
+which the substitution declines.  A stacked normal kernel for per-item
+trajectories would need those plans as well as the stack.
+
 Routing BART's device allocations through torch's allocator is a further step:
 `mem_device_malloc` takes the allocator as a parameter, so replacing
 `num/mem.c` would do it without a BART edit.

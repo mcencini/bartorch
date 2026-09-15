@@ -192,6 +192,29 @@ One C slab executor runs every matched form. It is today's pieces parameterised 
    - Stacked kernels for per-item trajectories.
    - Detection of Cartesian-aligned trajectory axes, with fewer cosets and, for pure stacks, decoupling along the axis.
 
+   **Fewer cosets for a Cartesian axis is not reachable by substituting an
+   entry point.** The doubling and the decomposition are per-axis only
+   through `conf.flags` (`nufft.c:954` and `nufft.c:984`; `conf.decomp` is one
+   boolean for every axis, and `nufft.c:851` requires it for a Toeplitz
+   normal). But `flags` is also the layout contract: `nufft_create2` asserts
+   `md_check_bounds(N, ~conf.flags, cim_dims, ksp_dims)` at `nufft.c:1229`, so
+   clearing kz makes BART compare the sample count against the image's z and
+   refuse.
+
+   `conf.cfft` transforms an axis without doubling it, which is the right
+   shape, but it is for a two-component trajectory whose third axis is a real
+   k-space axis of the data -- not for a three-component trajectory whose kz
+   happens to be whole. Reaching it would mean lifting the kz samples out of
+   the raveled point set into a k-space axis, which is this phase's *second*
+   bullet (decoupling a pure stack) rather than a cheaper version of the
+   first. Anything less needs a BART edit.
+
+   **A per-item trajectory is declined today, and correctly.** An image that
+   varies along an axis the trajectory indexes needs one plan per item, which
+   is what `nufft_finufft.c` refuses (`DECLINE(16)`). A stacked kernel
+   therefore comes with per-item plans in the substitution, not just a stacked
+   function.
+
 ## Targets
 
 Measured on an RTX 4060 laptop with host arrays, 8 coil kernels, and a reused output buffer. Ranges are the minimum and maximum over repeats. The script is `scripts/benchmark_encodings.py`.
