@@ -203,6 +203,9 @@ class Form:
     stacked : bool
         A stack on the image's own z grid, decoupled: ``traj`` is its in-plane
         part over one position's samples, and z is a batch of the transform.
+    stack_positions : tensor, optional
+        int64 positions along z of a stack's blocks, one per block, where they
+        are not every position in order.
     item_vector : tuple of int, optional
         The encoding axes each item of which has its own trajectory, in BART's
         order: their extents, and one elsewhere.
@@ -218,6 +221,7 @@ class Form:
     weights: Array | None = None
     traj: Array | None = None
     stacked: bool = False
+    stack_positions: torch.Tensor | None = None
     item_vector: tuple[int, ...] | None = None
     positions: torch.Tensor | None = None
     frames: int = 1
@@ -375,6 +379,8 @@ class Form:
         s.wgh_dims, s.weights = array(self.weights)
         s.traj_dims, s.traj = array(self.traj)
         s.stacked = int(self.stacked)
+        s.stack_count = 0 if self.stack_positions is None else int(self.stack_positions.numel())
+        s.stack_positions = 0 if self.stack_positions is None else self.stack_positions.data_ptr()
         s.item_dims = 0 if self.item_vector is None else vector(self.item_vector)
 
         s.frames = int(self.frames)
@@ -428,7 +434,7 @@ class Form:
             self.slice_phase,
         )
         out = [a.tensor for a in arrays if a is not None]
-        out += [t for t in (self.positions, self.psf) if t is not None]
+        out += [t for t in (self.positions, self.psf, self.stack_positions) if t is not None]
         if self.contraction is not None:
             out += [self.contraction.sample.tensor, self.contraction.image.tensor]
         return (*out, *self._keep)

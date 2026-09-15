@@ -59,6 +59,8 @@ class Encoding(ctypes.Structure):
         ("traj_dims", ctypes.c_void_p),
         ("traj", ctypes.c_void_p),
         ("stacked", ctypes.c_int),
+        ("stack_count", ctypes.c_long),
+        ("stack_positions", ctypes.c_void_p),
         ("frames", ctypes.c_long),
         ("shots", ctypes.c_long),
         ("components", ctypes.c_int),

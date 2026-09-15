@@ -469,7 +469,9 @@ class NoncartesianSense(_SensitivityBatch, LinearOperator):
         if self.kspace_shape != default:
             raise ValueError(f"the samples of this encoding are {default}, not {self.kspace_shape}")
         self.ishape = image_shape
-        self.stack = 0 if self.traj is None else self._stack()
+        positions = None if self.traj is None else self._stack()
+        self.stack = 0 if positions is None else len(positions)
+        self.stack_positions = positions
 
         # Where the operator is built follows the transform's own data, not
         # the sensitivities: a bank left on the host is the point.  Named, it
@@ -509,36 +511,63 @@ class NoncartesianSense(_SensitivityBatch, LinearOperator):
     def _spatial3(self) -> tuple[int, int, int]:
         return self.spatial if self.ndim == 3 else (1, *self.spatial)
 
-    def _stack(self) -> int:
-        """Positions along z the trajectory is a stack of, or 0 where it is not one.
+    def _stack(self) -> tuple[int, ...] | None:
+        """Positions along z of the trajectory's blocks of shots, or ``None`` for no stack.
 
-        A stack is the shots in ``z`` contiguous blocks, block ``j`` at ``kz = j -
-        z // 2`` with the same in-plane trajectory as every other block, and any
-        weights the same in every block too.  A transform along z over a batch of
-        in-plane transforms is then the same operator, and its normal is over x
-        and y alone.
+        A stack is the shots in contiguous blocks of one length, each block at one
+        whole ``kz`` of the image's z grid -- position ``kz + z // 2``, no position
+        twice -- with the same in-plane trajectory and any weights the same in
+        every block.  A transform along z over a batch of in-plane transforms is
+        then the same operator.
         """
-        # The executor lays z out on the axis the sets would take, under a slab
-        # of one coil.
+        # The executor lays the blocks out on the axis the sets would take, under
+        # a slab of one coil.
         if not self._decouples or self.ndim != 3 or self.coil_batch != 1 or self.sets > 1:
-            return 0
+            return None
         z, shots = int(self.spatial[0]), int(self.traj.shape[-3])
-        if z < 2 or shots % z:
-            return 0
+        if z < 2:
+            return None
         t = self.traj.real if self.traj.is_complex() else self.traj
-        blocks = t.reshape(*t.shape[:-3], z, shots // z, *t.shape[-2:])
-        kz = torch.arange(z, dtype=blocks.dtype, device=blocks.device) - z // 2
-        if float((blocks[..., 2] - kz[:, None, None]).abs().max()) > self._on_grid:
-            return 0
+
+        # One kz a shot, the same for every item along the encoding axes.
+        kz = t[..., 2]
+        per_shot = kz[..., :1]
+        if float((kz - per_shot).abs().max()) > self._on_grid:
+            return None
+        per_shot = per_shot[..., 0].reshape(-1, shots)
+        if float((per_shot - per_shot[:1]).abs().max()) > self._on_grid:
+            return None
+        whole = per_shot[0].round()
+        if float((per_shot[0] - whole).abs().max()) > self._on_grid:
+            return None
+
+        order = [int(k) for k in whole.tolist()]
+        starts = [0] + [s for s in range(1, shots) if order[s] != order[s - 1]]
+        count = len(starts)
+        if shots % count or any(
+            b - a != shots // count for a, b in zip(starts, starts[1:] + [shots])
+        ):
+            return None
+        positions = tuple(order[s] + z // 2 for s in starts)
+        if len(set(positions)) != count or min(positions) < 0 or max(positions) >= z:
+            return None
+
+        blocks = t.reshape(*t.shape[:-3], count, shots // count, *t.shape[-2:])
         plane = blocks[..., :2]
         if float((plane - plane[..., :1, :, :, :]).abs().max()) > self._on_grid:
-            return 0
+            return None
         w = self.weights
         if w is not None and int(w.shape[-2]) > 1:
-            by_block = w.reshape(*w.shape[:-2], z, int(w.shape[-2]) // z, int(w.shape[-1]))
+            by_block = w.reshape(*w.shape[:-2], count, int(w.shape[-2]) // count, int(w.shape[-1]))
             if not torch.equal(by_block, by_block[..., :1, :, :].expand_as(by_block)):
-                return 0
-        return z
+                return None
+        return positions
+
+    def _stack_positions(self) -> torch.Tensor | None:
+        """The stack's positions as the form takes them, or ``None`` for every position in order."""
+        if not self.stack or self.stack_positions == tuple(range(int(self.spatial[0]))):
+            return None
+        return torch.tensor(self.stack_positions, dtype=torch.int64)
 
     def _in_plane(self, values: torch.Tensor, tail: int) -> torch.Tensor:
         """The first position's block of ``values`` along the shots, contiguous.
@@ -682,6 +711,7 @@ class NoncartesianSense(_SensitivityBatch, LinearOperator):
             coeffs=1 if b is None else int(b.shape[0]),
             batch_dim=self._batch_dim(),
             stacked=bool(self.stack),
+            stack_positions=self._stack_positions(),
             item_vector=self._item_vector(),
         )
 

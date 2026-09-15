@@ -292,6 +292,11 @@ struct bartorch_encoding {
 	 * over x and y has z as a batch of it, and the coil images are
 	 * transformed along z around it. */
 	int stacked;
+	/* The positions along z a stack's blocks of shots lie at, one per block,
+	 * where they are not every position in order; NULL is every position,
+	 * block j at position j. */
+	long stack_count;
+	const long* stack_positions;
 
 	/* A table of the phase encodes that were sampled, instead of a dense
 	 * pattern: `frames` x `shots` places of `components` long indices
