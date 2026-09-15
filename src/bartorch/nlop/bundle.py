@@ -42,6 +42,9 @@ class _TenMul(NonlinearOperator):
         )
         return _built(ptr, (self._a, self._b), (self._out,))
 
+    def _bundle(self) -> Bundle:
+        return of_product(self, self._out, self._a, self._b)
+
     def __repr__(self) -> str:
         return f"_TenMul({self._out}, {self._a}, {self._b})"
 
@@ -364,6 +367,44 @@ def of_del_out(node, x, at: int) -> Bundle | None:
     zero = torch.zeros(x.oshapes[at], dtype=torch.complex64)
     adjoint = inner.adjoint.pin(at, zero)
     return Bundle(node, derivative, adjoint, source="chain rule")
+
+
+def of_product(node, out: Shape, a: Shape, b: Shape) -> Bundle:
+    """The product rule for a tensor product of two inputs.
+
+    ``noir_get_derivative``'s two terms added (``model_net.c:299-315``), and
+    ``noir_get_adjoint``'s pair with each operand conjugated and the product
+    summed back onto the other's shape (``:269-287``).
+    """
+    from bartorch.linop.basic import Conj
+    from bartorch.nlop.basic import Weighted
+
+    made = combine(_TenMul(out, a, b), _TenMul(out, a, b))  # in: a, db, da, b
+    made = made.permute_inputs([2, 1, 0, 3])  # in: da, db, a, b
+    derivative = chain(made, Weighted(out, 1.0, 1.0), output=0, input=0).link(1, 0)
+
+    first = chain(FromLinear(Conj(b)), _TenMul(a, b, out), output=0, input=0)
+    second = chain(FromLinear(Conj(a)), _TenMul(b, a, out), output=0, input=0)
+    adjoint = combine(first, second)  # in: dz, b, dz, a
+    adjoint = adjoint.permute_inputs([0, 2, 3, 1]).dup(0, 1)  # in: dz, a, b
+
+    return Bundle(node, derivative, adjoint)
+
+
+def of_composition(node, written) -> Bundle | None:
+    """The bundle of an operator declared as the composition BART builds it from.
+
+    ``written`` is that composition, and the bundle is the chain rule's over it;
+    this only relabels the members as the operator's own, so that a caller sees
+    the operator it asked about rather than the pieces.  ``None`` where the
+    composition does not answer for the operator or has no bundle itself.
+    """
+    if written.ishapes != node.ishapes or written.oshapes != node.oshapes:
+        return None
+    inner = written.bundle
+    if inner is None:
+        return None
+    return Bundle(node, inner.derivative, inner.adjoint, source=inner.source)
 
 
 def diagonal(operator: NonlinearOperator, diag: NonlinearOperator) -> Bundle:

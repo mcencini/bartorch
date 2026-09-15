@@ -112,8 +112,10 @@ The rest of what needs declaring is not diagonal:
 hand (`model_net.c:269-287`, `:299-315`), and it is the product rule; nothing
 about it is particular to a coil model.
 
-Everything else in `nlop/basic.py` is already a composition in BART, and the
-chain rule reaches it with no declaration at all:
+Everything else in `nlop/basic.py` is already a composition in BART, and gets a
+bundle by declaring itself as that composition -- the way `NonlinearSense` does
+-- rather than by carrying one of its own.  Each is one BART constructor here,
+so without the declaration the chain rule has nothing to walk into:
 
 | `bartorch` | What BART builds it from | Where |
 | --- | --- | --- |
@@ -124,11 +126,17 @@ chain rule reaches it with no declaration at all:
 | `SmoothAbs` | `zrss` over no axes, with `eps` | `someops.c:621` |
 | `Phase` | `zabs` into `zdiv`, duplicated | `someops.c:638` |
 
-Conjugation is not complex-linear, and BART carries it as `linop_zconj_create`,
-whose adjoint is itself; `linop.Conj` and `linop.Real` are already that. This is
-the Wirtinger convention the rest of the library is under -- a backward pass is
-the adjoint and not the transpose -- so the bundles inherit it rather than
-introducing it.
+`Phase` is the row that declares nothing: it is already written here as those
+two put together, so its bundle follows once they have one.
+
+**What `zss` conjugates it also makes real-linear.** Conjugation is not
+complex-linear, and BART carries it as `linop_zconj_create`, whose adjoint is
+itself; `linop.Conj` and `linop.Real` are already that, and say of themselves
+that they fail a complex dot test alone. So the five built on `zss` have an
+adjoint that satisfies the identity in the *real* inner product and not the
+complex one, and the tests assert the complex one fails -- asserting it held
+would be asserting a different operator. This is the Wirtinger convention the
+rest of the library is under, inherited rather than introduced.
 
 ## The chain rule
 

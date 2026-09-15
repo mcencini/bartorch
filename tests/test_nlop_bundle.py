@@ -328,3 +328,88 @@ def test_a_composed_normal_is_its_own_derivative_followed_by_its_own_adjoint(nam
     want = tupled(op.bundle.adjoint(op.bundle.derivative(*dxs, *xs), *xs))
     for one, other in zip(got, want):
         assert torch.equal(one, other)
+
+
+# --- the primitives BART builds out of others --------------------------------
+
+#: Each with the composition it declares, and whether it is complex-linear in
+#: its tangent.  The ones built on ``zss`` are not: they carry a conjugation.
+DERIVED = {
+    "divide": (nlop.Divide(SHAPE), None, True),
+    "divide (regularised)": (nlop.Divide(SHAPE, 1e-3), None, True),
+    "sum": (nlop.Sum(SHAPE, ()), lambda x: (x.conj() * x).real.to(torch.complex64), False),
+    "sum over an axis": (nlop.Sum(SHAPE, (-1,)), None, False),
+    "root sum of squares": (nlop.RootSumOfSquares(SHAPE, ()), lambda x: x.abs() + 0j, False),
+    "root sum of squares (regularised)": (nlop.RootSumOfSquares(SHAPE, (-1,), 1e-3), None, False),
+    "abs": (nlop.Abs(SHAPE), lambda x: x.abs() + 0j, False),
+    "smooth abs": (nlop.SmoothAbs(SHAPE, 1e-6), None, False),
+}
+
+
+@pytest.mark.parametrize("name", sorted(DERIVED))
+def test_the_declared_composition_answers_what_bart_answers(name, generator):
+    """What BART builds the operator out of, written here, is the operator."""
+    op = DERIVED[name][0]
+    xs = [rand(shape, generator) + 3.0 for shape in op.ishapes]
+    assert torch.equal(op.forward(*xs), op._composition().forward(*xs))
+
+
+@pytest.mark.parametrize("name", sorted(DERIVED))
+def test_a_derived_bundle_is_barts_own_derivative(name, generator):
+    """An agreement check: the chain rule over the pieces against `nlop_get_derivative`."""
+    op = DERIVED[name][0]
+    xs = [rand(shape, generator) + 3.0 for shape in op.ishapes]
+    dxs = [rand(shape, generator) for shape in op.ishapes]
+    dzs = [rand(shape, generator) for shape in op.oshapes]
+    want_d, want_a = jacobians(op, xs, dxs, dzs)
+
+    for got, want in zip(tupled(op.bundle.derivative(*dxs, *xs)), want_d):
+        assert torch.allclose(got, want, atol=1e-5, rtol=1e-4)
+    for got, want in zip(tupled(op.bundle.adjoint(*dzs, *xs)), want_a):
+        assert torch.allclose(got, want, atol=1e-5, rtol=1e-4)
+
+
+@pytest.mark.parametrize("name", sorted(DERIVED))
+def test_a_derived_derivative_is_torchs_jacobian_vector_product(name, generator):
+    op, fn, _ = DERIVED[name]
+    if fn is None:
+        pytest.skip("no torch function writes this one in one line")
+    x, dx = rand(SHAPE, generator) + 3.0, rand(SHAPE, generator)
+    want = torch.func.jvp(fn, (x,), (dx,))[1]
+    assert torch.allclose(op.bundle.derivative(dx, x), want, atol=1e-5, rtol=1e-4)
+
+
+@pytest.mark.parametrize("name", sorted(DERIVED))
+def test_a_derived_adjoint_is_adjoint_over_the_reals(name, generator):
+    """``zss`` conjugates its own input, so what is linear is real-linear.
+
+    The identity therefore holds in the real inner product and not the complex
+    one, which is what ``linop.Real`` already says of itself.  Asserting the
+    complex one would be asserting a different operator.
+    """
+    op, _, complex_linear = DERIVED[name]
+    xs = [rand(shape, generator) + 3.0 for shape in op.ishapes]
+    dxs = [rand(shape, generator) for shape in op.ishapes]
+    dzs = [rand(shape, generator) for shape in op.oshapes]
+
+    forward = sum(
+        (one.conj() * dz).sum() for one, dz in zip(tupled(op.bundle.derivative(*dxs, *xs)), dzs)
+    )
+    back = sum(
+        (dx.conj() * one).sum() for dx, one in zip(dxs, tupled(op.bundle.adjoint(*dzs, *xs)))
+    )
+
+    assert abs(forward.real - back.real) < 1e-4 * abs(forward)
+    if complex_linear:
+        assert abs(forward - back) < 1e-4 * abs(forward)
+    else:
+        assert abs(forward - back) > 1e-3 * abs(forward)
+
+
+def test_the_phase_operator_follows_from_the_two_it_is_built_of(generator):
+    """``zphsr`` is ``zabs`` into ``zdiv`` duplicated, and declares nothing of its own."""
+    op = nlop.Phase(SHAPE)
+    x, dx, dz = rand(SHAPE, generator) + 3.0, rand(SHAPE, generator), rand(SHAPE, generator)
+    want_d, want_a = jacobians(op, [x], [dx], [dz])
+    assert torch.allclose(op.bundle.derivative(dx, x), want_d[0], atol=1e-5, rtol=1e-4)
+    assert torch.allclose(op.bundle.adjoint(dz, x), want_a[0], atol=1e-5, rtol=1e-4)

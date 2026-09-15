@@ -113,6 +113,15 @@ class Abs(_Elementwise):
 
     _fn = "bartorch_nlop_zabs"
 
+    def _composition(self):
+        """``nlop_zabs_create`` is ``zrss`` over no axes (``someops.c:626``)."""
+        return RootSumOfSquares(self._shape, ())
+
+    def _bundle(self):
+        from bartorch.nlop.bundle import of_composition
+
+        return of_composition(self, self._composition())
+
 
 class SmoothAbs(_Elementwise):
     """``sqrt(|x|^2 + eps)``, elementwise.  BART's ``smo_abs``.
@@ -133,6 +142,15 @@ class SmoothAbs(_Elementwise):
 
     def _extra(self) -> tuple:
         return (self.eps,)
+
+    def _composition(self):
+        """``nlop_smo_abs_create`` is ``zrss`` over no axes, regularised (``someops.c:621``)."""
+        return RootSumOfSquares(self._shape, (), self.eps)
+
+    def _bundle(self):
+        from bartorch.nlop.bundle import of_composition
+
+        return of_composition(self, self._composition())
 
     def __repr__(self) -> str:
         return f"SmoothAbs({self._shape}, eps={self.eps})"
@@ -257,6 +275,30 @@ class Sum(_Reduction):
 
     _fn = "bartorch_nlop_zss"
 
+    def _composition(self):
+        """``nlop_zss_create``: the point against its own conjugate, summed, made real.
+
+        The product contracts onto the reduced shape, which is what
+        ``md_ztenmul`` does with a smaller output (``someops.c:539``).
+        """
+        from bartorch.linop.basic import Conj
+        from bartorch.linop.shape import Real
+        from bartorch.nlop.base import FromLinear, chain
+        from bartorch.nlop.bundle import _TenMul
+
+        product = chain(
+            FromLinear(Conj(self._shape)),
+            _TenMul(self._out, self._shape, self._shape),
+            output=0,
+            input=0,
+        )
+        return chain(product.dup(0, 1), FromLinear(Real(self._out)))
+
+    def _bundle(self):
+        from bartorch.nlop.bundle import of_composition
+
+        return of_composition(self, self._composition())
+
 
 class RootSumOfSquares(_Reduction):
     """``sqrt(sum(|x|^2))`` along ``axes``.  BART's ``zrss``.
@@ -273,6 +315,20 @@ class RootSumOfSquares(_Reduction):
 
     def _extra(self) -> tuple:
         return (self.eps,)
+
+    def _composition(self):
+        """``nlop_zrss_reg_create``: the sum of squares, offset where asked, rooted."""
+        from bartorch.nlop.base import chain
+
+        made = Sum(self._shape, self.axes)
+        if self.eps:
+            made = chain(made, Add(self._out, self.eps))
+        return chain(made, Sqrt(self._out))
+
+    def _bundle(self):
+        from bartorch.nlop.bundle import of_composition
+
+        return of_composition(self, self._composition())
 
 
 class Multiply(NonlinearOperator):
@@ -306,26 +362,9 @@ class Multiply(NonlinearOperator):
         return _built(ptr, (self._a, self._b), (self._out,))
 
     def _bundle(self):
-        from bartorch.linop.basic import Conj
-        from bartorch.nlop.base import FromLinear, chain, combine
-        from bartorch.nlop.bundle import Bundle, _TenMul
+        from bartorch.nlop.bundle import of_product
 
-        a, b, out = self._a, self._b, self._out
-
-        # `da * b + a * db`, which is `noir_get_derivative` without the
-        # linear parts of the coil model around it.
-        made = combine(_TenMul(out, a, b), _TenMul(out, a, b))  # in: a, db, da, b
-        made = made.permute_inputs([2, 1, 0, 3])  # in: da, db, a, b
-        derivative = chain(made, Weighted(out, 1.0, 1.0), output=0, input=0).link(1, 0)
-
-        # `conj(b) * dz` summed onto the image and `conj(a) * dz` onto the
-        # coils, which is `noir_get_adjoint`'s pair and its permutation.
-        first = chain(FromLinear(Conj(b)), _TenMul(a, b, out), output=0, input=0)
-        second = chain(FromLinear(Conj(a)), _TenMul(b, a, out), output=0, input=0)
-        adjoint = combine(first, second)  # in: dz, b, dz, a
-        adjoint = adjoint.permute_inputs([0, 2, 3, 1]).dup(0, 1)  # in: dz, a, b
-
-        return Bundle(self, derivative, adjoint)
+        return of_product(self, self._out, self._a, self._b)
 
     def __repr__(self) -> str:
         return f"Multiply({self._a}, {self._b})"
@@ -345,6 +384,22 @@ class Divide(NonlinearOperator):
     def _create(self) -> Built:
         ptr = self._under_lock(library().bartorch_nlop_zdiv, DIMS, dims(self._shape), self.eps)
         return _built(ptr, (self._shape, self._shape), (self._shape,))
+
+    def _composition(self):
+        """``nlop_zdiv_reg_create``: the divisor inverted, then multiplied in."""
+        from bartorch.nlop.base import chain
+
+        return chain(
+            Inverse(self._shape, self.eps),
+            Multiply(self._shape, self._shape),
+            output=0,
+            input=1,
+        )
+
+    def _bundle(self):
+        from bartorch.nlop.bundle import of_composition
+
+        return of_composition(self, self._composition())
 
     def __repr__(self) -> str:
         return f"Divide({self._shape}, eps={self.eps})"
