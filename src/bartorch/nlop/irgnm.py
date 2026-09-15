@@ -248,15 +248,18 @@ class IRGNM:
         another.  Steps chain into one operator with
         :func:`~bartorch.nlop.chain`.
 
-        ``F`` a :class:`~bartorch.nlop.NonlinearSense` is BART's own step of
-        ``nlinv`` (``noir/model_net.c``); any other model is that same
-        expression assembled over the derivative the model supplies as a
-        function of the point (:attr:`~bartorch.nlop.NonlinearOperator.bundle`),
-        and a model that supplies none solves through :meth:`__call__` instead.
+        Every model is the same assembly over the derivative it supplies as a
+        function of the point
+        (:attr:`~bartorch.nlop.NonlinearOperator.bundle`), which for a
+        :class:`~bartorch.nlop.NonlinearSense` is ``noir``'s own Gauss-Newton
+        step written out.  A model that supplies no bundle solves through
+        :meth:`__call__` instead.
 
         ``xn``, ``x0`` and the answer are the model's unknowns in one flat
         vector, which ``split()`` and ``join()`` read and write, and ``alpha``
-        may be a number.  ``cg_lambda`` is the inner solve's ``l2lambda``.
+        may be a number.  ``batch`` items are stacked on the leading axis of
+        every argument, each with its own build of the whole expression, so
+        they share nothing -- not even the inner conjugate gradients.
 
         A product of two unknowns behind a linear encoding is lowered so the
         encoding is applied once as its normal, which moves ``y`` from samples
@@ -271,28 +274,25 @@ class IRGNM:
 
         Notes
         -----
-        For ``NonlinearSense``, ``y`` is coil images, which ``prepare()`` makes
-        from k-space and a pattern; applying it is what gives the model its
-        pattern, and a step refuses until then.  ``batch`` copies of the model
-        sit on BART's batch axis, the leading axis of every argument, and only
-        BART's own model carries one.
+        A sampling pattern belongs to the model: a
+        :class:`~bartorch.nlop.NonlinearSense` is built with one, and an
+        encoding composed here carries it as a
+        :class:`~bartorch.linop.basic.Sampling`, whose
+        :meth:`~bartorch.linop.basic.Sampling.set` rewrites it under a step
+        that is already assembled.
 
         BART's default coil weighting, ``b = 32``, puts part of the coil half's
         gradient below float32's smallest normal number, where ``checkeps``
         leaves the solve untouched and the gradient is zeros; a gradient that
-        has to mean something there wants ``sobolev=(220.0, 8.0)``.  The network
-        model fits the coils on the image's grid, so a ``NonlinearSense`` must
-        have ``oversampling_coils=1.0`` and none of ``optimized``,
-        ``oversampled_coils`` or a separate coefficient shape.
+        has to mean something there wants ``sobolev=(220.0, 8.0)``.
 
         Examples
         --------
-        BART's own model, with its batch and its pattern per call:
+        BART's noir model, batched:
 
-        >>> F = nlop.CartesianSense((coils, 256, 256), sobolev=(220.0, 8.0))
-        >>> cell = nlop.IRGNM(iterations=1).operator(F, batch=4)
-        >>> y = cell.prepare()(kspace, pattern)
-        >>> x1 = cell(y, cell.start(batch=4), cell.start(batch=4), 1.0)
+        >>> F = nlop.CartesianSense((coils, 256, 256), sobolev=(220.0, 8.0), pattern=pattern)
+        >>> step = nlop.IRGNM(iterations=1).operator(F, batch=4)
+        >>> x1 = step(step.prepare(kspace), step.start(), step.start(), 1.0)
 
         A model assembled here, over the encoding of your choice:
 
@@ -302,8 +302,7 @@ class IRGNM:
         'normal'
         >>> x = step(step.prepare(kspace), start, start, 1.0)
         """
-        from bartorch.nlop._newton import _Cell
-        from bartorch.nlop.mri import NonlinearSense
+        from bartorch.nlop.step import Step
 
         if self.inner is not None or self.alpha_min0:
             raise ValueError(
@@ -314,32 +313,7 @@ class IRGNM:
             raise ValueError("a Gauss-Newton operator takes at least one step")
         if 1 > int(batch):
             raise ValueError("a batch is at least one")
-        if not isinstance(F, NonlinearSense):
-            from bartorch.nlop.step import Step
-
-            if 1 != int(batch):
-                raise ValueError(
-                    "only BART's noir model carries a batch of its own; a model assembled "
-                    "here takes whatever axes it was built with"
-                )
-            return Step(F, self, cg_lambda=cg_lambda, fuse=fuse)
-        beyond = [
-            name
-            for name, asked in (
-                ("oversampling_coils", 1.0 != F.oversampling_coils),
-                ("oversampled_coils", F.oversampled_coils),
-                ("optimized", F.optimized),
-                ("coefficient_shape", F.coefficient_shape != F.coil_shape),
-            )
-            if asked
-        ]
-        if beyond:
-            raise ValueError(
-                f"BART's network model fits the coils on the image's grid and cannot be given "
-                f"{', '.join(beyond)}; build the NonlinearSense with oversampling_coils=1.0 "
-                "and without the others"
-            )
-        return _Cell(F, self, batch=batch, cg_lambda=cg_lambda)
+        return Step(F, self, batch=batch, cg_lambda=cg_lambda, fuse=fuse)
 
     # --- BART's second form, with the inner problem anywhere ---------------
 

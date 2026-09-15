@@ -12,6 +12,7 @@ import torch
 
 from bartorch import linop, nlop
 from bartorch.linop.basic import Identity
+from bartorch.nlop._newton import _Cell
 from bartorch.nlop.base import chain
 from bartorch.nlop.basic import Multiply
 from bartorch.nlop.bundle import Asymmetric
@@ -166,7 +167,7 @@ def test_the_assembly_is_barts_own_over_the_noir_composition(iterations):
     schedule = nlop.IRGNM(
         iterations=iterations, alpha=1.0, redu=2.0, alpha_min=0.0, cg_maxiter=30, cg_tol=0.0
     )
-    cell = schedule.operator(F, batch=1)
+    cell = _Cell(F, schedule, batch=1, cg_lambda=0.0)
     step = Step(_normal_domain(F), schedule)
 
     kspace = torch.randn(F.oshapes[0], dtype=torch.complex64)
@@ -416,7 +417,7 @@ def test_a_batched_step_is_barts_own_batched_step_for_the_noir_model():
     model = nlop.CartesianSense((coils, n, n), sobolev=(220.0, 8.0))
     schedule = nlop.IRGNM(iterations=2, alpha=1.0, redu=2.0, cg_maxiter=20, cg_tol=0.0)
 
-    cell = schedule.operator(model, batch=batch)
+    cell = _Cell(model, schedule, batch=batch, cg_lambda=0.0)
     step = Step(model, schedule, batch=batch)
 
     kspace = torch.randn(batch, coils, n, n, dtype=torch.complex64)

@@ -368,6 +368,18 @@ class Step(NonlinearOperator):
             return torch.cat([x.reshape(-1) for x in xs])
         return torch.cat([x.reshape(self.batch, -1) for x in xs], dim=1)
 
+    def start(self, device=None) -> torch.Tensor:
+        """The iterate ``nlinv`` starts from: the first unknown ones, the rest zero.
+
+        ``noir2_init``'s convention -- an image of ones and no coil
+        coefficients.  A model whose unknowns are not an image and a set of
+        coils takes whatever start its own problem wants instead.
+        """
+        made = torch.zeros(self.state_shape, dtype=torch.complex64, device=device)
+        first = math.prod(self.lowered.ishapes[0])
+        made[..., :first] = 1.0
+        return made
+
     def weight(self, alpha: float, device=None) -> torch.Tensor:
         """``alpha`` as the step takes it: a vector as long as the state, multiplied by."""
         return torch.full(self.state_shape, float(alpha), dtype=torch.complex64, device=device)
