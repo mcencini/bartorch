@@ -8,6 +8,7 @@ a block to BART's schedule, called as ``solver(y, A, x0=None)``; the function
 from __future__ import annotations
 
 from bartorch.optim.blocks import ADMMBlock, FISTABlock, ISTBlock, PRIDUBlock
+from bartorch.optim.fixed_point import FixedPoint
 from bartorch.optim.functional import (
     admm,
     cg,
@@ -34,6 +35,7 @@ __all__ = [
     "CG",
     "FISTA",
     "FISTABlock",
+    "FixedPoint",
     "IST",
     "ISTBlock",
     "NIHT",

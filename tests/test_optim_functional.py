@@ -196,7 +196,7 @@ def test_every_solver_has_a_function():
     """The function is the ordinary call path, so a solver reachable only as a
     class would send a caller to the handle for no reason."""
     classes = {n for n in optim.__all__ if n[0].isupper() and not n.endswith("Block")}
-    classes -= {"Tikhonov"}
+    classes -= {"Tikhonov", "FixedPoint"}
     functions = {n for n in optim.__all__ if n.islower()} - {"data_scaling", "maxeigen"}
     assert {c.lower() for c in classes} == functions
 

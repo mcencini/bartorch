@@ -73,6 +73,17 @@ carry no derivative; everything else a step applies is recorded.
    PRIDUBlock
 ```
 
+{class}`FixedPoint` iterates a block to its fixed point and differentiates
+through the point rather than the run: a deep-equilibrium model.
+
+```{eval-rst}
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   FixedPoint
+```
+
 ## Functional wrappers
 
 `optim.fista(y, A, term, maxiter=30)` is `optim.FISTA(term, maxiter=30)(y, A)`.
