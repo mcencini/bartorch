@@ -1644,6 +1644,56 @@ bartorch_nlop* bartorch_nlop_stack_inputs(const bartorch_nlop* x, int a, int b, 
 	return (0 == guarded(nlop_stack_inputs_worker, &v)) ? v.result : NULL;
 }
 
+struct nlop_stack_multiple_args {
+
+	int n; const bartorch_nlop* const* ops;
+	int II; const int* in_stack_dim;
+	int OO; const int* out_stack_dim;
+	int container; int multigpu;
+	bartorch_nlop* result;
+};
+
+static int nlop_stack_multiple_worker(void* p)
+{
+	struct nlop_stack_multiple_args* a = p;
+
+	const struct nlop_s* nlops[a->n];
+	int istack[a->II];
+	int ostack[a->OO];
+
+	/* `nlop_stack_multiple_F` consumes what it is given, and these handles
+	 * belong to the caller, so each goes in as a reference of its own. */
+	for (int i = 0; i < a->n; i++)
+		nlops[i] = nlop_clone(a->ops[i]->op);
+
+	for (int i = 0; i < a->II; i++)
+		istack[i] = a->in_stack_dim[i];
+
+	for (int i = 0; i < a->OO; i++)
+		ostack[i] = a->out_stack_dim[i];
+
+	a->result = wrap_nlop(nlop_stack_multiple_F(a->n, nlops, a->II, istack, a->OO, ostack,
+			a->container, a->multigpu));
+	return 0;
+}
+
+bartorch_nlop* bartorch_nlop_stack_multiple(int n, const bartorch_nlop* const* ops,
+		int II, const int* in_stack_dim, int OO, const int* out_stack_dim,
+		int container, int multigpu)
+{
+	if ((NULL == ops) || (1 > n))
+		return NULL;
+
+	for (int i = 0; i < n; i++)
+		if ((NULL == ops[i]) || (NULL == ops[i]->op))
+			return NULL;
+
+	struct nlop_stack_multiple_args v = { n, ops, II, in_stack_dim, OO, out_stack_dim,
+			container, multigpu, NULL };
+
+	return (0 == guarded(nlop_stack_multiple_worker, &v)) ? v.result : NULL;
+}
+
 static int nlop_stack_outputs_worker(void* p)
 {
 	struct nlop_index2_args* v = p;

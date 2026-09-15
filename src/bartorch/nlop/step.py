@@ -12,11 +12,12 @@ import math
 
 import torch
 
+from bartorch import _marshal
 from bartorch._dispatch import BartError
 from bartorch._lib import library
 from bartorch._operator import Built, Shape
 from bartorch.nlop import plan as _plan
-from bartorch.nlop.base import NonlinearOperator, _built, arity, chain
+from bartorch.nlop.base import NonlinearOperator, _bart_axis, _built, arity, chain
 from bartorch.nlop.basic import Add, Multiply, Weighted
 from bartorch.nlop.bundle import Bundle, scaled
 
@@ -124,6 +125,63 @@ def _checkpoint(x: NonlinearOperator, *, der_once: bool, clear_mem: bool) -> Non
     )
 
 
+class _Batched(NonlinearOperator):
+    """``n`` builds of one operator applied together, stacked along a new leading axis.
+
+    ``nlop_stack_multiple_F`` over one operator per item, which is how
+    ``noir_gauss_newton_step_create`` (``model_net.c:425``) gives the noir step
+    its batch.  The items share nothing -- each has its own build of the whole
+    expression -- so one answers exactly what it would alone, and a solve does
+    not couple them through the inner conjugate gradients.
+    """
+
+    #: BART's own flag for a stack whose parts are kept as a container.
+    _CONTAINER = 1
+    #: `nlop_stack_multiple_F`'s multigpu split, which needs a card to mean anything.
+    _MULTIGPU = 0
+
+    def __init__(self, copies):
+        made = []
+        for one in copies:
+            # A singleton leading axis in C order is a singleton appended to
+            # BART's dimension vector, which is what the stack is taken along.
+            for at, shape in enumerate(one.ishapes):
+                one = one.reshape_input(at, (1, *shape))
+            for at, shape in enumerate(one.oshapes):
+                one = one.reshape_output(at, (1, *shape))
+            made.append(one._bart())
+        self.copies = tuple(made)
+        super().__init__()
+
+    def _create(self) -> Built:
+        first = self.copies[0]
+        n = len(self.copies)
+        handles = _marshal.handles([one._h.ptr for one in self.copies])
+        instack = _marshal.ints([_bart_axis(0, shape) for shape in first.ishapes])
+        outstack = _marshal.ints([_bart_axis(0, shape) for shape in first.oshapes])
+        device = next((one.device for one in self.copies if one.device is not None), None)
+        ptr = self._under_lock(
+            library().bartorch_nlop_stack_multiple,
+            n,
+            handles,
+            len(first.ishapes),
+            instack,
+            len(first.oshapes),
+            outstack,
+            self._CONTAINER,
+            self._MULTIGPU,
+            device=device,
+        )
+        if not ptr:
+            raise BartError("BART would not stack the operators")
+        ishapes = tuple((n, *shape[1:]) for shape in first.ishapes)
+        oshapes = tuple((n, *shape[1:]) for shape in first.oshapes)
+        return _built(ptr, ishapes, oshapes, keep=self.copies, device=device)
+
+    def __repr__(self) -> str:
+        return f"<{len(self.copies)} stacked>"
+
+
 class Step(NonlinearOperator):
     """A Gauss-Newton schedule as one operator ``(y, xn, x0, alpha) -> x``.
 
@@ -138,7 +196,7 @@ class Step(NonlinearOperator):
     a measurement there and :attr:`plan` says whether it happened.
     """
 
-    def __init__(self, F, schedule, *, cg_lambda: float = 0.0, fuse: bool = True):
+    def __init__(self, F, schedule, *, batch: int = 1, cg_lambda: float = 0.0, fuse: bool = True):
         if F.bundle is None:
             raise TypeError(
                 f"{type(F).__name__} supplies no derivative as a function of the point, so a "
@@ -160,6 +218,9 @@ class Step(NonlinearOperator):
         self.cg_maxiter = int(schedule.cg_maxiter)
         self.cg_tol = float(schedule.cg_tol)
         self.cg_lambda = float(cg_lambda)
+        self.batch = int(batch)
+        if 1 > self.batch:
+            raise ValueError("a batch is at least one")
         super().__init__()
 
     # --- the assembly ------------------------------------------------------
@@ -176,7 +237,7 @@ class Step(NonlinearOperator):
 
     def _one_step(self) -> NonlinearOperator:
         """``noir_gauss_newton_step_create_s``, line for line, over the bundle."""
-        data, state = self.data_shape, self.state_shape
+        data, state = self._item_data, self._item_state
 
         made = chain(self.flat.operator, Weighted(data, 1.0, -1.0), output=0, input=1)
         made = swapped(made, self.flat.adjoint)  # y, xn, xn
@@ -199,7 +260,7 @@ class Step(NonlinearOperator):
 
     def _decay(self) -> NonlinearOperator:
         """``alpha -> (alpha - alpha_min) / redu + alpha_min``, as three of BART's pieces."""
-        state = self.state_shape
+        state = self._item_state
         made = chain(
             flat_rank(Add(state, -self.alpha_min)), flat_rank(scaled(state, 1.0 / self.redu))
         )
@@ -220,14 +281,25 @@ class Step(NonlinearOperator):
             made = made.dup(0, 4).dup(2, 4).dup(3, 4)
         return made
 
+    def _assembled(self) -> NonlinearOperator:
+        """One item's whole schedule, at the shapes a caller passes."""
+        made = self._schedule()
+        # BART holds the data at whatever rank the model's codomain has; the
+        # caller passes what the model returns.
+        return made.reshape_input(0, self._item_data)
+
     def _create(self) -> Built:
         # The outermost checkpoint is `model_net.c:423`, and it is also what
         # gives this operator a handle of its own rather than a second
         # reference to the assembly's.
-        made = self._schedule()
-        # BART holds the data at whatever rank the model's codomain has; the
-        # caller passes what the model returns.
-        made = made.reshape_input(0, self.data_shape)
+        if 1 == self.batch:
+            made = self._assembled()
+        else:
+            # `noir_gauss_newton_step_create` builds the whole step per item
+            # and stacks the set, so each carries its own scratch and the
+            # items share nothing.  The cost is linear in the batch, there as
+            # here.
+            made = _Batched([self._assembled() for _ in range(self.batch)])
         ptr = self._under_lock(
             library().bartorch_nlop_checkpoint, made._h.ptr, 1, 1, device=made.device
         )
@@ -238,37 +310,63 @@ class Step(NonlinearOperator):
     # --- the arguments -----------------------------------------------------
 
     @property
-    def data_shape(self) -> Shape:
-        """What ``y`` is: what the model returns, or ``E^H`` of it once lowered."""
+    def _item_data(self) -> Shape:
+        """One item's ``y``, which is what the assembly is built at."""
         return self.flat.operator.oshapes[0]
+
+    @property
+    def _item_state(self) -> Shape:
+        """One item's state, which is what the assembly is built at."""
+        return self.flat.operator.ishapes[0]
+
+    def _batched(self, shape: Shape) -> Shape:
+        return shape if 1 == self.batch else (self.batch, *shape)
+
+    @property
+    def data_shape(self) -> Shape:
+        """What ``y`` is: what the model returns, or ``E^H`` of it once lowered.
+
+        A batch is the leading axis, as it is for every other argument.
+        """
+        return self._batched(self._item_data)
 
     @property
     def state_shape(self) -> Shape:
         """What ``xn``, ``x0`` and the answer are: the unknowns laid end to end."""
-        return self.flat.operator.ishapes[0]
+        return self._batched(self._item_state)
 
     def prepare(self, y: torch.Tensor) -> torch.Tensor:
         """A measurement in the shape the step takes.
 
         ``E^H y`` where the step works in the normal-equation domain, which is
         what :attr:`plan` reports, and the measurement unchanged where it does
-        not.
+        not.  A batch is the leading axis and each item goes through the
+        encoding on its own, the items sharing one encoding.
         """
-        return y if self._prepare is None else self._prepare.forward(y)
+        if self._prepare is None:
+            return y
+        if 1 == self.batch:
+            return self._prepare.forward(y)
+        return torch.stack([self._prepare.forward(one) for one in y])
 
     def split(self, x: torch.Tensor) -> tuple[torch.Tensor, ...]:
-        """One state back into a tensor per unknown of the model."""
-        flat, at = x.reshape(-1), 0
-        out = []
+        """One state back into a tensor per unknown of the model, batch first."""
+        flat = x.reshape(self.batch, -1) if 1 < self.batch else x.reshape(1, -1)
+        out, at = [], 0
         for shape in self.lowered.ishapes:
             size = math.prod(shape)
-            out.append(flat[at : at + size].reshape(shape))
+            piece = flat[:, at : at + size]
+            out.append(
+                piece.reshape(self.batch, *shape) if 1 < self.batch else piece.reshape(shape)
+            )
             at += size
         return tuple(out)
 
     def join(self, *xs: torch.Tensor) -> torch.Tensor:
-        """One tensor per unknown laid end to end into a state."""
-        return torch.cat([x.reshape(-1) for x in xs])
+        """One tensor per unknown laid end to end into a state, batch first."""
+        if 1 == self.batch:
+            return torch.cat([x.reshape(-1) for x in xs])
+        return torch.cat([x.reshape(self.batch, -1) for x in xs], dim=1)
 
     def weight(self, alpha: float, device=None) -> torch.Tensor:
         """``alpha`` as the step takes it: a vector as long as the state, multiplied by."""

@@ -274,6 +274,7 @@ SYMBOLS = (
     "bartorch_nlop_dup",
     "bartorch_nlop_stack_inputs",
     "bartorch_nlop_stack_outputs",
+    "bartorch_nlop_stack_multiple",
     "bartorch_nlop_permute",
     "bartorch_nlop_del_out",
     "bartorch_nlop_flatten",
@@ -984,6 +985,17 @@ def bind(lib: ctypes.CDLL) -> ctypes.CDLL:
     lib.bartorch_nlop_stack_outputs.argtypes = [
         ctypes.c_void_p,
         ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+    ]
+    lib.bartorch_nlop_stack_multiple.restype = ctypes.c_void_p
+    lib.bartorch_nlop_stack_multiple.argtypes = [
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_int),
         ctypes.c_int,
         ctypes.c_int,
     ]

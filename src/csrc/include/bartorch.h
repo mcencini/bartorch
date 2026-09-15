@@ -685,6 +685,15 @@ BARTORCH_API bartorch_nlop* bartorch_nlop_link(const bartorch_nlop* x, int oo, i
 BARTORCH_API bartorch_nlop* bartorch_nlop_dup(const bartorch_nlop* x, int a, int b);
 BARTORCH_API bartorch_nlop* bartorch_nlop_stack_inputs(const bartorch_nlop* x, int a, int b, int dim);
 BARTORCH_API bartorch_nlop* bartorch_nlop_stack_outputs(const bartorch_nlop* x, int a, int b, int dim);
+/* `n` operators of the same arity applied together, each argument stacked
+ * along the axis `in_stack_dim` or `out_stack_dim` names for it, in BART's
+ * dimension order.  This is how `noir_gauss_newton_step_create` gives the
+ * noir step its batch: one operator built per item and the set stacked, so
+ * the items share nothing and answer exactly as they would alone.
+ * The operators are referenced, so the caller still frees them. */
+BARTORCH_API bartorch_nlop* bartorch_nlop_stack_multiple(int n, const bartorch_nlop* const* ops,
+		int II, const int* in_stack_dim, int OO, const int* out_stack_dim,
+		int container, int multigpu);
 /* `outputs` non-zero permutes the outputs, zero the inputs. */
 BARTORCH_API bartorch_nlop* bartorch_nlop_permute(const bartorch_nlop* x, int outputs, int n, const int* perm);
 BARTORCH_API bartorch_nlop* bartorch_nlop_del_out(const bartorch_nlop* x, int o);

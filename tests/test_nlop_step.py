@@ -349,3 +349,84 @@ def test_a_step_answers_for_a_pattern_set_after_it_was_assembled():
     _, rebuilt = _assembled(second, shape, schedule)
     assert not torch.allclose(on_first, reused), "the swap changed nothing"
     assert torch.equal(reused, solve(rebuilt, second))
+
+
+# --- a batch of independent items ----------------------------------------------
+
+
+def test_a_batched_step_answers_what_each_item_answers_alone():
+    """The claim the batch makes: items share nothing, not even the inner solve.
+
+    Conjugate gradients couple through global inner products, so a batch laid
+    into one state would *not* answer this; ``nlop_stack_multiple`` builds the
+    whole expression per item, which does.
+    """
+    torch.manual_seed(0)
+    batch = 4
+    schedule = nlop.IRGNM(iterations=2, alpha=1.0, redu=2.0, cg_maxiter=15, cg_tol=0.0)
+    model = Multiply((1, 4), (3, 4))
+    one, many = Step(model, schedule), Step(model, schedule, batch=batch)
+
+    assert (batch, *one.state_shape) == tuple(many.state_shape)
+    assert (batch, *one.data_shape) == tuple(many.data_shape)
+
+    data = torch.randn(batch, *one.data_shape, dtype=torch.complex64)
+    state = torch.randn(batch, *one.state_shape, dtype=torch.complex64) * 0.3 + 1.0
+
+    alone = torch.stack([one(data[i], state[i], state[i], 1.0) for i in range(batch)])
+    together = many(data, state, state, many.weight(1.0))
+    assert torch.equal(alone, together)
+
+
+def test_a_batched_state_splits_and_joins_with_the_batch_in_front():
+    torch.manual_seed(0)
+    schedule = nlop.IRGNM(iterations=1, cg_maxiter=5, cg_tol=0.0)
+    step = Step(Multiply((1, 4), (3, 4)), schedule, batch=3)
+    state = torch.randn(*step.state_shape, dtype=torch.complex64)
+
+    parts = step.split(state)
+    assert [(3, *shape) for shape in step.lowered.ishapes] == [tuple(p.shape) for p in parts]
+    assert torch.equal(step.join(*parts), state)
+
+
+def test_a_batched_step_carries_a_gradient():
+    torch.manual_seed(0)
+    schedule = nlop.IRGNM(iterations=1, cg_maxiter=10, cg_tol=0.0)
+    step = Step(Multiply((1, 4), (3, 4)), schedule, batch=2)
+    data = torch.randn(*step.data_shape, dtype=torch.complex64)
+    start = torch.randn(*step.state_shape, dtype=torch.complex64) * 0.3
+    iterate = (torch.randn(*step.state_shape, dtype=torch.complex64) * 0.3 + 1.0).requires_grad_(
+        True
+    )
+
+    step(data, iterate, start, step.weight(1.0)).abs().square().sum().backward()
+    assert torch.isfinite(iterate.grad).all()
+    assert 0 < iterate.grad.abs().max()
+
+
+def test_a_batch_below_one_is_refused():
+    with pytest.raises(ValueError):
+        Step(Multiply((1, 4), (3, 4)), nlop.IRGNM(iterations=1), batch=0)
+
+
+def test_a_batched_step_is_barts_own_batched_step_for_the_noir_model():
+    """BART against BART: the assembly here and ``noir_gauss_newton_step_create``."""
+    torch.manual_seed(0)
+    coils, n, batch = 4, 16, 3
+    model = nlop.CartesianSense((coils, n, n), sobolev=(220.0, 8.0))
+    schedule = nlop.IRGNM(iterations=2, alpha=1.0, redu=2.0, cg_maxiter=20, cg_tol=0.0)
+
+    cell = schedule.operator(model, batch=batch)
+    step = Step(model, schedule, batch=batch)
+
+    kspace = torch.randn(batch, coils, n, n, dtype=torch.complex64)
+    pattern = torch.ones(batch, n, n, dtype=torch.complex64)
+
+    start = cell.start(batch=batch)
+    theirs = cell(cell.prepare()(kspace, pattern), start, start, 1.0)
+
+    state = torch.zeros(step.state_shape, dtype=torch.complex64)
+    state[:, : n * n] = 1.0
+    ours = step(step.prepare(kspace * pattern.reshape(batch, 1, n, n)), state, state, 1.0)
+
+    assert torch.equal(theirs.reshape(batch, -1), ours.reshape(batch, -1))
