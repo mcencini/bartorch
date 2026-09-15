@@ -240,49 +240,71 @@ class IRGNM:
 
     # --- BART's whole step, as an operator ---------------------------------
 
-    def operator(self, F, *, batch: int = 1, cg_lambda: float = 0.0):
+    def operator(self, F, *, batch: int = 1, cg_lambda: float = 0.0, fuse: bool = True):
         """This schedule as one operator ``(y, xn, x0, alpha) -> x``, differentiable by all four.
 
-        BART's own step of ``nlinv`` (``noir/model_net.c``) for ``F`` a
-        :class:`~bartorch.nlop.NonlinearSense`; any other model solves through
-        :meth:`__call__`.  ``iterations`` steps, the weight decaying by
-        ``redu`` towards ``alpha_min``, each a conjugate-gradient solve whose
-        backward pass is another.  Cells chain into one operator with
+        ``iterations`` steps, the weight decaying by ``redu`` towards
+        ``alpha_min``, each a conjugate-gradient solve whose backward pass is
+        another.  Steps chain into one operator with
         :func:`~bartorch.nlop.chain`.
 
-        ``y`` is coil images, which ``prepare()`` makes from k-space and a
-        pattern; applying it is what gives the model its pattern, and a step
-        refuses until then.  ``xn`` and ``x0`` are the image and the coil
-        coefficients in one flat vector -- ``start()``, ``split()``, ``join()``
-        and ``decompose()`` make and read one -- and ``alpha`` may be a number.
-        ``batch`` copies of the model sit on BART's batch axis, the leading
-        axis of every argument; ``cg_lambda`` is the inner solve's ``l2lambda``.
+        ``F`` a :class:`~bartorch.nlop.NonlinearSense` is BART's own step of
+        ``nlinv`` (``noir/model_net.c``); any other model is that same
+        expression assembled over the derivative the model supplies as a
+        function of the point (:attr:`~bartorch.nlop.NonlinearOperator.bundle`),
+        and a model that supplies none solves through :meth:`__call__` instead.
+
+        ``xn``, ``x0`` and the answer are the model's unknowns in one flat
+        vector, which ``split()`` and ``join()`` read and write, and ``alpha``
+        may be a number.  ``cg_lambda`` is the inner solve's ``l2lambda``.
+
+        A product of two unknowns behind a linear encoding is lowered so the
+        encoding is applied once as its normal, which moves ``y`` from samples
+        to coil images -- ``prepare()`` puts a measurement there and ``plan``
+        says whether it happened.  ``fuse=False`` declines the rewrite and
+        applies the encoding as a pair.
+
+        ``cg_lambda`` is ``iter_conjgrad_conf.l2lambda``, and no value of it
+        has been seen to change an answer -- neither here nor through BART's
+        own step, which takes the same parameter.  It is carried because BART
+        takes it, not because it is known to do anything.
 
         Notes
         -----
+        For ``NonlinearSense``, ``y`` is coil images, which ``prepare()`` makes
+        from k-space and a pattern; applying it is what gives the model its
+        pattern, and a step refuses until then.  ``batch`` copies of the model
+        sit on BART's batch axis, the leading axis of every argument, and only
+        BART's own model carries one.
+
         BART's default coil weighting, ``b = 32``, puts part of the coil half's
         gradient below float32's smallest normal number, where ``checkeps``
         leaves the solve untouched and the gradient is zeros; a gradient that
         has to mean something there wants ``sobolev=(220.0, 8.0)``.  The network
-        model fits the coils on the image's grid, so ``F`` must have
-        ``oversampling_coils=1.0`` and none of ``optimized``,
+        model fits the coils on the image's grid, so a ``NonlinearSense`` must
+        have ``oversampling_coils=1.0`` and none of ``optimized``,
         ``oversampled_coils`` or a separate coefficient shape.
 
         Examples
         --------
+        BART's own model, with its batch and its pattern per call:
+
         >>> F = nlop.CartesianSense((coils, 256, 256), sobolev=(220.0, 8.0))
         >>> cell = nlop.IRGNM(iterations=1).operator(F, batch=4)
         >>> y = cell.prepare()(kspace, pattern)
         >>> x1 = cell(y, cell.start(batch=4), cell.start(batch=4), 1.0)
+
+        A model assembled here, over the encoding of your choice:
+
+        >>> E = linop.NUFFT(traj, (coils, 1, 256, 256))
+        >>> step = nlop.IRGNM(iterations=8).operator(nlop.CoilSense(E))
+        >>> step.plan.domain
+        'normal'
+        >>> x = step(step.prepare(kspace), start, start, 1.0)
         """
         from bartorch.nlop._newton import _Cell
         from bartorch.nlop.mri import NonlinearSense
 
-        if not isinstance(F, NonlinearSense):
-            raise TypeError(
-                f"only BART's noir model builds its Gauss-Newton step as an operator, not "
-                f"{type(F).__name__}; any other model solves through IRGNM(...)(y, F, x0)"
-            )
         if self.inner is not None or self.alpha_min0:
             raise ValueError(
                 "the operator is BART's first form with its own conjugate gradients: it takes "
@@ -292,6 +314,15 @@ class IRGNM:
             raise ValueError("a Gauss-Newton operator takes at least one step")
         if 1 > int(batch):
             raise ValueError("a batch is at least one")
+        if not isinstance(F, NonlinearSense):
+            from bartorch.nlop.step import Step
+
+            if 1 != int(batch):
+                raise ValueError(
+                    "only BART's noir model carries a batch of its own; a model assembled "
+                    "here takes whatever axes it was built with"
+                )
+            return Step(F, self, cg_lambda=cg_lambda, fuse=fuse)
         beyond = [
             name
             for name, asked in (

@@ -11,11 +11,11 @@ import math
 
 import torch
 
-from bartorch import _marshal
 from bartorch._dispatch import BartError, _ensure_ready, _lock, _on_device
 from bartorch._lib import DIMS, library
 from bartorch._operator import Built, Shape, _Handle, dims
 from bartorch.nlop.base import NonlinearOperator, _built
+from bartorch.nlop.base import arity as _arity
 from bartorch.nlop.mri import _optional
 
 __all__: list[str] = []
@@ -36,30 +36,6 @@ def _trim(shape: Shape) -> Shape:
     while 1 < len(rest) and 1 == rest[0]:
         rest.pop(0)
     return (batch, *rest)
-
-
-def _arity(ptr: int) -> tuple[tuple[Shape, ...], tuple[Shape, ...]]:
-    """What BART says an operator takes and returns.
-
-    Read rather than worked out: the iterate is a flat vector of the image and
-    the coil coefficients together, whose length is BART's business, and the
-    batch axis is BART's too.
-    """
-    lib = library()
-    shapes: list[tuple[Shape, ...]] = []
-    for count, query in (
-        (lib.bartorch_nlop_inputs(ptr), lib.bartorch_nlop_input_domain),
-        (lib.bartorch_nlop_outputs(ptr), lib.bartorch_nlop_output_codomain),
-    ):
-        each = []
-        for at in range(count):
-            vector = _marshal.wide_dim_vector()
-            rank = query(ptr, at, len(vector), vector)
-            if rank < 0:
-                raise BartError("BART would not report the shape of one of its arguments")
-            each.append(tuple(int(vector[i]) for i in range(rank))[::-1])
-        shapes.append(tuple(each))
-    return shapes[0], shapes[1]
 
 
 class _Noir(NonlinearOperator):

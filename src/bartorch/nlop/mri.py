@@ -291,6 +291,38 @@ class NonlinearSense(NonlinearOperator):
             device=device,
         )
 
+    def _composition(self) -> NonlinearOperator:
+        """The model written out: the two unknowns' linear parts, their product, the transform.
+
+        ``noir2_join`` (``model2.c:164``) is these four operators, and off the
+        grid its last stage is asymmetric -- see
+        :class:`~bartorch.nlop.bundle.Asymmetric`.
+        """
+        from bartorch.linop.basic import Identity
+        from bartorch.nlop.bundle import Asymmetric
+
+        image, coils, transform = self.image, self.coils, self.transform
+        product = Multiply(image.oshape, coils.oshape)
+        made = chain(coils.to_nonlinear(), product, output=0, input=1)
+        made = chain(image.to_nonlinear(), made, output=0, input=0)
+        # The chain leaves the coil coefficients in front of the image.
+        made = made.permute_inputs([1, 0])
+        last = (
+            Asymmetric(transform.gram(), Identity(product.oshape), source=transform)
+            if self.noncart
+            else transform.to_nonlinear()
+        )
+        return chain(made, last, output=0, input=0)
+
+    def _bundle(self):
+        from bartorch.nlop.bundle import Bundle
+
+        written = self._composition()
+        if written.ishapes != self.ishapes or written.oshapes != self.oshapes:
+            return None
+        inner = written.bundle
+        return None if inner is None else Bundle(self, inner.derivative, inner.adjoint)
+
     def _read(self, which: int) -> Shape:
         """One of BART's dimension vectors, as a C-order shape.
 

@@ -50,6 +50,7 @@ would otherwise have been linked against.
 | `scripts/sources.py` | What the library is built from, in one place, so the script and `tests/test_build.py` cannot disagree about it. |
 | `scripts/lint.sh` | Ruff over `src/` and `tests/`, which is what the lint workflow runs; `--fix` writes. |
 | `scripts/benchmark_encodings.py` | The encoding timings `docs/design/composed-encodings.md` records, one case per process, each printing the plan it was lowered into beside its times. |
+| `scripts/benchmark_newton.py` | The Gauss-Newton timings `docs/design/nonlinear-fusion.md` records, with the encoding applied as its normal and as a pair. |
 | `scripts/macos_openmp.py` | `bartorch._macos_openmp` by hand: `diagnose` reads, `patch` rewrites and re-signs, `verify` proves it. The substitution does it for itself on first use, so this is for seeing what it found and for an environment where it could not. |
 | `scripts/build_docs.sh` | Builds the reference the way the workflow does. |
 | `scripts/check_device.py` | Everything a card can answer that a host cannot, in dependency order. |

@@ -36,6 +36,7 @@ from bartorch.nlop.basic import (
     Sum,
     Weighted,
 )
+from bartorch.nlop.bundle import Bundle
 from bartorch.nlop.callback import FromTorch, Parameters
 from bartorch.nlop.derivative import Derivative
 from bartorch.nlop.irgnm import IRGNM, irgnm
@@ -45,6 +46,7 @@ from bartorch.nlop.mri import (
     NoncartesianSense,
     NonlinearSense,
 )
+from bartorch.nlop.plan import Plan
 from bartorch.nlop.simulation import (
     Bloch,
     FromTorchSim,
@@ -56,6 +58,7 @@ __all__ = [
     "Abs",
     "Add",
     "Bloch",
+    "Bundle",
     "CartesianSense",
     "Chain",
     "CoilSense",
@@ -77,6 +80,7 @@ __all__ = [
     "NonlinearSense",
     "Parameters",
     "Phase",
+    "Plan",
     "Power",
     "RootSumOfSquares",
     "SmoothAbs",

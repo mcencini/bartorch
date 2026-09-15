@@ -228,6 +228,11 @@ class FromTorch(_Callback):
         else:
             super().__init__(oshapes, ishapes, forward, derivative, adjoint)
 
+    def _bundle(self):
+        from bartorch.nlop.bundle import from_torch
+
+        return from_torch(self, self.fn)
+
 
 class Parameters:
     """A module's parameters as one argument of an operator.
