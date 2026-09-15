@@ -9,6 +9,7 @@
 | {doc}`nlop` | `bartorch.nlop`: the nonlinear operator class, composition, operators defined in Python or torch |
 | {doc}`tools` | `bartorch.tools`: simulation, sampling and trajectories, coil calibration, reconstruction |
 | {doc}`io` | `bartorch.io`: CFL files |
+| {doc}`interop` | `bartorch.interop`: adapters to deepinv |
 
 ```{toctree}
 :hidden:
@@ -20,4 +21,5 @@ optim
 nlop
 tools
 io
+interop
 ```

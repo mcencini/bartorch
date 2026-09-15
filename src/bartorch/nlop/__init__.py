@@ -36,7 +36,7 @@ from bartorch.nlop.basic import (
     Sum,
     Weighted,
 )
-from bartorch.nlop.callback import Callback, FromTorch, Parameters
+from bartorch.nlop.callback import FromTorch, Parameters
 from bartorch.nlop.derivative import Derivative
 from bartorch.nlop.irgnm import IRGNM, irgnm
 from bartorch.nlop.mri import (
@@ -56,7 +56,6 @@ __all__ = [
     "Abs",
     "Add",
     "Bloch",
-    "Callback",
     "CartesianSense",
     "Chain",
     "CoilSense",

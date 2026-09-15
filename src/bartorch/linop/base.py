@@ -133,9 +133,21 @@ class LinearOperator(Operator):
         return self.adjoint(self.forward(x), out)
 
     def _as_callbacks(self) -> LinearOperator:
-        from bartorch.linop.basic import Callback
+        return LinearOperator.from_callbacks(
+            self.oshape, self.ishape, self.forward, self.adjoint, self.normal
+        )
 
-        return Callback(self.oshape, self.ishape, self.forward, self.adjoint, self.normal)
+    @classmethod
+    def from_callbacks(cls, oshape, ishape, forward, adjoint, normal=None) -> LinearOperator:
+        """An operator from Python functions, applied through BART.
+
+        ``forward`` maps ``ishape`` to ``oshape`` and ``adjoint`` back; ``normal``,
+        where a cheaper form exists, is ``adjoint(forward(x))`` in one.  Each
+        receives a view of BART's buffer, and every application crosses into Python.
+        """
+        from bartorch.linop.basic import _Callback
+
+        return _Callback(oshape, ishape, forward, adjoint, normal)
 
     @property
     def plan(self):
@@ -330,8 +342,7 @@ class LinearOperator(Operator):
         return self.forward(x, out)
 
     # pyxu's names for the shapes, so that an operator can stand in for one of
-    # its LinOps, the way the deepinv names below let it stand in for a
-    # LinearPhysics.  ishape and oshape stay the ones this library uses.
+    # its LinOps.  ishape and oshape stay the ones this library uses.
     #
     # There is deliberately no flat ``.shape``: an operator here maps a shape
     # to a shape, not a vector of length N to one of length M.  The flat sizes
@@ -419,38 +430,6 @@ class LinearOperator(Operator):
 
         x0 = kwargs.pop("x0", None)
         return CG(damp, **kwargs)(y, self, x0)
-
-    # deepinv's names for the same operations, so that an operator can stand
-    # in for a LinearPhysics without deepinv being imported.
-
-    def A(self, x: torch.Tensor, **kwargs) -> torch.Tensor:  # noqa: N802
-        """``A x``, under ``deepinv``'s name."""
-        return self(x)
-
-    def A_adjoint(self, y: torch.Tensor, **kwargs) -> torch.Tensor:  # noqa: N802
-        """``A^H y``, under ``deepinv``'s name, recorded for autograd."""
-        if _tracking(y):
-            from bartorch.linop.autograd import apply_adjoint
-
-            return apply_adjoint(self, y)
-        return self.adjoint(y)
-
-    def A_adjoint_A(self, x: torch.Tensor, **kwargs) -> torch.Tensor:  # noqa: N802
-        """``A^H A x``, under ``deepinv``'s name, recorded for autograd.
-
-        The recording entry point for :meth:`normal`, which is the raw one.
-        A gradient step inside an unrolled network applies ``A^H A``, so
-        calling ``normal`` there would leave the data term out of the graph.
-        """
-        if _tracking(x):
-            from bartorch.linop.autograd import apply_normal
-
-            return apply_normal(self, x)
-        return self.normal(x)
-
-    def A_dagger(self, y: torch.Tensor, **kwargs) -> torch.Tensor:  # noqa: N802
-        """The pseudo-inverse, under ``deepinv``'s name.  See :meth:`pinv`."""
-        return self.pinv(y, **kwargs)
 
 
 class _Composition(LinearOperator):

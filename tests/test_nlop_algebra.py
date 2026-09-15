@@ -538,7 +538,7 @@ def test_a_callback_of_many_arguments_says_which_pair_it_is_asked_for():
         seen.append(("adj", o, i))
         return v if 0 == i else v.sum()
 
-    F = nlop.Callback((4,), [(4,), ()], forward, derivative, adjoint)
+    F = nlop.NonlinearOperator.from_callbacks((4,), [(4,), ()], forward, derivative, adjoint)
     x, w = _rand(4), torch.tensor(0.5, dtype=torch.complex64)
     F(x, w)
     F.jacobian(0, 1)(torch.tensor(1.0, dtype=torch.complex64))
@@ -586,7 +586,7 @@ def test_a_chain_holds_the_two_sides_at_the_same_rank():
     ones is not a change to it.  This is what says the padding is done.
     """
     low = nlop.Exp((4,)).reshape_output(0, (1, 1, 4))
-    high = nlop.Callback(
+    high = nlop.NonlinearOperator.from_callbacks(
         (1, 1, 4), (1, 1, 4), lambda x: 2.0 * x, lambda d: 2.0 * d, lambda v: 2.0 * v
     )
 

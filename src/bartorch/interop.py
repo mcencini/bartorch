@@ -1,7 +1,7 @@
-"""The ``deepinv`` adapter, :func:`to_deepinv`.
+"""Adapters that hand bartorch's operators to other libraries.
 
-``deepinv`` is imported on first use rather than at import time, so a script
-that only builds operators does not pay for it.
+:func:`to_deepinv` makes an operator a ``deepinv`` physics for its losses and
+samplers; ``deepinv`` is the ``bartorch[deepinv]`` extra, imported on first use.
 """
 
 from __future__ import annotations
@@ -31,9 +31,8 @@ def _physics_class() -> type:
         from deepinv.physics import LinearPhysics
     except ImportError as exc:  # pragma: no cover - depends on the environment
         raise ImportError(
-            "bartorch.to_deepinv() hands an operator over as a deepinv "
-            "LinearPhysics, and deepinv is a dependency of this package -- an "
-            "environment without it is a broken one rather than a lean one"
+            "bartorch.interop.to_deepinv() hands an operator over as a deepinv "
+            "LinearPhysics, and needs deepinv: pip install 'bartorch[deepinv]'"
         ) from exc
 
     class BartPhysics(LinearPhysics):
@@ -52,9 +51,10 @@ def _physics_class() -> type:
         """
 
         def __init__(self, op, maxiter: int = 30, lambda_: float = 0.0, tol: float = 1e-6, **kw):
+            adjoint = op.H
             super().__init__(
                 A=lambda x, **_: _batched(op, x, op.ishape),
-                A_adjoint=lambda y, **_: _batched(op.A_adjoint, y, op.oshape),
+                A_adjoint=lambda y, **_: _batched(adjoint, y, op.oshape),
                 **kw,
             )
             self.op = op
@@ -100,7 +100,7 @@ def to_deepinv(op, **kwargs):
 
     Examples
     --------
-    >>> physics = bartorch.to_deepinv(linop.NoncartesianSense(maps, (128, 128), traj=traj))
+    >>> physics = interop.to_deepinv(linop.NoncartesianSense(maps, (128, 128), traj=traj))
     >>> physics.A_dagger(kspace[None]).shape       # a batch of one
     torch.Size([1, 128, 128])
     """

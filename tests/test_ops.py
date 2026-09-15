@@ -37,7 +37,7 @@ def test_adjoint_identity_holds_for_the_fft_operator():
 def test_python_operator_runs_inside_bart_and_chains_with_a_bart_operator():
     shape = (8, 16)
     w = _rand(*shape)
-    W = linop.Callback(shape, shape, lambda x: w * x, lambda y: w.conj() * y)
+    W = linop.LinearOperator.from_callbacks(shape, shape, lambda x: w * x, lambda y: w.conj() * y)
     F = linop.FFT(shape, axes=-1)
     A = F @ W
     x = _rand(*shape)
@@ -54,7 +54,7 @@ def test_bart_uses_the_normal_callback_when_given_one():
         calls.append(1)
         return 2 * x
 
-    Op = linop.Callback(shape, shape, lambda x: x, lambda y: y, normal=normal)
+    Op = linop.LinearOperator.from_callbacks(shape, shape, lambda x: x, lambda y: y, normal=normal)
     x = _rand(*shape)
     torch.testing.assert_close(Op.normal(x), 2 * x)
     assert calls

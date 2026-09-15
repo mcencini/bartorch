@@ -88,7 +88,8 @@ def test_several_terms_are_taken_as_a_list(problem):
 
 
 def _denoiser(kernel_size: int = 3):
-    from deepinv.models import MedianFilter, to_complex_denoiser
+    models = pytest.importorskip("deepinv.models")
+    MedianFilter, to_complex_denoiser = models.MedianFilter, models.to_complex_denoiser
 
     # An image here is complex and most denoisers are not; `median_out` is not
     # implemented for complex tensors at all, so this is the wrapper's job.

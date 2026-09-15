@@ -60,7 +60,7 @@ def test_an_operator_written_here_is_the_one_that_costs_a_crossing():
         calls.append("adjoint")
         return A.adjoint(x)
 
-    P = linop.Callback((8, 8), (8, 8), forward, adjoint)
+    P = linop.LinearOperator.from_callbacks((8, 8), (8, 8), forward, adjoint)
     optim.CG(maxiter=5)(_rand(8, 8), P)
     assert calls, "a Python operator was not called at all"
 

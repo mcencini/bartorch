@@ -133,13 +133,14 @@ whole(y, x0, alpha, packed, ...).abs().square().sum().backward()
 A function of several tensors becomes an `nlop` of several inputs, which is
 what lets a denoiser's weights be *arguments* of a BART graph rather than
 something the function closed over.
+{meth}`NonlinearOperator.from_callbacks` takes the forward, the derivative and
+the adjoint as functions; {class}`FromTorch` takes one differentiable function.
 
 ```{eval-rst}
 .. autosummary::
    :toctree: generated
    :nosignatures:
 
-   Callback
    FromTorch
    Parameters
 ```

@@ -596,8 +596,8 @@ class ADMMBlock(nn.Module):
                 worst = max(worst, spent)
             return torch.stack(made), worst
 
-        from bartorch.linop import Callback, Identity
-        from bartorch.linop.base import _tracking, _WithNormal
+        from bartorch.linop import Identity
+        from bartorch.linop.base import LinearOperator, _tracking, _WithNormal
         from bartorch.optim.linear import CG
 
         if 0.0 == float(torch.linalg.vector_norm(rhs.detach())):
@@ -621,7 +621,9 @@ class ADMMBlock(nn.Module):
         budget = self.cg_maxiter
         if first and self.cg_maxiter_first is not None:
             budget = self.cg_maxiter_first
-        operator = _WithNormal(Identity(shape), Callback(shape, shape, apply, apply, apply))
+        operator = _WithNormal(
+            Identity(shape), LinearOperator.from_callbacks(shape, shape, apply, apply, apply)
+        )
         steps: list[int] = []
 
         def solve(b, warm):
@@ -630,7 +632,9 @@ class ADMMBlock(nn.Module):
                 return solver(b, operator, x0=x.detach(), steps=steps)
             if self.precond is None:
                 return solver(b, operator)
-            transposed = Callback(shape, shape, transpose, transpose, transpose)
+            transposed = LinearOperator.from_callbacks(
+                shape, shape, transpose, transpose, transpose
+            )
             return solver(b, _WithNormal(Identity(shape), transposed))
 
         learned = isinstance(rho, torch.Tensor) and rho.requires_grad

@@ -7,8 +7,8 @@ for the platforms FINUFFT ships a wheel for too -- installing one never starts
 a build, and anywhere else the install is from the sdist, where compiling BART
 is already the price of entry.
 
-deepinv is a dependency while `bartorch.to_deepinv` hands operators to its
-losses and samplers.
+deepinv is an extra: denoisers, losses and samplers come from it through
+`priors.ImplicitPrior` and `bartorch.interop`, and nothing else imports it.
 
 torchsim is a dependency because `nlop.FromTorchSim`
 turns any of its simulators into a BART nonlinear operator, and
@@ -56,16 +56,13 @@ def test_finufft_is_a_dependency_and_not_an_extra():
     )
 
 
-def test_deepinv_is_a_dependency_and_not_an_extra():
-    """The adapter imports it."""
+def test_deepinv_is_an_extra_and_not_a_dependency():
     project = _pyproject()["project"]
-    assert _requirements(project["dependencies"], "deepinv"), (
-        "bartorch.to_deepinv hands operators to deepinv; "
-        "deepinv belongs in dependencies, not in optional-dependencies"
+    assert not _requirements(project["dependencies"], "deepinv"), (
+        "only the adapter and the denoisers a caller brings use deepinv; "
+        "it belongs in optional-dependencies"
     )
-    assert "deepinv" not in project["optional-dependencies"], (
-        "an extra named deepinv says the adapter is optional, and it is not"
-    )
+    assert _requirements(project["optional-dependencies"]["deepinv"], "deepinv")
 
 
 def test_torchsim_is_a_dependency_and_not_an_extra():

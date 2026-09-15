@@ -347,7 +347,7 @@ def test_a_first_step_budget_is_rieslings_iters0():
     y = A(_rand(1, n, n))
 
     applications = []
-    P = linop.Callback(
+    P = linop.LinearOperator.from_callbacks(
         (1, n, n),
         (1, n, n),
         A.forward,
@@ -641,7 +641,7 @@ def test_barts_budget_is_inner_applications_and_not_outer_steps():
     y = base(_rand(1, n, n))
 
     applications = []
-    P = linop.Callback(
+    P = linop.LinearOperator.from_callbacks(
         (1, n, n),
         (1, n, n),
         base.forward,

@@ -11,6 +11,7 @@ from importlib.metadata import PackageNotFoundError, version
 from bartorch import (
     _settings,
     fourier,
+    interop,
     interp,
     io,
     linop,
@@ -24,7 +25,6 @@ from bartorch import (
     util,
     wavelet,
 )
-from bartorch._deepinv import to_deepinv
 from bartorch._dispatch import BartError
 from bartorch._settings import *  # noqa: F401,F403
 from bartorch.fourier import *  # noqa: F401,F403
@@ -43,12 +43,12 @@ except PackageNotFoundError:
 __all__ = [
     "BartError",
     "__version__",
+    "interop",
     "io",
     "linop",
     "nlop",
     "optim",
     "priors",
-    "to_deepinv",
     "tools",
     *_settings.__all__,
     *fourier.__all__,

@@ -152,7 +152,9 @@ def test_a_python_defined_operator_differentiates_through_the_solve():
     torch.manual_seed(0)
     shape = (6,)
     weights = torch.linspace(0.6, 1.4, 6).to(torch.complex64)
-    A = linop.Callback(shape, shape, lambda x: weights * x, lambda v: weights.conj() * v)
+    A = linop.LinearOperator.from_callbacks(
+        shape, shape, lambda x: weights * x, lambda v: weights.conj() * v
+    )
 
     ours = _rand(6).requires_grad_(True)
     optim.CG(maxiter=120, cclambda=0.3)(ours, A).abs().square().sum().backward()

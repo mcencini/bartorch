@@ -27,7 +27,7 @@ from typing import Any
 import torch
 
 from bartorch._operator import Shape
-from bartorch.nlop.callback import Callback
+from bartorch.nlop.callback import _Callback
 
 __all__ = ["Bloch", "FromTorchSim", "InversionRecovery", "MultiEcho"]
 
@@ -45,7 +45,7 @@ def _operator(acquisition, unknown, bounds, scale, amplitude, subspace):
     )
 
 
-class FromTorchSim(Callback):
+class FromTorchSim(_Callback):
     """A TorchSim signal model as a BART nonlinear operator.
 
     The operator maps parameter maps to one image per contrast.  What it does

@@ -26,23 +26,8 @@ dependencies = [
     # for matplotlib, which its very first module imports.  That was weighed
     # and accepted -- off-resonance is the common case here, not a corner.
     "mri-nufft>=1.0",
-    # 2.2 is deepinv's floor, below; stating it here rather than letting the
-    # resolver discover it.
+    # 2.2 is deepinv's floor; stated here rather than left to the resolver.
     "torch>=2.2",
-    # deepinv was an extra while it was only an adapter -- `to_deepinv` handed
-    # an operator over as a `LinearPhysics` and nothing imported deepinv until
-    # someone asked.  It is not that any more.  `optim.IST`, `optim.FISTA`,
-    # `optim.ADMM` and `optim.PRIDU` run the iterations in
-    # `bartorch.optim.iterators`, which are written as
-    # `deepinv.optim.optim_iterators.OptimIterator` classes, so the ordinary
-    # way to run a regularized reconstruction imports it.  A solver whose
-    # behaviour depends on whether an extra happens to be installed is worse
-    # than the install it saves.
-    #
-    # It costs torchvision, torchmetrics, einops, h5py, tqdm, requests and
-    # natsort on top of what is here already.  Weighed and accepted, as
-    # mri-nufft was: the proximal solvers are the common case, not a corner.
-    "deepinv>=0.2",
     # TorchSim is the signal model.  `nlop.FromTorchSim` turns any of its
     # simulators into a BART nonlinear operator -- value, Jacobian-vector
     # product and adjoint product, which is exactly what `nlop_s` asks for --
@@ -81,6 +66,12 @@ Repository = "https://github.com/mcencini/bartorch"
 Issues = "https://github.com/mcencini/bartorch/issues"
 
 [project.optional-dependencies]
+# deepinv is a source of denoisers, losses and samplers, reached through
+# `priors.ImplicitPrior` and `bartorch.interop.to_deepinv`; nothing else here
+# imports it.
+deepinv = [
+    "deepinv>=0.2",
+]
 # MKL covers every BLAS and LAPACK routine BART calls and is about twice as
 # fast as the alternatives on the work that leans on LAPACK.  There is no MKL
 # wheel for macOS, where SciPy's OpenBLAS and Accelerate serve instead, and
@@ -96,9 +87,6 @@ mkl = [
 # sample count of int64 in `cufinufftf_setpts` and defaults filled from the
 # options struct alone.  That is the API from 2.3 on.
 cufinufft = ["cufinufft>=2.3"]
-# There is no `deepinv` extra: it is a dependency, above.  An old
-# `pip install 'bartorch[deepinv]'` still installs it, and pip warns that the
-# extra is not provided -- which is the right thing to hear.
 dev = [
     "pytest>=7",
     "ruff",

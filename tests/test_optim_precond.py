@@ -165,7 +165,7 @@ def test_a_python_defined_preconditioner_is_called_back():
         seen.append(1)
         return weight * x
 
-    M = linop.Callback((16,), (16,), forward, lambda v: weight.conj() * v)
+    M = linop.LinearOperator.from_callbacks((16,), (16,), forward, lambda v: weight.conj() * v)
     for solver in (optim.CG(maxiter=4, precond=M), optim.FISTA(priors.L1(0.001), precond=M)):
         seen.clear()
         made = solver(y, A)
