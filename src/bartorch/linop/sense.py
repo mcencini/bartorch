@@ -547,6 +547,17 @@ class NoncartesianSense(_SensitivityBatch, LinearOperator):
         axis = values.ndim - 2 - tail
         return values.narrow(axis, 0, min(spokes, int(values.shape[axis]))).contiguous()
 
+    def _sample_dims(self):
+        """BART dimensions of one coil's samples, in torch order."""
+        kspace, _ = self._encoding_placement()
+        return (*kspace, 2, 1)
+
+    def _image_dims(self):
+        """BART dimensions of the image past its batches, in torch order."""
+        _, image = self._encoding_placement()
+        sets = (_layout.MAPS,) if self.has_sets else ()
+        return (*sets, *image, *((2, 1, 0) if self.ndim == 3 else (1, 0)))
+
     def _encoding_placement(self):
         return _layout.encoding_dims(len(self.encoding), self._has_basis(), self.sens_batch > 1)
 

@@ -62,14 +62,10 @@ def _segment_layout(encoding, b, c, sample_dims, image_dims):
     """The segments as the form's contraction, or ``None``.
 
     The sample weights may vary along one coil's samples and the image's
-    along the coefficients and the voxels; weights the same along the
-    batches, the coils and the sets are taken once.
-
-    The sets are on the far side of the sensitivities: the slab contracts
-    them away with ``md_ztenmul2`` before the image factor is reached, so a
-    weight that differs between sets is not this contraction whatever it
-    multiplies.  Those, and weights varying along the batches or the coils,
-    are left to the sum of the segments.
+    along the sets, the coefficients and the voxels; weights the same along
+    the batches and the coils are taken once, and weights varying along them
+    are left to the sum of the segments.  An image weight that differs between
+    sets is applied before the sensitivities contract them.
     """
     count = int(b.shape[0])
     oshape, ishape = tuple(encoding.oshape), tuple(encoding.ishape)
@@ -94,10 +90,9 @@ def _segment_layout(encoding, b, c, sample_dims, image_dims):
 class _Segmentable:
     """A grid encoding whose coil loop a contraction over terms can go inside.
 
-    The axes each side's weights are laid out on: the image's coefficients
-    and voxels, and one coil's samples, which carry the frames as well where a
-    basis contracts them.  Not the sets, which the sensitivities have summed
-    over by the time the image factor is applied.
+    The axes each side's weights are laid out on: the image's sets,
+    coefficients and voxels, and one coil's samples, which carry the frames as
+    well where a basis contracts them.
     """
 
     def _spatial_dims(self):
@@ -105,7 +100,8 @@ class _Segmentable:
 
     def _image_dims(self):
         _, image = self._encoding_placement()
-        return (*image, *self._spatial_dims())
+        sets = (_layout.MAPS,) if self.has_sets else ()
+        return (*sets, *image, *self._spatial_dims())
 
     def _sample_dims(self):
         return ((5,) if self._grid_basis is not None else ()) + self._spatial_dims()
@@ -535,13 +531,19 @@ def contracted(encoding, b: torch.Tensor, c: torch.Tensor) -> LinearOperator | N
     along the samples, whose Toeplitz normal is a point spread function per
     pair of terms rather than two transforms per term per coil.
 
+    With several sets of maps off the grid the terms go inside the coil loop
+    as they do on it, where the subspace form does not take them.
+
     ``None`` says the factors do not fit the form -- weights that vary along
-    the batches, the coils, the sets or the coefficients, or an encoding that
-    already carries a contraction -- and the sum of chains stands instead.
+    the batches or the coils, or an encoding that already carries a
+    contraction -- and the sum of chains stands instead.
     """
     if isinstance(encoding, _Segmentable):
         return _grid_contraction(encoding, b, c)
-    return _nufft_contraction(encoding, b, c)
+    out = _nufft_contraction(encoding, b, c)
+    if out is None and type(encoding) is NoncartesianSense and encoding.sets > 1:
+        out = _grid_contraction(encoding, b, c, slices=False)
+    return out
 
 
 def _picks_each_set(c: torch.Tensor, sets: int, axis: int) -> bool:
@@ -587,15 +589,20 @@ def _slice_layout(encoding, b: torch.Tensor, c: torch.Tensor):
     return Array(samples, _layout.vector(placed))
 
 
-def _grid_contraction(encoding, b: torch.Tensor, c: torch.Tensor) -> LinearOperator | None:
-    """The contraction in the coil loop of a grid encoding, or ``None``."""
+def _grid_contraction(
+    encoding, b: torch.Tensor, c: torch.Tensor, slices: bool = True
+) -> LinearOperator | None:
+    """The contraction in the coil loop of an encoding, or ``None``.
+
+    ``slices`` allows the phase-per-set form, which only a grid transform takes.
+    """
     from bartorch.linop.sense import _Encoded
 
     form = encoding._form()
     if form.contraction is not None or form.slice_phase is not None:
         return None
 
-    phase = _slice_layout(encoding, b, c)
+    phase = _slice_layout(encoding, b, c) if slices else None
     if phase is not None:
         return _Encoded(encoding, replace(form, slice_phase=phase))
 

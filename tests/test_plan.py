@@ -785,24 +785,26 @@ def test_a_slice_phase_costs_one_application_rather_than_one_per_slice(pattern):
     assert _counter(_abi.BARTORCH_ENCODING_FORWARD) == 1
 
 
-def test_an_image_weight_that_differs_between_sets_is_left_to_the_sum(pattern):
-    """Only a slice picked whole can vary along the sets; anything else is the sum.
-
-    An image factor is applied to the coil images, where ``md_ztenmul2`` has
-    already contracted the sets, so a weight that differs between them has no
-    place to go.  What it must not be is fused and wrong.
-    """
-    torch.manual_seed(34)
+def _per_set_weights(pattern, seed):
+    """A grid encoding over two sets, and terms whose image weight differs between them."""
+    torch.manual_seed(seed)
     sets = 2
     sensitivities = _rand(sets, COILS, Y, X)
     E = linop.CartesianSense(sensitivities, (sets, Y, X), pattern=pattern)
+    return sensitivities, E, _rand(sets, 1, Y, 1), _rand(sets, sets, 1, 1)
 
-    weights = _rand(sets, sets, 1, 1)
-    phase = _rand(sets, 1, Y, 1)
+
+def test_an_image_weight_that_differs_between_sets_goes_on_before_the_sensitivities(pattern):
+    """Each term weights the sets before the sensitivities sum them, in the coil loop.
+
+    Against the terms written out with torch's own transform.
+    """
+    sensitivities, E, phase, weights = _per_set_weights(pattern, 34)
+    sets = int(weights.shape[0])
 
     A = _terms(E, phase, weights)
-    assert A.plan.contraction == "chained" and A.plan.terms == sets
-    assert not A.plan.fused
+    assert A.plan.contraction == "segments" and A.plan.terms == sets
+    assert A.plan.fused
 
     x = _rand(sets, Y, X)
     want = torch.zeros(COILS, Y, X, dtype=torch.complex64)
@@ -811,7 +813,61 @@ def test_an_image_weight_that_differs_between_sets_is_left_to_the_sum(pattern):
         for s in range(sets):
             inner = inner + sensitivities[s] * (weights[term, s] * x[s])
         want = want + phase[term] * pattern * _fft2(inner)
-    assert (A(x) - want).abs().max() / want.abs().max() < 1e-5
+
+    library().bartorch_encoding_reset_counters()
+    got = A(x)
+    assert _counter(_abi.BARTORCH_ENCODING_FORWARD) == 1
+    assert (got - want).abs().max() / want.abs().max() < 1e-5
+
+
+def test_a_per_set_image_weight_has_the_adjoint_and_the_normal_it_claims(pattern):
+    _, E, phase, weights = _per_set_weights(pattern, 35)
+    A = _terms(E, phase, weights)
+    assert A.plan.normal == "applications"
+
+    x, y = _rand(*A.ishape), _rand(*A.oshape)
+    lhs = torch.vdot(A(x).reshape(-1), y.reshape(-1))
+    rhs = torch.vdot(x.reshape(-1), A.adjoint(y).reshape(-1))
+    assert abs(lhs - rhs) / abs(lhs) < 1e-5
+
+    want = A.adjoint(A(x))
+    assert (A.normal(x) - want).abs().max() / want.abs().max() < 1e-5
+
+
+def test_off_the_grid_a_per_set_image_weight_is_the_sum_it_stands_for():
+    """The same terms inside the coil loop of a NUFFT, against the sum of chains."""
+    torch.manual_seed(36)
+    sets = 2
+    E = linop.NoncartesianSense(
+        _rand(sets, COILS, Y, Y), (sets, Y, Y), traj=bartorch.tools.traj(x=Y, y=8)
+    )
+    b, c = _rand(sets, 1, 8, Y), _rand(sets, sets, 1, 1)
+    A = _terms(E, b, c)
+    assert A.plan.contraction == "segments" and A.plan.fused
+
+    chained = planner.materialise(planner.describe(_terms(E, b, c)))
+    x, y = _rand(*A.ishape), _rand(*A.oshape)
+    for one, other in ((A(x), chained(x)), (A.adjoint(y), chained.adjoint(y))):
+        assert (one - other).abs().max() / other.abs().max() < 1e-4
+    want = A.adjoint(A(x))
+    assert (A.normal(x) - want).abs().max() / want.abs().max() < 1e-4
+
+
+@requires_cuda
+def test_on_a_card_a_per_set_image_weight_is_the_host_one(pattern):
+    _, E, phase, weights = _per_set_weights(pattern, 37)
+    host = _terms(E, phase, weights)
+    card_encoding = linop.CartesianSense(E.sensitivities, E.ishape, pattern=pattern, device="cuda")
+    card = _terms(card_encoding, phase, weights)
+    assert card.plan.contraction == "segments" and card.plan.fused
+
+    x, y = _rand(*host.ishape), _rand(*host.oshape)
+    for one, other in (
+        (card(x), host(x)),
+        (card.adjoint(y), host.adjoint(y)),
+        (card.normal(x), host.normal(x)),
+    ):
+        assert (one - other).abs().max() / other.abs().max() < 1e-4
 
 
 @requires_cuda
