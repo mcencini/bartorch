@@ -45,6 +45,12 @@ from bartorch._lib import DIMS
 #: encoding axes go, other than the one a basis contracts.
 FREE = (COEFF2, ITER, CSHIFT, TIME, TIME2, LEVEL, SLICE, AVG, BATCH)
 
+#: Where a batch the sensitivities vary along goes.  The torch layout puts it
+#: above the coils, so it has to be slower than every encoding axis and than
+#: the coils, which the slab loop places above the encoding axes in turn: the
+#: slowest dimension BART has, and one fewer free dimension for the encoding.
+SENS_BATCH = BATCH
+
 
 def vector(placed: dict[int, int]) -> tuple[int, ...]:
     """A BART dimension vector: ones, and ``placed[dim]`` where it is given."""
@@ -54,7 +60,7 @@ def vector(placed: dict[int, int]) -> tuple[int, ...]:
     return tuple(v)
 
 
-def encoding_dims(count: int, basis: bool) -> tuple[list[int], list[int]]:
+def encoding_dims(count: int, basis: bool, sens_batch: bool = False) -> tuple[list[int], list[int]]:
     """Where ``count`` encoding axes go, in torch order, in k-space and in the image.
 
     With a basis the last encoding axis is the one it contracts: its frames on
@@ -62,17 +68,21 @@ def encoding_dims(count: int, basis: bool) -> tuple[list[int], list[int]]:
     BART's NUFFT reads them.  It is the fastest of the encoding axes in memory,
     and TE and COEFF come before every free dimension, so the order holds.
     The other axes take the free dimensions, fastest first.
+
+    ``sens_batch`` keeps :data:`SENS_BATCH` back for a batch the sensitivities
+    vary along, which has to be slower than all of these.
     """
+    free = FREE[:-1] if sens_batch else FREE
     rest = count - 1 if (basis and count > 0) else count
-    if rest > len(FREE):
+    if rest > len(free):
         raise ValueError(
             f"{count} encoding axes is more than BART has dimensions for; at most "
-            f"{len(FREE) + (1 if basis else 0)}"
+            f"{len(free) + (1 if basis else 0)}"
         )
     kspace: list[int] = [0] * count
     image: list[int] = [0] * count
     for j in range(rest):
-        kspace[rest - 1 - j] = image[rest - 1 - j] = FREE[j]
+        kspace[rest - 1 - j] = image[rest - 1 - j] = free[j]
     if basis and count > 0:
         kspace[count - 1], image[count - 1] = TE, COEFF
     return kspace, image

@@ -849,3 +849,17 @@ def test_on_a_card_a_composition_takes_the_plan_it_takes_on_the_host(model, maps
     assert (card.plan.contraction, card.plan.terms) == (host.plan.contraction, host.plan.terms)
     want = host(x)
     assert (card(x) - want).abs().max() / want.abs().max() < 1e-4
+
+
+@requires_cuda
+def test_on_a_card_a_batch_on_the_sensitivities_is_the_host_one(pattern):
+    """The batch is a dimension of the operator, so a card walks it as the host does."""
+    torch.manual_seed(41)
+    items = 3
+    bank = _rand(items, 1, COILS, Y, X)
+    host = linop.CartesianSense(bank, (items, 1, Y, X), pattern=pattern)
+    card = linop.CartesianSense(bank, (items, 1, Y, X), pattern=pattern, device="cuda")
+
+    x = _rand(items, 1, Y, X)
+    want = host(x)
+    assert (card(x.to("cuda")).cpu() - want).abs().max() / want.abs().max() < 1e-4

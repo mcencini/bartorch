@@ -317,6 +317,13 @@ struct bartorch_encoding {
 	const long* segment_image_dims;
 	const void* segment_image;
 
+	/* The BART dimension a batch the sensitivities vary along lies on, or
+	 * -1 for none.  The torch layout puts such a batch above the coils, and
+	 * it is inside this operator rather than around it because one bank
+	 * cannot serve every item of it: independent slices, each with their own
+	 * maps, over one trajectory. */
+	int batch_dim;
+
 	/* A k-space factor that differs between sets of maps, applied after
 	 * the transform, with the sets summed over after it: the slice phase
 	 * of a simultaneous-multislice acquisition.  The sets then survive the

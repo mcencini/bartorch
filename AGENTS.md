@@ -725,6 +725,24 @@ the sets, the transform runs once per slice, and `linop_sum_create` adds them
 up past the k-space factor.  The terms say which slice they are by picking it
 whole on the image side, and `plan.contraction` is `slices`.
 
+**A batch the sensitivities vary along is inside the operator.**  Independent
+slices, each with their own maps over one trajectory, are
+`(nz, 1, c, y, x)` -- a batch axis in front of a sets axis, which is written
+even where there is one set, so that `(3, c, y, x)` is three sets and
+`(3, 1, c, y, x)` three items.  The torch layout puts such an axis above the
+coils, and `bartorch_linop_blocks` applies one operator to every block, so
+this one cannot be a block: it is a dimension of the operator instead, the
+slowest BART has (`_layout.SENS_BATCH`), which costs the encoding axes one
+free dimension.  `sense_output_from` places the coils above every axis of a
+block that is *not* one of these, and the samples are copied by the whole's
+own strides rather than a block's, so an axis slower than the coils lands
+where it belongs.
+
+Off a grid it is refused.  The substitution plans one transform over every
+sample an operator has, and a batch is a transform per item; the message says
+to build one operator per item.  On a grid and under the wave front each item
+answers exactly what its own operator would.
+
 Picking a slice whole is the only image factor the sets can carry.  An image
 factor is applied to the coil images, where `md_ztenmul2` has already
 contracted the sets, so a weight that differs between them has nowhere to go

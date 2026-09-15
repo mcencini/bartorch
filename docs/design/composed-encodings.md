@@ -168,10 +168,10 @@ One C slab executor runs every matched form. It is today's pieces parameterised 
    - Remove `Coils` and `Sampling` from the exports.
    - Each is tested against its written-out sum and its plain chain, with the fused plan asserted.
 
-   Done but for the batch axis on sensitivities: `@` and `+` defer, so the
-   planner is offered the whole description rather than one factor at a time,
-   and all four models lower into one encoding.  `Coils` and `Sampling` are
-   off the exports.
+   Done: `@` and `+` defer, so the planner is offered the whole description
+   rather than one factor at a time, all four models lower into one encoding,
+   `Coils` and `Sampling` are off the exports, and the sensitivities take a
+   batch axis in front of their sets axis.
 
    SMS needed the executor changed, because phase 1 attached the contraction
    around the transform over the *coil* images and `md_ztenmul2` had already
@@ -181,6 +181,11 @@ One C slab executor runs every matched form. It is today's pieces parameterised 
    outside the transform costs.  An image factor along the sets still has
    nowhere to go, so only a slice picked whole is taken and anything else is
    left chained.
+
+   The batch axis is a dimension of the operator rather than a block of it,
+   because one bank does not serve every block; it is the slowest dimension
+   BART has, and the coils are placed above every axis below it.  Off a grid
+   it is refused: one plan over every sample cannot be a transform per item.
 3. **Kernel stacks and Cartesian-aligned axes.**
    - Stacked kernels for per-item trajectories.
    - Detection of Cartesian-aligned trajectory axes, with fewer cosets and, for pure stacks, decoupling along the axis.

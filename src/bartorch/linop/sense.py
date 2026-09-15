@@ -30,24 +30,51 @@ def _vector(v):
 
 
 def _bank(sensitivities: torch.Tensor, ndim: int):
-    """``(bank, has_sets, sets, coils, spatial)`` from ``([sets,] coils, *spatial)``.
+    """``(bank, has_sets, sets, coils, spatial, batch)`` from the bank's shape.
+
+    ``([batch, sets,] coils, *spatial)``: an axis directly in front of the
+    coils is a set, which the image carries and the samples do not, and one in
+    front of that is a batch, which both carry.  A batch is written with its
+    sets axis even where there is one set, so ``(3, c, y, x)`` is three sets
+    and ``(3, 1, c, y, x)`` three batch items.
 
     ``spatial`` is the bank's own three spatial axes -- a kernel's extent for
     kernels -- with a two-dimensional bank's z written out as one.
     """
     s = as_operand(sensitivities, tuple(sensitivities.shape), "sensitivities")
     lead = s.ndim - ndim
+    batch = 1
     if lead == 1:
         has_sets, sets, coils = False, 1, int(s.shape[0])
     elif lead == 2:
         has_sets, sets, coils = True, int(s.shape[0]), int(s.shape[1])
+    elif lead == 3:
+        has_sets, sets, coils = True, int(s.shape[1]), int(s.shape[2])
+        batch = int(s.shape[0])
     else:
         raise ValueError(
-            f"sensitivities of {tuple(s.shape)} are neither (coils, *spatial) nor "
-            f"(sets, coils, *spatial) for {ndim} spatial axes"
+            f"sensitivities of {tuple(s.shape)} are none of (coils, *spatial), "
+            f"(sets, coils, *spatial) and (batch, sets, coils, *spatial) for "
+            f"{ndim} spatial axes"
         )
     spatial = tuple(int(n) for n in s.shape[-ndim:])
-    return s, has_sets, sets, coils, (spatial if ndim == 3 else (1, *spatial))
+    return s, has_sets, sets, coils, (spatial if ndim == 3 else (1, *spatial)), batch
+
+
+class _SensitivityBatch:
+    """Where a batch the sensitivities vary along sits, for an encoding that has one.
+
+    The torch layout puts it above the coils, so it is the slowest dimension
+    of one item -- and it lives inside the operator rather than around it,
+    because ``bartorch_linop_blocks`` applies one operator to every block and
+    one bank does not serve every item.
+    """
+
+    def _batch_placed(self) -> dict:
+        return {} if self.sens_batch < 2 else {_layout.SENS_BATCH: self.sens_batch}
+
+    def _batch_dim(self) -> int:
+        return _layout.SENS_BATCH if self.sens_batch > 1 else -1
 
 
 def _grid_ndim(sensitivities: torch.Tensor, image_shape: Shape, kernels: bool, ndim) -> int:
@@ -208,7 +235,7 @@ def _behind_permutation(owner, lib, ptr: int, ishape: Shape, order, device) -> i
                     lib.bartorch_linop_free(h)
 
 
-class NoncartesianSense(LinearOperator):
+class NoncartesianSense(_SensitivityBatch, LinearOperator):
     """Sensitivities followed by a NUFFT, applied ``coil_batch`` coils at a time.
 
     Memory held -- and the doubled grid the Toeplitz normal convolves on --
@@ -230,9 +257,18 @@ class NoncartesianSense(LinearOperator):
         :func:`bartorch.tools.ecalib` and :func:`bartorch.tools.nlinv` return
         for ``maps > 1``.  The image then carries the sets and the samples do
         not: the encoding is ``y[c] = sum_m S[m, c] x[m]``.
+
+        A batch goes in front of the sets, ``(batch, sets, coils, [z,] y, x)``,
+        and its sets axis is written even where there is one set: independent
+        slices each with their own maps are ``(nz, 1, coils, y, x)``, where
+        ``(nz, coils, y, x)`` would be one set of maps per slice summed
+        together.  Both the image and the samples carry a batch.  It is
+        refused off a grid, where the substitution plans one transform over
+        every sample rather than one per item.
     image_shape : tuple of int
-        Image shape ``(*batches, [sets,] *encoding, [z,] y, x)``: the batches
-        first, then the sets where the sensitivities carry them, then the
+        Image shape ``(*batches, [batch,] [sets,] *encoding, [z,] y, x)``: the
+        batches first, then the one the sensitivities vary along and the sets
+        where they carry them, then the
         trajectory's encoding axes -- with a basis, its coefficients in place of
         the last -- then the spatial axes the trajectory has.
     traj : tensor
@@ -346,8 +382,22 @@ class NoncartesianSense(LinearOperator):
             self.ndim = _grid_ndim(sensitivities, image_shape, self.kernels, ndim)
             self.encoding = self._grid_encoding()
 
-        s, self.has_sets, self.sets, self.coils, self.sens_spatial = _bank(sensitivities, self.ndim)
+        (
+            s,
+            self.has_sets,
+            self.sets,
+            self.coils,
+            self.sens_spatial,
+            self.sens_batch,
+        ) = _bank(sensitivities, self.ndim)
         self.sensitivities = s
+
+        if self.traj is not None and self.sens_batch > 1:
+            raise ValueError(
+                "a batch the sensitivities vary along is a transform per item, and off a "
+                "grid the substitution plans one over every sample of the operator at once; "
+                "build one operator per item, or hold the items on a grid"
+            )
 
         self.basis = None
         self.coeffs = None
@@ -366,10 +416,16 @@ class NoncartesianSense(LinearOperator):
             self.coeffs = coeffs
 
         self.image_encoding = self._image_encoding()
-        lead = (1 if self.has_sets else 0) + len(self.image_encoding) + self.ndim
+        lead = (
+            (1 if self.sens_batch > 1 else 0)
+            + (1 if self.has_sets else 0)
+            + len(self.image_encoding)
+            + self.ndim
+        )
         batches, rest = _layout.split(image_shape, lead, "the image")
         spatial = tuple(rest[len(rest) - self.ndim :])
         want = (
+            *((self.sens_batch,) if self.sens_batch > 1 else ()),
             *((self.sets,) if self.has_sets else ()),
             *self.image_encoding,
             *spatial,
@@ -377,7 +433,8 @@ class NoncartesianSense(LinearOperator):
         if tuple(rest) != want:
             raise ValueError(
                 f"the image {image_shape} does not end in "
-                f"{'(sets, ' if self.has_sets else '('}*encoding {self.image_encoding}, "
+                f"{'(batch, ' if self.sens_batch > 1 else '('}"
+                f"{'sets, ' if self.has_sets else ''}*encoding {self.image_encoding}, "
                 f"{self.ndim} spatial axes)"
             )
         self.batches = tuple(batches)
@@ -399,7 +456,8 @@ class NoncartesianSense(LinearOperator):
                 raise ValueError(f"weights of {tuple(w.shape)} do not broadcast over {per_coil}")
             self.weights = w.reshape(got)
 
-        default = (*self.batches, self.coils, *self._kspace_tail())
+        batch_axis = (self.sens_batch,) if self.sens_batch > 1 else ()
+        default = (*self.batches, *batch_axis, self.coils, *self._kspace_tail())
         self.kspace_shape = default if kspace_shape is None else tuple(kspace_shape)
         if self.kspace_shape != default:
             raise ValueError(f"the samples of this encoding are {default}, not {self.kspace_shape}")
@@ -443,6 +501,9 @@ class NoncartesianSense(LinearOperator):
     def _spatial3(self) -> tuple[int, int, int]:
         return self.spatial if self.ndim == 3 else (1, *self.spatial)
 
+    def _encoding_placement(self):
+        return _layout.encoding_dims(len(self.encoding), self._has_basis(), self.sens_batch > 1)
+
     def _max_vector(self):
         """The image of one batch item, with the coils BART counts beside it."""
         z, y, x = self._spatial3()
@@ -452,8 +513,9 @@ class NoncartesianSense(LinearOperator):
             _layout.PHS2: z,
             _layout.COIL: self.coils,
             _layout.MAPS: self.sets,
+            **self._batch_placed(),
         }
-        _, idims = _layout.encoding_dims(len(self.encoding), self._has_basis())
+        _, idims = self._encoding_placement()
         for dim, n in zip(idims, self.image_encoding):
             v[dim] = n
         return _layout.vector(v)
@@ -467,12 +529,13 @@ class NoncartesianSense(LinearOperator):
                 _layout.PHS2: z,
                 _layout.COIL: self.coils,
                 _layout.MAPS: self.sets,
+                **self._batch_placed(),
             }
         )
 
     def _encoding_vector(self, base: dict, sizes) -> tuple[int, ...]:
-        kdims, _ = _layout.encoding_dims(len(self.encoding), self._has_basis())
-        v = dict(base)
+        kdims, _ = self._encoding_placement()
+        v = {**base, **self._batch_placed()}
         for dim, n in zip(kdims, sizes):
             v[dim] = n
         return _layout.vector(v)
@@ -530,10 +593,11 @@ class NoncartesianSense(LinearOperator):
             coils=self.coils,
             sets=self.sets,
             coeffs=1 if b is None else int(b.shape[0]),
+            batch_dim=self._batch_dim(),
         )
 
 
-class Coils(LinearOperator):
+class Coils(_SensitivityBatch, LinearOperator):
     """Coil sensitivities, without the transform that usually follows them.
 
     The multiply on its own: an image to coil images, and the conjugate
@@ -549,11 +613,11 @@ class Coils(LinearOperator):
     Parameters
     ----------
     sensitivities : tensor
-        Coil sensitivities ``([sets,] coils, [z,] y, x)``, or their k-space
-        kernels when ``kernels`` is set.
+        Coil sensitivities ``([batch, sets,] [sets,] coils, [z,] y, x)``, or
+        their k-space kernels when ``kernels`` is set.
     image_shape : tuple of int
-        Image shape ``(*batches, [sets,] [coeffs,] [z,] y, x)``.  The coil
-        images are ``(*batches, coils, [coeffs,] [z,] y, x)``.
+        Image shape ``(*batches, [batch,] [sets,] [coeffs,] [z,] y, x)``.  The
+        coil images are ``(*batches, [batch,] coils, [coeffs,] [z,] y, x)``.
     kernels : bool
         Read ``sensitivities`` as k-space kernels, zero-padded to the image
         grid and transformed a slab at a time, as :class:`NoncartesianSense`
@@ -596,14 +660,22 @@ class Coils(LinearOperator):
         self.coil_batch = int(coil_batch)
         self.coeffs = int(coeffs)
         self.ndim = _grid_ndim(sensitivities, image_shape, self.kernels, ndim)
-        s, self.has_sets, self.sets, self.coils, self.sens_spatial = _bank(sensitivities, self.ndim)
+        (
+            s,
+            self.has_sets,
+            self.sets,
+            self.coils,
+            self.sens_spatial,
+            self.sens_batch,
+        ) = _bank(sensitivities, self.ndim)
         self.sensitivities = s
 
         encoding = (self.coeffs,) if self.coeffs > 1 else ()
-        lead = (1 if self.has_sets else 0) + len(encoding) + self.ndim
+        carried = (self.sens_batch,) if self.sens_batch > 1 else ()
+        lead = len(carried) + (1 if self.has_sets else 0) + len(encoding) + self.ndim
         batches, rest = _layout.split(image_shape, lead, "the image")
         spatial = tuple(rest[len(rest) - self.ndim :])
-        want = (*((self.sets,) if self.has_sets else ()), *encoding, *spatial)
+        want = (*carried, *((self.sets,) if self.has_sets else ()), *encoding, *spatial)
         if tuple(rest) != want:
             raise ValueError(f"the image {image_shape} does not end in {want}")
         self.batches = tuple(batches)
@@ -611,7 +683,7 @@ class Coils(LinearOperator):
         self.image_shape = image_shape
         self.encoding = encoding
         self.ishape = image_shape
-        self.oshape = (*self.batches, self.coils, *encoding, *spatial)
+        self.oshape = (*self.batches, *carried, self.coils, *encoding, *spatial)
         self.device = torch.device(device) if device is not None else s.device
 
         super().__init__()
@@ -626,6 +698,7 @@ class Coils(LinearOperator):
                 _layout.COIL: self.coils,
                 _layout.MAPS: self.sets,
                 _layout.COEFF: self.coeffs,
+                **self._batch_placed(),
             }
         )
         sz, sy, sx = self.sens_spatial
@@ -636,6 +709,7 @@ class Coils(LinearOperator):
                 _layout.PHS2: sz,
                 _layout.COIL: self.coils,
                 _layout.MAPS: self.sets,
+                **self._batch_placed(),
             }
         )
         return build_form(
@@ -650,6 +724,7 @@ class Coils(LinearOperator):
                 coils=self.coils,
                 sets=self.sets,
                 coeffs=self.coeffs,
+                batch_dim=self._batch_dim(),
             ),
             image_shape=self.ishape,
             kspace_shape=self.oshape,
