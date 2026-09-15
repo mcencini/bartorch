@@ -479,6 +479,10 @@ class _SegmentedSense(NoncartesianSense):
     cost a kernel per pair of them rather than a transform each.
     """
 
+    # The basis lies along the shots and the samples, which a decoupled stack
+    # ravels together.
+    _decouples = False
+
     def __init__(self, encoding: NoncartesianSense, basis: torch.Tensor):
         self._sample_basis = basis
         segments = int(basis.shape[0])

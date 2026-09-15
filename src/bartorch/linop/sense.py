@@ -334,6 +334,12 @@ class NoncartesianSense(_SensitivityBatch, LinearOperator):
     #: operator over BART's own FFT, and reaches it by clearing this.
     _needs_traj = True
 
+    #: Whether a stack on the image's own z grid is decoupled along z.
+    _decouples = True
+
+    #: How far a stack's kz may lie from a whole position of the image's grid.
+    _on_grid = 1e-4
+
     def __init__(
         self,
         sensitivities: torch.Tensor,
@@ -455,6 +461,7 @@ class NoncartesianSense(_SensitivityBatch, LinearOperator):
         if self.kspace_shape != default:
             raise ValueError(f"the samples of this encoding are {default}, not {self.kspace_shape}")
         self.ishape = image_shape
+        self.stack = 0 if self.traj is None else self._stack()
 
         # Where the operator is built follows the transform's own data, not
         # the sensitivities: a bank left on the host is the point.  Named, it
@@ -493,6 +500,47 @@ class NoncartesianSense(_SensitivityBatch, LinearOperator):
 
     def _spatial3(self) -> tuple[int, int, int]:
         return self.spatial if self.ndim == 3 else (1, *self.spatial)
+
+    def _stack(self) -> int:
+        """Positions along z the trajectory is a stack of, or 0 where it is not one.
+
+        A stack is the shots in ``z`` contiguous blocks, block ``j`` at ``kz = j -
+        z // 2`` with the same in-plane trajectory as every other block, and any
+        weights the same in every block too.  A transform along z over a batch of
+        in-plane transforms is then the same operator, and its normal is over x
+        and y alone.
+        """
+        # The executor lays z out on the axis the sets would take, under a slab
+        # of one coil.
+        if not self._decouples or self.ndim != 3 or self.coil_batch != 1 or self.sets > 1:
+            return 0
+        z, shots = int(self.spatial[0]), int(self.traj.shape[-3])
+        if z < 2 or shots % z:
+            return 0
+        t = self.traj.real if self.traj.is_complex() else self.traj
+        blocks = t.reshape(*t.shape[:-3], z, shots // z, *t.shape[-2:])
+        kz = torch.arange(z, dtype=blocks.dtype, device=blocks.device) - z // 2
+        if float((blocks[..., 2] - kz[:, None, None]).abs().max()) > self._on_grid:
+            return 0
+        plane = blocks[..., :2]
+        if float((plane - plane[..., :1, :, :, :]).abs().max()) > self._on_grid:
+            return 0
+        w = self.weights
+        if w is not None and int(w.shape[-2]) > 1:
+            by_block = w.reshape(*w.shape[:-2], z, int(w.shape[-2]) // z, int(w.shape[-1]))
+            if not torch.equal(by_block, by_block[..., :1, :, :].expand_as(by_block)):
+                return 0
+        return z
+
+    def _in_plane(self, values: torch.Tensor, tail: int) -> torch.Tensor:
+        """The first position's block of ``values`` along the shots, contiguous.
+
+        ``values`` is ``(*encoding, shots, samples, *tail)``; shots of one, which
+        broadcast, are kept as they are.
+        """
+        spokes = int(self.traj.shape[-3]) // self.stack
+        axis = values.ndim - 2 - tail
+        return values.narrow(axis, 0, min(spokes, int(values.shape[axis]))).contiguous()
 
     def _encoding_placement(self):
         return _layout.encoding_dims(len(self.encoding), self._has_basis(), self.sens_batch > 1)
@@ -563,13 +611,27 @@ class NoncartesianSense(_SensitivityBatch, LinearOperator):
         t, w = self.traj, self.weights
         b, bvec = self._basis_layout()
         tvec = wvec = None
-        if t is not None:
-            shots, samples, d = (int(n) for n in t.shape[-3:])
-            tvec = self._encoding_vector({0: d, 1: samples, 2: shots}, self.encoding, batch=False)
-        if w is not None:
-            wshape = tuple(w.shape)
-            base = {1: wshape[-1], 2: wshape[-2]} if t is not None else {}
-            wvec = self._encoding_vector(base, wshape[: len(self.encoding)], batch=False)
+        if self.stack:
+            # One position's block: the transform is over x and y, and the
+            # executor lays z out as a batch of it.
+            t = self._in_plane(t, 1).clone()
+            t[..., 2] = 0
+            spokes, samples = int(t.shape[-3]), int(t.shape[-2])
+            tvec = self._encoding_vector({0: 3, 1: samples, 2: spokes}, self.encoding, batch=False)
+            if w is not None:
+                wlead = tuple(w.shape[: len(self.encoding)])
+                w = self._in_plane(w, 0)
+                wvec = self._encoding_vector({1: w.shape[-1], 2: w.shape[-2]}, wlead, batch=False)
+        else:
+            if t is not None:
+                shots, samples, d = (int(n) for n in t.shape[-3:])
+                tvec = self._encoding_vector(
+                    {0: d, 1: samples, 2: shots}, self.encoding, batch=False
+                )
+            if w is not None:
+                wshape = tuple(w.shape)
+                base = {1: wshape[-1], 2: wshape[-2]} if t is not None else {}
+                wvec = self._encoding_vector(base, wshape[: len(self.encoding)], batch=False)
         return Form(
             transform="nufft" if t is not None else "fft",
             max_vector=self._max_vector(),
@@ -587,6 +649,7 @@ class NoncartesianSense(_SensitivityBatch, LinearOperator):
             sets=self.sets,
             coeffs=1 if b is None else int(b.shape[0]),
             batch_dim=self._batch_dim(),
+            stacked=bool(self.stack),
         )
 
 

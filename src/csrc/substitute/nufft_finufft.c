@@ -2514,8 +2514,17 @@ static const struct linop_s* toeplitz_for(int N, const long ksp_dims[N], const l
 
 	/* Keeping only where the samples reach: the function loses the part
 	 * that lies outside them, and what crosses the bus for every set loses
-	 * it too.  Whether that pays is decided when the function is built. */
-	if (compress_psf_enabled)
+	 * it too.  Whether that pays is decided when the function is built.
+	 * The places are a map of the grid the function is over, so a volume
+	 * batched along an axis between that grid and the coefficients -- a
+	 * stack's z, laid out where the sets would be -- is not read through one. */
+	bool transformed = true;
+
+	for (int i = 3; i < 6; i++)
+		if ((1 < cim_dims[i]) && (COIL_DIM != i))
+			transformed = false;
+
+	if (compress_psf_enabled && transformed)
 		barts.compress_psf = true;
 
 	/* Streaming needs the normal that walks the sets rather than the one

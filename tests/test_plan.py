@@ -324,6 +324,7 @@ def test_a_contraction_barts_gridder_cannot_serve_falls_back_to_the_sum(maps):
         "wave subspace, dense pattern",
         "wave subspace, positions",
         "non-cartesian subspace",
+        "stack of stars",
         "field-corrected non-cartesian",
         "field-corrected cartesian",
         "field-corrected wave",
@@ -379,6 +380,10 @@ def _benchmark_case(case, device=None):
     if case == "non-cartesian subspace":
         many = traj.unsqueeze(0).expand(8, -1, -1, -1).contiguous()
         return linop.NoncartesianSense(flat, (3, Y, X), traj=many, basis=basis, **where)
+    if case == "stack of stars":
+        planes = traj.unsqueeze(0).repeat(Z, 1, 1, 1)
+        planes[..., 2] = (torch.arange(Z) - Z // 2).to(torch.float32)[:, None, None]
+        return linop.NoncartesianSense(maps, shape, traj=planes.reshape(-1, X, 3), **where)
     if case == "field-corrected non-cartesian":
         E = linop.NoncartesianSense(flat, (Y, X), traj=traj, **where)
         return linop.FieldCorrected(E, coefficients=(_rand(3, *E.oshape[1:]), _rand(3, Y, X)))
@@ -535,6 +540,7 @@ def test_a_plan_reads_as_a_sentence(maps, pattern):
         "wave subspace, dense pattern",
         "wave subspace, positions",
         "non-cartesian subspace",
+        "stack of stars",
         "field-corrected non-cartesian",
         "field-corrected cartesian",
         "field-corrected wave",
@@ -863,3 +869,161 @@ def test_on_a_card_a_batch_on_the_sensitivities_is_the_host_one(pattern):
     x = _rand(items, 1, Y, X)
     want = host(x)
     assert (card(x.to("cuda")).cpu() - want).abs().max() / want.abs().max() < 1e-4
+
+
+# --- a stack decoupled along z ------------------------------------------------
+
+
+def _stack_of_stars(z, n, spokes, planes=None):
+    """``(z * spokes, n, 3)``: a radial plane at ``kz = j - z // 2``, one block per position.
+
+    ``planes`` is the in-plane trajectory of each block, the same one by default.
+    """
+    if planes is None:
+        planes = bartorch.tools.traj(x=n, y=spokes, r=True).unsqueeze(0).repeat(z, 1, 1, 1)
+    traj = planes.clone()
+    traj[..., 2] = (torch.arange(z) - z // 2).to(torch.float32)[:, None, None]
+    return traj.reshape(z * spokes, n, 3)
+
+
+def _dft3(traj, image):
+    """The 3D transform written out: ``sum_r x(r) exp(-2i pi k.r / n) / sqrt(voxels)``."""
+    z, y, x = image.shape[-3:]
+    k = traj.real.to(torch.float64)
+    rz, ry, rx = (torch.arange(n, dtype=torch.float64) - n // 2 for n in (z, y, x))
+    phase = (
+        k[..., 0, None, None, None] * rx / x
+        + k[..., 1, None, None, None] * ry[:, None] / y
+        + k[..., 2, None, None, None] * rz[:, None, None] / z
+    )
+    spread = torch.exp(-2j * torch.pi * phase)
+    image = image.reshape(*image.shape[:-3], *(1,) * (traj.ndim - 1), z, y, x)
+    return (spread * image).sum((-3, -2, -1)) / (z * y * x) ** 0.5
+
+
+def _off(got, want):
+    return float((got - want).norm() / want.norm())
+
+
+STACK, PLANE, SPOKES = 4, 16, 6
+
+
+def test_a_stack_on_the_image_grid_is_decoupled_along_z():
+    """A transform along z over a batch of in-plane ones, against the 3D sum written out."""
+    torch.manual_seed(50)
+    maps = _rand(COILS, STACK, PLANE, PLANE)
+    traj = _stack_of_stars(STACK, PLANE, SPOKES)
+
+    library().bartorch_encoding_reset_counters()
+    A = linop.NoncartesianSense(maps, (STACK, PLANE, PLANE), traj=traj)
+    assert A.plan.cartesian == ("z",) and A.plan.fused
+    assert _counter(_abi.BARTORCH_ENCODING_STACKED) == 1
+
+    x = _rand(STACK, PLANE, PLANE)
+    assert _off(A(x), _dft3(traj, maps * x)) < 5 * _finufft.tolerance()
+
+
+def test_an_odd_stack_is_decoupled_about_the_same_centre():
+    """An odd number of positions puts the centre where the 3D transform puts it too."""
+    torch.manual_seed(58)
+    odd = STACK - 1
+    maps = _rand(COILS, odd, PLANE, PLANE)
+    traj = _stack_of_stars(odd, PLANE, SPOKES)
+    A = linop.NoncartesianSense(maps, (odd, PLANE, PLANE), traj=traj)
+    assert A.plan.cartesian == ("z",)
+
+    x = _rand(odd, PLANE, PLANE)
+    assert _off(A(x), _dft3(traj, maps * x)) < 5 * _finufft.tolerance()
+
+
+def test_a_decoupled_stack_has_the_adjoint_it_claims():
+    torch.manual_seed(51)
+    A = linop.NoncartesianSense(
+        _rand(COILS, STACK, PLANE, PLANE),
+        (STACK, PLANE, PLANE),
+        traj=_stack_of_stars(STACK, PLANE, SPOKES),
+    )
+    x, y = _rand(*A.ishape), _rand(*A.oshape)
+    lhs = torch.vdot(A(x).reshape(-1), y.reshape(-1))
+    rhs = torch.vdot(x.reshape(-1), A.adjoint(y).reshape(-1))
+    assert abs(lhs - rhs) / abs(lhs) < 1e-4
+
+
+def test_a_decoupled_stack_has_the_normal_of_its_two_applications():
+    """The in-plane function at every position: no transform along z, and no factor of z."""
+    torch.manual_seed(52)
+    A = linop.NoncartesianSense(
+        _rand(COILS, STACK, PLANE, PLANE),
+        (STACK, PLANE, PLANE),
+        traj=_stack_of_stars(STACK, PLANE, SPOKES),
+    )
+    assert A.plan.normal == "kernel"
+    x = _rand(*A.ishape)
+    assert _off(A.normal(x), A.adjoint(A(x))) < 1e-2
+
+
+def _three_dimensional(maps, traj, **kwargs):
+    """The encoding without the Toeplitz normal: a 3D function over a volume this thin
+    is not something FINUFFT will spread a mask for, and these cases ask only about
+    the plan and the transform."""
+    return linop.NoncartesianSense(maps, (STACK, PLANE, PLANE), traj=traj, toeplitz=False, **kwargs)
+
+
+def test_a_stack_off_the_image_grid_along_kz_stays_three_dimensional():
+    torch.manual_seed(53)
+    maps = _rand(COILS, STACK, PLANE, PLANE)
+    traj = _stack_of_stars(STACK, PLANE, SPOKES)
+    traj[..., 2] += 0.5
+    A = _three_dimensional(maps, traj)
+    assert A.plan.cartesian == ()
+
+    x = _rand(STACK, PLANE, PLANE)
+    assert _off(A(x), _dft3(traj, maps * x)) < 5 * _finufft.tolerance()
+
+
+def test_a_stack_whose_planes_differ_is_not_decoupled():
+    torch.manual_seed(54)
+    planes = bartorch.tools.traj(x=PLANE, y=SPOKES * STACK, r=True).reshape(STACK, SPOKES, PLANE, 3)
+    traj = _stack_of_stars(STACK, PLANE, SPOKES, planes=planes)
+    A = _three_dimensional(_rand(COILS, STACK, PLANE, PLANE), traj)
+    assert A.plan.cartesian == ()
+
+
+def test_a_decoupled_stack_carries_its_weights_on_the_way_out():
+    torch.manual_seed(55)
+    maps = _rand(COILS, STACK, PLANE, PLANE)
+    traj = _stack_of_stars(STACK, PLANE, SPOKES)
+    ramp = (torch.arange(PLANE) - PLANE // 2).abs().to(torch.complex64) + 0.5
+    A = linop.NoncartesianSense(maps, (STACK, PLANE, PLANE), traj=traj, weights=ramp[None, :])
+    assert A.plan.cartesian == ("z",)
+
+    x = _rand(STACK, PLANE, PLANE)
+    assert _off(A(x), ramp * _dft3(traj, maps * x)) < 5 * _finufft.tolerance()
+    assert _off(A.normal(x), A.adjoint(A(x))) < 1e-2
+
+
+def test_weights_that_differ_along_kz_are_not_decoupled():
+    """The normal commutes with z's transform only while the weights are the same along it."""
+    torch.manual_seed(56)
+    traj = _stack_of_stars(STACK, PLANE, SPOKES)
+    weights = torch.rand(STACK * SPOKES, PLANE, dtype=torch.float64).to(torch.complex64)
+    A = _three_dimensional(_rand(COILS, STACK, PLANE, PLANE), traj, weights=weights)
+    assert A.plan.cartesian == ()
+
+
+@requires_cuda
+def test_on_a_card_a_decoupled_stack_is_the_host_one():
+    torch.manual_seed(57)
+    maps = _rand(COILS, STACK, PLANE, PLANE)
+    traj = _stack_of_stars(STACK, PLANE, SPOKES)
+    host = linop.NoncartesianSense(maps, (STACK, PLANE, PLANE), traj=traj)
+    card = linop.NoncartesianSense(maps, (STACK, PLANE, PLANE), traj=traj, device="cuda")
+    assert card.plan.cartesian == ("z",)
+
+    x, y = _rand(*host.ishape), _rand(*host.oshape)
+    for one, other in (
+        (card(x), host(x)),
+        (card.adjoint(y), host.adjoint(y)),
+        (card.normal(x), host.normal(x)),
+    ):
+        assert _off(one, other) < 1e-2

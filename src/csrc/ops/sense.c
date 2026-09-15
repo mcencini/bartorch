@@ -117,7 +117,7 @@ int bartorch_sense_fold_maps(void)
 /* What the executor has built and run, by the header's own names
  * (bartorch_encoding_count).  bartorch_sense_counter is the first three of
  * them under the slab loop's own name. */
-enum { SN_COUNTS = BARTORCH_ENCODING_SEGMENTED + 1 };
+enum { SN_COUNTS = BARTORCH_ENCODING_STACKED + 1 };
 static long sense_counters[SN_COUNTS];
 
 static void counted(int which)
@@ -214,6 +214,12 @@ struct sense_s {
 	/* The transform for one slab: a Fourier transform on a grid, a NUFFT
 	 * off one. */
 	const struct linop_s* slab;
+
+	/* The slab is a NUFFT over x and y with z a batch of it, and the coil
+	 * images are transformed along z around it: a stack whose kz lies on
+	 * the image's own grid.  The normal needs no transform along z, since
+	 * the slab's is the same at every position along it. */
+	bool stacked;
 };
 
 static DEF_TYPEID(sense_s);
@@ -620,7 +626,10 @@ static void forward_slab(const struct sense_s* d, long coil, const complex float
 
 	md_ztenmul2(DIMS, d->slab_dims, d->cim_strs, c->cim, d->img_strs, c->src, mstrs, map);
 
-	linop_forward(d->slab, DIMS, d->out_dims, c->out, DIMS, d->cim_dims, c->cim);
+	if (d->stacked)
+		fftuc(DIMS, d->cim_dims, PHS2_FLAG, c->cim, c->cim);
+
+	linop_forward(d->slab, DIMS, d->out_dims, c->out, DIMS, linop_domain(d->slab)->dims, c->cim);
 
 	put_samples(d, coil, c->dst, c->out);
 }
@@ -633,7 +642,10 @@ static void adjoint_slab(const struct sense_s* d, long coil, const complex float
 
 	take_samples(d, coil, c->out, c->src);
 
-	linop_adjoint(d->slab, DIMS, d->cim_dims, c->cim, DIMS, d->out_dims, c->out);
+	linop_adjoint(d->slab, DIMS, linop_domain(d->slab)->dims, c->cim, DIMS, d->out_dims, c->out);
+
+	if (d->stacked)
+		ifftuc(DIMS, d->cim_dims, PHS2_FLAG, c->cim, c->cim);
 
 	md_zfmacc2(DIMS, d->slab_dims, d->img_strs, c->dst, d->cim_strs, c->cim, mstrs, map);
 }
@@ -819,8 +831,10 @@ static void sense_normal(const linop_data_t* _d, complex float* dst, const compl
 	/* Folded, the two coil images are not needed at all.  It takes a
 	 * transform that reads and writes a coefficient at a time, and one map
 	 * per coil rather than a set of them to contract. */
+	/* A stack's transform is laid out on dimensions of its own, which the
+	 * maps' strides do not describe, so its maps stay outside. */
 	bool folds = (0 != cosets) && (0 != bartorch_nufft_coset_folds(d->slab))
-			&& (1 == d->slab_dims[MAPS_DIM]) && d->fold;
+			&& (1 == d->slab_dims[MAPS_DIM]) && d->fold && !d->stacked;
 
 	if (folds)
 		counted(BARTORCH_ENCODING_FOLDED);
@@ -958,6 +972,7 @@ static struct sense_s* sense_slabs(long batch, bool fold, const long max_dims[DI
 	d->coils = max_dims[COIL_DIM];
 	d->batch = slab_size(d->coils, batch);
 	d->fold = fold;
+	d->stacked = false;
 	d->maps = NULL;
 	d->owned = NULL;
 	d->kernels = NULL;
@@ -1383,6 +1398,9 @@ const struct linop_s* bartorch_encoding_operator(const struct bartorch_encoding*
 	conf.os = 0.;
 	conf.width = 0.;
 
+	if ((0 != f->stacked) && (BARTORCH_ENCODING_NUFFT != f->transform))
+		error("bartorch: a stack is a trajectory's, and this encoding has none\n");
+
 	/* A batch the sensitivities vary along is one of their dimensions and one
 	 * of the image's, and the samples carry it too: the operator holds every
 	 * item of it rather than being applied once per item, because one bank
@@ -1413,13 +1431,24 @@ const struct linop_s* bartorch_encoding_operator(const struct bartorch_encoding*
 		&& ((NULL == f->weights) || (1 == f->wgh_dims[COIL_DIM]))
 		&& ((NULL == f->basis) || (1 == f->bas_dims[COIL_DIM]));
 
-	if (!sliced)
+	if (!sliced) {
+
+		if (0 != f->stacked)
+			error("bartorch: a stack is transformed along z inside the coil loop, "
+				"and this form cannot be sliced into one\n");
+
 		return form_chain(f, max_dims, map_dims, out_dims, &conf);
+	}
 
 	struct sense_s* d = sense_slabs((long)f->coil_batch, 0 != f->fold_maps,
 			max_dims, map_dims, out_dims, 0UL, NULL != f->slice);
 
 	sense_hold(d, f->sens_dims, f->sens, f->kernels);
+
+	d->stacked = (0 != f->stacked);
+
+	if (d->stacked)
+		counted(BARTORCH_ENCODING_STACKED);
 
 	if (0 != f->modulated) {
 
@@ -1451,10 +1480,33 @@ const struct linop_s* bartorch_encoding_operator(const struct bartorch_encoding*
 	md_copy_dims(DIMS, slab_ksp_dims, out_dims);
 	slab_ksp_dims[COIL_DIM] = d->batch;
 
+	/* A stack's transform is a plain in-plane one with z a batch of it, laid
+	 * out where the sets would be in the coil image and in the samples alike,
+	 * and one position's shots where the shots were.  Under a slab of one coil
+	 * and no sets that is the same memory as the layout around it, so the
+	 * relabelling copies nothing. */
+	long slab_cim_dims[DIMS];
+	md_copy_dims(DIMS, slab_cim_dims, d->cim_dims);
+
+	if (d->stacked) {
+
+		long z = d->cim_dims[PHS2_DIM];
+
+		if ((1 != d->batch) || (1 != d->cim_dims[MAPS_DIM]) || (1 != slab_ksp_dims[MAPS_DIM])
+				|| (0 != slab_ksp_dims[PHS2_DIM] % z) || (NULL != f->slice) || (0 != f->segments))
+			error("bartorch: a stack lays z out where the sets would be, which takes a slab of "
+				"one coil and no sets, segments or slice phase\n");
+
+		slab_cim_dims[PHS2_DIM] = 1;
+		slab_cim_dims[MAPS_DIM] = z;
+		slab_ksp_dims[PHS2_DIM] /= z;
+		slab_ksp_dims[MAPS_DIM] = z;
+	}
+
 	struct bartorch_encoding slab = *f;
 	slab.ksp_dims = slab_ksp_dims;
 
-	d->slab = contracted(f, summed_over_sets(f, form_transform(&slab, d->cim_dims, &conf)));
+	d->slab = contracted(f, summed_over_sets(f, form_transform(&slab, slab_cim_dims, &conf)));
 
 	sense_output_from(d, true, outer_flags);
 
