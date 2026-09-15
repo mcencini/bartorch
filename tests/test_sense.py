@@ -15,6 +15,7 @@ import bartorch.tools as bt
 from bartorch import _dispatch, linop, optim
 from bartorch._dispatch import BartError
 from bartorch._lib import library
+from bartorch.linop import sense
 
 
 @pytest.fixture
@@ -443,7 +444,7 @@ def test_the_coil_multiply_alone_is_barts_own_fmac():
     x = torch.randn(n, n, dtype=torch.complex64)
 
     fmac = linop.MultiplySum(maps, (n, n), (coils, n, n))
-    coil = linop.Coils(maps, (n, n), coil_batch=0)
+    coil = sense.Coils(maps, (n, n), coil_batch=0)
 
     assert (coil.ishape, coil.oshape) == (fmac.ishape, fmac.oshape)
     torch.testing.assert_close(coil(x), fmac(x))
@@ -456,8 +457,8 @@ def test_the_slab_does_not_change_the_coil_multiply(batch):
     maps = torch.randn(coils, n, n, dtype=torch.complex64)
     x = torch.randn(n, n, dtype=torch.complex64)
 
-    whole = linop.Coils(maps, (n, n), coil_batch=0)
-    sliced = linop.Coils(maps, (n, n), coil_batch=batch)
+    whole = sense.Coils(maps, (n, n), coil_batch=0)
+    sliced = sense.Coils(maps, (n, n), coil_batch=batch)
 
     torch.testing.assert_close(sliced(x), whole(x))
     y = whole(x)
@@ -468,7 +469,7 @@ def test_the_coil_multiply_has_the_adjoint_it_claims():
     n, coils = 16, 3
     torch.manual_seed(0)
     maps = torch.randn(coils, n, n, dtype=torch.complex64)
-    A = linop.Coils(maps, (n, n), coil_batch=2)
+    A = sense.Coils(maps, (n, n), coil_batch=2)
 
     x = torch.randn(*A.ishape, dtype=torch.complex64)
     y = torch.randn(*A.oshape, dtype=torch.complex64)
@@ -483,8 +484,8 @@ def test_the_coil_multiply_takes_kernels_as_the_maps_they_stand_for():
     kernels, maps = _smooth_bank(n=n, coils=coils)
     x = bt.phantom([n, n]).reshape(n, n)
 
-    dense = linop.Coils(maps, (n, n))
-    compact = linop.Coils(kernels, (n, n), kernels=True)
+    dense = sense.Coils(maps, (n, n))
+    compact = sense.Coils(kernels, (n, n), kernels=True)
 
     torch.testing.assert_close(compact(x), dense(x), rtol=1e-4, atol=1e-5)
     y = dense(x)
@@ -504,7 +505,7 @@ def test_the_coil_multiply_and_an_fft_are_the_cartesian_encoding():
     x = bt.phantom([n, n]).reshape(n, n)
 
     inside = linop.CartesianSense(maps, (n, n))
-    outside = linop.FFT(inside.oshape, axes=(-2, -1)) @ linop.Coils(maps, (n, n))
+    outside = linop.FFT(inside.oshape, axes=(-2, -1)) @ sense.Coils(maps, (n, n))
 
     assert (outside.ishape, outside.oshape) == (inside.ishape, inside.oshape)
     torch.testing.assert_close(outside(x), inside(x), rtol=0, atol=0)
@@ -579,8 +580,8 @@ def test_a_bank_of_one_set_is_read_either_way():
     torch.manual_seed(0)
     bare = torch.randn(coils, n, n, dtype=torch.complex64)
 
-    A = linop.Coils(bare, (n, n))
-    B = linop.Coils(bare.reshape(1, coils, n, n), (1, n, n))
+    A = sense.Coils(bare, (n, n))
+    B = sense.Coils(bare.reshape(1, coils, n, n), (1, n, n))
 
     assert B.ishape == (1, *A.ishape) and A.oshape == B.oshape
     x = torch.randn(*A.ishape, dtype=torch.complex64)
@@ -590,12 +591,12 @@ def test_a_bank_of_one_set_is_read_either_way():
 def test_a_bank_that_is_neither_shape_is_refused():
     """A 2D bank with BART's singleton z still in it has an axis too many."""
     with pytest.raises(ValueError, match="neither .coils, .spatial. nor"):
-        linop.Coils(torch.ones(2, 3, 1, 16, 16, dtype=torch.complex64), (2, 16, 16))
+        sense.Coils(torch.ones(2, 3, 1, 16, 16, dtype=torch.complex64), (2, 16, 16))
 
 
 def test_the_sets_lead_the_image_and_not_the_coil_images():
     n, coils = 16, 4
-    A = linop.Coils(_sets_bank(n, coils), (SETS, n, n))
+    A = sense.Coils(_sets_bank(n, coils), (SETS, n, n))
 
     # The image carries the sets, the coil images do not, because the operator
     # has summed over them.
@@ -610,7 +611,7 @@ def test_several_sets_are_summed_the_way_enlive_means_it():
     tolerance is what says it."""
     n, coils = 16, 4
     bank = _sets_bank(n, coils)
-    A = linop.Coils(bank, (SETS, n, n))
+    A = sense.Coils(bank, (SETS, n, n))
 
     torch.manual_seed(0)
     x = torch.randn(*A.ishape, dtype=torch.complex64)
@@ -620,7 +621,7 @@ def test_several_sets_are_summed_the_way_enlive_means_it():
 
 def test_several_sets_have_the_adjoint_they_claim():
     n, coils = 16, 4
-    A = linop.Coils(_sets_bank(n, coils), (SETS, n, n), coil_batch=2)
+    A = sense.Coils(_sets_bank(n, coils), (SETS, n, n), coil_batch=2)
 
     torch.manual_seed(0)
     x = torch.randn(*A.ishape, dtype=torch.complex64)
@@ -635,8 +636,8 @@ def test_the_slab_walks_the_coils_and_not_the_sets(batch):
     """The slab is a slab of coils; the sets are inside it whatever it is."""
     n, coils = 16, 4
     bank = _sets_bank(n, coils)
-    sliced = linop.Coils(bank, (SETS, n, n), coil_batch=batch)
-    whole = linop.Coils(bank, (SETS, n, n), coil_batch=0)
+    sliced = sense.Coils(bank, (SETS, n, n), coil_batch=batch)
+    whole = sense.Coils(bank, (SETS, n, n), coil_batch=0)
 
     torch.manual_seed(0)
     x = torch.randn(*sliced.ishape, dtype=torch.complex64)
@@ -656,7 +657,7 @@ def test_the_slab_walks_the_coils_and_not_the_sets(batch):
 # ``ndim`` are given it.
 
 _KERNEL_CASES = {
-    "coils": lambda s, k, **o: linop.Coils(s, _kernel_image(s), kernels=k, ndim=2, **o),
+    "coils": lambda s, k, **o: sense.Coils(s, _kernel_image(s), kernels=k, ndim=2, **o),
     "cartesian": lambda s, k, **o: linop.CartesianSense(
         s, _kernel_image(s), kernels=k, ndim=2, **o
     ),
@@ -752,8 +753,8 @@ def test_the_slab_does_not_change_a_kernel_bank_of_several_sets(batch):
     """The two features meet in the loop, so the loop is what is varied."""
     kernels, _ = _kernel_bank(SETS)
     image = (SETS, N_K, N_K)
-    sliced = linop.Coils(kernels, image, kernels=True, coil_batch=batch, ndim=2)
-    one = linop.Coils(kernels, image, kernels=True, coil_batch=1, ndim=2)
+    sliced = sense.Coils(kernels, image, kernels=True, coil_batch=batch, ndim=2)
+    one = sense.Coils(kernels, image, kernels=True, coil_batch=1, ndim=2)
 
     torch.manual_seed(0)
     x = torch.randn(*one.ishape, dtype=torch.complex64)

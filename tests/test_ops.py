@@ -9,6 +9,7 @@ import torch
 import bartorch
 import bartorch.tools as bt
 from bartorch import linop, nlop, optim
+from bartorch.linop import basic
 
 
 def _rand(*shape):
@@ -76,7 +77,7 @@ def test_sampling_operator_zeroes_unsampled_lines():
     shape = (4, 8, 8)
     pattern = torch.zeros(1, 8, 8, dtype=torch.complex64)
     pattern[..., ::2, :] = 1
-    P = linop.Sampling(pattern, shape)
+    P = basic.Sampling(pattern, shape)
     x = _rand(*shape)
     torch.testing.assert_close(P(x), x * pattern)
 

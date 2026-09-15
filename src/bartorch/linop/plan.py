@@ -22,7 +22,7 @@ import torch
 
 from bartorch.linop.base import LinearOperator
 
-__all__ = ["Chain", "Contract", "Sum", "build", "describe", "lower", "materialise"]
+__all__ = ["Chain", "Contract", "Sum", "build", "describe", "lower", "lowered", "materialise"]
 
 
 @dataclass(frozen=True)
@@ -159,17 +159,22 @@ def materialise(description: Sum | Contract) -> LinearOperator:
     still one call per application.  What it is not is one transform: each
     term applies the encoding itself.
     """
+    from bartorch.linop.base import _Add, _Compose
     from bartorch.linop.basic import Diagonal
 
+    # Built without matching: this is the description's fallback, so a node
+    # that lowered itself back into the contraction would defeat the point.
     terms = description.terms
     out: LinearOperator | None = None
     for term in terms:
         built = term.encoding
         if term.image is not None:
-            built = built @ Diagonal(_widened(term.image, term.encoding.ishape), built.ishape)
+            diagonal = Diagonal(_widened(term.image, term.encoding.ishape), built.ishape)
+            built = _Compose(built, diagonal, match=False)
         if term.kspace is not None:
-            built = Diagonal(_widened(term.kspace, built.oshape), built.oshape) @ built
-        out = built if out is None else out + built
+            diagonal = Diagonal(_widened(term.kspace, built.oshape), built.oshape)
+            built = _Compose(diagonal, built, match=False)
+        out = built if out is None else _Add(out, built, match=False)
 
     # The encoding inside still runs where its own plan says; what is not
     # fused is the sum, and the plan says so rather than reporting the
@@ -190,3 +195,16 @@ def build(description: Sum | Contract) -> LinearOperator:
     """The description lowered where it matches the form, and chained where it does not."""
     matched = lower(description)
     return materialise(description) if matched is None else matched
+
+
+def lowered(op: LinearOperator) -> LinearOperator | None:
+    """``op`` as one encoding, or ``None`` where it is not one.
+
+    What a composition asks before it builds itself: a description the form
+    holds becomes a single encoding with the factors and the terms folded in,
+    and anything else is left to the chain the composition stands for.
+    """
+    description = describe(op)
+    if description is None:
+        return None
+    return lower(description)

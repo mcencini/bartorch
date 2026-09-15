@@ -17,6 +17,7 @@ import bartorch
 from bartorch import _abi, _finufft, linop
 from bartorch._lib import library
 from bartorch.linop import plan as planner
+from bartorch.linop import sense
 
 COILS, Z, Y, X = 4, 3, 16, 12
 
@@ -62,7 +63,7 @@ def test_every_encoding_reports_its_transform(maps, pattern):
         "fft": linop.CartesianSense(maps, (Y, X), pattern=pattern),
         "nufft": linop.NoncartesianSense(maps, (Y, X), traj=traj),
         "wave": linop.WaveSense(maps, (Y, X), psf=psf, readout=2 * X),
-        "none": linop.Coils(maps, (Y, X)),
+        "none": sense.Coils(maps, (Y, X)),
     }
     for name, A in cases.items():
         assert A.plan.transform == name
@@ -571,3 +572,280 @@ def test_on_a_card_the_slab_executor_is_still_what_ran_it(maps, pattern):
     assert _counter(_abi.BARTORCH_ENCODING_BUILT) == 1
     assert _counter(_abi.BARTORCH_ENCODING_CHAINED) == 0
     assert _counter(_abi.BARTORCH_ENCODING_NORMAL) == 1
+
+
+# --- a composition written by hand, rather than by a constructor --------------
+
+
+def _terms(E, b, c):
+    """``sum_l diag(b_l) E diag(c_l)`` written with ``@`` and ``+``."""
+    out = None
+    for term in range(int(b.shape[0])):
+        built = linop.Diagonal(b[term], E.oshape) @ E @ linop.Diagonal(c[term], E.ishape)
+        out = built if out is None else out + built
+    return out
+
+
+def test_composing_builds_a_description_and_nothing_else(maps, pattern):
+    """``@`` and ``+`` work the shapes out; nothing is built until something needs it."""
+    E = linop.CartesianSense(maps, (Y, X), pattern=pattern)
+    built = linop.Diagonal(_rand(Y, X), E.ishape)
+    composed = E @ built
+
+    assert "_h" not in composed.__dict__
+    assert composed.ishape == E.ishape and composed.oshape == E.oshape
+    composed(_rand(Y, X))
+    assert "_h" in composed.__dict__
+
+
+def test_a_sum_written_by_hand_is_the_contraction_the_planner_lowers(maps, pattern):
+    """The composition a caller writes and the description a fit hands over are one operator."""
+    torch.manual_seed(23)
+    E = linop.CartesianSense(maps, (Y, X), pattern=pattern)
+    b, c = _rand(3, 1, Y, X), _rand(3, Y, X)
+
+    composed = _terms(E, b, c)
+    assert composed.plan.contraction == "segments"
+    assert composed.plan.terms == 3
+    assert composed.plan.fused
+
+    fused = planner.lower(planner.Contract(E, b, c))
+    x = _rand(Y, X)
+    assert torch.equal(composed(x), fused(x))
+
+
+def test_a_sum_written_by_hand_is_the_sum_written_out(maps, pattern):
+    """Against the model itself: the segments summed with torch's own transform."""
+    torch.manual_seed(24)
+    E = linop.CartesianSense(maps, (Y, X), pattern=pattern)
+    b, c = _rand(3, 1, Y, X), _rand(3, Y, X)
+    x = _rand(Y, X)
+
+    want = torch.zeros(COILS, Y, X, dtype=torch.complex64)
+    for term in range(3):
+        coils = maps * (c[term] * x)
+        shifted = torch.fft.ifftshift(coils, dim=(-2, -1))
+        k = torch.fft.fftshift(torch.fft.fft2(shifted, norm="ortho"), dim=(-2, -1))
+        want = want + b[term] * pattern * k
+
+    got = _terms(E, b, c)(x)
+    assert (got - want).abs().max() / want.abs().max() < 1e-5
+
+
+def test_a_composition_costs_one_application_however_many_terms(maps, pattern):
+    """The counted form of composing costing nothing, for a sum a caller wrote."""
+    torch.manual_seed(25)
+    E = linop.CartesianSense(maps, (Y, X), pattern=pattern)
+    composed = _terms(E, _rand(4, 1, Y, X), _rand(4, Y, X))
+
+    library().bartorch_encoding_reset_counters()
+    composed(_rand(Y, X))
+    assert _counter(_abi.BARTORCH_ENCODING_FORWARD) == 1
+
+
+# --- the compositions the design names ----------------------------------------
+
+
+def _fft2(x):
+    shifted = torch.fft.ifftshift(x, dim=(-2, -1))
+    return torch.fft.fftshift(torch.fft.fft2(shifted, norm="ortho"), dim=(-2, -1))
+
+
+def test_a_shot_phase_is_a_contraction_over_the_shots(maps):
+    """Multishot: one image, a phase per shot, and the samples each shot took.
+
+    Against the shots written out, with torch's own transform.
+    """
+    torch.manual_seed(30)
+    shots = 3
+    E = linop.CartesianSense(maps, (Y, X), pattern=torch.ones(Y, 1, dtype=torch.complex64))
+
+    phase = _rand(shots, Y, X)
+    taken = torch.zeros(shots, 1, Y, 1, dtype=torch.complex64)
+    for shot in range(shots):
+        taken[shot, 0, shot::shots, 0] = 1
+
+    A = _terms(E, taken, phase)
+    assert A.plan.contraction == "segments" and A.plan.terms == shots
+    assert A.plan.fused
+
+    x = _rand(Y, X)
+    want = torch.zeros(COILS, Y, X, dtype=torch.complex64)
+    for shot in range(shots):
+        want = want + taken[shot] * _fft2(maps * (phase[shot] * x))
+    assert (A(x) - want).abs().max() / want.abs().max() < 1e-5
+
+
+def test_an_echo_phase_with_a_basis_is_a_contraction_over_the_frames(maps, basis):
+    """A per-voxel phase per frame cannot move to the k-space side, so it is a term each.
+
+    The basis still contracts the coefficients inside each term, which is what
+    makes this one encoding per frame rather than one per frame and
+    coefficient.
+    """
+    torch.manual_seed(31)
+    coeffs, frames = int(basis.shape[0]), int(basis.shape[1])
+    pattern = torch.ones(frames, Y, 1, dtype=torch.complex64)
+    E = linop.CartesianSense(maps, (coeffs, Y, X), pattern=pattern, basis=basis)
+
+    phase = _rand(frames, 1, Y, X)
+    selector = torch.zeros(frames, 1, frames, 1, 1, dtype=torch.complex64)
+    for frame in range(frames):
+        selector[frame, 0, frame] = 1
+
+    A = _terms(E, selector, phase)
+    assert A.plan.contraction == "segments" and A.plan.terms == frames
+    assert A.plan.fused
+
+    x = _rand(coeffs, Y, X)
+    want = torch.zeros(COILS, frames, Y, X, dtype=torch.complex64)
+    for frame in range(frames):
+        for coeff in range(coeffs):
+            want[:, frame] += basis[coeff, frame] * _fft2(maps * (phase[frame, 0] * x[coeff]))
+    assert (A(x) - want).abs().max() / want.abs().max() < 1e-5
+
+
+def _slices(sets):
+    """Maps per slice, and the indicator of each slice on the image side."""
+    picked = torch.zeros(sets, sets, 1, 1, dtype=torch.complex64)
+    for s in range(sets):
+        picked[s, s] = 1
+    return picked
+
+
+def test_a_phase_per_slice_is_summed_over_on_the_far_side(pattern):
+    """SMS: each slice takes its own phase in k-space, and the slices add up after it.
+
+    Against the slices written out.  The sum is past the transform, so the
+    sensitivities cannot contract the sets as they usually do: the coil images
+    keep them and the transform runs once per slice.
+    """
+    torch.manual_seed(32)
+    sets = 2
+    sensitivities = _rand(sets, COILS, Y, X)
+    E = linop.CartesianSense(sensitivities, (sets, Y, X), pattern=pattern)
+    assert E.sets == sets
+
+    phase = _rand(sets, 1, Y, 1)
+    A = _terms(E, phase, _slices(sets))
+    assert A.plan.contraction == "slices" and A.plan.terms == sets
+    assert A.plan.fused
+    assert "slice phase" in {factor.name for factor in A.plan.kspace}
+
+    x = _rand(sets, Y, X)
+    want = torch.zeros(COILS, Y, X, dtype=torch.complex64)
+    for s in range(sets):
+        want = want + phase[s] * pattern * _fft2(sensitivities[s] * x[s])
+    assert (A(x) - want).abs().max() / want.abs().max() < 1e-5
+
+
+def test_the_adjoint_of_a_slice_phase_fans_back_out(pattern):
+    """The sum runs the other way on the adjoint, which is where it could quietly not.
+
+    Against the adjoint written out, and against the identity
+    ``<A x, y> == <x, A^H y>`` which no reference of mine can talk it out of.
+    """
+    torch.manual_seed(35)
+    sets = 3
+    sensitivities = _rand(sets, COILS, Y, X)
+    E = linop.CartesianSense(sensitivities, (sets, Y, X), pattern=pattern)
+    phase = _rand(sets, 1, Y, 1)
+    A = _terms(E, phase, _slices(sets))
+
+    x, y = _rand(sets, Y, X), _rand(COILS, Y, X)
+    lhs = torch.vdot(A(x).reshape(-1), y.reshape(-1))
+    rhs = torch.vdot(x.reshape(-1), A.adjoint(y).reshape(-1))
+    assert abs(lhs - rhs) / abs(lhs) < 1e-5
+
+    want = torch.zeros(sets, Y, X, dtype=torch.complex64)
+    for s in range(sets):
+        shifted = torch.fft.ifftshift(pattern.conj() * phase[s].conj() * y, dim=(-2, -1))
+        image = torch.fft.fftshift(torch.fft.ifft2(shifted, norm="ortho"), dim=(-2, -1))
+        want[s] = (sensitivities[s].conj() * image).sum(0)
+    got = A.adjoint(y)
+    assert (got - want).abs().max() / want.abs().max() < 1e-5
+
+
+def test_a_slice_phase_costs_one_application_rather_than_one_per_slice(pattern):
+    """The sum over the slices is inside the executor, not around it."""
+    torch.manual_seed(33)
+    sets = 2
+    E = linop.CartesianSense(_rand(sets, COILS, Y, X), (sets, Y, X), pattern=pattern)
+    A = _terms(E, _rand(sets, 1, Y, 1), _slices(sets))
+
+    library().bartorch_encoding_reset_counters()
+    A(_rand(sets, Y, X))
+    assert _counter(_abi.BARTORCH_ENCODING_FORWARD) == 1
+
+
+def test_an_image_weight_that_differs_between_sets_is_left_to_the_sum(pattern):
+    """Only a slice picked whole can vary along the sets; anything else is the sum.
+
+    An image factor is applied to the coil images, where ``md_ztenmul2`` has
+    already contracted the sets, so a weight that differs between them has no
+    place to go.  What it must not be is fused and wrong.
+    """
+    torch.manual_seed(34)
+    sets = 2
+    sensitivities = _rand(sets, COILS, Y, X)
+    E = linop.CartesianSense(sensitivities, (sets, Y, X), pattern=pattern)
+
+    weights = _rand(sets, sets, 1, 1)
+    phase = _rand(sets, 1, Y, 1)
+
+    A = _terms(E, phase, weights)
+    assert A.plan.contraction == "chained" and A.plan.terms == sets
+    assert not A.plan.fused
+
+    x = _rand(sets, Y, X)
+    want = torch.zeros(COILS, Y, X, dtype=torch.complex64)
+    for term in range(sets):
+        inner = torch.zeros(COILS, Y, X, dtype=torch.complex64)
+        for s in range(sets):
+            inner = inner + sensitivities[s] * (weights[term, s] * x[s])
+        want = want + phase[term] * pattern * _fft2(inner)
+    assert (A(x) - want).abs().max() / want.abs().max() < 1e-5
+
+
+@requires_cuda
+@pytest.mark.parametrize("model", ["shot phase", "echo phase", "slice phase"])
+def test_on_a_card_a_composition_takes_the_plan_it_takes_on_the_host(model, maps, basis, pattern):
+    """A card changes where the terms run, not whether they were folded in."""
+    torch.manual_seed(40)
+
+    def built(device):
+        if model == "shot phase":
+            dense = torch.ones(Y, 1, dtype=torch.complex64)
+            E = linop.CartesianSense(maps, (Y, X), pattern=dense, device=device)
+            taken = torch.zeros(3, 1, Y, 1, dtype=torch.complex64)
+            for shot in range(3):
+                taken[shot, 0, shot::3, 0] = 1
+            return _terms(E, taken, _rand(3, Y, X)), _rand(Y, X)
+        if model == "echo phase":
+            coeffs, frames = int(basis.shape[0]), int(basis.shape[1])
+            E = linop.CartesianSense(
+                maps,
+                (coeffs, Y, X),
+                pattern=torch.ones(frames, Y, 1, dtype=torch.complex64),
+                basis=basis,
+                device=device,
+            )
+            selector = torch.zeros(frames, 1, frames, 1, 1, dtype=torch.complex64)
+            for frame in range(frames):
+                selector[frame, 0, frame] = 1
+            return _terms(E, selector, _rand(frames, 1, Y, X)), _rand(coeffs, Y, X)
+        sets = 2
+        E = linop.CartesianSense(
+            _rand(sets, COILS, Y, X), (sets, Y, X), pattern=pattern, device=device
+        )
+        return _terms(E, _rand(sets, 1, Y, 1), _slices(sets)), _rand(sets, Y, X)
+
+    torch.manual_seed(40)
+    host, x = built(None)
+    torch.manual_seed(40)
+    card, _ = built("cuda")
+
+    assert card.plan.fused
+    assert (card.plan.contraction, card.plan.terms) == (host.plan.contraction, host.plan.terms)
+    want = host(x)
+    assert (card(x) - want).abs().max() / want.abs().max() < 1e-4

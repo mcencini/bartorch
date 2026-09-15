@@ -61,16 +61,21 @@ def _flat_along(t: torch.Tensor, axes) -> torch.Tensor | None:
 def _segment_layout(encoding, b, c, sample_dims, image_dims):
     """The segments as the form's contraction, or ``None``.
 
-    The sample weights may vary along one coil's samples and the spatial ones
-    along the image's spatial axes; weights the same along the batches, the
-    coils, the sets or the coefficients are taken once.  Weights that vary
-    along any of those are left to the sum of the segments.
+    The sample weights may vary along one coil's samples and the image's
+    along the coefficients and the voxels; weights the same along the
+    batches, the coils and the sets are taken once.
+
+    The sets are on the far side of the sensitivities: the slab contracts
+    them away with ``md_ztenmul2`` before the image factor is reached, so a
+    weight that differs between sets is not this contraction whatever it
+    multiplies.  Those, and weights varying along the batches or the coils,
+    are left to the sum of the segments.
     """
     count = int(b.shape[0])
     oshape, ishape = tuple(encoding.oshape), tuple(encoding.ishape)
     tail = tuple(encoding._kspace_tail())
     lead = len(oshape) - len(tail)
-    image_lead = len(ishape) - encoding.ndim
+    image_lead = len(ishape) - len(image_dims)
 
     samples = _flat_along(_per_segment(b, oshape, "sample weights"), range(1, 1 + lead))
     image = _flat_along(_per_segment(c, ishape, "spatial weights"), range(1, 1 + image_lead))
@@ -89,16 +94,21 @@ def _segment_layout(encoding, b, c, sample_dims, image_dims):
 class _Segmentable:
     """A grid encoding whose coil loop a contraction over terms can go inside.
 
-    The axes each side's weights are laid out on: the image's spatial ones,
-    and one coil's samples, which carry the frames as well where a basis
-    contracts them.
+    The axes each side's weights are laid out on: the image's coefficients
+    and voxels, and one coil's samples, which carry the frames as well where a
+    basis contracts them.  Not the sets, which the sensitivities have summed
+    over by the time the image factor is applied.
     """
 
-    def _image_dims(self):
+    def _spatial_dims(self):
         return (2, 1, 0) if self.ndim == 3 else (1, 0)
 
+    def _image_dims(self):
+        _, image = _layout.encoding_dims(len(self.encoding), self._has_basis())
+        return (*image, *self._spatial_dims())
+
     def _sample_dims(self):
-        return ((5,) if self._grid_basis is not None else ()) + self._image_dims()
+        return ((5,) if self._grid_basis is not None else ()) + self._spatial_dims()
 
 
 class _CartesianNative(_Segmentable, _GridSense):
@@ -527,13 +537,61 @@ def contracted(encoding, b: torch.Tensor, c: torch.Tensor) -> LinearOperator | N
     return _nufft_contraction(encoding, b, c)
 
 
+def _picks_each_set(c: torch.Tensor, sets: int, axis: int) -> bool:
+    """Whether term ``l`` of ``c`` is the indicator of set ``l`` and nothing else."""
+    if int(c.shape[0]) != sets or int(c.shape[1 + axis]) != sets:
+        return False
+    for term in range(sets):
+        for other in range(sets):
+            want = 1.0 if term == other else 0.0
+            if not bool(torch.all(c[term].select(axis, other) == want)):
+                return False
+    return True
+
+
+def _slice_layout(encoding, b: torch.Tensor, c: torch.Tensor):
+    """The terms as a phase per set summed over on the far side, or ``None``.
+
+    What a simultaneous-multislice group is: the image carries the slices, the
+    sensitivities vary along them, and each slice's samples take their own
+    phase before the slices add up.  The terms say so by picking one slice
+    each on the image side, which is the only image factor the sets can carry
+    -- anything else would have to be applied before the sensitivities, where
+    the contraction does not reach.
+    """
+    if not encoding.has_sets or encoding.sets < 2:
+        return None
+    nb = len(encoding.batches)
+    image = _per_segment(c, tuple(encoding.ishape), "spatial weights")
+    if not _picks_each_set(image, encoding.sets, nb):
+        return None
+
+    oshape = tuple(encoding.oshape)
+    tail = tuple(encoding._kspace_tail())
+    lead = len(oshape) - len(tail)
+    samples = _flat_along(_per_segment(b, oshape, "sample weights"), range(1, 1 + lead))
+    if samples is None:
+        return None
+    samples = samples.reshape(encoding.sets, *samples.shape[1 + lead :])
+    samples = as_operand(samples, tuple(samples.shape), "slice phase")
+
+    placed = {_layout.MAPS: encoding.sets}
+    placed.update(dict(zip(encoding._sample_dims(), samples.shape[1:])))
+    return Array(samples, _layout.vector(placed))
+
+
 def _grid_contraction(encoding, b: torch.Tensor, c: torch.Tensor) -> LinearOperator | None:
     """The contraction in the coil loop of a grid encoding, or ``None``."""
     from bartorch.linop.sense import _Encoded
 
     form = encoding._form()
-    if form.contraction is not None:
+    if form.contraction is not None or form.slice_phase is not None:
         return None
+
+    phase = _slice_layout(encoding, b, c)
+    if phase is not None:
+        return _Encoded(encoding, replace(form, slice_phase=phase))
+
     layout = _segment_layout(encoding, b, c, encoding._sample_dims(), encoding._image_dims())
     if layout is None:
         return None

@@ -427,7 +427,7 @@ def CoilSense(  # noqa: N802  (it is a constructor)
 
     Examples
     --------
-    >>> E = linop.Sampling(pattern, shape) @ linop.FFT(shape, axes=(-1, -2))
+    >>> E = linop.Diagonal(pattern, shape) @ linop.FFT(shape, axes=(-1, -2))
     >>> F = CoilSense(E)
     >>> F.ishapes
     ((1, 128, 128), (8, 128, 128))

@@ -317,6 +317,15 @@ struct bartorch_encoding {
 	const long* segment_image_dims;
 	const void* segment_image;
 
+	/* A k-space factor that differs between sets of maps, applied after
+	 * the transform, with the sets summed over after it: the slice phase
+	 * of a simultaneous-multislice acquisition.  The sets then survive the
+	 * sensitivities rather than being contracted by them, so the transform
+	 * runs once per set -- which is what the sum being on the far side of
+	 * it costs.  NULL leaves the sets where the sensitivities sum them. */
+	const long* slice_dims;
+	const void* slice;
+
 	/* The closed-form normal rather than the two applications. */
 	int toeplitz;
 	/* BART's own sample convention rather than the centred one; a grid

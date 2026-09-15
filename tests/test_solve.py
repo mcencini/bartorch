@@ -16,6 +16,7 @@ import torch
 import bartorch
 import bartorch.tools as bt
 from bartorch import _dispatch, linop, optim, prox
+from bartorch.linop import basic
 
 
 def _rand(*shape):
@@ -499,7 +500,7 @@ def _pics_problem(size=24, coils=4, accel=2):
     # arrays are (coils, z, y, x) with one partition, so dropping z leaves the
     # operator's (coils, y, x) maps and k-space over a (y, x) image.
     S = linop.CartesianSense(maps.squeeze(1), (size, size), coil_batch=0, modulated=True)
-    A = linop.Sampling(pattern.squeeze(), S.oshape) @ S
+    A = basic.Sampling(pattern.squeeze(), S.oshape) @ S
     return kspace, maps, A, (y * (1.0 / scale)).squeeze(1), scale
 
 

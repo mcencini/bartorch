@@ -167,6 +167,20 @@ One C slab executor runs every matched form. It is today's pieces parameterised 
    - Accept a batch axis on sensitivities (in front of a sets axis).
    - Remove `Coils` and `Sampling` from the exports.
    - Each is tested against its written-out sum and its plain chain, with the fused plan asserted.
+
+   Done but for the batch axis on sensitivities: `@` and `+` defer, so the
+   planner is offered the whole description rather than one factor at a time,
+   and all four models lower into one encoding.  `Coils` and `Sampling` are
+   off the exports.
+
+   SMS needed the executor changed, because phase 1 attached the contraction
+   around the transform over the *coil* images and `md_ztenmul2` had already
+   contracted the sets away by then.  A k-space factor along the sets now
+   keeps them through the transform and sums after that factor with
+   `linop_sum_create`: one transform per slice, which is what the sum being
+   outside the transform costs.  An image factor along the sets still has
+   nowhere to go, so only a slice picked whole is taken and anything else is
+   left chained.
 3. **Kernel stacks and Cartesian-aligned axes.**
    - Stacked kernels for per-item trajectories.
    - Detection of Cartesian-aligned trajectory axes, with fewer cosets and, for pure stacks, decoupling along the axis.

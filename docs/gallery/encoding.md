@@ -13,10 +13,8 @@ factors; it is not in general an inverse.
 | Coil encoding, contraction | `linop.MultiplySum` | Multiply by a tensor and sum the axes missing from the output; conjugate in the adjoint.  Serves sensitivities and subspace contractions. |
 | SENSE encoding | `linop.CartesianSense`, `linop.NoncartesianSense` | Sensitivities followed by an FFT or a NUFFT, applied `coil_batch` coils at a time.  A `basis` reads the image as a temporal subspace; `(sets, coils, *spatial)` sensitivities are summed over the sets, as ESPIRiT's second map and ENLIVE mean them. |
 | Wave encoding | `linop.WaveSense` | The hybrid-space model below, as one BART operator; takes sensitivities as maps or as kernels, and a `basis` for Wave-Shuffling. |
-| Coil encoding alone | `linop.Coils` | The sensitivity multiply without a transform after it, for chaining onto an encoding that is not a SENSE operator. |
 | Cartesian FFT | `linop.FFT`; `bartorch.fft`, `bartorch.ifft` | The operator is centred and unitary; the function needs `unitary=True` for that scaling. |
-| Sampling | `linop.Sampling` | A mask on the full grid, broadcast over singleton axes. |
-| Phase, weights | `linop.Diagonal` | Complex pointwise multiplication; the adjoint uses the conjugate. |
+| Phase, weights, sampling | `linop.Diagonal` | Complex pointwise multiplication, broadcast over singleton axes; the adjoint uses the conjugate.  A sampling mask is one of these. |
 | Non-Cartesian transform | `linop.NUFFT`; `bartorch.nufft`, `tools.traj` | Trajectories in grid units, computed by FINUFFT or cuFINUFFT.  Density weights and a temporal basis belong to the operator; its Toeplitz normal should be checked against the explicit forward-adjoint pair. |
 | Custom encoding | `linop.Callback`, or a `LinearOperator` subclass | Supply a forward and an adjoint, and optionally a cheaper normal.  Callbacks see views of BART's buffers and must not modify their inputs. |
 | Operator algebra | `A @ B`, `A + B`, `A.to_nonlinear()` | The rightmost operator runs first; domains, codomains and devices must match. |
@@ -45,6 +43,43 @@ explains why calibration can yield several sets of maps.  Keeping one is a
 modelling choice; phase gauges and coil-space normalization matter when
 comparing maps.  See the
 {doc}`coil preparation example </auto_examples/01_tools/plot_02_coil_preparation>`.
+
+## Encodings written as compositions
+
+An encoding with an element-wise factor on either side of it, summed over
+terms, is one operator rather than a sum of them.  Write the terms with `@`
+and `+`; nothing is built until something needs the operator, and what is
+built is one encoding whose contraction is those terms.  `A.plan` says which
+happened -- `contraction=segments(n)` where the terms were folded in,
+`chained(n)` where the sum stands.
+
+```python
+A = None
+for term in range(len(b)):
+    built = linop.Diagonal(b[term], E.oshape) @ E @ linop.Diagonal(c[term], E.ishape)
+    A = built if A is None else A + built
+```
+
+| Model | `c_l` (image side) | `b_l` (k-space side) |
+| --- | --- | --- |
+| Off-resonance by time segmentation | spatial weights of the fit | the segment's sample weights |
+| Multishot with a known phase | the shot's phase | the samples that shot took |
+| Echo phase with a subspace basis | the frame's phase | the frame, picked out of the samples |
+
+{func}`bartorch.linop.FieldCorrected` is the first of these with the fit done
+for you; the others are the composition and nothing more.  Each costs one
+transform per term inside the coil loop, which is what an image-side factor
+that varies along the frames costs.
+
+Simultaneous multislice is the same shape with the slices as sets of maps:
+`c_l` picks slice `l` whole and `b_l` is its phase in k-space.  The slices are
+summed on the far side of the transform, so it runs once per slice, and
+`plan.contraction` is `slices`.
+
+Picking a slice whole is the only image-side factor that may differ between
+sets.  The sensitivities contract the sets before the image factor is reached,
+so any other weight along them leaves the sum standing and the plan says
+`chained`.
 
 ## Beyond Cartesian and radial encoding
 

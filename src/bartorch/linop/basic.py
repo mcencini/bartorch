@@ -27,7 +27,6 @@ __all__ = [
     "FFT",
     "Identity",
     "MultiplySum",
-    "Sampling",
     "Zero",
 ]
 
