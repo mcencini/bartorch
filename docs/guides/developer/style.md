@@ -9,8 +9,5 @@ existing local conventions, and keep upstream BART unchanged.
 A wrapper around a BART command calls BART; it does not reimplement BART's
 computation in torch.  Torch is for reshaping and marshalling around the call.
 
-Docstrings follow {doc}`documentation`.  Pages are Markdown (MyST); gallery
-examples are Python scripts with narrative blocks.  Document implemented
-behaviour, separate proposed methods from available APIs and paper
-reproductions from teaching phantoms, and label plots with units and
-normalization.
+Docstrings follow {doc}`documentation`.  Pages are Markdown (MyST).  Document
+implemented behaviour, and separate proposed methods from available APIs.

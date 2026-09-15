@@ -18,5 +18,4 @@ bundled code.  FINUFFT, cuFINUFFT, MKL, PyTorch and DeepInverse carry their
 own notices.
 
 Workshop datasets, pretrained models and paper figures have independent terms.
-The documentation links to original sources, and the gallery uses synthetic
-data.
+The documentation links to original sources.

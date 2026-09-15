@@ -19,7 +19,7 @@ else's sits inside it.
 | `src/csrc/` | The compiled library. |
 | `scripts/` | Everything a developer runs by hand: the two generators, the docs build, the suite, the device check. |
 | `cmake/` | What the build system runs and a person does not. |
-| `tests/`, `docs/`, `examples/` | The rest. |
+| `tests/`, `docs/` | The rest. |
 
 `src/csrc/` is three things, and a file belongs to whichever it is: `abi/` is
 the boundary -- what the host calls, and what BART's environment asks of the

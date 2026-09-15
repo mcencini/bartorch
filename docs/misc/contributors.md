@@ -11,8 +11,6 @@ has its own history.  See {doc}`../guides/developer/contributing` to take part.
 Report the bartorch version or commit and the pinned BART revision, and cite
 the algorithms actually used, for example ESPIRiT or Wave-Shuffling.  BART
 maintains [citation and reproducibility resources](https://mrirecon.codeberg.page/publications.html).
-The papers behind the advanced gallery plans are linked from
-{doc}`../gallery/research`.
 
 No bartorch paper or archival DOI exists yet.  A reproducibility statement
 should also record trajectory units, array order, calibration, sampling,
