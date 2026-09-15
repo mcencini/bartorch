@@ -204,6 +204,7 @@ def test_a_composition_the_planner_matches_is_one_encoding(maps, pattern):
     chained = planner.materialise(described)
     assert fused.plan.contraction == "segments" and fused.plan.fused
     assert chained.plan.contraction == "chained" and not chained.plan.fused
+    assert chained.plan.normal == "applications"
 
     x = _rand(Y, X)
     want = sum(b[term] * A(c[term] * x) for term in range(3))

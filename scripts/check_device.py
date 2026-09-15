@@ -146,7 +146,7 @@ def _device_matches_host():
 def _pics_on_device():
     n, spokes, coils = 256, 401, 8
     traj = bt.traj(x=n, y=spokes, r=True).cuda()
-    image = bt.phantom([n, n], ncoils=coils).cuda()
+    image = bt.phantom([n, n], s=coils).cuda()
     maps = (torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5).cuda()
     kspace = bartorch.nufft(image, traj)
 
@@ -165,7 +165,7 @@ def _pics_on_device():
 def _streams():
     n, spokes, coils = 256, 401, 8
     traj = bt.traj(x=n, y=spokes, r=True).cuda()
-    image = bt.phantom([n, n], ncoils=coils).cuda()
+    image = bt.phantom([n, n], s=coils).cuda()
     maps = (torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5).cuda()
     kspace = bartorch.nufft(image, traj)
 
@@ -192,7 +192,7 @@ def _memcache():
     """
     n, spokes, coils = 256, 401, 8
     traj = bt.traj(x=n, y=spokes, r=True).cuda()
-    image = bt.phantom([n, n], ncoils=coils).cuda()
+    image = bt.phantom([n, n], s=coils).cuda()
     maps = (torch.ones(1, coils, 1, n, n, dtype=torch.complex64) / coils**0.5).cuda()
     kspace = bartorch.nufft(image, traj)
 
@@ -229,7 +229,7 @@ def _needs_g():
     n = 128
     traj, image = _radial(n, 64, "cuda")
     plain = bartorch.nufft(image, traj)
-    flagged = bartorch.nufft(image, traj, gpu=True)
+    flagged = bartorch.nufft(image, traj, g=True)
     rel = float((plain - flagged).abs().max().item() / flagged.abs().max().item())
     return rel < 1e-5, f"with and without -g differ by {rel:.2e}"
 
