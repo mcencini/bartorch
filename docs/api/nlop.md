@@ -144,8 +144,10 @@ step, and `block.output(state, F)` returns the unknowns.  {class}`IRGNM` is
 these calls in a loop.  Without `inner=` a step is differentiable with respect
 to the data, the iterate, the regularization centre and `alpha`.  With
 `inner=` the inner solver runs over the derivative linearized at the iterate,
-and the gradient reaches the iterate through it.  The regularization weight is
-carried in the state and decays from the first block's `alpha`.
+and the gradient reaches the iterate through it.  A block's `alpha` is the
+weight of the first step, and the block taking step `k` applies it decayed `k`
+times: blocks with the same `alpha` follow BART's schedule, and blocks whose
+`alpha` requires a gradient learn one weight per step.
 
 ```python
 blocks = nn.ModuleList(nlop.IRGNMBlock(cg_maxiter=30) for _ in range(2))

@@ -34,7 +34,7 @@ class _Newton:
     """A noir model, a block over it, and ``iterations`` steps as one call.
 
     ``newton(y, xn, x0, alpha)`` takes prepared data, the iterate, the centre
-    and the weight -- a number or a vector as long as the state.  The pattern
+    and the first step's weight.  The pattern
     is the model's, so a step is taken over an encoding that already carries it.
     """
 
@@ -56,13 +56,11 @@ class _Newton:
     def plan(self):
         return self.block.plan(self.model)
 
-    def weight(self, alpha: float) -> torch.Tensor:
-        return torch.full(self.space.state_shape, float(alpha), dtype=torch.complex64)
-
     def __call__(self, y, xn, x0, alpha):
-        if not isinstance(alpha, torch.Tensor):
-            alpha = self.weight(alpha)
-        state = self.block.State(xn, x0, y, alpha, self.space)
+        """``iterations`` steps from step zero, the first at weight ``alpha``."""
+        if not self.block.alpha.requires_grad:
+            self.block.alpha.data.fill_(float(alpha))
+        state = self.block.State(xn, x0, y, self.space)
         for _ in range(self.iterations):
             state = self.block(state, self.model)
         return state.x
@@ -241,15 +239,19 @@ def test_every_argument_carries_a_gradient(problem, at):
     y = newton.prepare(kspace)
     x0 = newton.start()
 
-    order = {"data": 0, "iterate": 1, "centre": 2, "weight": 3}[at]
-    xs = [y, x0, x0, newton.weight(1.0)]
-    tracked = xs[order].clone().requires_grad_(True)
-    xs[order] = tracked
-
-    newton(*xs).abs().square().sum().backward()
-    assert tracked.grad is not None
-    assert torch.isfinite(tracked.grad).all()
-    assert torch.any(tracked.grad != 0)
+    if "weight" == at:
+        newton.block.alpha.requires_grad_(True)
+        newton(y, x0, x0, 1.0).abs().square().sum().backward()
+        grad = newton.block.alpha.grad
+    else:
+        xs = [y, x0, x0]
+        order = {"data": 0, "iterate": 1, "centre": 2}[at]
+        tracked = xs[order] = xs[order].clone().requires_grad_(True)
+        newton(*xs, 1.0).abs().square().sum().backward()
+        grad = tracked.grad
+    assert grad is not None
+    assert torch.isfinite(grad).all()
+    assert torch.any(grad != 0)
 
 
 def test_a_gentler_weighting_keeps_the_whole_gradient_in_range(problem):
@@ -265,7 +267,7 @@ def test_a_gentler_weighting_keeps_the_whole_gradient_in_range(problem):
     y = newton.prepare(kspace)
     x0 = newton.start()
     tracked = x0.clone().requires_grad_(True)
-    newton(y, tracked, x0, newton.weight(1.0)).abs().square().sum().backward()
+    newton(y, tracked, x0, 1.0).abs().square().sum().backward()
 
     size = tracked.grad.abs()
     assert torch.all(size > torch.finfo(torch.float32).tiny)
@@ -330,7 +332,7 @@ def test_an_inner_solver_takes_the_linearized_problem(problem):
     y = newton.prepare(kspace)
     x0 = newton.start()
     tracked = x0.clone().requires_grad_(True)
-    state = newton.block.State(tracked, x0, y, 1.0, newton.space)
+    state = newton.block.State(tracked, x0, y, newton.space)
     for _ in range(2):
         state = newton.block(state, newton.model)
     state.x.abs().square().sum().backward()

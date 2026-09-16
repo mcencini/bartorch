@@ -170,6 +170,53 @@ def test_every_argument_carries_the_gradient_the_written_out_loop_does(at, gener
     assert (got - want).abs().max() < 1e-4 * want.abs().max()
 
 
+def _stack(blocks, F, y, xn, x0):
+    state = blocks[0].start(y, F, x0=xn, xref=x0)
+    for block in blocks:
+        state = block(state, F)
+    return state.x
+
+
+def test_a_stack_of_blocks_with_one_alpha_is_the_schedule_to_the_bit(generator):
+    y, xn, x0 = _arguments(generator)
+    F = _model()
+    looped = stepped(nlop.IRGNMBlock(cg_maxiter=30), F, y, xn, x0, 3)
+    stacked = _stack([nlop.IRGNMBlock(cg_maxiter=30) for _ in range(3)], F, y, xn, x0)
+    schedule = nlop.IRGNM(iterations=3, cg_maxiter=30)(y, F, x0=xn, xref=x0)
+    assert torch.equal(looped, stacked)
+    image, coils = schedule
+    assert torch.equal(looped, torch.cat([image.reshape(-1), coils.reshape(-1)]))
+
+
+def test_a_block_at_step_k_applies_its_own_alpha_decayed_k_times(generator):
+    y, xn, x0 = _arguments(generator)
+    F = _model()
+    blocks = [
+        nlop.IRGNMBlock(alpha=0.8, cg_maxiter=200),
+        nlop.IRGNMBlock(alpha=3.0, cg_maxiter=200),
+    ]
+    got = _stack(blocks, F, y, xn, x0)
+    first = written_out(y, xn, x0, torch.full((STATE,), 0.8, dtype=torch.complex64), iterations=1)
+    want = written_out(y, first, x0, torch.full((STATE,), 1.5, dtype=torch.complex64), iterations=1)
+    assert (got - want).abs().max() < 1e-4 * want.abs().max()
+
+
+def test_learned_weights_are_one_per_block(generator):
+    y, xn, x0 = _arguments(generator)
+    F = _model()
+    frozen = _stack([nlop.IRGNMBlock(cg_maxiter=30) for _ in range(3)], F, y, xn, x0)
+    blocks = [nlop.IRGNMBlock(cg_maxiter=30) for _ in range(3)]
+    for block in blocks:
+        block.alpha.requires_grad_(True)
+    learned = _stack(blocks, F, y, xn, x0)
+    assert torch.equal(learned.detach(), frozen)
+
+    learned.abs().square().sum().backward()
+    grads = [block.alpha.grad.item() for block in blocks]
+    assert all(0 != g for g in grads)
+    assert len(set(grads)) == len(grads)
+
+
 def test_a_model_of_one_unknown_is_written_flat_too():
     """What the step asserts is the state's rank, not how many unknowns made it."""
     space = Linearized(linop.FFT((2, 3), axes=(-1,)).to_nonlinear())

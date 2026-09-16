@@ -78,9 +78,12 @@ class IRGNMBlock(nn.Module):
 
     ``state = block.start(y, F, x0, xref)`` prepares the data and the model,
     ``state = block(state, F)`` takes one step, and ``block.output(state, F)``
-    returns the unknowns.  ``F`` needs a :attr:`~bartorch.nlop.NonlinearOperator.bundle`.
-    A leading batch axis on ``y`` is a batch of independent items, each stepped
-    on its own.
+    returns the unknowns.  ``alpha`` is the weight of the first step: the block
+    taking step ``k`` applies it decayed ``k`` times, so one block looped, or a
+    stack of blocks with the same ``alpha``, is BART's schedule, and a stack
+    whose blocks learn ``alpha`` learns a weight per step.  ``F`` needs a
+    :attr:`~bartorch.nlop.NonlinearOperator.bundle`.  A leading batch axis on
+    ``y`` is a batch of independent items, each stepped on its own.
 
     Parameters
     ----------
@@ -118,7 +121,6 @@ class IRGNMBlock(nn.Module):
         x: torch.Tensor
         xref: torch.Tensor
         data: torch.Tensor
-        alpha: object
         space: object
         k: int = 0
 
@@ -197,61 +199,67 @@ class IRGNMBlock(nn.Module):
         else:
             x = space.state(x0).expand(*batch, *space.state_shape)
         centre = torch.zeros_like(x) if xref is None else space.state(xref).expand_as(x)
-        if self.inner is not None:
-            alpha = float(self.alpha)
-        elif self.alpha.requires_grad:
-            alpha = self.alpha.float().to(torch.complex64) * torch.ones_like(x)
-        else:
-            alpha = torch.full_like(x, float(self.alpha))
-        return self.State(x, centre, data, alpha, space)
+        return self.State(x, centre, data, space)
 
     def forward(self, state: State, F) -> State:
         space = state.space
         take = self._first if self.inner is None else self._second
         if space.batched(state.x, space.state_shape):
-            items = zip(state.x, state.xref, state.data, _items(state.alpha, len(state.x)))
-            x = torch.stack([take(space, *item) for item in items])
+            items = zip(state.x, state.xref, state.data)
+            x = torch.stack([take(space, *item, state.k) for item in items])
         else:
-            x = take(space, state.x, state.xref, state.data, state.alpha)
-        return dataclasses.replace(state, x=x, alpha=self._decay(state.alpha), k=state.k + 1)
+            x = take(space, state.x, state.xref, state.data, state.k)
+        return dataclasses.replace(state, x=x, k=state.k + 1)
 
     def output(self, state: State, F):
         """The unknowns: a tensor for a model of one input, else one per input."""
         parts = state.space.split(state.x)
         return parts[0] if 1 == len(parts) else parts
 
-    def _first(self, space, x, xref, data, alpha):
+    def _first(self, space, x, xref, data, k: int):
         """``noir_gauss_newton_step_create_s``'s expression, one item."""
         from bartorch.nlop.derivative import _evaluate
 
+        alpha = self._weight(k, x)
         residual = data - _evaluate(space.operator, x)
         rhs = _evaluate(space.adjoint, residual, x) - alpha * (x - xref)
         return x + _evaluate(space.inverse(x.device), rhs, x, alpha)
 
-    def _second(self, space, x, xref, data, alpha):
+    def _second(self, space, x, xref, data, k: int):
         """``irgnm2``'s step, one item: the linearization carried to the centre."""
         from bartorch.nlop.derivative import _evaluate
 
         residual = data - _evaluate(space.operator, x)
         derivative = space.flat.at(x)
         residual = residual + derivative.forward(x - xref)
-        return _at(self.inner, alpha)(residual, derivative) + xref
+        return _at(self.inner, self._number(k))(residual, derivative) + xref
 
-    def _decay(self, alpha):
-        if self.inner is None:
-            redu = _value(self.redu)
-            return (alpha - self.alpha_min) / redu + self.alpha_min
-        alpha = (alpha - self.alpha_min) / float(self.redu) + self.alpha_min
-        return self.alpha_min0 if alpha < self.alpha_min0 else alpha
+    def _weight(self, k: int, like: torch.Tensor) -> torch.Tensor:
+        """The first form's weight at step ``k``: a vector as long as the state.
+
+        Decayed one step at a time, in the arithmetic BART's schedule uses.
+        """
+        if self.alpha.requires_grad:
+            weight = self.alpha.float().to(torch.complex64) * torch.ones_like(like)
+        else:
+            weight = torch.full_like(like, float(self.alpha))
+        redu = _value(self.redu)
+        for _ in range(k):
+            weight = (weight - self.alpha_min) / redu + self.alpha_min
+        return weight
+
+    def _number(self, k: int) -> float:
+        """The second form's weight at step ``k``, which ``irgnm2`` keeps in a double."""
+        alpha, redu = float(self.alpha), float(self.redu)
+        for _ in range(k):
+            alpha = (alpha - self.alpha_min) / redu + self.alpha_min
+            if alpha < self.alpha_min0:
+                alpha = self.alpha_min0
+        return alpha
 
     def __repr__(self) -> str:
         inner = "" if self.inner is None else f", inner={type(self.inner).__name__}(...)"
         return f"IRGNMBlock(alpha={float(self.alpha)}, redu={float(self.redu)}{inner})"
-
-
-def _items(alpha, count: int):
-    """The weight per item: a batched tensor's rows, or one number for all."""
-    return alpha if isinstance(alpha, torch.Tensor) else [alpha] * count
 
 
 class IRGNM:
