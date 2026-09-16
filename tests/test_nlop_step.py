@@ -500,11 +500,13 @@ def test_a_model_of_items_steps_each_as_it_would_step_alone(off_grid):
         assert (together[i] - alone).abs().max() < 1e-5 * alone.abs().max()
 
     # Items share nothing: another item's data moves none of them beyond the
-    # transform's own reproducibility.
+    # transform's own reproducibility -- exact on a grid, and off it the order
+    # in which FINUFFT's threads spread, which varies between runs on some hosts.
     moved = kspace.clone()
     moved[0] *= 3.0
     others = run(fused, moved)[1:]
-    assert (others - together[1:]).abs().max() < 1e-10 * together[1:].abs().max()
+    floor = 1e-5 if off_grid else 1e-10
+    assert (others - together[1:]).abs().max() < floor * together[1:].abs().max()
 
 
 def test_a_model_of_items_carries_no_gradient_between_them():
