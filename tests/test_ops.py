@@ -114,8 +114,8 @@ def test_torch_function_becomes_a_bart_nonlinear_operator_with_a_correct_adjoint
     dx, dy = _rand(*shape), _rand(*shape)
     eps = 1e-3
     fd = (fn(x + eps * dx) - fn(x - eps * dx)) / (2 * eps)
-    torch.testing.assert_close(F.derivative(dx), fd, rtol=1e-2, atol=1e-2)
-    assert _inner(F.derivative(dx), dy) == pytest.approx(_inner(dx, F.adjoint(dy)), rel=1e-3)
+    torch.testing.assert_close(F._derivative(dx), fd, rtol=1e-2, atol=1e-2)
+    assert _inner(F._derivative(dx), dy) == pytest.approx(_inner(dx, F._adjoint(dy)), rel=1e-3)
 
 
 def test_gauss_newton_fits_a_mono_exponential_decay():

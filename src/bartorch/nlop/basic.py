@@ -96,12 +96,12 @@ class Sqrt(_Elementwise):
     _fn = "bartorch_nlop_zsqrt"
 
     def _bundle(self):
-        from bartorch.nlop.base import chain
+        from bartorch.nlop.base import _chain
         from bartorch.nlop.bundle import diagonal, scaled
 
         # `zsqrt_apply` fills the diagonal with 0.5 and divides it by the
         # value, so it is half the inverse of the root and not of the point.
-        half = chain(chain(Sqrt(self._shape), Inverse(self._shape)), scaled(self._shape, 0.5))
+        half = _chain(_chain(Sqrt(self._shape), Inverse(self._shape)), scaled(self._shape, 0.5))
         return diagonal(self, half)
 
 
@@ -173,13 +173,13 @@ class Inverse(_Elementwise):
         return (self.eps,)
 
     def _bundle(self):
-        from bartorch.nlop.base import chain
+        from bartorch.nlop.base import _chain
         from bartorch.nlop.bundle import diagonal, scaled
 
         # `zinv_reg_fun` squares the value and negates it, so the diagonal is
         # minus the square of the regularised inverse rather than of `1 / x`.
-        squared = Multiply(self._shape, self._shape).dup(0, 1)
-        made = chain(chain(Inverse(self._shape, self.eps), squared), scaled(self._shape, -1.0))
+        squared = Multiply(self._shape, self._shape)._dup(0, 1)
+        made = _chain(_chain(Inverse(self._shape, self.eps), squared), scaled(self._shape, -1.0))
         return diagonal(self, made)
 
     def __repr__(self) -> str:
@@ -199,7 +199,7 @@ class Power(_Elementwise):
         return (self.exponent.real, self.exponent.imag)
 
     def _bundle(self):
-        from bartorch.nlop.base import chain
+        from bartorch.nlop.base import _chain
         from bartorch.nlop.bundle import diagonal, scaled
 
         # `zspow_fun` divides the value by the point rather than raising the
@@ -207,8 +207,8 @@ class Power(_Elementwise):
         # BART divides with `md_zdiv` and `Divide` multiplies by the inverse,
         # so this is that diagonal to within one rounding rather than to the
         # bit.
-        ratio = chain(Power(self._shape, self.exponent), Divide(self._shape)).dup(0, 1)
-        return diagonal(self, chain(ratio, scaled(self._shape, self.exponent)))
+        ratio = _chain(Power(self._shape, self.exponent), Divide(self._shape))._dup(0, 1)
+        return diagonal(self, _chain(ratio, scaled(self._shape, self.exponent)))
 
     def __repr__(self) -> str:
         return f"Power({self._shape}, {self.exponent})"
@@ -283,16 +283,16 @@ class Sum(_Reduction):
         """
         from bartorch.linop.basic import Conj
         from bartorch.linop.shape import Real
-        from bartorch.nlop.base import FromLinear, chain
+        from bartorch.nlop.base import FromLinear, _chain
         from bartorch.nlop.bundle import _TenMul
 
-        product = chain(
+        product = _chain(
             FromLinear(Conj(self._shape)),
             _TenMul(self._out, self._shape, self._shape),
             output=0,
             input=0,
         )
-        return chain(product.dup(0, 1), FromLinear(Real(self._out)))
+        return _chain(product._dup(0, 1), FromLinear(Real(self._out)))
 
     def _bundle(self):
         from bartorch.nlop.bundle import of_composition
@@ -318,12 +318,12 @@ class RootSumOfSquares(_Reduction):
 
     def _composition(self):
         """``nlop_zrss_reg_create``: the sum of squares, offset where asked, rooted."""
-        from bartorch.nlop.base import chain
+        from bartorch.nlop.base import _chain
 
         made = Sum(self._shape, self.axes)
         if self.eps:
-            made = chain(made, Add(self._out, self.eps))
-        return chain(made, Sqrt(self._out))
+            made = _chain(made, Add(self._out, self.eps))
+        return _chain(made, Sqrt(self._out))
 
     def _bundle(self):
         from bartorch.nlop.bundle import of_composition
@@ -387,9 +387,9 @@ class Divide(NonlinearOperator):
 
     def _composition(self):
         """``nlop_zdiv_reg_create``: the divisor inverted, then multiplied in."""
-        from bartorch.nlop.base import chain
+        from bartorch.nlop.base import _chain
 
-        return chain(
+        return _chain(
             Inverse(self._shape, self.eps),
             Multiply(self._shape, self._shape),
             output=0,
@@ -420,12 +420,12 @@ class Weighted(NonlinearOperator):
         return _built(ptr, (self._shape, self._shape), (self._shape,))
 
     def _bundle(self):
-        from bartorch.nlop.base import combine
+        from bartorch.nlop.base import _combine
         from bartorch.nlop.bundle import linear, scaled
 
         # `a` and `b` are real, so the adjoint scales by them rather than by
         # their conjugates.
-        adjoint = combine(scaled(self._shape, self.a), scaled(self._shape, self.b)).dup(0, 1)
+        adjoint = _combine(scaled(self._shape, self.a), scaled(self._shape, self.b))._dup(0, 1)
         return linear(self, Weighted(self._shape, self.a, self.b), adjoint)
 
     def __repr__(self) -> str:
@@ -442,9 +442,9 @@ def Phase(shape: Shape) -> NonlinearOperator:  # noqa: N802
     value into the divisor, then the two inputs made one.
     """
     shape = tuple(shape)
-    from bartorch.nlop.base import chain
+    from bartorch.nlop.base import _chain
 
-    return chain(Abs(shape), Divide(shape), output=0, input=1).dup(0, 1)
+    return _chain(Abs(shape), Divide(shape), output=0, input=1)._dup(0, 1)
 
 
 class Constant(NonlinearOperator):

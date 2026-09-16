@@ -15,7 +15,7 @@ class Derivative(LinearOperator):
     ``nlop_get_derivative``.  This is a view: the point is wherever the
     operator's last application left it, and it moves with the next one, so
     it is wrong to hold on to across an unrelated evaluation.
-    :meth:`~bartorch.nlop.Bundle.at` gives the derivative at a point it holds.
+    :meth:`~bartorch.nlop.NonlinearOperator.linearize` gives the derivative at a point it holds.
 
     Parameters
     ----------
@@ -81,7 +81,7 @@ def _written(value, out):
 
 
 class Linearization(LinearOperator):
-    """``DF(xn)`` over a :class:`~bartorch.nlop.bundle.Bundle`, with ``xn`` held as a tensor.
+    """Derivative ``DF(xn)`` of a nonlinear operator, with ``xn`` held as a tensor.
 
     Each application passes the point to the bundle, so it does not depend on
     what was evaluated before it, and is differentiable by the point as well as
@@ -99,23 +99,23 @@ class Linearization(LinearOperator):
                 "a linearization is of an operator with one input and one output; flatten "
                 f"{type(op).__name__} first"
             )
-        self.bundle, self.point = bundle, point
+        self._members, self.point = bundle, point
         self.ishape, self.oshape = tuple(op.ishapes[0]), tuple(op.oshapes[0])
         self.device = getattr(point, "device", None)
         super().__init__()
 
     def at(self, point) -> Linearization:
         """The same derivative at another point."""
-        return Linearization(self.bundle, point)
+        return Linearization(self._members, point)
 
     def forward(self, x, out=None):
-        return _written(_evaluate(self.bundle.derivative, x, self.point), out)
+        return _written(_evaluate(self._members.derivative, x, self.point), out)
 
     def adjoint(self, y, out=None):
-        return _written(_evaluate(self.bundle.adjoint, y, self.point), out)
+        return _written(_evaluate(self._members.adjoint, y, self.point), out)
 
     def normal(self, x, out=None):
-        return _written(_evaluate(self.bundle.normal, x, self.point), out)
+        return _written(_evaluate(self._members.normal, x, self.point), out)
 
     def _as_callbacks(self) -> LinearOperator:
         import torch
@@ -132,4 +132,4 @@ class Linearization(LinearOperator):
         )
 
     def __repr__(self) -> str:
-        return f"Linearization({type(self.bundle.operator).__name__})"
+        return f"Linearization({type(self._members.operator).__name__})"

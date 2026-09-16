@@ -42,13 +42,13 @@ class _Apply(torch.autograd.Function):
                 continue
             if 1 == len(op.ishapes) == len(op.oshapes):
                 # The cheap path, and the only one a Python-defined operator has.
-                g = op.adjoint(grads[0])
+                g = op._adjoint(grads[0])
             else:
                 g = None
                 for o, grad in enumerate(grads):
                     if grad is None:
                         continue
-                    part = op.jacobian(o, at).adjoint(grad)
+                    part = op._jacobian(o, at).adjoint(grad)
                     g = part if g is None else g + part
                 if g is None:
                     g = torch.zeros(op.ishapes[at], dtype=torch.complex64, device=ctx.device)

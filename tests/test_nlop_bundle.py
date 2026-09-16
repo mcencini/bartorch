@@ -46,7 +46,7 @@ def point(name, generator):
 @pytest.mark.parametrize("name", sorted(ELEMENTWISE))
 def test_a_member_takes_the_tangent_first_and_the_point_after(name):
     op = ELEMENTWISE[name][0]
-    bundle = op.bundle
+    bundle = op._bundled
     assert bundle.derivative.ishapes == (*op.ishapes, *op.ishapes)
     assert bundle.derivative.oshapes == op.oshapes
     assert bundle.adjoint.ishapes == (*op.oshapes, *op.ishapes)
@@ -55,7 +55,7 @@ def test_a_member_takes_the_tangent_first_and_the_point_after(name):
 
 def test_the_tangent_comes_first_for_a_model_of_two_unknowns():
     op = nlop.Multiply((1, 6), (3, 6))
-    bundle = op.bundle
+    bundle = op._bundled
     assert bundle.derivative.ishapes == ((1, 6), (3, 6), (1, 6), (3, 6))
     assert bundle.adjoint.ishapes == ((3, 6), (1, 6), (3, 6))
     assert bundle.adjoint.oshapes == ((1, 6), (3, 6))
@@ -69,7 +69,7 @@ def test_the_derivative_is_torchs_jacobian_vector_product(name, generator):
     op, fn, _ = ELEMENTWISE[name]
     x, dx = point(name, generator), rand(SHAPE, generator)
     want = torch.func.jvp(fn, (x,), (dx,))[1]
-    assert torch.allclose(op.bundle.derivative(dx, x), want, atol=1e-5, rtol=1e-4)
+    assert torch.allclose(op._bundled.derivative(dx, x), want, atol=1e-5, rtol=1e-4)
 
 
 @pytest.mark.parametrize("name", sorted(ELEMENTWISE))
@@ -82,7 +82,7 @@ def test_the_derivative_is_the_limit_of_a_difference_quotient(name, generator):
     eps = 1e-2
     quotient = (op.forward(x + eps * dx) - op.forward(x - eps * dx)) / (2 * eps)
 
-    exact = op.bundle.derivative(dx, x)
+    exact = op._bundled.derivative(dx, x)
     assert (quotient - exact).abs().max() < 5e-3 * exact.abs().max()
 
 
@@ -90,8 +90,8 @@ def test_the_derivative_is_the_limit_of_a_difference_quotient(name, generator):
 def test_the_adjoint_satisfies_the_adjoint_identity(name, generator):
     op, _, _ = ELEMENTWISE[name]
     x, dx, dz = point(name, generator), rand(SHAPE, generator), rand(SHAPE, generator)
-    forward = (op.bundle.derivative(dx, x).conj() * dz).sum()
-    back = (dx.conj() * op.bundle.adjoint(dz, x)).sum()
+    forward = (op._bundled.derivative(dx, x).conj() * dz).sum()
+    back = (dx.conj() * op._bundled.adjoint(dz, x)).sum()
     assert abs(forward - back) < 1e-4 * abs(forward)
 
 
@@ -104,8 +104,8 @@ def test_the_adjoint_is_not_the_transpose(name, generator):
     """
     op, _, _ = ELEMENTWISE[name]
     x, dz = point(name, generator), rand(SHAPE, generator)
-    adjoint = op.bundle.adjoint(dz, x)
-    transpose = op.bundle.adjoint(dz.conj(), x).conj()
+    adjoint = op._bundled.adjoint(dz, x)
+    transpose = op._bundled.adjoint(dz.conj(), x).conj()
     assert not torch.allclose(adjoint, transpose, atol=1e-3)
 
 
@@ -113,10 +113,10 @@ def test_the_product_rule_is_what_multiply_differentiates_by(generator):
     op = nlop.Multiply((1, 6), (3, 6))
     a, b = rand((1, 6), generator), rand((3, 6), generator)
     da, db = rand((1, 6), generator), rand((3, 6), generator)
-    assert torch.allclose(op.bundle.derivative(da, db, a, b), da * b + a * db, atol=1e-5)
+    assert torch.allclose(op._bundled.derivative(da, db, a, b), da * b + a * db, atol=1e-5)
 
     dz = rand((3, 6), generator)
-    dx_a, dx_b = op.bundle.adjoint(dz, a, b)
+    dx_a, dx_b = op._bundled.adjoint(dz, a, b)
     assert torch.allclose(dx_a, (b.conj() * dz).sum(0, keepdim=True), atol=1e-5)
     assert torch.allclose(dx_b, a.conj() * dz, atol=1e-5)
 
@@ -125,8 +125,8 @@ def test_the_normal_is_the_derivative_followed_by_the_adjoint(generator):
     op = nlop.Multiply((1, 6), (3, 6))
     a, b = rand((1, 6), generator), rand((3, 6), generator)
     da, db = rand((1, 6), generator), rand((3, 6), generator)
-    got = op.bundle.normal(da, db, a, b)
-    want = op.bundle.adjoint(op.bundle.derivative(da, db, a, b), a, b)
+    got = op._bundled.normal(da, db, a, b)
+    want = op._bundled.adjoint(op._bundled.derivative(da, db, a, b), a, b)
     for one, other in zip(got, want):
         assert torch.allclose(one, other, atol=1e-5)
 
@@ -139,14 +139,14 @@ def test_the_point_is_an_argument_and_not_the_last_forward(name, generator):
     """A forward somewhere else between building and applying changes nothing."""
     op, _, _ = ELEMENTWISE[name]
     x, dx = point(name, generator), rand(SHAPE, generator)
-    want = op.bundle.derivative(dx, x)
+    want = op._bundled.derivative(dx, x)
     op.forward(point(name, generator))
-    assert torch.equal(op.bundle.derivative(dx, x), want)
+    assert torch.equal(op._bundled.derivative(dx, x), want)
 
 
 def test_a_linear_operators_bundle_ignores_the_point(generator):
     transform = linop.FFT(SHAPE, axes=(-1,))
-    bundle = transform.to_nonlinear().bundle
+    bundle = transform.to_nonlinear()._bundled
     dx, dz = rand(SHAPE, generator), rand(SHAPE, generator)
     for x in (rand(SHAPE, generator), rand(SHAPE, generator)):
         assert torch.equal(bundle.derivative(dx, x), transform.forward(dx))
@@ -155,10 +155,10 @@ def test_a_linear_operators_bundle_ignores_the_point(generator):
 
 def test_a_constant_has_no_cotangent_to_return(generator):
     made = nlop.Constant(rand(SHAPE, generator))
-    assert made.bundle.adjoint is None
-    assert torch.equal(made.bundle.derivative(), torch.zeros(SHAPE, dtype=torch.complex64))
+    assert made._bundled.adjoint is None
+    assert torch.equal(made._bundled.derivative(), torch.zeros(SHAPE, dtype=torch.complex64))
     with pytest.raises(NotImplementedError, match="no inputs"):
-        _ = made.bundle.normal
+        _ = made._bundled.normal
 
 
 def test_a_torch_operators_bundle_differentiates_the_function(generator):
@@ -166,11 +166,11 @@ def test_a_torch_operators_bundle_differentiates_the_function(generator):
     made = nlop.TorchOperator(fn, SHAPE, SHAPE)
     x, dx, dz = rand(SHAPE, generator), rand(SHAPE, generator), rand(SHAPE, generator)
 
-    forward = made.bundle.derivative(dx, x)
+    forward = made._bundled.derivative(dx, x)
     assert torch.allclose(forward, torch.func.jvp(fn, (x,), (dx,))[1], atol=1e-5)
 
     paired = (forward.conj() * dz).sum()
-    back = (dx.conj() * made.bundle.adjoint(dz, x)).sum()
+    back = (dx.conj() * made._bundled.adjoint(dz, x)).sum()
     assert abs(paired - back) < 1e-4 * abs(paired)
 
 
@@ -183,9 +183,9 @@ def test_the_bundle_agrees_with_the_derivative_at_the_stored_point(name, generat
     op, _, _ = ELEMENTWISE[name]
     x, dx = point(name, generator), rand(SHAPE, generator)
     op.forward(x)
-    assert torch.allclose(op.bundle.derivative(dx, x), op.derivative(dx), atol=1e-5, rtol=1e-5)
+    assert torch.allclose(op._bundled.derivative(dx, x), op._derivative(dx), atol=1e-5, rtol=1e-5)
     dz = rand(SHAPE, generator)
-    assert torch.allclose(op.bundle.adjoint(dz, x), op.adjoint(dz), atol=1e-5, rtol=1e-5)
+    assert torch.allclose(op._bundled.adjoint(dz, x), op._adjoint(dz), atol=1e-5, rtol=1e-5)
 
 
 # --- the chain rule ----------------------------------------------------------
@@ -194,7 +194,7 @@ def test_the_bundle_agrees_with_the_derivative_at_the_stored_point(name, generat
 def jacobians(op, xs, dxs, dzs):
     """What BART's own derivative at the stored point answers, summed over arguments."""
     op.forward(*xs)
-    jac = [[op.jacobian(o, i) for i in range(len(op.ishapes))] for o in range(len(op.oshapes))]
+    jac = [[op._jacobian(o, i) for i in range(len(op.ishapes))] for o in range(len(op.oshapes))]
     forward = [
         sum(jac[o][i].forward(dxs[i]) for i in range(len(op.ishapes)))
         for o in range(len(op.oshapes))
@@ -212,39 +212,39 @@ def tupled(made):
 
 def composed(generator):
     """One composition per node of the algebra, each with a bundle."""
-    from bartorch.nlop.base import chain, combine
+    from bartorch.nlop.base import _chain, _combine
 
     exp, log = nlop.Exp(SHAPE), nlop.Log(SHAPE)
     return {
         "chain": nlop.Exp(SHAPE) @ nlop.Log(SHAPE),
-        "chain2": chain(nlop.Exp(SHAPE), nlop.Multiply(SHAPE, SHAPE), output=0, input=1),
-        "combine": combine(exp, log),
-        "dup": nlop.Multiply(SHAPE, SHAPE).dup(0, 1),
-        "permute_inputs": nlop.Multiply((1, 6), (3, 6)).permute_inputs([1, 0]),
-        "reshape_input": nlop.Exp(SHAPE).reshape_input(0, (1, 6)),
-        "reshape_output": nlop.Exp(SHAPE).reshape_output(0, (1, 6)),
-        "del_out": combine(nlop.Exp(SHAPE), nlop.Log(SHAPE)).del_out(1),
+        "chain2": _chain(nlop.Exp(SHAPE), nlop.Multiply(SHAPE, SHAPE), output=0, input=1),
+        "combine": _combine(exp, log),
+        "dup": nlop.Multiply(SHAPE, SHAPE)._dup(0, 1),
+        "permute_inputs": nlop.Multiply((1, 6), (3, 6))._permute_inputs([1, 0]),
+        "reshape_input": nlop.Exp(SHAPE)._reshape_input(0, (1, 6)),
+        "reshape_output": nlop.Exp(SHAPE)._reshape_output(0, (1, 6)),
+        "del_out": _combine(nlop.Exp(SHAPE), nlop.Log(SHAPE))._del_out(1),
         "partial": nlop.Multiply(SHAPE, SHAPE).partial(1, rand(SHAPE, generator) + 3.0),
-        "nested": chain(
+        "nested": _chain(
             nlop.Exp(SHAPE) @ nlop.Log(SHAPE), nlop.Multiply(SHAPE, SHAPE), output=0, input=1
         ),
         # The operand that feeds the chain has an output left over, which is
         # the arithmetic the one-output cases never reach.
-        "chain from several outputs": chain(
-            combine(nlop.Exp(SHAPE), nlop.Log(SHAPE)),
+        "chain from several outputs": _chain(
+            _combine(nlop.Exp(SHAPE), nlop.Log(SHAPE)),
             nlop.Multiply(SHAPE, SHAPE),
             output=0,
             input=1,
         ),
-        "chain from the later output": chain(
-            combine(nlop.Exp(SHAPE), nlop.Log(SHAPE)),
+        "chain from the later output": _chain(
+            _combine(nlop.Exp(SHAPE), nlop.Log(SHAPE)),
             nlop.Multiply(SHAPE, SHAPE),
             output=1,
             input=0,
         ),
-        "chain into several outputs": chain(
+        "chain into several outputs": _chain(
             nlop.Multiply(SHAPE, SHAPE),
-            combine(nlop.Exp(SHAPE), nlop.Log(SHAPE)),
+            _combine(nlop.Exp(SHAPE), nlop.Log(SHAPE)),
             output=0,
             input=1,
         ),
@@ -260,9 +260,9 @@ def test_a_composed_bundle_is_barts_own_derivative(name, generator):
     dzs = [rand(s, generator) for s in op.oshapes]
     want_d, want_a = jacobians(op, xs, dxs, dzs)
 
-    for got, want in zip(tupled(op.bundle.derivative(*dxs, *xs)), want_d):
+    for got, want in zip(tupled(op._bundled.derivative(*dxs, *xs)), want_d):
         assert torch.allclose(got, want, atol=1e-5, rtol=1e-4)
-    for got, want in zip(tupled(op.bundle.adjoint(*dzs, *xs)), want_a):
+    for got, want in zip(tupled(op._bundled.adjoint(*dzs, *xs)), want_a):
         assert torch.allclose(got, want, atol=1e-5, rtol=1e-4)
 
 
@@ -272,46 +272,46 @@ def test_a_composed_bundle_satisfies_the_adjoint_identity(name, generator):
     xs = [rand(s, generator) + 3.0 for s in op.ishapes]
     dxs = [rand(s, generator) for s in op.ishapes]
     dzs = [rand(s, generator) for s in op.oshapes]
-    forward = tupled(op.bundle.derivative(*dxs, *xs))
-    back = tupled(op.bundle.adjoint(*dzs, *xs))
+    forward = tupled(op._bundled.derivative(*dxs, *xs))
+    back = tupled(op._bundled.adjoint(*dzs, *xs))
     paired = sum((one.conj() * dz).sum() for one, dz in zip(forward, dzs))
     other = sum((dx.conj() * one).sum() for dx, one in zip(dxs, back))
     assert abs(paired - other) < 1e-4 * abs(paired)
 
 
 def test_the_chain_rule_is_torchs_own_over_the_written_out_composition(generator):
-    from bartorch.nlop.base import chain
+    from bartorch.nlop.base import _chain
 
-    op = chain(nlop.Exp(SHAPE), nlop.Multiply(SHAPE, SHAPE), output=0, input=1)
+    op = _chain(nlop.Exp(SHAPE), nlop.Multiply(SHAPE, SHAPE), output=0, input=1)
     fn = lambda a, x: a * torch.exp(x)  # noqa: E731
 
     a, x = rand(SHAPE, generator), rand(SHAPE, generator)
     da, dx = rand(SHAPE, generator), rand(SHAPE, generator)
     want = torch.func.jvp(fn, (a, x), (da, dx))[1]
-    assert torch.allclose(op.bundle.derivative(da, dx, a, x), want, atol=1e-5, rtol=1e-4)
+    assert torch.allclose(op._bundled.derivative(da, dx, a, x), want, atol=1e-5, rtol=1e-4)
 
     dz = rand(SHAPE, generator)
     back = torch.func.vjp(fn, a, x)[1](dz)
-    for got, one in zip(op.bundle.adjoint(dz, a, x), back):
+    for got, one in zip(op._bundled.adjoint(dz, a, x), back):
         assert torch.allclose(got, one, atol=1e-5, rtol=1e-4)
 
 
 def test_a_composed_bundle_does_not_move_with_a_forward_elsewhere(generator):
     op = nlop.Exp(SHAPE) @ nlop.Log(SHAPE)
     x, dx = rand(SHAPE, generator) + 3.0, rand(SHAPE, generator)
-    want = op.bundle.derivative(dx, x)
+    want = op._bundled.derivative(dx, x)
     op.forward(rand(SHAPE, generator) + 3.0)
-    assert torch.equal(op.bundle.derivative(dx, x), want)
+    assert torch.equal(op._bundled.derivative(dx, x), want)
 
 
 def test_a_link_has_no_bundle():
     """A tie is a feedback edge, and its rule needs the whole graph rather than the node."""
-    from bartorch.nlop.base import combine
+    from bartorch.nlop.base import _combine
 
     # BART applies a combination back to front, so `Log` produces before `Exp`
     # consumes and the tie is the one the algebra allows.
-    made = combine(nlop.Exp(SHAPE), nlop.Log(SHAPE)).link(1, 0)
-    assert made.bundle is None
+    made = _combine(nlop.Exp(SHAPE), nlop.Log(SHAPE))._link(1, 0)
+    assert made._bundled is None
 
 
 @pytest.mark.parametrize("name", sorted(composed(torch.Generator().manual_seed(0))))
@@ -324,8 +324,8 @@ def test_a_composed_normal_is_its_own_derivative_followed_by_its_own_adjoint(nam
         pytest.skip("a normal operator is defined for one output")
     xs = [rand(s, generator) + 3.0 for s in op.ishapes]
     dxs = [rand(s, generator) for s in op.ishapes]
-    got = tupled(op.bundle.normal(*dxs, *xs))
-    want = tupled(op.bundle.adjoint(op.bundle.derivative(*dxs, *xs), *xs))
+    got = tupled(op._bundled.normal(*dxs, *xs))
+    want = tupled(op._bundled.adjoint(op._bundled.derivative(*dxs, *xs), *xs))
     for one, other in zip(got, want):
         assert torch.equal(one, other)
 
@@ -363,9 +363,9 @@ def test_a_derived_bundle_is_barts_own_derivative(name, generator):
     dzs = [rand(shape, generator) for shape in op.oshapes]
     want_d, want_a = jacobians(op, xs, dxs, dzs)
 
-    for got, want in zip(tupled(op.bundle.derivative(*dxs, *xs)), want_d):
+    for got, want in zip(tupled(op._bundled.derivative(*dxs, *xs)), want_d):
         assert torch.allclose(got, want, atol=1e-5, rtol=1e-4)
-    for got, want in zip(tupled(op.bundle.adjoint(*dzs, *xs)), want_a):
+    for got, want in zip(tupled(op._bundled.adjoint(*dzs, *xs)), want_a):
         assert torch.allclose(got, want, atol=1e-5, rtol=1e-4)
 
 
@@ -376,7 +376,7 @@ def test_a_derived_derivative_is_torchs_jacobian_vector_product(name, generator)
         pytest.skip("no torch function writes this one in one line")
     x, dx = rand(SHAPE, generator) + 3.0, rand(SHAPE, generator)
     want = torch.func.jvp(fn, (x,), (dx,))[1]
-    assert torch.allclose(op.bundle.derivative(dx, x), want, atol=1e-5, rtol=1e-4)
+    assert torch.allclose(op._bundled.derivative(dx, x), want, atol=1e-5, rtol=1e-4)
 
 
 @pytest.mark.parametrize("name", sorted(DERIVED))
@@ -393,10 +393,10 @@ def test_a_derived_adjoint_is_adjoint_over_the_reals(name, generator):
     dzs = [rand(shape, generator) for shape in op.oshapes]
 
     forward = sum(
-        (one.conj() * dz).sum() for one, dz in zip(tupled(op.bundle.derivative(*dxs, *xs)), dzs)
+        (one.conj() * dz).sum() for one, dz in zip(tupled(op._bundled.derivative(*dxs, *xs)), dzs)
     )
     back = sum(
-        (dx.conj() * one).sum() for dx, one in zip(dxs, tupled(op.bundle.adjoint(*dzs, *xs)))
+        (dx.conj() * one).sum() for dx, one in zip(dxs, tupled(op._bundled.adjoint(*dzs, *xs)))
     )
 
     assert abs(forward.real - back.real) < 1e-4 * abs(forward)
@@ -411,5 +411,5 @@ def test_the_phase_operator_follows_from_the_two_it_is_built_of(generator):
     op = nlop.Phase(SHAPE)
     x, dx, dz = rand(SHAPE, generator) + 3.0, rand(SHAPE, generator), rand(SHAPE, generator)
     want_d, want_a = jacobians(op, [x], [dx], [dz])
-    assert torch.allclose(op.bundle.derivative(dx, x), want_d[0], atol=1e-5, rtol=1e-4)
-    assert torch.allclose(op.bundle.adjoint(dz, x), want_a[0], atol=1e-5, rtol=1e-4)
+    assert torch.allclose(op._bundled.derivative(dx, x), want_d[0], atol=1e-5, rtol=1e-4)
+    assert torch.allclose(op._bundled.adjoint(dz, x), want_a[0], atol=1e-5, rtol=1e-4)

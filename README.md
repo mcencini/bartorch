@@ -27,7 +27,7 @@ platform notes.
 | Reconstruct with a BART application | `bartorch.tools`: `pics`, `nlinv`, `ecalib` |
 | Build an encoding and solve it | `bartorch.linop` and `bartorch.optim` |
 | Transform, filter or register arrays | the functions in `bartorch` |
-| Fit a torch signal model | `bartorch.nlop` and `bartorch.optim.IRGNM` |
+| Fit a torch signal model | `bartorch.nlop`: `SignalModel`, `TorchOperator`, `IRGNM` |
 
 ## Quickstart
 

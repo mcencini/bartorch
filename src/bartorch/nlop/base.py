@@ -17,7 +17,7 @@ from bartorch._dispatch import BartError, _ensure_ready, _lock, _on_device
 from bartorch._lib import DIMS, library
 from bartorch._operator import Built, Operator, Shape, _Handle, as_operand, dims
 
-__all__ = ["Chain", "FromLinear", "NonlinearOperator", "chain", "combine"]
+__all__ = ["Chain", "FromLinear", "NonlinearOperator"]
 
 
 def _built(
@@ -87,8 +87,8 @@ def _agree(a: NonlinearOperator, output: int, b: NonlinearOperator, input: int):
     shape = a.oshapes[output]
     padded = (1,) * (max(here, there) - len(shape)) + tuple(shape)
     if here < there:
-        return a.reshape_output(output, padded), b
-    return a, b.reshape_input(input, padded)
+        return a._reshape_output(output, padded), b
+    return a, b._reshape_input(input, padded)
 
 
 def arity(ptr: int) -> tuple[tuple[Shape, ...], tuple[Shape, ...]]:
@@ -125,20 +125,18 @@ def _bart_axis(axis: int, shape: Shape) -> int:
 class NonlinearOperator(Operator):
     """Nonlinear operator between tensor shapes, with a derivative and its adjoint.
 
-    :meth:`derivative` and :meth:`adjoint` are taken at the point of the last
-    :meth:`forward` call, which is how BART's solvers use them.  The backward
-    pass of ``F(x)`` is ``adjoint`` at that point, so evaluating the operator
-    elsewhere between a forward and a backward pass gives a wrong gradient.
+    ``F(x)`` applies the operator and, for a tensor that requires a gradient,
+    records the application; the backward pass is the adjoint of the
+    derivative at ``x``.  ``a @ b`` composes, applying ``b`` first, and either
+    side may be a :class:`~bartorch.linop.LinearOperator`.  :meth:`partial`
+    fixes one input to a value, and :meth:`linearize` gives the derivative at
+    a point as a linear operator.
 
     An operator may take more than one input and return more than one output;
     :attr:`ishapes` and :attr:`oshapes` are the shape of each, and
     :attr:`ishape` and :attr:`oshape` are the whole of it when there is one of
-    each.  The algebra in :mod:`bartorch.nlop` builds the many-argument
-    ones: :func:`combine`, :func:`chain`, :meth:`link`, :meth:`dup`.
-
-    A subclass is defined either by :meth:`_create`, which builds one of
-    BART's operators, or in Python by :meth:`forward`, :meth:`derivative` and
-    :meth:`adjoint`.
+    each.  An operator is defined in Python by :meth:`from_callbacks` or by
+    :class:`~bartorch.nlop.TorchOperator`.
 
     Attributes
     ----------
@@ -161,10 +159,10 @@ class NonlinearOperator(Operator):
             self._build()
         elif any(
             getattr(type(self), name) is getattr(NonlinearOperator, name)
-            for name in ("forward", "derivative", "adjoint")
+            for name in ("forward", "_derivative", "_adjoint")
         ):
             raise TypeError(
-                f"{type(self).__name__} must define _create, or forward, derivative and adjoint"
+                f"{type(self).__name__} must define _create, or forward, _derivative and _adjoint"
             )
 
     # --- shape ------------------------------------------------------------
@@ -233,7 +231,7 @@ class NonlinearOperator(Operator):
         """Which evaluation stage each output and each input belongs to.
 
         BART evaluates a combination back to front: ``operator_combi_create``
-        applies its operands in reverse, so in ``combine(a, b)`` it is ``b``
+        applies its operands in reverse, so in ``_combine(a, b)`` it is ``b``
         that runs first.  That is why ``nlop_chain2`` combines ``b`` with ``a``
         and not the other way round, and it is why linking an output into an
         input that is consumed earlier reads a buffer nothing has written yet
@@ -256,11 +254,11 @@ class NonlinearOperator(Operator):
             return self._apply(library().bartorch_nlop_apply, xs[0], self.ishape, self.oshape)
         return self._apply_generic(xs)
 
-    def derivative(self, dx: torch.Tensor) -> torch.Tensor:
+    def _derivative(self, dx: torch.Tensor) -> torch.Tensor:
         """``DF(x) dx`` at the last evaluated point, for one input and one output."""
         return self._apply(library().bartorch_nlop_derivative, dx, self.ishape, self.oshape)
 
-    def adjoint(self, dy: torch.Tensor) -> torch.Tensor:
+    def _adjoint(self, dy: torch.Tensor) -> torch.Tensor:
         """``DF(x)^H dy`` at the last evaluated point, for one input and one output."""
         return self._apply(library().bartorch_nlop_adjoint, dy, self.oshape, self.ishape)
 
@@ -297,7 +295,7 @@ class NonlinearOperator(Operator):
                 "behind it; build it from one-argument pieces with the algebra instead"
             )
         return NonlinearOperator.from_callbacks(
-            self.oshape, self.ishape, self.forward, self.derivative, self.adjoint
+            self.oshape, self.ishape, self.forward, self._derivative, self._adjoint
         )
 
     @classmethod
@@ -316,10 +314,10 @@ class NonlinearOperator(Operator):
 
     # --- the derivative as a linear operator -------------------------------
 
-    def jacobian(self, output: int = 0, input: int = 0):  # noqa: A002
+    def _jacobian(self, output: int = 0, input: int = 0):  # noqa: A002
         """``DF/dx_input`` of one output at the last evaluated point.
 
-        Returned as a :class:`~bartorch.nlop.Derivative`, to which the whole
+        Returned as a ``Derivative``, to which the whole
         linear surface applies -- its adjoint, its normal operator, a solve
         over it.  The point is wherever the last :meth:`forward` left it, and
         it moves with the next one: this is a view of the operator's
@@ -331,11 +329,11 @@ class NonlinearOperator(Operator):
         return Derivative(self, output, input)
 
     def _bundle(self):
-        """This operator's :class:`~bartorch.nlop.bundle.Bundle`, or ``None`` where it has none."""
+        """This operator's derivative as a function of the point, or ``None`` where it has none."""
         return None
 
     @cached_property
-    def bundle(self):
+    def _bundled(self):
         """The derivative and adjoint with the linearization point as an argument.
 
         ``None`` where the operator has none; such an operator has no
@@ -344,25 +342,52 @@ class NonlinearOperator(Operator):
         """
         return self._bundle()
 
-    def linearize(self, *xs: torch.Tensor):
+    def linearize(self, *xs: torch.Tensor, input: int | None = None, output: int = 0):  # noqa: A002
         """The derivative at ``x``, as a :class:`~bartorch.linop.LinearOperator`.
 
-        For an operator of one input and one output.  With a :attr:`bundle` the
-        result is ``bundle.at(x)``: it holds ``x``, answers the same whatever is
-        evaluated afterwards, and is differentiable by ``x``.  Without one it
-        evaluates the operator at ``x`` and answers at the last evaluated
-        point, as :meth:`jacobian` does.  For an operator of several
-        arguments, :meth:`flatten` it first, or evaluate and take a
-        :meth:`jacobian`.
+        ``xs`` is one tensor per input.  ``input`` selects the input the
+        derivative is taken by, the others held at their values; ``None`` takes
+        it by all of them laid end to end, as a Gauss-Newton step does, and the
+        result's domain is then one vector.  ``output`` selects the output.
+
+        The result holds ``x``: it answers the same whatever is evaluated
+        afterwards, and is differentiable by ``x``.  An operator that does not
+        supply its derivative as a function of the point answers at the last
+        evaluated point instead.
         """
         from bartorch.linop.base import LinearOperator
+        from bartorch.nlop.derivative import Linearization
+        from bartorch.nlop.step import flattened
 
-        if 1 == len(xs) == len(self.ishapes) == len(self.oshapes) and self.bundle is not None:
-            return self.bundle.at(xs[0])
-        self.forward(*xs)
-        return LinearOperator.from_callbacks(
-            self.oshape, self.ishape, self.derivative, self.adjoint
-        )
+        if len(xs) != len(self.ishapes):
+            raise ValueError(f"the operator takes {len(self.ishapes)} inputs, got {len(xs)}")
+        op = self
+        output = _index(output, len(op.oshapes), "output")
+        for other in reversed(range(len(op.oshapes))):
+            if other != output:
+                op = op._del_out(other)
+        point = xs
+        if input is not None and 1 < len(xs):
+            input = _index(input, len(xs), "input")
+            for other in reversed(range(len(xs))):
+                if other != input:
+                    op = op.partial(other, xs[other])
+            point = (xs[input],)
+
+        bundle = op._bundled
+        if bundle is not None:
+            if 1 == len(point):
+                return Linearization(bundle, point[0])
+            joined = torch.cat([x.reshape(-1) for x in point])
+            return Linearization(flattened(bundle), joined)
+
+        if 1 < len(point):
+            op = op._flatten(inputs_only=True)
+            point = (torch.cat([x.reshape(-1) for x in point]),)
+        op.forward(*point)
+        if op._native:
+            return op._jacobian(0, 0)
+        return LinearOperator.from_callbacks(op.oshape, op.ishape, op._derivative, op._adjoint)
 
     def __call__(self, *xs: torch.Tensor):
         """``F(x)``, recorded for autograd when an input requires a gradient."""
@@ -378,7 +403,7 @@ class NonlinearOperator(Operator):
 
     # --- the algebra -------------------------------------------------------
 
-    def link(self, output: int = 0, input: int = 0) -> NonlinearOperator:  # noqa: A002
+    def _link(self, output: int = 0, input: int = 0) -> NonlinearOperator:  # noqa: A002
         """Tie an output back into an input; both arguments go away.
 
         ``nlop_link``.  What is left is ``f(..., g(...), ...)`` with the
@@ -386,7 +411,7 @@ class NonlinearOperator(Operator):
         """
         return _Link(self, output, input)
 
-    def reshape_input(self, input: int, shape: Shape) -> NonlinearOperator:  # noqa: A002
+    def _reshape_input(self, input: int, shape: Shape) -> NonlinearOperator:  # noqa: A002
         """This operator with one input's shape written differently.
 
         ``nlop_reshape_in``.  The number of entries has to be the same; what
@@ -396,14 +421,14 @@ class NonlinearOperator(Operator):
         """
         return _Reshape(self, input, shape, output=False)
 
-    def reshape_output(self, output: int, shape: Shape) -> NonlinearOperator:
+    def _reshape_output(self, output: int, shape: Shape) -> NonlinearOperator:
         """This operator with one output's shape written differently.
 
         ``nlop_reshape_out``.  See :meth:`reshape_input`.
         """
         return _Reshape(self, output, shape, output=True)
 
-    def dup(self, a: int = 0, b: int = 1) -> NonlinearOperator:
+    def _dup(self, a: int = 0, b: int = 1) -> NonlinearOperator:
         """Make two inputs of the same shape one input, kept at ``a``.
 
         ``nlop_dup``.  The derivative by the surviving input is the sum of the
@@ -411,7 +436,7 @@ class NonlinearOperator(Operator):
         """
         return _Dup(self, a, b)
 
-    def stack_inputs(self, a: int, b: int, axis: int) -> NonlinearOperator:
+    def _stack_inputs(self, a: int, b: int, axis: int) -> NonlinearOperator:
         """Make two inputs one, concatenated along a C-order ``axis``.
 
         ``nlop_stack_inputs``.  The stacked input takes the lower of the two
@@ -419,28 +444,28 @@ class NonlinearOperator(Operator):
         """
         return _Stack(self, a, b, axis, inputs=True)
 
-    def stack_outputs(self, a: int, b: int, axis: int) -> NonlinearOperator:
+    def _stack_outputs(self, a: int, b: int, axis: int) -> NonlinearOperator:
         """Make two outputs one, concatenated along a C-order ``axis``.
 
         ``nlop_stack_outputs``.
         """
         return _Stack(self, a, b, axis, inputs=False)
 
-    def permute_inputs(self, perm) -> NonlinearOperator:
+    def _permute_inputs(self, perm) -> NonlinearOperator:
         """Reorder the inputs: the new input ``i`` is the old ``perm[i]``."""
         return _Permute(self, perm, outputs=False)
 
-    def permute_outputs(self, perm) -> NonlinearOperator:
+    def _permute_outputs(self, perm) -> NonlinearOperator:
         """Reorder the outputs: the new output ``o`` is the old ``perm[o]``."""
         return _Permute(self, perm, outputs=True)
 
-    def shift_input(self, new: int, old: int) -> NonlinearOperator:
+    def _shift_input(self, new: int, old: int) -> NonlinearOperator:
         """Move one input to another position, the rest closing up behind it."""
-        return self.permute_inputs(_shifted(len(self.ishapes), new, old))
+        return self._permute_inputs(_shifted(len(self.ishapes), new, old))
 
-    def shift_output(self, new: int, old: int) -> NonlinearOperator:
+    def _shift_output(self, new: int, old: int) -> NonlinearOperator:
         """Move one output to another position, the rest closing up behind it."""
-        return self.permute_outputs(_shifted(len(self.oshapes), new, old))
+        return self._permute_outputs(_shifted(len(self.oshapes), new, old))
 
     def partial(self, input: int, value) -> NonlinearOperator:  # noqa: A002
         """Fix one input to ``value``; the input goes away.
@@ -452,14 +477,14 @@ class NonlinearOperator(Operator):
         """
         return _Pinned(self, input, value)
 
-    def del_out(self, output: int = 0) -> NonlinearOperator:
+    def _del_out(self, output: int = 0) -> NonlinearOperator:
         """Drop an output, and everything computed only for it.
 
         ``nlop_del_out``.
         """
         return _DelOut(self, output)
 
-    def flatten(self, inputs_only: bool = False) -> NonlinearOperator:
+    def _flatten(self, inputs_only: bool = False) -> NonlinearOperator:
         """Every input as one flat vector, and every output as another.
 
         ``nlop_flatten``.  What a two-unknown model needs to reach a solver
@@ -469,11 +494,11 @@ class NonlinearOperator(Operator):
         """
         return _Flattened(self, inputs_only)
 
-    def combine(self, other: NonlinearOperator) -> NonlinearOperator:
+    def _combine(self, other: NonlinearOperator) -> NonlinearOperator:
         """Place ``self`` and ``other`` side by side, sharing no argument."""
-        return combine(self, other)
+        return _combine(self, other)
 
-    def chain(
+    def _chain(
         self,
         other: NonlinearOperator,
         *,
@@ -481,7 +506,7 @@ class NonlinearOperator(Operator):
         input: int = 0,  # noqa: A002
     ) -> NonlinearOperator:
         """Feed one output of ``self`` into one input of ``other``."""
-        return chain(self, other, output=output, input=input)
+        return _chain(self, other, output=output, input=input)
 
     def __matmul__(self, other):
         """``self @ other`` applies ``other`` first, as one BART operator."""
@@ -614,7 +639,7 @@ class _Combine(_Binary):
         return of_combine(self, self.a, self.b)
 
     def __repr__(self) -> str:
-        return f"combine({self.a!r}, {self.b!r})"
+        return f"_combine({self.a!r}, {self.b!r})"
 
 
 class _Chain2(_Binary):
@@ -661,7 +686,7 @@ class _Chain2(_Binary):
         return of_chain(self, self.a, self.b, self.output, self.input)
 
     def __repr__(self) -> str:
-        return f"chain({self.a!r}, {self.b!r}, output={self.output}, input={self.input})"
+        return f"_chain({self.a!r}, {self.b!r}, output={self.output}, input={self.input})"
 
 
 def _without(shapes: tuple, at: int) -> tuple:
@@ -747,9 +772,9 @@ class _Link(_Unary):
             shape = x.oshapes[self.output]
             padded = (1,) * (max(here, there) - len(shape)) + tuple(shape)
             x = (
-                x.reshape_output(self.output, padded)
+                x._reshape_output(self.output, padded)
                 if here < there
-                else x.reshape_input(self.input, padded)
+                else x._reshape_input(self.input, padded)
             )
         produced, consumed = x._stages[0][self.output], x._stages[1][self.input]
         if produced >= consumed:
@@ -757,7 +782,7 @@ class _Link(_Unary):
                 f"output {self.output} is produced after input {self.input} is read, so the "
                 "link would read a buffer nothing has written yet.  BART applies a "
                 "combination back to front, so the operator that produces goes second in "
-                "combine(); chain() puts them in that order for you"
+                "_combine(); _chain() puts them in that order for you"
             )
         super().__init__(x)
 
@@ -1018,15 +1043,15 @@ class _Flattened(_Unary):
         from bartorch.nlop.bundle import Bundle
         from bartorch.nlop.step import flattened
 
-        inner = self.x.bundle
+        inner = self.x._bundled
         if inner is None or (not self.inputs_only and 1 != len(self.x.oshapes)):
             return None
         made = flattened(inner)
         derivative, adjoint = made.derivative, made.adjoint
         if not self.inputs_only:
             size = (sum(self.out_sizes),)
-            derivative = derivative.reshape_output(0, size)
-            adjoint = adjoint.reshape_input(0, size)
+            derivative = derivative._reshape_output(0, size)
+            adjoint = adjoint._reshape_input(0, size)
         return Bundle(self, derivative, adjoint, source=inner.source)
 
     def __repr__(self) -> str:
@@ -1074,7 +1099,7 @@ class _Pinned(_Unary):
         return f"{self.x!r}.partial({self.input}, ...)"
 
 
-def combine(a: NonlinearOperator, b: NonlinearOperator) -> NonlinearOperator:
+def _combine(a: NonlinearOperator, b: NonlinearOperator) -> NonlinearOperator:
     """Place ``a`` and ``b`` side by side, sharing no argument.
 
     ``nlop_combine``.  The result takes ``a``'s inputs and then ``b``'s, and
@@ -1092,7 +1117,7 @@ def combine(a: NonlinearOperator, b: NonlinearOperator) -> NonlinearOperator:
     return _Combine(a, b)
 
 
-def chain(
+def _chain(
     a: NonlinearOperator,
     b: NonlinearOperator,
     *,

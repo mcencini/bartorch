@@ -82,7 +82,7 @@ class IRGNMBlock(nn.Module):
     taking step ``k`` applies it decayed ``k`` times, so one block looped, or a
     stack of blocks with the same ``alpha``, is BART's schedule, and a stack
     whose blocks learn ``alpha`` learns a weight per step.  ``F`` needs a
-    :attr:`~bartorch.nlop.NonlinearOperator.bundle`.  A leading batch axis on
+    :attr:`~bartorch.nlop.NonlinearOperator._bundled`.  A leading batch axis on
     ``y`` is a batch of independent items, each stepped on its own; a model that
     holds its items, as ``CoilSense(..., items=True)`` does, is stepped as one,
     with each item's inner problem solved on its own.
@@ -178,7 +178,7 @@ class IRGNMBlock(nn.Module):
     def plan(self, F):
         """What ``F`` was lowered into, as a :class:`~bartorch.nlop.plan.Plan`.
 
-        ``plan.bundle`` says where the derivative came from, ``plan.domain``
+        ``plan.derivative`` says where the derivative came from, ``plan.domain``
         whether the step works against the normal operator or applies the
         encoding forward and adjoint, ``plan.encoding`` the linear part's own
         plan, and ``plan.fused`` whether the coil model was rewritten.

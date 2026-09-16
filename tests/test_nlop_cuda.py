@@ -18,7 +18,7 @@ import torch
 import bartorch
 import bartorch.tools as bt
 from bartorch import linop, nlop
-from bartorch.nlop.base import chain
+from bartorch.nlop.base import _chain
 
 requires_cuda = pytest.mark.skipif(
     not bartorch._cuda.available(), reason="no CUDA device, or the library was built without CUDA"
@@ -54,13 +54,13 @@ def test_a_bundle_answers_on_the_card_what_it_answers_on_the_host(which):
     dxs = [_rand(*shape) for shape in op.ishapes]
     dzs = [_rand(*shape) for shape in op.oshapes]
 
-    host = op.bundle.derivative(*dxs, *xs)
-    device = op.bundle.derivative(*(t.cuda() for t in dxs), *(t.cuda() for t in xs))
+    host = op._bundled.derivative(*dxs, *xs)
+    device = op._bundled.derivative(*(t.cuda() for t in dxs), *(t.cuda() for t in xs))
     assert device.device.type == "cuda"
     torch.testing.assert_close(device.cpu(), host, rtol=1e-4, atol=1e-5)
 
     def back(tensors):
-        made = op.bundle.adjoint(*tensors)
+        made = op._bundled.adjoint(*tensors)
         return (made,) if isinstance(made, torch.Tensor) else made
 
     on_host = back([*dzs, *xs])
@@ -74,12 +74,12 @@ def test_a_bundle_answers_on_the_card_what_it_answers_on_the_host(which):
 def test_a_composed_bundle_answers_on_the_card():
     """The chain rule recomputes the intermediate point, so the recomputation runs there too."""
     torch.manual_seed(0)
-    op = chain(nlop.Exp(SHAPE), nlop.Multiply(SHAPE, SHAPE), output=0, input=1)
+    op = _chain(nlop.Exp(SHAPE), nlop.Multiply(SHAPE, SHAPE), output=0, input=1)
     xs = [_rand(*shape) + 3.0 for shape in op.ishapes]
     dxs = [_rand(*shape) for shape in op.ishapes]
 
-    host = op.bundle.derivative(*dxs, *xs)
-    device = op.bundle.derivative(*(t.cuda() for t in dxs), *(t.cuda() for t in xs))
+    host = op._bundled.derivative(*dxs, *xs)
+    device = op._bundled.derivative(*(t.cuda() for t in dxs), *(t.cuda() for t in xs))
     torch.testing.assert_close(device.cpu(), host, rtol=1e-4, atol=1e-5)
 
 

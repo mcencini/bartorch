@@ -13,6 +13,7 @@ import pytest
 import torch
 
 from bartorch import linop, nlop, optim, priors
+from bartorch.nlop.base import _chain
 
 
 def _rand(*shape):
@@ -22,7 +23,7 @@ def _rand(*shape):
 def _decay(n: int = 24):
     """``exp(-t p)`` as one BART operator, and data from a known ``p``."""
     t = torch.linspace(0.2, 3.0, n, dtype=torch.complex64)
-    F = nlop.chain(nlop.Multiply((n,), (n,)).partial(0, -t), nlop.Exp((n,)))
+    F = _chain(nlop.Multiply((n,), (n,)).partial(0, -t), nlop.Exp((n,)))
     truth = torch.full((n,), 0.7, dtype=torch.complex64)
     return F, torch.exp(-t * truth), truth
 
@@ -221,7 +222,7 @@ def test_a_linear_operator_is_taken_as_a_nonlinear_one():
 def test_a_two_unknown_model_reaches_it_through_flatten():
     shape = (2, 8, 8)
     F = nlop.CartesianSense(shape)
-    flat = F.flatten(inputs_only=True)
+    flat = F._flatten(inputs_only=True)
     import math
 
     sizes = [math.prod(s) for s in F.ishapes]

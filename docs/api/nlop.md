@@ -1,10 +1,9 @@
 # Nonlinear operators
 
-`bartorch.nlop`.  A nonlinear operator maps *many* inputs to *many* outputs and
-carries its derivative, and that derivative's adjoint, at the last evaluated
-point.  Arguments are counted outputs first, then inputs.  Applying an operator
-to a tensor that requires a gradient records the application for autograd; the
-backward pass is the adjoint of the derivative at that point.
+`bartorch.nlop`.  A nonlinear operator maps one or more inputs to one or more
+outputs and supplies its derivative and the derivative's adjoint.  Applying an
+operator to a tensor that requires a gradient records the application for
+autograd; the backward pass is the adjoint of the derivative at that point.
 
 ```{eval-rst}
 .. currentmodule:: bartorch.nlop
@@ -49,30 +48,20 @@ contrasts, and is fitted by {class}`IRGNM`.
    Bloch
 ```
 
-## Nonlinear operators and operator algebra
+## Nonlinear operators
 
-`a @ b` composes, applying `b` first; either side may be a
-{class}`~bartorch.linop.LinearOperator`.  Operators with several arguments are
-combined and rearranged by methods.  `F.chain(G, output=i, input=j)` feeds
-output `i` of `F` into input `j` of `G`, and `F.combine(G)` places the two side
-by side; {func}`chain` and {func}`combine` are the same operations as functions.
-`F.link`, `F.dup`, `F.pin`, `F.del_out`, `F.stack_inputs`, `F.stack_outputs`,
-`F.permute_inputs`, `F.permute_outputs`, `F.shift_input`, `F.shift_output`,
-`F.reshape_input`, `F.reshape_output` and `F.flatten` rearrange the arguments
-of one operator.  Each returns a {class}`NonlinearOperator`; the concrete types
-are not part of the interface.
+`F(x)` applies an operator and, for a tensor that requires a gradient, records
+the application.  `a @ b` composes, applying `b` first; either side may be a
+{class}`~bartorch.linop.LinearOperator`.  `F.partial(i, value)` fixes input
+`i` to `value`, so `nlop.Exp(s) @ nlop.Multiply(s, s).partial(0, -t)` is
+`exp(-t x)`.
 
-The derivative is available in three forms, which differ in where the
-linearization point is held:
-
-| Form | Linearization point | Differentiable by the point |
-| --- | --- | --- |
-| `F.jacobian(o, i)`, a {class}`Derivative` | the last evaluation of `F`, moving with the next | no |
-| `F.linearize(x)`, for one input and one output | `x`, held by the operator | yes |
-| `F.bundle`, a {class}`Bundle` | an explicit argument of each member | yes |
-
-`F.linearize(x)` is `F.bundle.at(x)`, and falls back to the first form for an
-operator without a bundle.  A bundle is what {class}`IRGNMBlock` applies.
+`F.linearize(*x)` is the derivative at `x` as a linear operator.  It holds
+`x`: it answers the same whatever is evaluated afterwards, and it is
+differentiable with respect to `x`.  `input=` selects the input the derivative
+is taken by, with the others held at their values; without it the derivative
+is taken by all inputs laid end to end, which is how a Gauss-Newton step sees
+them.  `output=` selects the output.
 
 ```{eval-rst}
 .. autosummary::
@@ -80,10 +69,6 @@ operator without a bundle.  A bundle is what {class}`IRGNMBlock` applies.
    :nosignatures:
 
    NonlinearOperator
-   chain
-   combine
-   Derivative
-   Bundle
 ```
 
 ## Elementary operators
@@ -112,16 +97,10 @@ operator without a bundle.  A bundle is what {class}`IRGNMBlock` applies.
 
 ## User-defined operators
 
-A function of several tensors becomes an operator of several inputs, so a
-denoiser's weights become arguments of the operator graph rather than values
-captured by closure.  {meth}`NonlinearOperator.from_callbacks` takes the
-forward, the derivative and the adjoint as functions; {class}`TorchOperator` takes
-one differentiable function and obtains the other two from autograd.
-
-A tensor captured by closure inside a Python callback is not an input of the
-operator, so no cotangent is propagated to it.  Pass such weights as explicit
-operator arguments instead; {class}`Parameters` packs a module's parameters
-into one argument for this purpose.
+{meth}`NonlinearOperator.from_callbacks` takes the forward, the derivative and
+the adjoint as functions.  {class}`TorchOperator` takes one differentiable
+function and obtains the other two from autograd.  Either can be fitted by
+{class}`IRGNM`, composed with `@`, and linearized.
 
 ```{eval-rst}
 .. autosummary::
@@ -129,7 +108,6 @@ into one argument for this purpose.
    :nosignatures:
 
    TorchOperator
-   Parameters
 ```
 
 ## Gauss-Newton methods

@@ -1,22 +1,14 @@
 """Nonlinear operators, BART's own and Python-defined, composable with linear ones.
 
-An operator maps many inputs to many outputs, as BART's ``nlop_s`` does, and
-the algebra here is ``nlops/chain.h``: :func:`combine` puts two side by side,
-:func:`chain` feeds one output into one input, and
-:meth:`~bartorch.nlop.NonlinearOperator.link`,
-:meth:`~bartorch.nlop.NonlinearOperator.dup`,
-:meth:`~bartorch.nlop.NonlinearOperator.stack_inputs` and the permutations
-rearrange what is left.  Arguments are counted BART's way -- outputs first,
-then inputs.
+An operator maps one or more inputs to one or more outputs, as BART's
+``nlop_s`` does.  ``@`` composes, :meth:`~bartorch.nlop.NonlinearOperator.partial`
+fixes an input, and :meth:`~bartorch.nlop.NonlinearOperator.linearize` gives
+the derivative at a point.
 """
 
 from __future__ import annotations
 
-from bartorch.nlop.base import (
-    NonlinearOperator,
-    chain,
-    combine,
-)
+from bartorch.nlop.base import NonlinearOperator
 from bartorch.nlop.basic import (
     Abs,
     Add,
@@ -34,9 +26,7 @@ from bartorch.nlop.basic import (
     Sum,
     Weighted,
 )
-from bartorch.nlop.bundle import Bundle
-from bartorch.nlop.callback import Parameters, TorchOperator
-from bartorch.nlop.derivative import Derivative
+from bartorch.nlop.callback import TorchOperator
 from bartorch.nlop.irgnm import IRGNM, IRGNMBlock, irgnm
 from bartorch.nlop.mri import (
     CartesianSense,
@@ -55,34 +45,29 @@ __all__ = [
     "Abs",
     "Add",
     "Bloch",
-    "Bundle",
     "CartesianSense",
     "CoilSense",
     "Constant",
-    "Derivative",
     "Divide",
     "Exp",
-    "TorchOperator",
-    "SignalModel",
-    "IRGNM",
-    "IRGNMBlock",
-    "InversionRecovery",
     "Inverse",
+    "InversionRecovery",
+    "IRGNM",
+    "irgnm",
+    "IRGNMBlock",
     "Log",
     "MultiEcho",
     "Multiply",
     "NoncartesianSense",
     "NonlinearOperator",
     "NonlinearSense",
-    "Parameters",
     "Phase",
     "Power",
     "RootSumOfSquares",
+    "SignalModel",
     "SmoothAbs",
     "Sqrt",
     "Sum",
+    "TorchOperator",
     "Weighted",
-    "chain",
-    "combine",
-    "irgnm",
 ]

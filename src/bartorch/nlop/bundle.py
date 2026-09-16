@@ -15,7 +15,7 @@ import torch
 
 from bartorch._lib import DIMS, library
 from bartorch._operator import Built, Shape, dims
-from bartorch.nlop.base import FromLinear, NonlinearOperator, _built, chain, combine
+from bartorch.nlop.base import FromLinear, NonlinearOperator, _built, _chain, _combine
 
 __all__ = ["Bundle"]
 
@@ -63,8 +63,8 @@ def ignoring(op: NonlinearOperator, shapes) -> NonlinearOperator:
     for shape in shapes:
         # A null map to one element rather than an identity, so the point is
         # never copied to be thrown away.
-        made = combine(made, FromLinear(Zero((1,) * len(shape), shape)))
-        made = made.del_out(len(made.oshapes) - 1)
+        made = _combine(made, FromLinear(Zero((1,) * len(shape), shape)))
+        made = made._del_out(len(made.oshapes) - 1)
     return made
 
 
@@ -72,7 +72,7 @@ def conjugate(op: NonlinearOperator) -> NonlinearOperator:
     """``conj(op(...))``, for the one-output case."""
     from bartorch.linop.basic import Conj
 
-    return chain(op, FromLinear(Conj(op.oshape)), output=0, input=0)
+    return _chain(op, FromLinear(Conj(op.oshape)), output=0, input=0)
 
 
 def scaled(shape: Shape, value: complex) -> NonlinearOperator:
@@ -161,10 +161,10 @@ class Bundle:
         # The chain leaves the adjoint's point in front of the derivative's
         # arguments, so the tangents are brought to the front and the two
         # copies of the point are made one, which is `noir_get_normal`.
-        made = chain(self.derivative, self.adjoint, output=0, input=0)
-        made = made.permute_inputs([*range(n, 2 * n), *range(n), *range(2 * n, 3 * n)])
+        made = _chain(self.derivative, self.adjoint, output=0, input=0)
+        made = made._permute_inputs([*range(n, 2 * n), *range(n), *range(2 * n, 3 * n)])
         for at in range(n):
-            made = made.dup(n + at, 2 * n)
+            made = made._dup(n + at, 2 * n)
         return made
 
     def at(self, point):
@@ -210,7 +210,7 @@ def _only_output(op: NonlinearOperator, at: int) -> NonlinearOperator:
     made = op
     for output in reversed(range(len(op.oshapes))):
         if output != at:
-            made = made.del_out(output)
+            made = made._del_out(output)
     return made
 
 
@@ -222,7 +222,7 @@ def of_chain(node, first, second, output: int, at: int) -> Bundle | None:
     the coil model's linear parts.  ``None`` where either operand has no
     bundle, or where ``first`` takes no input and so returns no cotangent.
     """
-    one, two = first.bundle, second.bundle
+    one, two = first._bundled, second._bundled
     if one is None or two is None or one.adjoint is None or two.adjoint is None:
         return None
 
@@ -235,12 +235,12 @@ def of_chain(node, first, second, output: int, at: int) -> Bundle | None:
     # Both copies are handed the same point by construction -- that is what
     # the duplications below are for -- so the derivative BART stores in it is
     # the same either way.
-    made = chain(one.derivative, two.derivative, output=output, input=at)
-    made = chain(_only_output(first, output), made, output=0, input=(nb - 1) + at)
+    made = _chain(one.derivative, two.derivative, output=output, input=at)
+    made = _chain(_only_output(first, output), made, output=0, input=(nb - 1) + at)
     base = 2 * nb - 2
     for j in range(na):
-        made = made.dup(base + na + j, base + 2 * na)
-    derivative = made.permute_inputs(
+        made = made._dup(base + na + j, base + 2 * na)
+    derivative = made._permute_inputs(
         [
             *range(nb - 1),
             *range(base, base + na),
@@ -251,21 +251,21 @@ def of_chain(node, first, second, output: int, at: int) -> Bundle | None:
 
     p, q = ma - 1, ma - 1 + na
     r, s = q + mb, q + mb + nb - 1
-    made = chain(two.adjoint, one.adjoint, output=at, input=output)
-    made = chain(_only_output(first, output), made, output=0, input=p + na + mb + at)
+    made = _chain(two.adjoint, one.adjoint, output=at, input=output)
+    made = _chain(_only_output(first, output), made, output=0, input=p + na + mb + at)
     for j in range(na):
-        made = made.dup(p + j, s)
-    adjoint = made.permute_inputs([*range(q, r), *range(p), *range(r, s), *range(p, q)])
+        made = made._dup(p + j, s)
+    adjoint = made._permute_inputs([*range(q, r), *range(p), *range(r, s), *range(p, q)])
     # The chain returns `first`'s cotangents first and the node's inputs put
     # `second`'s first, so the outputs are read the other way round.
-    adjoint = adjoint.permute_outputs([*range(na, na + nb - 1), *range(na)])
+    adjoint = adjoint._permute_outputs([*range(na, na + nb - 1), *range(na)])
 
     return Bundle(node, derivative, adjoint, source="chain rule")
 
 
 def of_combine(node, a, b) -> Bundle | None:
     """The chain rule for two operators side by side: block diagonal in both members."""
-    one, two = a.bundle, b.bundle
+    one, two = a._bundled, b._bundled
     if one is None or two is None or one.adjoint is None or two.adjoint is None:
         return None
 
@@ -274,7 +274,7 @@ def of_combine(node, a, b) -> Bundle | None:
 
     # Each member lays its own tangents and point end to end, and the node
     # wants every tangent before every point.
-    derivative = combine(one.derivative, two.derivative).permute_inputs(
+    derivative = _combine(one.derivative, two.derivative)._permute_inputs(
         [
             *range(na),
             *range(2 * na, 2 * na + nb),
@@ -282,7 +282,7 @@ def of_combine(node, a, b) -> Bundle | None:
             *range(2 * na + nb, 2 * na + 2 * nb),
         ]
     )
-    adjoint = combine(one.adjoint, two.adjoint).permute_inputs(
+    adjoint = _combine(one.adjoint, two.adjoint)._permute_inputs(
         [
             *range(ma),
             *range(ma + na, ma + na + mb),
@@ -297,65 +297,65 @@ def of_dup(node, x, a: int, b: int) -> Bundle | None:
     """The chain rule for two inputs made one: the tangent paths add, the point is shared."""
     from bartorch.nlop.basic import Weighted
 
-    inner = x.bundle
+    inner = x._bundled
     if inner is None or inner.adjoint is None:
         return None
 
     n, m = len(x.ishapes), len(x.oshapes)
     # The later of a pair goes, so the point's pair is merged first and the
     # tangents' own indices do not move under it.
-    derivative = inner.derivative.dup(n + a, n + b).dup(a, b)
+    derivative = inner.derivative._dup(n + a, n + b)._dup(a, b)
 
-    made = inner.adjoint.dup(m + a, m + b)
+    made = inner.adjoint._dup(m + a, m + b)
     # Both cotangents survive `nlop_dup`, and the one the merged input takes
     # is their sum.
-    made = chain(made, Weighted(x.ishapes[a], 1.0, 1.0), output=a, input=0)
+    made = _chain(made, Weighted(x.ishapes[a], 1.0, 1.0), output=a, input=0)
     # The sum leads the outputs and the other cotangent has moved up one.
-    made = made.link(b, 0)
+    made = made._link(b, 0)
 
     rest = [at for at in range(n) if at not in (a, b)]
     target = [at for at in range(n) if at != b]
-    adjoint = made.permute_outputs([0 if at == a else 1 + rest.index(at) for at in target])
+    adjoint = made._permute_outputs([0 if at == a else 1 + rest.index(at) for at in target])
     return Bundle(node, derivative, adjoint, source="chain rule")
 
 
 def of_permute(node, x, perm, *, outputs: bool) -> Bundle | None:
     """The chain rule for reordered arguments: the tangents move with them."""
-    inner = x.bundle
+    inner = x._bundled
     if inner is None or inner.adjoint is None:
         return None
 
     n, m = len(x.ishapes), len(x.oshapes)
     if outputs:
-        derivative = inner.derivative.permute_outputs(perm)
-        adjoint = inner.adjoint.permute_inputs([*perm, *range(m, m + n)])
+        derivative = inner.derivative._permute_outputs(perm)
+        adjoint = inner.adjoint._permute_inputs([*perm, *range(m, m + n)])
     else:
-        derivative = inner.derivative.permute_inputs([*perm, *(n + p for p in perm)])
-        adjoint = inner.adjoint.permute_inputs([*range(m), *(m + p for p in perm)]).permute_outputs(
-            perm
-        )
+        derivative = inner.derivative._permute_inputs([*perm, *(n + p for p in perm)])
+        adjoint = inner.adjoint._permute_inputs(
+            [*range(m), *(m + p for p in perm)]
+        )._permute_outputs(perm)
     return Bundle(node, derivative, adjoint, source="chain rule")
 
 
 def of_reshape(node, x, at: int, shape: Shape, *, output: bool) -> Bundle | None:
     """The chain rule for one argument written at another rank, which moves no bytes."""
-    inner = x.bundle
+    inner = x._bundled
     if inner is None or inner.adjoint is None:
         return None
 
     n, m = len(x.ishapes), len(x.oshapes)
     if output:
-        derivative = inner.derivative.reshape_output(at, shape)
-        adjoint = inner.adjoint.reshape_input(at, shape)
+        derivative = inner.derivative._reshape_output(at, shape)
+        adjoint = inner.adjoint._reshape_input(at, shape)
     else:
-        derivative = inner.derivative.reshape_input(at, shape).reshape_input(n + at, shape)
-        adjoint = inner.adjoint.reshape_input(m + at, shape).reshape_output(at, shape)
+        derivative = inner.derivative._reshape_input(at, shape)._reshape_input(n + at, shape)
+        adjoint = inner.adjoint._reshape_input(m + at, shape)._reshape_output(at, shape)
     return Bundle(node, derivative, adjoint, source="chain rule")
 
 
 def of_pinned(node, x, at: int, value) -> Bundle | None:
     """The chain rule for an input held fixed: no tangent of its own, and the point is the value."""
-    inner = x.bundle
+    inner = x._bundled
     if inner is None or inner.adjoint is None:
         return None
 
@@ -363,17 +363,17 @@ def of_pinned(node, x, at: int, value) -> Bundle | None:
     zero = torch.zeros_like(value)
     # The point first, so pinning it does not move the tangent's index.
     derivative = inner.derivative.partial(n + at, value).partial(at, zero)
-    adjoint = inner.adjoint.partial(m + at, value).del_out(at)
+    adjoint = inner.adjoint.partial(m + at, value)._del_out(at)
     return Bundle(node, derivative, adjoint, source="chain rule")
 
 
 def of_del_out(node, x, at: int) -> Bundle | None:
     """The chain rule for a dropped output: it carries no tangent and its cotangent is zero."""
-    inner = x.bundle
+    inner = x._bundled
     if inner is None or inner.adjoint is None:
         return None
 
-    derivative = inner.derivative.del_out(at)
+    derivative = inner.derivative._del_out(at)
     zero = torch.zeros(x.oshapes[at], dtype=torch.complex64)
     adjoint = inner.adjoint.partial(at, zero)
     return Bundle(node, derivative, adjoint, source="chain rule")
@@ -389,14 +389,14 @@ def of_product(node, out: Shape, a: Shape, b: Shape) -> Bundle:
     from bartorch.linop.basic import Conj
     from bartorch.nlop.basic import Weighted
 
-    made = combine(_TenMul(out, a, b), _TenMul(out, a, b))  # in: a, db, da, b
-    made = made.permute_inputs([2, 1, 0, 3])  # in: da, db, a, b
-    derivative = chain(made, Weighted(out, 1.0, 1.0), output=0, input=0).link(1, 0)
+    made = _combine(_TenMul(out, a, b), _TenMul(out, a, b))  # in: a, db, da, b
+    made = made._permute_inputs([2, 1, 0, 3])  # in: da, db, a, b
+    derivative = _chain(made, Weighted(out, 1.0, 1.0), output=0, input=0)._link(1, 0)
 
-    first = chain(FromLinear(Conj(b)), _TenMul(a, b, out), output=0, input=0)
-    second = chain(FromLinear(Conj(a)), _TenMul(b, a, out), output=0, input=0)
-    adjoint = combine(first, second)  # in: dz, b, dz, a
-    adjoint = adjoint.permute_inputs([0, 2, 3, 1]).dup(0, 1)  # in: dz, a, b
+    first = _chain(FromLinear(Conj(b)), _TenMul(a, b, out), output=0, input=0)
+    second = _chain(FromLinear(Conj(a)), _TenMul(b, a, out), output=0, input=0)
+    adjoint = _combine(first, second)  # in: dz, b, dz, a
+    adjoint = adjoint._permute_inputs([0, 2, 3, 1])._dup(0, 1)  # in: dz, a, b
 
     return Bundle(node, derivative, adjoint)
 
@@ -411,7 +411,7 @@ def of_composition(node, written) -> Bundle | None:
     """
     if written.ishapes != node.ishapes or written.oshapes != node.oshapes:
         return None
-    inner = written.bundle
+    inner = written._bundled
     if inner is None:
         return None
     return Bundle(node, inner.derivative, inner.adjoint, source=inner.source)
@@ -427,8 +427,8 @@ def diagonal(operator: NonlinearOperator, diag: NonlinearOperator) -> Bundle:
     shape = operator.ishape
     return Bundle(
         operator,
-        chain(diag, _TenMul(shape, shape, shape), output=0, input=1),
-        chain(conjugate(diag), _TenMul(shape, shape, shape), output=0, input=1),
+        _chain(diag, _TenMul(shape, shape, shape), output=0, input=1),
+        _chain(conjugate(diag), _TenMul(shape, shape, shape), output=0, input=1),
     )
 
 

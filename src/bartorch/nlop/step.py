@@ -35,9 +35,9 @@ def _laid_out(op: NonlinearOperator, first: int, count: int, sizes, items: int =
     """
     made = op
     for at in range(count):
-        made = made.reshape_input(first + at, _row(sizes[at], items))
+        made = made._reshape_input(first + at, _row(sizes[at], items))
     for _ in range(count - 1):
-        made = made.stack_inputs(first, first + 1, len(_row(1, items)) - 1)
+        made = made._stack_inputs(first, first + 1, len(_row(1, items)) - 1)
     return made
 
 
@@ -69,9 +69,9 @@ def flattened(bundle: Bundle, items: int = 1) -> Bundle:
 
     adjoint = _laid_out(bundle.adjoint, m, n, sizes, items)
     for at in range(n):
-        adjoint = adjoint.reshape_output(at, _row(sizes[at], items))
+        adjoint = adjoint._reshape_output(at, _row(sizes[at], items))
     for _ in range(n - 1):
-        adjoint = adjoint.stack_outputs(0, 1, len(_row(1, items)) - 1)
+        adjoint = adjoint._stack_outputs(0, 1, len(_row(1, items)) - 1)
 
     return Bundle(forward, derivative, adjoint)
 
@@ -121,7 +121,7 @@ class Linearized:
     """
 
     def __init__(self, F, *, cg_maxiter=30, cg_tol=0.0, cg_lambda=0.0, fuse=True, inverse=True):
-        if F.bundle is None:
+        if F._bundled is None:
             raise TypeError(
                 f"{type(F).__name__} supplies no derivative as a function of the point, so no "
                 "Gauss-Newton step can be taken over it"
@@ -136,7 +136,7 @@ class Linearized:
         self.items = int(getattr(F, "items", 1))
         #: What the model was lowered into, what prepares its data, and the plan.
         self.lowered, self._prepare, self.plan = _plan.build(F, fuse=fuse)
-        self.flat = flattened(self.lowered.bundle, self.items)
+        self.flat = flattened(self.lowered._bundled, self.items)
         self._solve = (cg_maxiter, cg_tol, cg_lambda) if inverse else None
         self._inverses: dict = {}
 

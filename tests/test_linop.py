@@ -648,3 +648,23 @@ def test_a_linearization_holds_its_point():
     point = x.clone().requires_grad_(True)
     F.linearize(point)(dx).abs().square().sum().backward()
     assert torch.isfinite(point.grad).all() and (point.grad != 0).any()
+
+
+def test_a_linearization_takes_one_input_or_all_of_them():
+    shape = (4,)
+    F = nlop.Multiply(shape, shape)
+    a, b, d = _rand(4), _rand(4), _rand(4)
+    torch.testing.assert_close(F.linearize(a, b, input=0)(d), d * b, rtol=1e-5, atol=1e-5)
+    torch.testing.assert_close(F.linearize(a, b, input=1)(d), a * d, rtol=1e-5, atol=1e-5)
+    whole = F.linearize(a, b)
+    assert ((8,), (4,)) == (whole.ishape, whole.oshape)
+    both = torch.cat([d, 2 * d])
+    torch.testing.assert_close(whole(both), d * b + a * 2 * d, rtol=1e-5, atol=1e-5)
+
+
+def test_a_linearization_takes_one_output():
+    shape = (4,)
+    F = nlop.TorchOperator(lambda x: (torch.exp(x), x * x), shape, [shape, shape])
+    x, d = _rand(4) * 0.3, _rand(4)
+    torch.testing.assert_close(F.linearize(x, output=0)(d), torch.exp(x) * d, rtol=1e-4, atol=1e-5)
+    torch.testing.assert_close(F.linearize(x, output=1)(d), 2 * x * d, rtol=1e-4, atol=1e-5)

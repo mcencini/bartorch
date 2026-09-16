@@ -4,7 +4,9 @@
 A solver loops a block, reproducing BART's iteration schedule -- step sizes,
 penalty updates and stopping -- and is called as `solver(y, A, x0=None)`.  The
 functional forms, such as `optim.fista(y, A, term)`, construct a solver and call
-it in one expression.
+it in one expression.  A leading axis on `y` beyond `A`'s codomain is a batch of
+independent problems, which a solver takes one run at a time: its stopping
+rule, its adaptive steps and a term's random shifts belong to the run.
 
 ```{eval-rst}
 .. currentmodule:: bartorch.optim
@@ -85,6 +87,14 @@ for block in blocks:
 image = blocks[-1].output(state, A)
 ```
 
+A block over a batch applies the operator item by item, and a term that draws
+random shifts draws them per item; the scalars that drive ADMM's and PRIDU's
+adaptive steps are computed over the whole batch.
+
+The operator may be the derivative of a nonlinear operator at a point,
+`F.linearize(x)`.  The gradient then reaches `x` as well: through each
+application in IST, FISTA and PRIDU, and through the implicit x-update in ADMM.
+
 Two parts of a step are outside the graph.  BART's proximal operators have no
 implemented backward pass.  The residual norms that drive the schedule -- an
 adaptive `rho`, an adaptive step size -- are deliberately detached, so they
@@ -109,7 +119,10 @@ unroll: `solver(y, A)` runs its block `maxiter` times in Python, and the whole
 iteration is recorded.  {class}`CG` instead records the solve as a single
 operation and obtains the gradient analytically -- `x = N^-1 A^H y` is linear in
 `y`, so the vector-Jacobian product is one further solve with the same normal
-operator followed by a forward application.
+operator followed by a forward application.  Over `F.linearize(x)` the solve is
+differentiated by `x` too, through one further application of the normal
+operator at `x`.  {class}`ADMM`'s x-update is a conjugate-gradient solve inside
+the unrolled iteration, and is differentiated the same way.
 
 {class}`FixedPoint` is a third route, and wraps a block rather than being a
 solver.  It drives the block to its fixed point and differentiates implicitly

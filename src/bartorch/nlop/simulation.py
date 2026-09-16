@@ -86,7 +86,7 @@ class SignalModel(_Callback):
 
     Under an encoding:
 
-    >>> F = nlop.chain(M, encoding.to_nonlinear())
+    >>> F = encoding @ M
     >>> maps = nlop.IRGNM()(kspace, F, x0=M.initial(T2=80.0))
     >>> M.split(maps)["T2"]
     """

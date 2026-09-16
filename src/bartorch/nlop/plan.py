@@ -22,7 +22,7 @@ class Plan:
 
     Attributes
     ----------
-    bundle : str or None
+    derivative : str or None
         Where the derivative came from: ``"declared"``, ``"chain rule"``,
         ``"linear"``, ``"torch"``, or ``None`` for a model that has none.
     domain : str
@@ -36,13 +36,13 @@ class Plan:
         was declined because the encoding's normal is no cheaper than the pair.
     """
 
-    bundle: str | None = None
+    derivative: str | None = None
     domain: str = "paired"
     encoding: object | None = None
     fused: bool = False
 
     def __repr__(self) -> str:
-        parts = [f"bundle={self.bundle}", f"domain={self.domain}", f"fused={self.fused}"]
+        parts = [f"derivative={self.derivative}", f"domain={self.domain}", f"fused={self.fused}"]
         if self.encoding is not None:
             parts.append(f"encoding={self.encoding!r}")
         return f"Plan({', '.join(parts)})"
@@ -101,14 +101,14 @@ def lower(description: Coils) -> NonlinearOperator | None:
     non-Cartesian model.
     """
     from bartorch.linop.basic import Identity
-    from bartorch.nlop.base import chain
+    from bartorch.nlop.base import _chain
     from bartorch.nlop.bundle import Asymmetric
 
     if description.lowered:
         return None
     encoding = description.encoding
     stage = Asymmetric(encoding.gram(), Identity(encoding.ishape), source=encoding)
-    return chain(description.product, stage, output=0, input=0)
+    return _chain(description.product, stage, output=0, input=0)
 
 
 def build(F, *, fuse: bool = True) -> tuple[NonlinearOperator, LinearOperator | None, Plan]:
@@ -121,10 +121,10 @@ def build(F, *, fuse: bool = True) -> tuple[NonlinearOperator, LinearOperator | 
     that domain is past declining.
     """
     description = describe(F)
-    bundle = F.bundle
+    bundle = F._bundled
     source = None if bundle is None else bundle.source
     if description is None:
-        return F, None, Plan(bundle=source)
+        return F, None, Plan(derivative=source)
 
     encoding = description.encoding.plan
     if description.lowered:
@@ -133,4 +133,4 @@ def build(F, *, fuse: bool = True) -> tuple[NonlinearOperator, LinearOperator | 
     made = None if not fuse else lower(description)
     if made is None:
         return F, None, Plan(source, "paired", encoding, False)
-    return made, description.encoding.H, Plan(made.bundle.source, "normal", encoding, True)
+    return made, description.encoding.H, Plan(made._bundled.source, "normal", encoding, True)
