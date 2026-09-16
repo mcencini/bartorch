@@ -36,7 +36,8 @@ class Regularizer(abc.ABC):
     Attributes
     ----------
     kind : str
-        BART's letter for the term, as ``pics -R`` writes it.
+        BART's identifier for the regularizer, the letter ``opt_reg_configure``
+        selects it by.
     axes : tuple of int
         Axes the term works over, as indices into the image's shape.
     joint_axes : tuple of int
@@ -339,8 +340,8 @@ class Regularizer(abc.ABC):
         """Block size, wavelet family and shift mode for ``opt_reg_configure``.
 
         Only the wavelet and locally low-rank terms read them.  Shift mode 0
-        is no shift, 1 the random cycle spinning ``pics`` does unless ``-n``,
-        2 fully overlapping blocks (``pics -N``).
+        is no shift, 1 a random cycle spin between solves, 2 fully overlapping
+        blocks.
         """
         return 8, "dau2", 1
 
@@ -449,7 +450,7 @@ def _as_terms(regularizers) -> list[Regularizer]:
     if isinstance(regularizers, str):
         raise TypeError(
             f"a regularizer is a term from bartorch.priors, not the string {regularizers!r}; "
-            "`priors.Wavelet(axes=(-1, -2), weight=...)` states what `-R W:3:0:...` does"
+            "for instance `priors.Wavelet(axes=(-1, -2), weight=0.005)`"
         )
     if regularizers is None:
         return []

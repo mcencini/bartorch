@@ -92,8 +92,8 @@ def maps_to_kernels(
     size : int or tuple of int
         Kernel size per spatial axis, or one size for all.
     ndim : int, optional
-        Spatial axes, for a single ``size`` over a bank with sets.  By default
-        the length of ``size``, or every axis after the first.
+        Number of spatial axes, for a single ``size`` over a bank with sets.
+        By default the length of ``size``, or every axis after the first.
 
     Returns
     -------
@@ -141,8 +141,8 @@ def resize(input: torch.Tensor, oshape: tuple[int, ...], *, anchor: str = "cente
     oshape : tuple of int
         Full output shape, one size per axis of ``input``.
     anchor : {"center", "front", "start"}
-        What is kept in place.  ``"center"`` (``-c``) keeps index ``n // 2``
-        at ``m // 2``; ``"front"`` (``-f``) keeps the last element and crops or
+        What is kept in place.  ``"center"`` keeps index ``n // 2``
+        at ``m // 2``; ``"front"`` keeps the last element and crops or
         pads at the beginning; ``"start"`` keeps the first element and crops or
         pads at the end.
     """
@@ -203,7 +203,7 @@ def conv(input: torch.Tensor, kernel: torch.Tensor, axes: int | tuple[int, ...])
 
 @curated("window")
 def window(input: torch.Tensor, axes: int | tuple[int, ...], *, hann: bool = False) -> torch.Tensor:
-    """Multiply by a Hamming window along each of ``axes``, or a Hann window (``-H``).
+    """Multiply by a Hamming window along each of ``axes``, or a Hann window.
 
     The window along an axis of size ``n`` is
     ``a - (1 - a) * cos(2 pi i / (n - 1))`` with ``a = 0.54`` (Hamming) or
@@ -229,7 +229,7 @@ def _filter_shape(input: torch.Tensor, axis: int, length: int) -> tuple[int, ...
 def median_filter(
     input: torch.Tensor, axis: int, length: int, *, geometric: bool = False
 ) -> torch.Tensor:
-    """Median over each window of ``length`` consecutive elements along ``axis`` (``-m``, ``-l``).
+    """Median over each window of ``length`` consecutive elements along ``axis``.
 
     Only whole windows are taken: the axis shrinks from ``n`` to
     ``n - length + 1`` and ``out[i]`` is the median of ``input[i:i + length]``.
@@ -237,9 +237,9 @@ def median_filter(
     Parameters
     ----------
     geometric : bool
-        Take the geometric median of the complex values in the plane
-        (``-G``), by ten Weiszfeld iterations from zero.  Otherwise the
-        element of median magnitude, or the mean of the two for an even length.
+        Take the geometric median of the complex values in the plane, by ten
+        Weiszfeld iterations from zero.  Otherwise the element of median
+        magnitude, or the mean of the two for an even length.
     """
     shape = _filter_shape(input, axis, length)
     dim = _bart_dim(axis, input.ndim)
@@ -248,7 +248,7 @@ def median_filter(
 
 @curated("filter")
 def moving_average(input: torch.Tensor, axis: int, length: int) -> torch.Tensor:
-    """Mean over each window of ``length`` consecutive elements along ``axis`` (``-a``, ``-l``).
+    """Mean over each window of ``length`` consecutive elements along ``axis``.
 
     Only whole windows are taken: the axis shrinks from ``n`` to
     ``n - length + 1`` and ``out[i]`` is the mean of ``input[i:i + length]``.
@@ -262,7 +262,7 @@ def moving_average(input: torch.Tensor, axis: int, length: int) -> torch.Tensor:
 def normalize(
     input: torch.Tensor, axes: int | tuple[int, ...], *, l1: bool = False
 ) -> torch.Tensor:
-    """Divide by the l2 norm over ``axes``, or the l1 norm (``-b``), per index of the other axes."""
+    """Divide by the l2 norm over ``axes``, or the l1 norm, per index of the other axes."""
     flags = axes_flags(axes, input.ndim)
     return dispatch("normalize", [input], None, _pos=[flags], b=l1).reshape(input.shape)
 
@@ -275,7 +275,7 @@ def mip(
     minimum: bool = False,
     magnitude: bool = False,
 ) -> torch.Tensor:
-    """Maximum (or minimum, ``-m``) intensity projection over ``axes``, which are kept as size one.
+    """Maximum or minimum intensity projection over ``axes``, which are kept as size one.
 
     Only real parts are compared and returned; the imaginary part of the
     output is zero.  The maximum starts from zero, so a projection whose real
@@ -284,7 +284,7 @@ def mip(
     Parameters
     ----------
     magnitude : bool
-        Project the magnitude instead of the real part (``-a``).
+        Project the magnitude instead of the real part.
     """
     flags = axes_flags(axes, input.ndim)
     shape = [1 if flags >> (input.ndim - 1 - i) & 1 else n for i, n in enumerate(input.shape)]
@@ -305,7 +305,7 @@ def unwrap(input: torch.Tensor, axis: int, *, bound: float = math.pi) -> torch.T
     Parameters
     ----------
     bound : float
-        Half the period (``-b``).
+        Half the period.
     """
     dim = _bart_dim(axis, input.ndim)
     return dispatch("unwrap", [input], None, _pos=[dim], b=float(bound)).reshape(input.shape)

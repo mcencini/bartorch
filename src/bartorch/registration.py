@@ -61,11 +61,10 @@ def register_affine(
         axis must have size one.  A ``reference`` without ``z``, or with
         ``z`` of size one, is registered in two dimensions.
     transform : {"translation", "rigid", "affine"}
-        Degrees of freedom: translation only (``-T``), rotation and
-        translation (``-R``), or all (``-A``).
+        Degrees of freedom: translation only, rotation and
+        translation, or all.
     reference_mask, moved_mask : torch.Tensor, optional
-        Binary masks shaped like their image (``--mask-reference``,
-        ``--mask-moved``); both or neither.
+        Binary masks shaped like their image; both or neither.
 
     Returns
     -------
@@ -139,13 +138,13 @@ def register_nonrigid(
     axes : int or tuple of int
         Axes to register along.
     levels : int, optional
-        Gaussian pyramid levels, one to five (``-l``); BART's default is three.
+        Gaussian pyramid levels, one to five; BART's default is three.
     optical_flow : bool
-        TV-L1 optical flow instead of greedy SyN (``--optical-flow``).
+        TV-L1 optical flow instead of greedy SyN.
     tv_weight : float, optional
-        TV regularization of the optical flow (``-r``); BART's default is 0.01.
+        TV regularization of the optical flow; BART's default is 0.01.
     max_flow : float, optional
-        Bound on the flow magnitude of the optical flow (``--max-flow``).
+        Bound on the flow magnitude of the optical flow.
 
     Returns
     -------
@@ -208,7 +207,7 @@ def estimate_shift(
     axes : int or tuple of int
         Axes to estimate the shift along.
     fov_units : bool
-        Shift as a fraction of the axis length rather than in voxels (``-f``).
+        Shift as a fraction of the axis length rather than in voxels.
 
     Returns
     -------

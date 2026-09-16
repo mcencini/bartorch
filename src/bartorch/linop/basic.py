@@ -207,7 +207,7 @@ class Sampling(_SettableDiagonal):
     Parameters
     ----------
     pattern : tensor
-        Ones where a sample was taken and zeros where it was not.
+        Binary sampling mask, one at acquired positions and zero elsewhere.
     shape : tuple of int
         The k-space shape, C order.
     """

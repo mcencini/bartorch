@@ -30,12 +30,11 @@ class NUFFT(LinearOperator):
     Parameters
     ----------
     traj : tensor
-        Trajectory ``(*encoding, shots, samples, ndim)`` in grid units, as
-        :func:`bartorch.tools.traj` produces: ``kx, ky`` or ``kx, ky, kz``.  A
-        ``kz`` that is zero everywhere makes the transform two-dimensional as
-        well.  The encoding axes are
-        whatever the samples vary along besides the shots -- frames, echoes,
-        cardiac phases -- in any number.
+        Trajectory ``(*encoding, shots, samples, ndim)`` in grid units,
+        ``kx, ky`` or ``kx, ky, kz``, as :func:`bartorch.tools.traj` produces.
+        A ``kz`` that is zero everywhere makes the transform two-dimensional.
+        The encoding axes are whatever the samples vary along besides the
+        shots -- frames, echoes, cardiac phases -- in any number.
     image_shape : tuple of int
         Image shape ``(*batches, *encoding, [z,] y, x)``: two spatial axes for
         a two-dimensional trajectory and three for a three-dimensional one.
@@ -45,15 +44,15 @@ class NUFFT(LinearOperator):
         Sample shape; by default ``(*batches, *encoding, shots, samples)``.
     weights : tensor, optional
         Diagonal in k-space, broadcast over ``(*encoding, shots, samples)``,
-        applied on the way out and conjugated on the way back.
+        applied on the forward pass and conjugated on the adjoint.
     basis : tensor, optional
-        Subspace basis ``(coeffs, frames)``, contracting the image's
-        coefficients into the frames of the last encoding axis: that axis is
-        ``frames`` long in k-space and ``coeffs`` long in the image.  The
-        weights and the basis are part of the operator because its Toeplitz
-        normal is built over both.
+        Temporal subspace basis ``(coeffs, frames)`` over the last encoding
+        axis, which is ``coeffs`` long in the image and ``frames`` long in
+        k-space.  The weights and the basis belong to the operator because its
+        Toeplitz normal is built over both.
     toeplitz : bool
-        Apply the normal as a convolution with a point spread function.
+        Apply the normal in closed form rather than as the forward and
+        adjoint applications: a convolution with a point spread function.
     oversampling, width : float
         Grid oversampling and kernel width; zero keeps the defaults.
 

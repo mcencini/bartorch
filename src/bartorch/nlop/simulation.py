@@ -4,10 +4,10 @@
 :class:`~torchsim.recon.ModelOperator` -- a model's value, its
 Jacobian-vector product and its adjoint product, none of which builds a
 Jacobian -- onto the three things BART's ``nlop_s`` asks for.
-:func:`InversionRecovery`, :func:`MultiEcho` and :func:`Bloch` are ``moba``'s
-families written on TorchSim's simulators, and on TorchSim's
-parameterisation rather than ``moba``'s.  The suite holds both the curves
-against ``bart signal`` and the fits against ``bart mobafit``'s.
+:func:`InversionRecovery`, :func:`MultiEcho` and :func:`Bloch` are the
+quantitative models built on TorchSim's simulators, in TorchSim's
+parameterisation.  The suite holds their curves and their fits against BART's
+own signal models.
 
 Notes
 -----
@@ -213,12 +213,12 @@ def InversionRecovery(  # noqa: N802  (it is a constructor)
     subspace: Any = None,
     **scale: float,
 ) -> FromTorchSim:
-    """T1 from an inversion recovery: ``moba -L``'s family, on TorchSim.
+    """T1 from an inversion-recovery series.
 
-    The longitudinal magnetization read at a series of inversion times, which
-    is the model ``moba``'s Look-Locker family fits.  ``moba -L`` solves for
-    ``(Mss, M0, R1*)`` and this solves for ``T1`` and a complex amplitude, so
-    the two agree on the recovery and not on the variables.
+    The longitudinal magnetization read at a series of inversion times.  The
+    unknowns are ``T1`` and, with ``amplitude``, a complex amplitude; the
+    Look-Locker parameterisation ``(Mss, M0, R1*)`` describes the same recovery
+    in different variables.
 
     Parameters
     ----------
@@ -266,13 +266,12 @@ def MultiEcho(  # noqa: N802  (it is a constructor)
     subspace: Any = None,
     **scale: float,
 ) -> FromTorchSim:
-    """T2 or T2* from a multi-echo readout: ``moba -T`` and ``moba -G``'s family.
+    """T2 or T2* from a multi-echo readout.
 
     The transverse decay read at a series of echo times.  Which relaxation is
-    being measured is a property of the sequence that produced the data, not
-    of the model: a spin-echo train measures T2 and a gradient-echo train T2*,
-    and the exponential is the same either way -- which is exactly why
-    ``moba`` has two flags for one model.
+    measured is a property of the sequence that produced the data, not of the
+    model: a spin-echo train measures T2 and a gradient-echo train T2*, and the
+    exponential is the same either way.
 
     Parameters
     ----------
@@ -317,13 +316,12 @@ def Bloch(  # noqa: N802  (it is a constructor)
     contrasts: int | None = None,
     **scale: float,
 ) -> FromTorchSim:
-    """Any TorchSim sequence as a model operator: ``moba --bloch``'s family.
+    """Any TorchSim sequence as a model operator, through Bloch simulation.
 
-    ``moba --bloch`` fits a Bloch simulation of the sequence rather than a
-    closed form, so it serves sequences that have none.
-    This is the same idea with TorchSim doing the simulating: an FSE train, a
-    fingerprinting schedule, a bSSFP sweep, a sequence of your own -- anything
-    with a ``simulate`` -- becomes an operator BART's Gauss-Newton solves.
+    Fits a Bloch simulation of the sequence rather than a closed-form signal
+    equation, so it serves sequences that have none: an FSE train, a
+    fingerprinting schedule, a bSSFP sweep, or a sequence of your own --
+    anything with a ``simulate`` becomes an operator Gauss-Newton can solve.
 
     Parameters
     ----------

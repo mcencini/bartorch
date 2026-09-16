@@ -28,12 +28,12 @@ def fft(
     axes : int or tuple of int
         Axes to transform, as indices into ``input.shape``.
     inverse : bool
-        Transform with the positive exponent (``-i``).
+        Transform with the positive exponent.
     unitary : bool
-        Scale by one over the square root of the transformed size (``-u``);
+        Scale by one over the square root of the transformed size;
         otherwise unnormalized.
     uncentred : bool
-        Keep the zero frequency at index zero rather than at ``n // 2`` (``-n``).
+        Keep the zero frequency at index zero rather than at ``n // 2``.
 
     Examples
     --------
@@ -97,12 +97,13 @@ def nufft(
         Image, C order ``(..., z, y, x)``; ``z`` is one for a two-dimensional
         trajectory.
     traj : torch.Tensor
-        Trajectory of shape ``(..., samples, 3)`` in grid units, as
+        Trajectory ``(..., samples, 3)`` in grid units, ``kx, ky, kz``, as
         :func:`bartorch.tools.traj` produces.
     weights : torch.Tensor, optional
-        Diagonal applied to the samples (``-p``).
+        Diagonal in k-space applied to the samples.
     basis : torch.Tensor, optional
-        Subspace basis over frames and coefficients (``-B``).
+        Temporal subspace basis, coefficients then frames, in BART's axis
+        order: ``(coeffs, frames, 1, 1, 1, 1, 1)``.
     **extra
         Further ``bart nufft`` options, by name.
     """
@@ -131,14 +132,17 @@ def nufft_adjoint(
     input : torch.Tensor
         Samples, as :func:`nufft` returns them.
     traj : torch.Tensor
-        Trajectory of shape ``(..., samples, 3)`` in grid units.
+        Trajectory ``(..., samples, 3)`` in grid units, ``kx, ky, kz``, as
+        :func:`bartorch.tools.traj` produces.
     image_shape : tuple of int, optional
-        Spatial shape of the image, C order ``(z, y, x)`` or ``(y, x)``
-        (``-d``).  By default BART estimates it from the trajectory.
+        Spatial shape of the image, C order ``(z, y, x)`` or ``(y, x)``.  By
+        default BART estimates it from the trajectory.
     weights : torch.Tensor, optional
-        Diagonal applied to the samples (``-p``); its conjugate is applied here.
+        Diagonal in k-space applied to the samples; its conjugate is applied
+        here.
     basis : torch.Tensor, optional
-        Subspace basis over frames and coefficients (``-B``).
+        Temporal subspace basis, coefficients then frames, in BART's axis
+        order: ``(coeffs, frames, 1, 1, 1, 1, 1)``.
     **extra
         Further ``bart nufft`` options, by name.
     """

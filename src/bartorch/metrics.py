@@ -28,7 +28,7 @@ def nrmse(reference: torch.Tensor, input: torch.Tensor, *, scaled: bool = False)
     ----------
     scaled : bool
         First scale ``reference`` by the complex least-squares factor
-        ``Σ conj(reference)·input / ‖reference‖²`` (``-s``).
+        ``Σ conj(reference)·input / ‖reference‖²``.
     """
     _check_same_shape(reference, input)
     return float(dispatch("nrmse", [reference, input], False, s=scaled, scientific=True))
@@ -41,21 +41,21 @@ def _measure(option: str, reference: torch.Tensor, input: torch.Tensor) -> float
 
 @curated("measure")
 def mse(reference: torch.Tensor, input: torch.Tensor, *, magnitude: bool = False) -> float:
-    """Mean squared error ``mean |input - reference|²`` over every element (``--mse``).
+    """Mean squared error ``mean |input - reference|²`` over every element .
 
     Parameters
     ----------
     magnitude : bool
         Compare magnitudes, ``mean (|input| - |reference|)²``, taken as the
         root sum of squares over the coil axis ``-4`` of a C-order
-        ``(..., coils, z, y, x)`` array (``--mse-mag``).
+        ``(..., coils, z, y, x)`` array .
     """
     return _measure("mse_mag" if magnitude else "mse", reference, input)
 
 
 @curated("measure")
 def ssim(reference: torch.Tensor, input: torch.Tensor) -> float:
-    """Mean structural similarity of the magnitudes (``--ssim``).
+    """Mean structural similarity of the magnitudes .
 
     Magnitudes are the root sum of squares over the coil axis, and each image
     is divided by the maximum magnitude of its ``reference``.  SSIM with
@@ -78,7 +78,7 @@ def ssim(reference: torch.Tensor, input: torch.Tensor) -> float:
 
 @curated("measure")
 def psnr(reference: torch.Tensor, input: torch.Tensor) -> float:
-    """Peak signal-to-noise ratio of the magnitudes in decibels, averaged over images (``--psnr``).
+    """Peak signal-to-noise ratio of the magnitudes in decibels, averaged over images .
 
     Per image over ``(z, y, x)``: ``20 log10 max|reference| - 10 log10
     mean (|input| - |reference|)²``, magnitudes being the root sum of squares
@@ -106,12 +106,12 @@ def roi_stat(
         ``input``; an axis where ``roi`` has size one and ``input`` does not
         (or the reverse, several regions along it) is kept.
     stat : {"count", "sum", "mean", "std", "energy", "variance"}
-        ``count`` is the sum of the weights (``-C``); ``sum`` of the weighted
-        values (``-S``); ``mean`` their ratio (``-M``); ``energy`` the sum of
-        squared deviations from the mean, not of squared values (``-E``);
-        ``variance`` energy over count (``-V``); ``std`` its root (``-D``).
+        ``count`` is the sum of the weights; ``sum`` of the weighted
+        values; ``mean`` their ratio; ``energy`` the sum of
+        squared deviations from the mean, not of squared values;
+        ``variance`` energy over count; ``std`` its root.
     bessel : bool
-        Divide by count minus one; ``std`` and ``variance`` only (``-b``).
+        Divide by count minus one; ``std`` and ``variance`` only.
 
     Returns
     -------

@@ -465,7 +465,7 @@ class NonlinearOperator(Operator):
         return _Flattened(self, inputs_only)
 
     def combine(self, other: NonlinearOperator) -> NonlinearOperator:
-        """``self`` and ``other`` side by side, sharing nothing."""
+        """Place ``self`` and ``other`` side by side, sharing no argument."""
         return combine(self, other)
 
     def chain(
@@ -475,7 +475,7 @@ class NonlinearOperator(Operator):
         output: int = 0,
         input: int = 0,  # noqa: A002
     ) -> NonlinearOperator:
-        """Output ``output`` of ``self`` into input ``input`` of ``other``."""
+        """Feed one output of ``self`` into one input of ``other``."""
         return chain(self, other, output=output, input=input)
 
     def __matmul__(self, other):
@@ -1054,7 +1054,7 @@ class _Pinned(_Unary):
 
 
 def combine(a: NonlinearOperator, b: NonlinearOperator) -> NonlinearOperator:
-    """``a`` and ``b`` side by side, sharing nothing.
+    """Place ``a`` and ``b`` side by side, sharing no argument.
 
     ``nlop_combine``.  The result takes ``a``'s inputs and then ``b``'s, and
     returns ``a``'s outputs and then ``b``'s.  It is where every other
@@ -1078,7 +1078,7 @@ def chain(
     output: int = 0,
     input: int = 0,  # noqa: A002
 ) -> NonlinearOperator:
-    """Output ``output`` of ``a`` into input ``input`` of ``b``.
+    """Feed one output of ``a`` into one input of ``b``.
 
     ``nlop_chain2``.  ``a`` runs first.  The result takes ``b``'s remaining
     inputs and then all of ``a``'s, and returns all of ``b``'s outputs and then

@@ -9,7 +9,7 @@ transform in front of it.  The denoisers are functions on images.
 .. currentmodule:: bartorch.priors
 ```
 
-## Regularizer class
+## Regularizers
 
 A regularizer is a pair: a linear transform `G` and the proximal operator of a
 functional `g`, together representing `g(G x)`.  `G` is the identity for terms

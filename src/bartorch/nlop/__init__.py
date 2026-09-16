@@ -13,8 +13,6 @@ then inputs.
 from __future__ import annotations
 
 from bartorch.nlop.base import (
-    Chain,
-    FromLinear,
     NonlinearOperator,
     chain,
     combine,
@@ -46,7 +44,6 @@ from bartorch.nlop.mri import (
     NoncartesianSense,
     NonlinearSense,
 )
-from bartorch.nlop.plan import Plan
 from bartorch.nlop.simulation import (
     Bloch,
     FromTorchSim,
@@ -60,13 +57,11 @@ __all__ = [
     "Bloch",
     "Bundle",
     "CartesianSense",
-    "Chain",
     "CoilSense",
     "Constant",
     "Derivative",
     "Divide",
     "Exp",
-    "FromLinear",
     "FromTorch",
     "FromTorchSim",
     "IRGNM",
@@ -80,7 +75,6 @@ __all__ = [
     "NonlinearSense",
     "Parameters",
     "Phase",
-    "Plan",
     "Power",
     "RootSumOfSquares",
     "SmoothAbs",

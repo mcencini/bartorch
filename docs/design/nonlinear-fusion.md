@@ -431,8 +431,7 @@ instead by the reconstruction of a phantom, against the truth.
    - `_Cell` is retired; see [Fusion of the coil model](#fusion-of-the-coil-model).
 
 Names that appear: `nlop.Derivative` keeps its meaning; `IRGNM.operator(F)` loses
-its type restriction; `F.bundle`, `nlop.Bundle`, `nlop.Plan` and `Step.plan` are
-new, and `Step` carries `prepare`, `split` and `join` of its own. No name goes.
+its type restriction; `F.bundle`, `nlop.Bundle` and `Step.plan` are new, and `Step` carries `prepare`, `split` and `join` of its own. No name goes.
 
 ## Targets
 

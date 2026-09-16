@@ -107,8 +107,8 @@ def interpolate(
     axes : int or tuple of int
         Axes interpolated over.
     order : {0, 1, 3}
-        Nearest neighbour (``-N``, rounds half up), linear, or Keys cubic
-        with ``a = -1/2`` (``-C``).
+        Nearest neighbour (rounding half up), linear, or Keys cubic
+        with ``a = -1/2``.
 
     Returns
     -------
@@ -240,7 +240,7 @@ def affine_transform(
         The last two or three axes, in the order the matrix's rows and
         columns refer to them.
     oshape : tuple of int, optional
-        Output size of the last ``k`` axes, in C order (``-x``); by default
+        Output size of the last ``k`` axes, in C order; by default
         the input's.
 
     Returns
@@ -324,10 +324,10 @@ def fovshift(
         Shift along the image axes in C order, ``(z, y, x)`` or ``(y, x)``
         or ``(x,)``; in fields of view, or in voxels with ``pixels``.
     traj : torch.Tensor, optional
-        Trajectory of shape ``(..., samples, 3)``, last axis ``(kx, ky, kz)``
-        in grid units, as :func:`bartorch.tools.traj` produces (``-t``).
+        Trajectory ``(..., samples, 3)`` in grid units, ``kx, ky, kz``, as
+        :func:`bartorch.tools.traj` produces.
     pixels : bool
-        ``shift`` in voxels rather than fields of view (``-p``); Cartesian
+        ``shift`` in voxels rather than fields of view; Cartesian
         only.
     """
     shift = [float(s) for s in shift]

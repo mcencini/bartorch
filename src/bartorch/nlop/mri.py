@@ -98,12 +98,11 @@ class NonlinearSense(NonlinearOperator):
         Coil-image shape, ``(coils, *spatial)``, C order -- the same shape the
         linear encodings take.  The image itself is this with one coil.
     pattern : tensor, optional
-        On a grid: binary sampling mask, one at acquired positions and zero
-        elsewhere.  Without one the acquisition is treated as fully sampled, as
-        ``nlinv`` does when estimating from a complete measurement.
+        Binary sampling mask, one at acquired positions and zero elsewhere,
+        on a grid.  Without one the acquisition is treated as fully sampled.
     trajectory : tensor, optional
-        Off the grid: the trajectory, ``(..., samples, 3)`` in grid units, as
-        :class:`bartorch.linop.NUFFT` takes it.  Giving one makes the
+        Trajectory ``(..., samples, 3)`` in grid units, ``kx, ky, kz``, as
+        :func:`bartorch.tools.traj` produces.  Giving one selects the
         non-Cartesian model.
     kspace_shape : tuple of int, optional
         Sample shape.  Off the grid it defaults to the trajectory's with the
@@ -113,19 +112,20 @@ class NonlinearSense(NonlinearOperator):
         Where the sensitivities live and where their coefficients do; both
         default to the coil-image shape.
     weights : tensor, optional
-        Density compensation, off the grid.
+        Diagonal in k-space applied to the samples, off the grid; its
+        conjugate is applied on the adjoint.
     basis : tensor, optional
-        Temporal subspace basis, off the grid.  BART's Cartesian model refuses
-        one.
+        Temporal subspace basis ``(coeffs, frames)`` over the last encoding
+        axis, off the grid.  The Cartesian model does not take one.
     mask : tensor, optional
-        A support the image is restricted to, as ``nlinv -f`` builds one.
+        A support the image is restricted to.
     sobolev : tuple of float
         ``(a, b)`` of the coil weighting ``c (1 + a |k|^2)^(-b/2)``; BART's
         ``220, 32``.
     c : float
         The scale on that weighting, BART's ``1``.
     real : bool
-        Constrain the image to be real (``nlinv -c``).
+        Constrain the image to be real.
     sos : bool
         BART's sum-of-squares variant of the coil weighting.
     oversampling_coils : float, optional
@@ -134,7 +134,9 @@ class NonlinearSense(NonlinearOperator):
     oversampled_coils : bool
         Return them on that grid rather than on the image's.
     toeplitz : bool
-        Off the grid, apply the NUFFT's normal as a convolution.
+        Apply the normal in closed form rather than as the forward and
+        adjoint applications: a convolution with a point spread function, off
+        the grid.
     optimized : bool
         BART's ``noir2_noncart_optimized_create``, off the grid.
 
@@ -428,7 +430,7 @@ def NoncartesianSense(  # noqa: N802  (it is a constructor)
     """Non-Cartesian joint image and coil-sensitivity forward model.
 
     The nonlinear counterpart of :class:`bartorch.linop.NoncartesianSense`, the
-    model ``nlinv -t`` inverts.  The coil unknown is the Sobolev-weighted
+    model ``nlinv`` inverts off the grid.  The coil unknown is the Sobolev-weighted
     k-space representation described in :class:`NonlinearSense`.  The model is
     asymmetric, as BART builds it: it returns gridded coil images, and
     :meth:`NonlinearSense.prepare` puts a measurement in that shape.

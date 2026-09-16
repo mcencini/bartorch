@@ -1,8 +1,9 @@
 """BART's regularization terms, as objects a solver in :mod:`bartorch.optim` takes,
 and BART's denoisers.
 
-Each term fills the table BART's ``-R`` parser would, with axes as indices
-rather than bitmasks; BART builds the proximal operator from it.
+A term names a regularization functional and its parameters, with axes as
+indices rather than bitmasks; BART builds the proximal operator, and the linear
+transform in front of it, from that.
 """
 
 from __future__ import annotations

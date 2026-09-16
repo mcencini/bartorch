@@ -77,16 +77,15 @@ def fwt(input: torch.Tensor, axes: int | tuple[int, ...], *, wavelet: str = "dau
     axes : int or tuple of int
         Axes to transform, as indices into ``input.shape``.
     wavelet : {"haar", "dau2", "cdf44", "cdf97"}
-        ``"haar"``, ``"dau2"`` and ``"cdf44"`` run ``bart wavelet`` with
-        ``-H``, ``-D`` and ``-C``: along one axis, PyWavelets' ``wavedec``
-        with ``"haar"``, ``"db2"`` and ``"bior4.4"`` in ``mode="symmetric"``,
-        concatenated coarse first.  Each level keeps ``(n + taps - 1) // 2``
-        coefficients per band, so there are more coefficients than samples
-        unless the filter has two taps and every level's length is even;
-        levels continue while that half-length is at least 16.  ``"cdf97"``
-        runs ``bart cdf97``: CDF 9/7 by lifting, in place, coarse band first,
-        levels continuing while every transformed axis is longer than 32; one
-        level of an even length is PyWavelets' ``"bior4.4"`` in
+        ``"haar"``, ``"dau2"`` and ``"cdf44"`` are, along one axis,
+        PyWavelets' ``wavedec`` with ``"haar"``, ``"db2"`` and ``"bior4.4"``
+        in ``mode="symmetric"``, concatenated coarse first.  Each level keeps
+        ``(n + taps - 1) // 2`` coefficients per band, so there are more
+        coefficients than samples unless the filter has two taps and every
+        level's length is even; levels continue while that half-length is at
+        least 16.  ``"cdf97"`` is CDF 9/7 by lifting, in place, coarse band
+        first, levels continuing while every transformed axis is longer than
+        32; one level of an even length is PyWavelets' ``"bior4.4"`` in
         ``mode="periodization"`` with the detail band negated.
 
     Returns

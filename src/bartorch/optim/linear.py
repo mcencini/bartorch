@@ -1,8 +1,8 @@
-"""Least squares by the iterations ``pics`` runs.
+"""Least squares by BART's iterative algorithms.
 
 The proximal solvers loop a block from :mod:`bartorch.optim.blocks` to BART's
-schedule; conjugate gradients go to BART's ``lsqr2`` through the
-``italgo_config`` call ``pics`` makes.
+schedule; conjugate gradients go to BART's ``lsqr2``, configured through
+``italgo_config``.
 """
 
 from __future__ import annotations
@@ -174,7 +174,7 @@ def maxeigen(
 ) -> float:
     """Power-iteration estimate of the largest eigenvalue of the normal operator.
 
-    The quantity ``pics -e`` uses to scale a proximal step.  The power
+    The quantity a proximal step is scaled by.  The power
     iteration starts from a random vector drawn from BART's own generator, so
     an iteration written outside the library must request it here, at the point
     in the sequence the library would have reached it; otherwise the subsequent
@@ -190,7 +190,7 @@ def maxeigen(
         primal-dual iteration estimates over these; the proximal iterations
         estimate over the encoding alone.
     cclambda : float
-        The quadratic weight (``pics -q``).
+        Weight of an identity added to the normal operator.
     precond : LinearOperator, optional
         Chained onto the normal before the terms are added, as ``lsqr2_create``
         chains it.
@@ -350,7 +350,7 @@ _TAKES_A_TRANSFORM = ("admm", "pridu")
 _SHARED_OPTIONS = (8, "dau2", 1)
 
 
-#: The pairs ``pics`` takes once for the whole set, and BART's own values for
+#: The pairs BART takes once for the whole set, and its own values for
 #: them (`opt_reg_init`, optreg.c:309-313).  Only the terms with auxiliary variables
 #: read them.
 _SHARED_PAIRS: dict[str, tuple[float, float]] = {
@@ -360,11 +360,11 @@ _SHARED_PAIRS: dict[str, tuple[float, float]] = {
 
 
 def _shared_pairs(terms) -> tuple[tuple[float, float], tuple[float, float]]:
-    """``--alpha`` and ``--gamma`` for the whole set.
+    """The ``alpha`` and ``gamma`` pairs for the whole set.
 
-    They live on ``struct opt_reg_s`` rather than on a term, which is why
-    ``pics`` has a single ``--alpha``; two terms disagreeing is refused rather
-    than one of them silently winning, as it is for the block size.
+    They live on ``struct opt_reg_s`` rather than on a term, so the set carries
+    one of each; two terms disagreeing is refused rather than one of them
+    silently winning, as it is for the block size.
     """
     resolved = dict(_SHARED_PAIRS)
     asked: dict[str, tuple[float, float]] = {}
@@ -374,8 +374,8 @@ def _shared_pairs(terms) -> tuple[tuple[float, float], tuple[float, float]]:
                 continue
             if asked.setdefault(name, value) != value:
                 raise ValueError(
-                    f"{name} is one pair for the whole set -- `pics` has a single "
-                    f"--{name} -- and these terms ask for {asked[name]!r} and {value!r}; "
+                    f"{name} is one pair for the whole set, and these terms ask for "
+                    f"{asked[name]!r} and {value!r}; "
                     "give them the same, or solve for them separately"
                 )
             resolved[name] = value
@@ -442,7 +442,7 @@ def _shared_options(terms) -> tuple[int, str, int]:
     """The one block size, wavelet family and shift mode for the whole set.
 
     ``opt_reg_configure`` takes one of each and hands them to whichever terms
-    read them, so ``pics`` has a single ``-b`` and a single ``-w``.
+    read them, so the set carries a single block size and a single family.
     A term that reads none answers with the defaults, so what is looked for is
     the terms that said something, and two of those disagreeing is refused
     rather than silently resolved.
@@ -453,7 +453,8 @@ def _shared_options(terms) -> tuple[int, str, int]:
     if 1 < len(asked):
         raise ValueError(
             "BART configures a set of terms with one block size, one wavelet family and "
-            f"one shift mode -- `pics` has a single -b and a single -w -- and these ask for "
+            f"one shift mode -- BART takes one of each for the whole set -- and these ask "
+            f"for "
             f"{sorted(asked)}; give them the same, or solve for them separately"
         )
     return next(iter(asked))
@@ -560,8 +561,8 @@ class CG(_Solver):
 
         \min_x \; \| A x - y \|^2 + \lambda \| x \|^2
 
-    which ``pics`` solves with no regularizer or with ``-r`` alone.  With terms
-    it is
+    the ordinary Tikhonov-regularized least-squares problem.  With terms it
+    is
 
     .. math::
 
@@ -573,8 +574,7 @@ class CG(_Solver):
     Parameters
     ----------
     lambda_ : float
-        Tikhonov weight on the image itself (``pics -r``).  BART adds it to
-        the normal operator, which is why this matches the tool.
+        Tikhonov weight on the image itself, added to the normal operator.
     terms : Tikhonov or iterable of Tikhonov, optional
         Quadratic penalties with an operator, a bias, or both.  See
         :class:`Tikhonov`.
@@ -583,13 +583,13 @@ class CG(_Solver):
         Stop once the residual of the normal equations is at most
         ``tol * ||A^H y||``.  Zero, BART's default, runs every iteration.
     cclambda : float
-        Weight of an identity added to the normal operator (``pics -q``).
+        Weight of an identity added to the normal operator.
     precond : LinearOperator, optional
         Left preconditioner, ``lsqr2_create``'s ``precond_op``: chained onto
         the normal operator and onto the adjoint, so the iteration sees
         ``M(A^H A + lambda) x = M A^H y``.  Must be positive definite --
-        BART composes it without symmetrizing.  ``pics`` passes NULL, so
-        nothing on the command line has used it.
+        BART composes it without symmetrizing.  BART's own reconstructions
+        pass none.
 
     Notes
     -----
@@ -708,7 +708,7 @@ class CG(_Solver):
 
 
 class IST(_Solver):
-    """Iterative soft thresholding (``pics --ist``), looping :class:`ISTBlock`.
+    """Iterative soft thresholding, looping :class:`ISTBlock`.
 
     Parameters
     ----------
@@ -716,20 +716,20 @@ class IST(_Solver):
         Exactly one term.
     maxiter : int
     step : float
-        Step size (``pics -s``); ``pics`` uses 0.95 when none is given.
+        Step size; the default is 0.95.
     eigen : bool
         Scale the step by the largest eigenvalue of the normal operator,
-        estimated with 30 power iterations (``pics -e``).
+        estimated with 30 power iterations.
     hogwild : bool
-        BART's ``hogwild`` setting (``pics -H``), which its IST refuses.
+        BART's ``hogwild`` setting, which its IST rejects.
     cclambda : float
-        Weight of an identity added to the normal operator (``pics -q``).
+        Weight of an identity added to the normal operator.
     precond : LinearOperator, optional
         Left preconditioner, ``lsqr2_create``'s ``precond_op``: chained onto
         the normal operator and onto the adjoint, so the iteration sees
         ``M(A^H A + lambda) x = M A^H y``.  Must be positive definite --
-        BART composes it without symmetrizing.  ``pics`` passes NULL, so
-        nothing on the command line has used it.
+        BART composes it without symmetrizing.  BART's own reconstructions
+        pass none.
     """
 
     _algorithm = "ist"
@@ -780,7 +780,7 @@ class IST(_Solver):
 
 
 class FISTA(IST):
-    """Fast iterative soft thresholding (``pics --fista``), looping :class:`FISTABlock`.
+    """Fast iterative soft thresholding, looping :class:`FISTABlock`.
 
     Parameters
     ----------
@@ -788,23 +788,23 @@ class FISTA(IST):
         Exactly one term.
     maxiter : int
     step : float
-        Step size (``pics -s``); ``pics`` uses 0.95 when none is given.
+        Step size; the default is 0.95.
     eigen : bool
         Scale the step by the largest eigenvalue of the normal operator,
-        estimated with 30 power iterations (``pics -e``).
+        estimated with 30 power iterations.
     hogwild : bool
-        BART's ``hogwild`` setting (``pics -H``).
+        BART's ``hogwild`` setting.
     pqr : tuple of float, optional
-        Acceleration parameters ``(p, q, r)`` (``pics --fista_pqr``); ``None``
+        Acceleration parameters ``(p, q, r)``; ``None``
         keeps BART's.
     cclambda : float
-        Weight of an identity added to the normal operator (``pics -q``).
+        Weight of an identity added to the normal operator.
     precond : LinearOperator, optional
         Left preconditioner, ``lsqr2_create``'s ``precond_op``: chained onto
         the normal operator and onto the adjoint, so the iteration sees
         ``M(A^H A + lambda) x = M A^H y``.  Must be positive definite --
-        BART composes it without symmetrizing.  ``pics`` passes NULL, so
-        nothing on the command line has used it.
+        BART composes it without symmetrizing.  BART's own reconstructions
+        pass none.
     """
 
     _algorithm = "fista"
@@ -848,7 +848,7 @@ class FISTA(IST):
 
 
 class ADMM(_Solver):
-    """Alternating direction method of multipliers (``pics --admm``), looping :class:`ADMMBlock`.
+    """Alternating direction method of multipliers, looping :class:`ADMMBlock`.
 
     Parameters
     ----------
@@ -861,35 +861,34 @@ class ADMM(_Solver):
         count of outer steps: ``admm`` breaks when ``nr_invokes > maxiter``.
         Thirty with ten inner iterations is about five outer steps.
     rho : float
-        Penalty parameter (``pics -u``); 0.5 is BART's default.
+        Penalty parameter; BART's default is 0.5.
     cg_maxiter : int
-        Conjugate-gradient iterations per step (``pics -C``); 10 is BART's
+        Conjugate-gradient iterations per step; BART's default is 10, and
         default.
     hogwild : bool
-        BART's ``hogwild`` setting (``pics -H``), which doubles ``rho`` after
+        BART's ``hogwild`` setting, which doubles ``rho`` after
         ten steps, then twenty, then forty.  Not combinable with
         ``dynamic_rho``, which BART asserts against.
     cclambda : float
-        Weight of an identity added to the normal operator (``pics -q``).
+        Weight of an identity added to the normal operator.
     biases : sequence of tensor, optional
         The ``b_j`` of ``f_j(G_j x - b_j)``, one per term, each of its term's
         transformed shape.
     dynamic_rho : bool
-        Move ``rho`` with the residuals (``pics --admm_dynamic_rho``): up by
+        Move ``rho`` with the residuals: up by
         ``tau`` when the primal residual leads, down when the dual does.  The
         dual variables are rescaled to match, so the split stays where it was.
     dynamic_tau : bool
-        Choose ``tau`` from the residuals too (``pics --admm_dynamic_tau``),
+        Choose ``tau`` from the residuals too,
         as ``sqrt(r / s)`` clipped to ``[1 / tau_max, tau_max]``.  Together
         with ``dynamic_rho`` and ``relative_norm`` this is the residual
         balancing of Wohlberg (2017).
     relative_norm : bool
-        Compare the residuals to their scalings rather than to each other
-        (``pics --admm_relative_norm``).
+        Compare the residuals to their scalings rather than to each other.
     fast : bool
         Skip the residuals entirely, and with them the stopping test.
     alpha : float
-        Over-relaxation; ``pics`` runs BART's default of 1.6.
+        Over-relaxation; BART's default is 1.6.
     mu : float
         How far the residuals must part before ``dynamic_rho`` moves ``rho``.
     tau_max : float
@@ -897,7 +896,7 @@ class ADMM(_Solver):
     abstol, reltol : float
         Boyd's absolute and relative tolerances, which stop the iteration when
         both residuals are inside them.  ``italgo_config`` sets both to zero,
-        so only the iteration budget stops ``pics``.
+        so only the iteration budget stops the run.
     cg_maxiter_first : int, optional
         A separate budget for the first step's inner solve, where there is no
         warm start to build on; riesling's, not BART's.
@@ -905,8 +904,8 @@ class ADMM(_Solver):
         Left preconditioner, ``lsqr2_create``'s ``precond_op``: chained onto
         the normal operator and onto the adjoint, so the iteration sees
         ``M(A^H A + lambda) x = M A^H y``.  Must be positive definite --
-        BART composes it without symmetrizing.  ``pics`` passes NULL, so
-        nothing on the command line has used it.
+        BART composes it without symmetrizing.  BART's own reconstructions
+        pass none.
 
     Notes
     -----
@@ -1020,7 +1019,7 @@ class ADMM(_Solver):
 
 
 class PRIDU(_Solver):
-    """Primal-dual iteration (``pics --pridu``), looping :class:`PRIDUBlock`.
+    """Primal-dual iteration, looping :class:`PRIDUBlock`.
 
     Parameters
     ----------
@@ -1030,27 +1029,27 @@ class PRIDU(_Solver):
         :class:`ADMM`.
     maxiter : int
     step : float
-        Step size (``pics -s``); ``pics`` uses 0.95 when none is given.
+        Step size; the default is 0.95.
     sigma_tau_ratio : float
         Ratio of the dual to the primal step: ``sigma = sqrt(step) * ratio``,
-        ``tau = sqrt(step) / ratio``.  ``pics`` sets it to the scaling it
-        divided the data by, so pass :func:`data_scaling`'s value to match
-        the tool.
+        ``tau = sqrt(step) / ratio``.  BART's own reconstructions set it to
+        the factor the data was divided by, so pass :func:`data_scaling`'s
+        value to match them.
     adaptive_step : bool
-        Adapt the steps during the iteration (``pics --adaptive_stepsize``).
+        Adapt the steps during the iteration.
     eigen : bool
         Scale the step by the largest eigenvalue of the normal operator,
-        estimated with 30 power iterations (``pics -e``).
+        estimated with 30 power iterations.
     hogwild : bool
-        Decay the steps by a factor of 0.95 (``pics -H``).
+        Decay the steps by a factor of 0.95 per iteration.
     cclambda : float
-        Weight of an identity added to the normal operator (``pics -q``).
+        Weight of an identity added to the normal operator.
     precond : LinearOperator, optional
         Left preconditioner, ``lsqr2_create``'s ``precond_op``: chained onto
         the normal operator and onto the adjoint, so the iteration sees
         ``M(A^H A + lambda) x = M A^H y``.  Must be positive definite --
-        BART composes it without symmetrizing.  ``pics`` passes NULL, so
-        nothing on the command line has used it.
+        BART composes it without symmetrizing.  BART's own reconstructions
+        pass none.
     """
 
     _algorithm = "pridu"
@@ -1108,13 +1107,13 @@ class NIHT(_Solver):
         The hard-thresholding terms from :mod:`bartorch.priors`.
     maxiter : int
     cclambda : float
-        Weight of an identity added to the normal operator (``pics -q``).
+        Weight of an identity added to the normal operator.
     precond : LinearOperator, optional
         Left preconditioner, ``lsqr2_create``'s ``precond_op``: chained onto
         the normal operator and onto the adjoint, so the iteration sees
         ``M(A^H A + lambda) x = M A^H y``.  Must be positive definite --
-        BART composes it without symmetrizing.  ``pics`` passes NULL, so
-        nothing on the command line has used it.
+        BART composes it without symmetrizing.  BART's own reconstructions
+        pass none.
     """
 
     _algorithm = "niht"
@@ -1139,14 +1138,14 @@ class NIHT(_Solver):
         g)`` at ``iter/niht.c:85`` and ``:212`` -- while the operator ``lsqr2``
         supplies asserts that its arguments are not aliased, ``args[0] !=
         args[1]`` at ``iter/lsqr.c:60``.  Every NIHT solve therefore terminates
-        in an assertion, ``bart pics -R H`` included; here those assertions are
+        in an assertion; here those assertions are
         ``error()`` calls that unwind rather than ending the process.
         """
         raise NotImplementedError(
             "BART's NIHT cannot run: `niht` applies the normal operator in place "
             "(iter/niht.c:85, :212) and the operator `lsqr2` hands it asserts that it "
-            "is not (iter/lsqr.c:60), so every solve ends in an assertion -- `bart pics "
-            "-R H` included.  Nothing here can work around it; it needs a BART fix.  "
+            "is not (iter/lsqr.c:60), so every solve ends in an assertion.  Nothing here "
+            "can work around it; it needs a BART fix.  "
             "priors.WaveletNIHT and priors.ImageNIHT still reach tools.pics, which catches "
             "the assertion rather than ending the process"
         )

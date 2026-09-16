@@ -1,4 +1,4 @@
-"""The data scaling ``pics`` applies before it solves."""
+"""Normalization of the data before a solve."""
 
 from __future__ import annotations
 
@@ -18,41 +18,41 @@ def data_scaling(
     percentile: float | None = None,
     compat: bool = False,
 ) -> float:
-    """The number ``pics`` divides its data by before solving.
+    """Normalization factor for the data of a reconstruction.
 
-    Dividing by it makes a regularization weight independent of the data's
-    overall scale.
+    Dividing the data by it makes a regularization weight independent of the
+    data's overall scale, and is the normalization BART's own reconstructions
+    apply before solving.
 
     Parameters
     ----------
     y : torch.Tensor
         Data as the solve will see it: for a Cartesian encoding, after the
-        sampling pattern and ``fftmod(..., inverse=True)``.  Coils on their
-        own axis, in the layout :func:`bartorch.tools.pics` takes rather than
-        the squeezed one an operator takes: the estimate is read off the
-        k-space centre, which a misplaced coil axis moves.
+        sampling pattern and ``fftmod(..., inverse=True)``.  Coils must be on
+        their own axis in BART's layout rather than the squeezed layout an
+        operator takes, because the estimate is read off the k-space centre and
+        a misplaced coil axis moves it.
     A : LinearOperator, optional
-        The encoding.  With one, the estimate ``pics`` makes for a trajectory:
-        the spread of ``|A^H y|`` from its order statistics.  Without one,
-        the k-space-centre estimate of ``bart estscaling``, which ``pics``
-        uses for a Cartesian encoding.
+        The encoding.  With one, the estimate used for a non-Cartesian
+        acquisition: the spread of ``|A^H y|`` from its order statistics.
+        Without one, the k-space-centre estimate of
+        :func:`bartorch.tools.estscaling`, used for a Cartesian acquisition.
     percentile : float, optional
-        Take this percentile of the sorted magnitudes instead of BART's rule
-        (``estscaling -p``; ``pics`` has no flag for it).
+        Take this percentile of the sorted magnitudes instead of BART's
+        rule.
     compat : bool
         Take the median, as BART's older estimate did.  Only with ``A``.
 
     Returns
     -------
     float
-        The scaling.  Zero means the estimate failed; ``pics`` then warns and
-        uses one.
+        The scaling.  Zero means the estimate failed, and a scaling of one
+        should be used instead.
 
     Notes
     -----
-    The solution of a solve on scaled data is scaled too; ``pics`` leaves it
-    so.  ``pics -w 1`` disables the scaling, which makes a solve assembled
-    without this function comparable to the tool.
+    The solution of a solve on scaled data is scaled by the same factor, and
+    is conventionally left so rather than divided back.
 
     Examples
     --------
