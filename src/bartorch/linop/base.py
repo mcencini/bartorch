@@ -153,12 +153,33 @@ class LinearOperator(Operator):
     def plan(self):
         """The encoding form this operator was lowered into, or ``None``.
 
-        An MRI encoding reports what the planner chose for it -- the
-        transform, the element-wise factors on each side of it, the
-        contraction, what is streamed, how the normal is applied, and which
-        executor path ran it.  The algebra carries the plan through, so a
-        composition with one encoding in it reports that encoding's plan;
-        anything else has none.
+        Diagnostic: reading it changes nothing about the operator.  An MRI
+        encoding reports what the planner chose for it -- the transform, the
+        element-wise factors on each side of it, the contraction, what is
+        streamed, how the normal is applied, and which executor path ran it.
+        The algebra carries the plan through, so a composition with one
+        encoding in it reports that encoding's plan; anything else has none.
+
+        ``plan.fused`` is the field to check: it is false where the coil-slab
+        loop could not take the form and where a sum of terms was left as a
+        chain, both of which give the same numbers several times slower.
+        ``plan.executor`` is read back from the library after the build, so it
+        reports the path that ran rather than the one intended.
+
+        Accessing this on a composition builds it, since the plan is decided by
+        lowering and lowering is what building does.
+
+        Returns
+        -------
+        bartorch.linop.form.Plan or None
+
+        Examples
+        --------
+        >>> A = linop.CartesianSense(maps, (64, 64), pattern=mask)
+        >>> A.plan.transform, A.plan.normal, A.plan.executor
+        ('fft', 'kernel', 'slab')
+        >>> A.plan.fused
+        True
         """
         if self._defers and "_plan" not in self.__dict__:
             # A composition works out its plan by lowering, and lowering is

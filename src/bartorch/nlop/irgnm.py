@@ -300,6 +300,16 @@ class IRGNM:
         >>> step.plan.domain
         'normal'
         >>> x = step(step.prepare(kspace), start, start, 1.0)
+
+        Notes
+        -----
+        The returned step carries a diagnostic ``plan``: ``plan.bundle`` says
+        where the derivative came from (``"declared"``, ``"chain rule"``,
+        ``"linear"`` or ``"torch"``), ``plan.domain`` whether the step works
+        against the normal operator or applies the encoding forward and
+        adjoint, ``plan.encoding`` the linear part's own
+        :attr:`~bartorch.linop.LinearOperator.plan`, and ``plan.fused`` whether
+        the coil model was rewritten.  Reading it changes nothing.
         """
         from bartorch.nlop.step import Step
 
