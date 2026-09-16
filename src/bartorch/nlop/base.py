@@ -123,7 +123,7 @@ def _bart_axis(axis: int, shape: Shape) -> int:
 
 
 class NonlinearOperator(Operator):
-    """A map between shapes, with a derivative and its adjoint.
+    """Nonlinear operator between tensor shapes, with a derivative and its adjoint.
 
     :meth:`derivative` and :meth:`adjoint` are taken at the point of the last
     :meth:`forward` call, which is how BART's solvers use them.  The backward
@@ -317,15 +317,14 @@ class NonlinearOperator(Operator):
     # --- the derivative as a linear operator -------------------------------
 
     def jacobian(self, output: int = 0, input: int = 0):  # noqa: A002
-        """``DF/dx_input`` of one output, as a :class:`~bartorch.linop.LinearOperator`.
+        """``DF/dx_input`` of one output at the last evaluated point.
 
-        The whole linear surface applies to what this returns -- its adjoint,
-        its normal operator, a solve over it -- which is how ``noir/recon2.c``
-        builds the inner problem of a Gauss-Newton step.
-
-        The point is wherever the last :meth:`forward` left it, and it moves
-        with the next one: this is a view of the operator's derivative, not a
-        copy of it.
+        Returned as a :class:`~bartorch.nlop.Derivative`, to which the whole
+        linear surface applies -- its adjoint, its normal operator, a solve
+        over it.  The point is wherever the last :meth:`forward` left it, and
+        it moves with the next one: this is a view of the operator's
+        derivative, not a copy of it.  :meth:`linearize` holds the point
+        instead.
         """
         from bartorch.nlop.derivative import Derivative
 
@@ -339,21 +338,27 @@ class NonlinearOperator(Operator):
     def bundle(self):
         """The derivative and adjoint with the linearization point as an argument.
 
-        ``None`` where the operator has none, which leaves it able to solve
-        but not to be a Gauss-Newton step; see
-        :class:`~bartorch.nlop.bundle.Bundle`.
+        ``None`` where the operator has none; such an operator has no
+        Gauss-Newton step and no :meth:`linearize` that holds its point.  See
+        :class:`~bartorch.nlop.Bundle`.
         """
         return self._bundle()
 
     def linearize(self, *xs: torch.Tensor):
         """The derivative at ``x``, as a :class:`~bartorch.linop.LinearOperator`.
 
-        Evaluates the operator at ``x``, which moves the point the derivative
-        is taken at.  For an operator of one input and one output; for the
-        others, evaluate and take a :meth:`jacobian`.
+        For an operator of one input and one output.  With a :attr:`bundle` the
+        result is ``bundle.at(x)``: it holds ``x``, answers the same whatever is
+        evaluated afterwards, and is differentiable by ``x``.  Without one it
+        evaluates the operator at ``x`` and answers at the last evaluated
+        point, as :meth:`jacobian` does.  For an operator of several
+        arguments, :meth:`flatten` it first, or evaluate and take a
+        :meth:`jacobian`.
         """
         from bartorch.linop.base import LinearOperator
 
+        if 1 == len(xs) == len(self.ishapes) == len(self.oshapes) and self.bundle is not None:
+            return self.bundle.at(xs[0])
         self.forward(*xs)
         return LinearOperator.from_callbacks(
             self.oshape, self.ishape, self.derivative, self.adjoint

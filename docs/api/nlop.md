@@ -51,20 +51,28 @@ contrasts, and is fitted by {class}`IRGNM`.
 
 ## Nonlinear operators and operator algebra
 
-`a @ b` composes, applying `b` first, and accepts a
-{class}`~bartorch.linop.LinearOperator` on either side.  Beyond composition an
-operator with several arguments is rearranged by methods rather than by
-symbols: `F.chain(G, output=i, input=j)` feeds one output into one input,
-`F.combine(G)` places two side by side, and `F.link`, `F.dup`,
-`F.stack_inputs`, `F.permute_inputs`, `F.permute_outputs`, `F.reshape_input`,
-`F.reshape_output` and `F.flatten` rearrange what is left.  {func}`chain` and
-{func}`combine` are the same two operations as functions.  The concrete types
-these return are implementation detail; each is a {class}`NonlinearOperator`.
+`a @ b` composes, applying `b` first; either side may be a
+{class}`~bartorch.linop.LinearOperator`.  Operators with several arguments are
+combined and rearranged by methods.  `F.chain(G, output=i, input=j)` feeds
+output `i` of `F` into input `j` of `G`, and `F.combine(G)` places the two side
+by side; {func}`chain` and {func}`combine` are the same operations as functions.
+`F.link`, `F.dup`, `F.pin`, `F.del_out`, `F.stack_inputs`, `F.stack_outputs`,
+`F.permute_inputs`, `F.permute_outputs`, `F.shift_input`, `F.shift_output`,
+`F.reshape_input`, `F.reshape_output` and `F.flatten` rearrange the arguments
+of one operator.  Each returns a {class}`NonlinearOperator`; the concrete types
+are not part of the interface.
 
-{class}`Derivative` is one output's derivative by one input as a linear
-operator, also reached as `F.jacobian(...)`.  {class}`Bundle` declares an
-operator's derivative and adjoint with the linearization point as an explicit
-argument, the form a Gauss-Newton step is assembled over.
+The derivative is available in three forms, which differ in where the
+linearization point is held:
+
+| Form | Linearization point | Differentiable by the point |
+| --- | --- | --- |
+| `F.jacobian(o, i)`, a {class}`Derivative` | the last evaluation of `F`, moving with the next | no |
+| `F.linearize(x)`, for one input and one output | `x`, held by the operator | yes |
+| `F.bundle`, a {class}`Bundle` | an explicit argument of each member | yes |
+
+`F.linearize(x)` is `F.bundle.at(x)`, and falls back to the first form for an
+operator without a bundle.  A bundle is what {class}`IRGNMBlock` applies.
 
 ```{eval-rst}
 .. autosummary::

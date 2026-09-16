@@ -10,13 +10,12 @@ __all__ = ["Derivative"]
 
 
 class Derivative(LinearOperator):
-    """``DF/dx_input`` of one output of a nonlinear operator, as a linear one.
+    """Derivative of one output by one input at the last evaluated point, as a linear operator.
 
     ``nlop_get_derivative``.  This is a view: the point is wherever the
-    operator's last application left it, and it moves with the next one.  That
-    makes it usable as the inner problem of a Gauss-Newton step, where
-    the linearisation point is the iterate, and what makes it wrong to hold on
-    to across an unrelated evaluation.
+    operator's last application left it, and it moves with the next one, so
+    it is wrong to hold on to across an unrelated evaluation.
+    :meth:`~bartorch.nlop.Bundle.at` gives the derivative at a point it holds.
 
     Parameters
     ----------

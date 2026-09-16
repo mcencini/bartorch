@@ -632,3 +632,19 @@ def test_the_values_are_copied_rather_than_held():
     S.set(torch.full((1, 8, 8), 3.0, dtype=torch.complex64))
     gc.collect()
     torch.testing.assert_close(S(x), x * 3.0)
+
+
+def test_a_linearization_holds_its_point():
+    """Evaluating the operator elsewhere leaves it where it was, and the point carries a gradient."""
+    t = torch.linspace(0, 1, 16, dtype=torch.complex64)
+    F = nlop.FromTorch(lambda p: p[0] * torch.exp(-t * p[1]), ishape=(2,), oshape=(16,))
+    x = torch.tensor([2.0, 1.5], dtype=torch.complex64)
+    dx = _rand(2)
+    D = F.linearize(x)
+    before = D(dx)
+    F.forward(torch.tensor([0.5, 3.0], dtype=torch.complex64))
+    assert torch.equal(D(dx), before)
+
+    point = x.clone().requires_grad_(True)
+    F.linearize(point)(dx).abs().square().sum().backward()
+    assert torch.isfinite(point.grad).all() and (point.grad != 0).any()

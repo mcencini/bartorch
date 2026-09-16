@@ -83,7 +83,7 @@ def scaled(shape: Shape, value: complex) -> NonlinearOperator:
 
 
 class Bundle:
-    """``F``'s derivative and adjoint written with the linearization point as an argument.
+    """Derivative and adjoint of a nonlinear operator as functions of the linearization point.
 
     ``derivative`` takes ``(*tangents, *point)`` and returns one tangent per
     output; ``adjoint`` takes ``(*cotangents, *point)`` and returns one per
