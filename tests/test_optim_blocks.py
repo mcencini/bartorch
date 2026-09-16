@@ -340,3 +340,48 @@ def test_conjugate_gradients_over_a_linearization_are_differentiable_by_the_poin
     h = 3e-3
     measured = (loss(point + h * direction) - loss(point - h * direction)) / (2 * h)
     assert abs(along - measured) <= 1e-3 * abs(measured)
+
+
+# --- a batch is a batch of runs -----------------------------------------------------
+
+
+_EACH_RUN = {
+    "ist": lambda t: optim.IST(t, maxiter=12),
+    "fista": lambda t: optim.FISTA(t, maxiter=12),
+    "admm": lambda t: optim.ADMM(t, maxiter=12),
+    "pridu": lambda t: optim.PRIDU(t, maxiter=40, adaptive_step=True),
+}
+
+
+@pytest.mark.parametrize("name", sorted(_EACH_RUN))
+@pytest.mark.parametrize("prior", ["wavelet", "l1"])
+def test_a_solver_answers_for_a_batch_what_each_item_answers_alone(name, prior):
+    """A stopping rule, an adaptive step and a wavelet's random shifts belong to a run."""
+    torch.manual_seed(0)
+    A = linop.FFT((16, 16), axes=(-1, -2))
+    y = _rand(3, 16, 16)
+    y[1] *= 50.0
+    make = {"wavelet": lambda: priors.Wavelet((-1, -2), 0.01), "l1": lambda: priors.L1(0.01)}
+    solver = _EACH_RUN[name](make[prior]())
+    together = solver(y, A)
+    alone = torch.stack([solver(item, A) for item in y])
+    assert torch.equal(together, alone)
+
+
+def test_conjugate_gradients_take_a_batch_too():
+    torch.manual_seed(0)
+    A = linop.FFT((16, 16), axes=(-1, -2))
+    y = _rand(2, 16, 16)
+    solver = optim.CG(maxiter=10, cclambda=0.1)
+    assert torch.equal(solver(y, A), torch.stack([solver(item, A) for item in y]))
+
+
+def test_a_stack_draws_a_wavelets_shifts_per_item():
+    torch.manual_seed(0)
+    A = linop.FFT((16, 16), axes=(-1, -2))
+    y = _rand(3, 16, 16)
+    term = priors.Wavelet((-1, -2), 0.01)
+    stack = [optim.ISTBlock(term, step=0.7)] * 4
+    together = _run(stack, y, A)
+    alone = torch.stack([_run(stack, item, A) for item in y])
+    assert torch.equal(together, alone)
