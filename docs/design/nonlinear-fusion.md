@@ -370,15 +370,21 @@ network model imposes -- `oversampling_coils=1.0`, no `optimized`, no
 `oversampled_coils`, no separate coefficient shape -- does not apply. Off the grid
 that includes BART's own default coil oversampling.
 
-A batch is a leading axis on the data, and the block takes each item's step on
-its own. Conjugate gradients couple through global inner products, so a batch laid
-into one long state answers something else; and a leading axis on the encoding of
-`CoilSense` is read as coils, which describes one shared image rather than
-independent items. Applying a batch as one fused operator, as the sensitivity
-batch of the linear encodings does, therefore needs two things this design does
-not have: an item axis on both unknowns of the model, and a conjugate-gradient
-iteration whose scalars are kept per item. Until then the cost is linear in the
-batch.
+A batch comes in two forms. A leading axis on the data of a single-item model is
+stepped item by item. `CoilSense(E, items=True)` instead holds the items inside
+one model: the encoding's leading axis is the item, the image and the coils each
+carry it, and the planner lowers the whole batch into one fused encoding, applied
+to every item at once. The state is then laid out `(items, n)`, items slowest,
+which is the layout `conjgrad_batch` (`italgos.c:589`) solves. `norm_inv` reaches
+that iteration through `iter_conjgrad_conf.Bo` (`iter2.c:258-265`), so the
+inverse keeps its step lengths and its stopping test per item, for the solve and
+for its implicit backward pass alike. Conjugate gradients over one long state
+would couple the items through their inner products; these do not, and a batch in
+one model answers what each item answers alone, to the reproducibility of the
+transform. The second form keeps the item-by-item batch: a solver from
+`bartorch.optim` computes its own scalars over whatever vector it is given.
+
+Which form is faster depends on the size of an item; see [Targets](#targets).
 
 A sampling pattern is `linop_gdiag_set_diag`, which writes into the existing
 `cdiag` and drops its cached normal, so a composition, a gram and a model prepared
@@ -431,6 +437,7 @@ that is torch, which can differentiate every primitive in the table:
 | a linearization at a point | every proximal block and `optim.CG` over `Bundle.at` against the same solver over the derivative written in torch; ADMM, CG and a whole second-form fit against central differences with exact inner solves |
 | the normal-equation rewrite | the same step with `fuse=False`: to single precision on a grid, and off it to a distance that closes as the transform's tolerance is tightened, which says the transform and not the rewrite separates them |
 | fusion | the plan asserted by `IRGNMBlock.plan`, on a coil composition and on one that is not |
+| a model of items | each item against the same item stepped alone, the items' independence under a change to one item's data, and the gradient of one item by another's data |
 | the device | each of the above on a card against the host, and a model stepped on the host and then on the card |
 
 One agreement check is BART against BART and is labelled as such rather than
@@ -470,6 +477,32 @@ no difference, and ranges that are disjoint do.  The absolute times also depend 
 what else the machine is running -- a second compute job on the host cores
 inflates them by tens of per cent without changing whether the ranges separate --
 so the card is measured idle.
+
+A batch of eight items, stepped one by one against held in one model, eight steps
+each, on the same card:
+
+| Case | size | pass | one by one (s) | one model (s) |
+| --- | --- | --- | --- | --- |
+| Cartesian | 64² | forward | 1.74-1.92 | 0.76-0.82 |
+| Cartesian | 64² | backward | 5.68-6.26 | 2.60-2.96 |
+| Cartesian | 128² | forward | 1.95-2.37 | 1.17-1.44 |
+| Cartesian | 128² | backward | 6.33-7.33 | 4.06-4.48 |
+| Cartesian | 256² | forward | 3.34-3.88 | 5.03-5.17 |
+| Cartesian | 256² | backward | 10.09-11.17 | 15.11-15.93 |
+| non-Cartesian | 64² | forward | 2.08-3.04 | 1.01-2.09 |
+| non-Cartesian | 64² | backward | 6.64-9.85 | 2.69-5.98 |
+| non-Cartesian | 128² | forward | 2.11-2.95 | 1.97-2.30 |
+| non-Cartesian | 128² | backward | 6.80-7.57 | 5.62-6.83 |
+| non-Cartesian | 256² | forward | 4.04-4.24 | 7.80-8.02 |
+| non-Cartesian | 256² | backward | 12.47-13.45 | 22.51-24.49 |
+
+One model is faster where an item is small, because it replaces many small
+applications with one, and slower at 256², where the applications are no longer
+small.  There the fused normal operator costs about what the eight single ones
+cost, and the difference is the inverse's vector arithmetic: `conjgrad_batch`'s
+per-item kernels take about three times longer per element than the plain solve's.
+On the host the comparison is not consistent between sizes, so the host is not
+tabulated.
 
 On a grid `linop_get_normal` of an FFT is the same two transforms, and neither
 pass separates from the spread.  Off the grid the normal domain is faster in the

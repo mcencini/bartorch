@@ -149,6 +149,11 @@ weight of the first step, and the block taking step `k` applies it decayed `k`
 times: blocks with the same `alpha` follow BART's schedule, and blocks whose
 `alpha` requires a gradient learn one weight per step.
 
+A leading axis on the data is a batch of independent items, each stepped on its
+own.  {func}`CoilSense` with `items=True` holds the items inside one model
+instead: the model is applied to all of them at once, and the inner conjugate
+gradients keep their scalars per item, which is faster where an item is small.
+
 ```python
 blocks = nn.ModuleList(nlop.IRGNMBlock(cg_maxiter=30) for _ in range(2))
 state = blocks[0].start(y, F)

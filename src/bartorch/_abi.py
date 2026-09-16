@@ -1066,6 +1066,7 @@ def bind(lib: ctypes.CDLL) -> ctypes.CDLL:
         ctypes.c_int,
         ctypes.c_float,
         ctypes.c_float,
+        ctypes.c_long,
     ]
     lib.bartorch_noir_create.restype = ctypes.c_void_p
     lib.bartorch_noir_create.argtypes = [

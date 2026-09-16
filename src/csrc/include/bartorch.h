@@ -733,9 +733,12 @@ BARTORCH_API void bartorch_nlop_free(bartorch_nlop* h);
  * point as the inputs after it; what comes back takes those and then `lambda`.
  * A nonzero `tol` is refused by BART's own assertions once the result is
  * differentiated, and no value of `l2lambda` has been seen to change an
- * answer -- `noir_normal_inversion_create` passes it the same way.
+ * answer -- `noir_normal_inversion_create` passes it the same way.  `batch`
+ * is the number of independent items the vector holds, laid out one after
+ * another; with more than one, the conjugate gradients keep their step lengths
+ * and stopping test per item.
  */
-BARTORCH_API bartorch_nlop* bartorch_nlop_norm_inv_lambda(const bartorch_nlop* normal, int maxiter, float tol, float l2lambda);
+BARTORCH_API bartorch_nlop* bartorch_nlop_norm_inv_lambda(const bartorch_nlop* normal, int maxiter, float tol, float l2lambda, long batch);
 
 /* The nonlinear SENSE model `nlinv` inverts, from `noir/model2.c`.
  *

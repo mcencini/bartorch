@@ -289,3 +289,22 @@ def test_a_batch_on_the_card_answers_what_each_item_answers_alone():
     together = _stepped(block, F, data, state, state, 2)
     assert together.device.type == "cuda"
     assert torch.equal(alone, together)
+
+
+@requires_cuda
+def test_a_model_of_items_steps_on_the_card_as_on_the_host():
+    torch.manual_seed(0)
+    items = 3
+    model = nlop.CoilSense(linop.FFT((items, COILS, 1, N, N), axes=(-1, -2)), items=True)
+    kspace = _rand(*model.oshapes[0])
+    block = nlop.IRGNMBlock(cg_maxiter=20)
+
+    def run(y):
+        state = block.start(y, model)
+        for _ in range(2):
+            state = block(state, model)
+        return state.x
+
+    host, device = run(kspace), run(kspace.cuda())
+    assert device.device.type == "cuda"
+    torch.testing.assert_close(device.cpu(), host, rtol=1e-3, atol=1e-4)

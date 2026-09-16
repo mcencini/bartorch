@@ -2038,7 +2038,7 @@ bartorch_nlop* bartorch_nlop_set_input_const(const bartorch_nlop* a, int i, int 
 }
 
 
-struct nlop_norm_inv_args { const bartorch_nlop* normal; int maxiter; float tol; float l2lambda; bartorch_nlop* result; };
+struct nlop_norm_inv_args { const bartorch_nlop* normal; int maxiter; float tol; float l2lambda; long batch; bartorch_nlop* result; };
 
 static int nlop_norm_inv_worker(void* p)
 {
@@ -2051,6 +2051,12 @@ static int nlop_norm_inv_worker(void* p)
 	cgconf.tol = v->tol;
 	cgconf.l2lambda = v->l2lambda;
 
+	/* `iter2_conjgrad` switches to `conjgrad_batch` when there is more than one
+	 * item, which keeps its step lengths and its stopping test per item: the
+	 * vector is laid out { 2, 1, N, batch }, items slowest. */
+	cgconf.Bo = v->batch;
+	cgconf.Bi = 1;
+
 	struct nlop_norm_inv_conf conf = nlop_norm_inv_default;
 	conf.iter_conf = &cgconf;
 
@@ -2061,12 +2067,12 @@ static int nlop_norm_inv_worker(void* p)
 	return 0;
 }
 
-bartorch_nlop* bartorch_nlop_norm_inv_lambda(const bartorch_nlop* normal, int maxiter, float tol, float l2lambda)
+bartorch_nlop* bartorch_nlop_norm_inv_lambda(const bartorch_nlop* normal, int maxiter, float tol, float l2lambda, long batch)
 {
-	if (NULL == normal)
+	if ((NULL == normal) || (1 > batch))
 		return NULL;
 
-	struct nlop_norm_inv_args v = { normal, maxiter, tol, l2lambda, NULL };
+	struct nlop_norm_inv_args v = { normal, maxiter, tol, l2lambda, batch, NULL };
 
 	return (0 == guarded(nlop_norm_inv_worker, &v)) ? v.result : NULL;
 }
