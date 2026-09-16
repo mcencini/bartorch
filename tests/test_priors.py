@@ -231,11 +231,11 @@ def test_recording_the_transform_does_not_change_it():
 
 
 def test_the_proximal_operator_refuses_a_gradient_rather_than_dropping_one():
-    """BART's is an ``operator_p_s`` and has no derivative to give, so a term
+    """BART's is an ``operator_p_s`` with no backward pass, so a term
     inside a differentiated iteration says so instead of contributing the
     gradient of the constant map."""
     term = priors.L1(0.1)
-    with pytest.raises(ValueError, match="carries no derivative"):
+    with pytest.raises(ValueError, match="no backward pass"):
         term.prox(_rand(*SHAPE).requires_grad_(True), 1.0)
 
 

@@ -1,7 +1,7 @@
 """Nonlinear operators defined by Python functions.
 
 One argument or many.  A function of several tensors becomes an ``nlop`` of
-several inputs, which is what lets a denoiser's weights be an *argument* of a
+several inputs, which lets a denoiser's weights be an *argument* of a
 BART graph rather than something the function closed over -- and so what lets
 a gradient reach them when the graph is BART's to apply.
 """
@@ -245,10 +245,10 @@ class Parameters:
 
     The weights ride in the real part.  BART's operators are complex
     throughout, so the vector is complex64 and its imaginary half is an exact
-    null direction: nothing reads it, and the gradient that comes back is
-    complex with the answer in its real part -- which is what an optimizer
-    over the packed vector wants, and why the packed vector is the thing to
-    hold as a ``torch.nn.Parameter``.
+    null direction: nothing reads it, and the returned gradient is complex with
+    the answer in its real part.  An optimizer over the packed vector therefore
+    works directly on it, so the packed vector is the object to hold as a
+    ``torch.nn.Parameter``.
 
     Parameters
     ----------

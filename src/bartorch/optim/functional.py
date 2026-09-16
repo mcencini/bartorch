@@ -23,12 +23,12 @@ def fista(y: torch.Tensor, A, regularizers=None, *, x0=None, **settings):
 
 
 def admm(y: torch.Tensor, A, regularizers=None, *, x0=None, **settings):
-    """Alternating directions.  See :class:`~bartorch.optim.ADMM`."""
+    """Alternating direction method of multipliers.  See :class:`~bartorch.optim.ADMM`."""
     return ADMM(regularizers, **settings)(y, A, x0)
 
 
 def pridu(y: torch.Tensor, A, regularizers=None, *, x0=None, **settings):
-    """Primal and dual.  See :class:`~bartorch.optim.PRIDU`."""
+    """Primal-dual iteration.  See :class:`~bartorch.optim.PRIDU`."""
     return PRIDU(regularizers, **settings)(y, A, x0)
 
 
@@ -44,7 +44,7 @@ def niht(y: torch.Tensor, A, regularizers, *, x0=None, **settings):
 def cg(y: torch.Tensor, A, lambda_: float = 0.0, *, x0=None, **settings):
     """Conjugate gradients.  See :class:`~bartorch.optim.CG`.
 
-    Its penalties are the quadratic ones :class:`~bartorch.optim.Tikhonov`
-    describes; no proximal term goes here.
+    Takes the quadratic penalties described by
+    :class:`~bartorch.optim.Tikhonov`; proximal terms are not accepted.
     """
     return CG(lambda_, **settings)(y, A, x0)

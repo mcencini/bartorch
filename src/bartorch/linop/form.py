@@ -6,9 +6,9 @@ encoding frame ``t`` and sample ``k``::
     y[c, t, k] = sum_a  O[a, t](k) . T_t( I[c, a, t](r) . x[a](r) )(k)
 
 with ``I`` the image-side element-wise factors, ``T`` the transform, ``O`` the
-k-space element-wise factors and ``sum_a`` a contraction.  :class:`Form` is
-that expression as the library's one encoding entry point takes it, and
-:class:`Plan` is what it reports about itself.
+k-space element-wise factors and ``sum_a`` a contraction.  :class:`Form` is that
+expression in the form the library's single encoding entry point accepts, and
+:class:`Plan` reports how a built operator realizes it.
 
 Composing in Python builds a description; matching and lowering happen once,
 when the operator is built, and each application is then one call into the
@@ -50,7 +50,7 @@ def _vector(v) -> tuple[int, ...]:
 class Array:
     """One array the form holds by pointer, with the BART dimensions it lies on.
 
-    ``vector`` is in BART's order, so it is what :func:`bartorch._layout.vector`
+    ``vector`` is in BART's order, as produced by :func:`bartorch._layout.vector`
     produces rather than a C-order shape.
     """
 
@@ -84,7 +84,7 @@ class Factor:
     """One element-wise factor of the form, as :class:`Plan` reports it.
 
     ``varies`` names the axis roles the factor differs along -- ``coils``,
-    ``sets``, ``frames``, ``terms``, ``voxels``, ``samples`` -- which is what
+    ``sets``, ``frames``, ``terms``, ``voxels``, ``samples`` -- the names
     decides whether it can be streamed with a slab and whether it enters the
     normal's kernel.  ``held`` is ``"whole"`` unless the factor is compressed,
     as coil kernels and a table of phase-encode positions are.
@@ -98,7 +98,7 @@ class Factor:
 
 @dataclass(frozen=True)
 class Plan:
-    """What the planner chose for one encoding.
+    """Lowered form of an encoding operator, as reported by ``LinearOperator.plan``.
 
     Attributes
     ----------
@@ -124,7 +124,7 @@ class Plan:
     executor : str
         ``"slab"`` where the slab loop took the form and ``"chain"`` where it
         could not and BART's plain chain of operators answers instead.  Read
-        back from the library after the operator is built, so it is what ran
+        back from the library after the operator is built, so it reports what ran
         and not what was intended.
     cartesian : tuple of str
         Axes of a trajectory found on the image's own grid and transformed by

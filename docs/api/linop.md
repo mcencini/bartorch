@@ -1,20 +1,23 @@
 # Linear operators
 
-`bartorch.linop`.  An operator maps between two C-order shapes.  They compose
-and combine into a single BART operator through the algebra below, so what a
-solver drives is one operator in BART's own loop.  Applying one to a tensor
-that requires a gradient records it for autograd.
+`bartorch.linop`.  A linear operator maps between two C-order shapes.
+Composition and combination produce a single BART operator rather than a Python
+chain, so an iterative solver applies one operator per iteration without
+returning to Python.  Applying an operator to a tensor that requires a gradient
+records the application for autograd.
 
 ```{eval-rst}
 .. currentmodule:: bartorch.linop
 ```
 
-## MRI encoding
+## MRI encoding operators
 
-An encoding and a solver driving it is what most reconstructions here are.
-Reach for `NoncartesianSense` off the grid, `CartesianSense` on it, and
-`WaveSense` for Wave-CAIPI.  Each owns its sensitivities and its sampling,
-and everything else is a composition with the operators below.
+Each of these implements a complete SENSE forward model -- coil sensitivities,
+transform and sampling -- for one sampling regime: {func}`CartesianSense` for
+Cartesian sampling, {class}`NoncartesianSense` for non-Cartesian trajectories,
+and {func}`WaveSense` for Wave-CAIPI.  {func}`FieldCorrected` wraps any of them
+with off-resonance correction by time segmentation.  Other encoding models are
+built by composing these with the operators below.
 
 ```{eval-rst}
 .. autosummary::
@@ -27,12 +30,13 @@ and everything else is a composition with the operators below.
    FieldCorrected
 ```
 
-## Operator class
+## Linear operators and operator algebra
 
 `A @ B` composes, `A + B` and `A - B` add, `c * A` scales, `A ** n` repeats,
-`A.H` and `A.T` transpose, `A.gram()` and `A.cogram()` are the normal
-operators, and `A[key]` restricts the output as indexing a tensor does.  What
-each returns is private.
+`A.H` is the adjoint and `A.T` the transpose, `A.gram()` and `A.cogram()` are
+the normal operators `A^H A` and `A A^H`, and `A[key]` restricts the codomain
+as indexing a tensor does.  The concrete types these return are implementation
+detail; each is a {class}`LinearOperator`.
 
 ```{eval-rst}
 .. autosummary::
@@ -42,7 +46,7 @@ each returns is private.
    LinearOperator
 ```
 
-## Elementary
+## Elementary operators
 
 ```{eval-rst}
 .. autosummary::
@@ -60,7 +64,7 @@ each returns is private.
    MultiplySum
 ```
 
-## Filtering and differencing
+## Matrix, convolution and finite-difference operators
 
 ```{eval-rst}
 .. autosummary::
@@ -72,11 +76,10 @@ each returns is private.
    Gradient
 ```
 
-## Combining
+## Stacking and block composition
 
-The only functions on this page: everything else maps a tensor to a tensor and
-is therefore an operator, which makes it a class.  Each of these is one BART
-operator, not a list walked per iteration.
+Each of these builds a single BART operator over its operands rather than a
+Python container traversed once per iteration.
 
 ```{eval-rst}
 .. autosummary::
@@ -90,7 +93,7 @@ operator, not a list walked per iteration.
    block
 ```
 
-## Shape
+## Shape and indexing operators
 
 ```{eval-rst}
 .. autosummary::
@@ -112,8 +115,9 @@ operator, not a list walked per iteration.
    Repeat
 ```
 
-## Python-defined
+## User-defined operators
 
-{meth}`LinearOperator.from_callbacks` makes an operator of Python functions
-for the forward, the adjoint and, where a cheaper form exists, the normal;
-every application crosses into Python.
+{meth}`LinearOperator.from_callbacks` builds an operator from Python functions
+for the forward, the adjoint and, where a cheaper form is available, the
+normal.  BART reaches such an operator through callbacks, at the cost of one
+crossing into Python per application.

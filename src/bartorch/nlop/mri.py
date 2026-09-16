@@ -64,23 +64,33 @@ class _Part(LinearOperator):
 
 
 class NonlinearSense(NonlinearOperator):
-    """BART's ``noir`` model: the image and the coil profiles fitted together.
+    r"""Joint image and coil-sensitivity forward model, BART's ``noir``.
 
-    The operator takes **two** inputs -- the image, and the coils as k-space
-    coefficients -- and returns data.  Its Jacobian by either one is a linear
-    operator (:meth:`~bartorch.nlop.NonlinearOperator.jacobian`), which is what
-    a Gauss-Newton step solves over.
+    The operator has **two** inputs, the image and the coil representation, and
+    one output, the data.  Its Jacobian with respect to either input is a
+    linear operator (:meth:`~bartorch.nlop.NonlinearOperator.jacobian`), and a
+    Gauss-Newton step solves the linearized problem over both jointly.
 
-    The coils are unknown as *coefficients*, not as maps: BART carries the
-    Sobolev weighting ``(1 + a |k|^2)^(-b/2)`` that keeps them smooth inside
-    the model, so the quantity being fitted is already regularised.
-    :attr:`coils` is the operator that turns fitted coefficients into
+    The coil unknown is not the sensitivity maps.  It is a k-space
+    representation :math:`\hat{s}` of them, from which the maps follow by the
+    Sobolev weighting
+
+    .. math::
+
+        S = \mathcal{F}^{-1} \left[ \, \kappa \,
+            (1 + a |k|^2)^{-b/2} \, \hat{s} \, \right]
+
+    with ``sobolev`` giving :math:`(a, b)` and ``c`` the scale
+    :math:`\kappa` (BART's ``noir_calc_weights``).  The weighting is part of
+    the model, so the estimated variable is smoothness-regularized by
+    construction and the Gauss-Newton step needs no separate penalty on the
+    coils.  :attr:`coils` is the linear operator mapping fitted coefficients to
     sensitivities.
 
-    Off the grid the model is asymmetric, as BART builds it: it returns
-    *gridded coil images* rather than samples, so a measurement has to be
-    gridded to match.  :meth:`prepare` does that, and does nothing on a grid,
-    where the model returns k-space directly.
+    Off the grid the model is asymmetric, as BART builds it: it returns gridded
+    coil images rather than samples, so a measurement must be gridded to match.
+    :meth:`prepare` does that, and is a no-op on a grid, where the model
+    returns k-space directly.
 
     Parameters
     ----------
@@ -88,9 +98,9 @@ class NonlinearSense(NonlinearOperator):
         Coil-image shape, ``(coils, *spatial)``, C order -- the same shape the
         linear encodings take.  The image itself is this with one coil.
     pattern : tensor, optional
-        On a grid: ones where a sample was taken, zeros where it was not.
-        Without one the acquisition is taken to be fully sampled, which is
-        what ``nlinv`` estimates from a complete measurement.
+        On a grid: binary sampling mask, one at acquired positions and zero
+        elsewhere.  Without one the acquisition is treated as fully sampled, as
+        ``nlinv`` does when estimating from a complete measurement.
     trajectory : tensor, optional
         Off the grid: the trajectory, ``(..., samples, 3)`` in grid units, as
         :class:`bartorch.linop.NUFFT` takes it.  Giving one makes the
@@ -344,7 +354,8 @@ class NonlinearSense(NonlinearOperator):
     def coils(self):
         """Coil coefficients to sensitivities: the Sobolev weighting and the transform.
 
-        What a fit returns is coefficients; this is what makes them maps.
+        A fit returns coefficients; applying this operator gives the
+        sensitivity maps they represent.
         """
         return self._linop(
             library().bartorch_noir_coils, self.ishapes[1], self._read(_SHAPES["coils"])
@@ -378,9 +389,9 @@ class NonlinearSense(NonlinearOperator):
     def prepare(self, kspace: torch.Tensor) -> torch.Tensor:
         """The measurement in the shape the model returns.
 
-        Off the grid that is ``nufft^H(kspace)``, which is what
-        ``noir2_recon`` does before the first Gauss-Newton step; on the grid it
-        is the measurement unchanged.
+        Off the grid this is ``nufft^H(kspace)``, as ``noir2_recon`` applies
+        before the first Gauss-Newton step; on the grid the measurement is
+        returned unchanged.
         """
         if not self.noncart:
             return as_operand(kspace, self.kspace_shape, "kspace")
@@ -396,11 +407,13 @@ def CartesianSense(  # noqa: N802  (it is a constructor)
     pattern: torch.Tensor | None = None,
     **kwargs,
 ) -> NonlinearSense:
-    """Coils and an image fitted together on a grid: ``nlinv`` without a trajectory.
+    """Cartesian joint image and coil-sensitivity forward model.
 
-    The nonlinear variant of :func:`bartorch.linop.CartesianSense`, with the
-    sensitivities turned from a fixed tensor into a second unknown.  See
-    :class:`NonlinearSense` for what it takes.
+    The nonlinear counterpart of :func:`bartorch.linop.CartesianSense`, with
+    the sensitivities a second unknown rather than a fixed tensor; this is the
+    model ``nlinv`` inverts without a trajectory.  The coil unknown is the
+    Sobolev-weighted k-space representation described in
+    :class:`NonlinearSense`, which documents the arguments.
     """
     if kwargs.get("trajectory") is not None:
         raise ValueError("a trajectory makes the non-Cartesian model; use NoncartesianSense")
@@ -412,11 +425,13 @@ def NoncartesianSense(  # noqa: N802  (it is a constructor)
     image_shape: Shape,
     **kwargs,
 ) -> NonlinearSense:
-    """Coils and an image fitted together off the grid: ``nlinv -t``.
+    """Non-Cartesian joint image and coil-sensitivity forward model.
 
-    The nonlinear variant of :class:`bartorch.linop.NoncartesianSense`.  The
-    model is asymmetric, as BART builds it: it returns gridded coil images, and
-    :meth:`NonlinearSense.prepare` is what puts a measurement in that shape.
+    The nonlinear counterpart of :class:`bartorch.linop.NoncartesianSense`, the
+    model ``nlinv -t`` inverts.  The coil unknown is the Sobolev-weighted
+    k-space representation described in :class:`NonlinearSense`.  The model is
+    asymmetric, as BART builds it: it returns gridded coil images, and
+    :meth:`NonlinearSense.prepare` puts a measurement in that shape.
     """
     return NonlinearSense(image_shape, trajectory=trajectory, **kwargs)
 
@@ -426,18 +441,18 @@ def CoilSense(  # noqa: N802  (it is a constructor)
     image_shape: Shape | None = None,
     coil_shape: Shape | None = None,
 ) -> NonlinearOperator:
-    """An image times unknown coils, through any linear encoding.
+    """Product of an image and unknown coil sensitivities, through any encoding.
 
-    The recipe rather than BART's particular model: a product of two unknowns
-    in front of any linear operator from coil images to data -- a wave
-    encoding, a field-corrected one, a subspace one, one of your own::
+    The general construction rather than BART's particular model: a product of
+    two unknowns in front of any linear operator from coil images to data -- a
+    wave encoding, a field-corrected one, a subspace one, or one of your own::
 
         chain(Multiply(image_shape, coil_shape), encoding.to_nonlinear())
 
     Unlike :class:`NonlinearSense` there is no Sobolev weighting on the coils:
-    what is fitted is the sensitivities themselves.  Regularise them by
-    chaining a smoothing operator onto the coil input, or use
-    :class:`NonlinearSense`, which carries BART's.
+    the sensitivities themselves are the unknown, and nothing constrains them
+    to be smooth.  Regularize them by chaining a smoothing operator onto the
+    coil input, or use :class:`NonlinearSense`, which carries BART's.
 
     Parameters
     ----------

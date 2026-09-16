@@ -1,9 +1,10 @@
 # Optimization
 
-`bartorch.optim`.  A block is one step of a BART iteration as a torch module; a
-solver loops a block to BART's schedule and is called as
-`solver(y, A, x0=None)`; the function `optim.fista(y, A, term)` is that call in
-one expression.
+`bartorch.optim`.  A *block* is one step of a BART iteration as a torch module.
+A solver loops a block, reproducing BART's iteration schedule -- step sizes,
+penalty updates and stopping -- and is called as `solver(y, A, x0=None)`.  The
+functional forms, such as `optim.fista(y, A, term)`, construct a solver and call
+it in one expression.
 
 ```{eval-rst}
 .. currentmodule:: bartorch.optim
@@ -35,16 +36,21 @@ one expression.
    maxeigen
 ```
 
-A {class}`~bartorch.priors.ImplicitPrior` goes wherever a term goes.
-{class}`NIHT` refuses: BART's own iteration asserts against the operator
-`lsqr2` hands it, so no NIHT solve runs, `bart pics -R H` included.
+An {class}`~bartorch.priors.ImplicitPrior` is accepted wherever a regularizer
+is.
 
-## Blocks
+{class}`NIHT` cannot be run.  BART's `niht` applies the normal operator in
+place, and the operator `lsqr2` supplies asserts that its arguments are not
+aliased (`iter/niht.c:85`, `iter/lsqr.c:60`), so every NIHT solve terminates in
+an assertion -- `bart pics -R H` included.
 
-`state = block.start(y, A, x0)` sets a run up, `state = block(state, A)` takes a
-step, and `block.output(state, A)` is the image.  A solver is these three
-calls in a loop, so a stack of frozen blocks answers with the solver's bits.
-Step sizes and weights are parameters, frozen until `requires_grad_()`.
+## Iteration blocks
+
+`state = block.start(y, A, x0)` initializes a run, `state = block(state, A)`
+takes one step, and `block.output(state, A)` returns the image.  A solver is
+these three calls in a loop, so a stack of blocks with frozen parameters
+reproduces the solver's output bit for bit.  Step sizes and penalty weights are
+`torch.nn.Parameter`s, frozen until `requires_grad_()` is called on them.
 
 ```python
 blocks = nn.ModuleList(
@@ -59,8 +65,11 @@ for block in blocks:
 image = blocks[-1].output(state, A)
 ```
 
-BART's proximal operators and the residual norms that steer the schedule
-carry no derivative; everything else a step applies is recorded.
+Two parts of a step are outside the graph.  BART's proximal operators have no
+implemented backward pass.  The residual norms that drive the schedule -- an
+adaptive `rho`, an adaptive step size -- are deliberately detached, so they
+control the iteration without contributing gradients.  Every other tensor
+operation in a step is recorded.
 
 ```{eval-rst}
 .. autosummary::
@@ -73,8 +82,19 @@ carry no derivative; everything else a step applies is recorded.
    PRIDUBlock
 ```
 
-{class}`FixedPoint` iterates a block to its fixed point and differentiates
-through the point rather than the run: a deep-equilibrium model.
+## Differentiation through iterations
+
+The solvers produce gradients in one of two ways.  The proximal solvers
+unroll: `solver(y, A)` runs its block `maxiter` times in Python, and the whole
+iteration is recorded.  {class}`CG` instead records the solve as a single
+operation and obtains the gradient analytically -- `x = N^-1 A^H y` is linear in
+`y`, so the vector-Jacobian product is one further solve with the same normal
+operator followed by a forward application.
+
+{class}`FixedPoint` is a third route, and wraps a block rather than being a
+solver.  It drives the block to its fixed point and differentiates implicitly
+there, solving the adjoint fixed-point equation instead of unrolling, so memory
+does not grow with the iteration count -- a deep-equilibrium model.
 
 ```{eval-rst}
 .. autosummary::
@@ -84,10 +104,11 @@ through the point rather than the run: a deep-equilibrium model.
    FixedPoint
 ```
 
-## Functional wrappers
+## Functional interface
 
 `optim.fista(y, A, term, maxiter=30)` is `optim.FISTA(term, maxiter=30)(y, A)`.
-Reach for the class to hand a solver to {class}`bartorch.nlop.IRGNM` as `inner=`.
+The class form is needed where a solver object is passed as an argument, as in
+{class}`bartorch.nlop.IRGNM`'s `inner=`.
 
 ```{eval-rst}
 .. autosummary::

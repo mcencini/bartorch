@@ -145,7 +145,7 @@ class NUFFT(LinearOperator):
         and lie on BART's coil axis side by side, as BART batches coils: one
         plan transforms them all.  With encoding axes they sit behind them in
         memory, which BART's order of roles cannot express, and a batch item
-        at a time is what is built.
+        at a time is built.
         """
         return not self.encoding
 

@@ -1026,88 +1026,33 @@ Routing BART's device allocations through torch's allocator is a further step:
 
 ## Documentation and docstrings
 
-Documentation in this project is written primarily for human developers. Optimize for clarity, precision, and high information density. Do not make documentation verbose in order to help an LLM understand the code.
+`docs/guides/developer/documentation.md` is the editorial policy for everything
+written here -- reference pages, guides and docstrings alike -- and it is
+authoritative.  Read it before writing documentation, and follow it.  What it
+fixes, in short: the reader is an expert in MRI reconstruction and numerical
+optimization; the register is BART's, MRpro's, SigPy's, DeepInv's, PyLops's,
+PyProximal's and Pyxu's; conventional terminology is used and repeated rather
+than paraphrased; a summary line is a classification and not a tagline;
+equations are used where they are more precise than prose; and conversational,
+metaphorical or fragmentary prose is prohibited.
 
-### General principles
+Three rules matter more for an agent than for a person, because an agent is
+likelier to break them:
 
-* Document information that is not obvious from names, signatures, type annotations, or the implementation itself.
-* Prefer direct technical prose over narrative, tutorial-style, conversational, literary, or essay-like explanations.
-* Do not use docstrings to record your reasoning process or to narrate how the code works line by line.
-* Do not restate the signature in prose.
-* Do not document parameters or attributes with descriptions that merely repeat their names or types.
-* Do not add documentation solely for completeness or because a symbol exists.
-* Preserve the project's established docstring format and terminology.
+**The prose already here is not a style reference.**  Documentation in this
+repository has been rewritten out of an inappropriate register once already.
+Matching the voice of a neighbouring docstring is not a reason to write
+something, and a passage that reads as conspicuously written is a defect
+whether or not it was recently touched.
 
-Conciseness is a means, not the goal. Preserve enough detail to state non-obvious contracts precisely.
+**The prose already here is not a description of semantics.**  Before rewriting
+a description, read the implementation, read the tests, and read
+`external/bart` where the behaviour is BART's; the submodule is the upstream
+source and answers most questions about what a term, a solver or an operator
+means.  Do not paraphrase an existing sentence into a new one.  Do not invent
+detail to make a description sound complete -- say what is unclear instead.
 
-### Information worth documenting
-
-Document these when relevant and non-obvious:
-
-* purpose and externally visible behavior;
-* physical units;
-* coordinate or reference frames;
-* transformation/composition order;
-* invariants and state transitions;
-* side effects;
-* important preconditions or assumptions;
-* non-obvious return conventions;
-* behavior at boundaries or special values;
-* state whose meaning is not apparent from its name/type;
-* compatibility constraints;
-* surprising behavior that is intentional and must be preserved.
-
-These details are more important than minimizing line count.
-
-### Packages and modules
-
-Package and module docstrings should normally be brief: usually a one-line summary or a few sentences describing the responsibility of the package/module.
-
-Do not put a design essay, implementation walkthrough, usage tutorial, or historical rationale in a module docstring. Put substantial architectural rationale in dedicated documentation, or a focused code comment if it is local to an implementation decision.
-
-### Classes
-
-A class docstring should explain what abstraction the class represents and any important semantic conventions.
-
-Document constructor parameters and public attributes when their meaning is useful and not obvious. Do not mechanically enumerate every attribute.
-
-For stateful classes, document state variables whose interpretation or lifecycle would otherwise be unclear.
-
-### Functions and methods
-
-State what the operation means rather than narrating its implementation.
-
-Document parameters, return values, exceptions, units, frames, side effects, or special cases only where they convey useful semantics beyond the signature.
-
-A short precise statement is preferred to a long explanatory paragraph.
-
-### Private and helper functions
-
-Private helpers do not require docstrings merely because they are functions.
-
-Add or retain a helper docstring when it communicates a non-obvious contract, invariant, state transition, algorithmic assumption, side effect, special return convention, or other information useful to a maintainer.
-
-If a private helper's behavior is obvious from its name, signature, and short implementation, omit the docstring rather than adding filler.
-
-### Comments versus docstrings
-
-Use docstrings for the contract and semantics of an abstraction.
-
-Use local comments for implementation details, algorithmic tricks, performance-sensitive choices, and explanations of why a particular piece of code is written in a non-obvious way.
-
-Do not move local implementation commentary into a docstring simply to preserve it.
-
-### Style to avoid
-
-Avoid generated prose such as:
-
-* extended scenarios used where a direct rule would suffice;
-* phrases describing code metaphorically or narratively;
-* repeated explanations of implementation mechanics;
-* obvious descriptions such as "the first value", "the system options", or "helper for X";
-* commentary about what is "common", "usually", or "nearly all" unless this is a meaningful documented constraint;
-* large `Parameters` or `Attributes` sections containing mostly information already present in type annotations;
-* statements whose primary purpose is to make the code easier for an LLM to reconstruct.
-
-When modifying existing code, clean up nearby documentation that clearly violates these rules, but do not broaden an otherwise focused code change into a repository-wide documentation rewrite unless requested.
-
+**Write for the code as it is now.**  No text about what the code used to be,
+no changelog in a docstring, no note that something was moved or renamed.
+Design rationale goes in this file or in a comment beside the code it explains,
+not into a module docstring.

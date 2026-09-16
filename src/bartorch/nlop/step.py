@@ -311,12 +311,12 @@ class Step(NonlinearOperator):
 
     @property
     def _item_data(self) -> Shape:
-        """One item's ``y``, which is what the assembly is built at."""
+        """One item's ``y``, the point the assembly is built at."""
         return self.flat.operator.oshapes[0]
 
     @property
     def _item_state(self) -> Shape:
-        """One item's state, which is what the assembly is built at."""
+        """One item's state, the point the assembly is built at."""
         return self.flat.operator.ishapes[0]
 
     def _batched(self, shape: Shape) -> Shape:

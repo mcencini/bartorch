@@ -176,7 +176,7 @@ class ImaginaryL2(_Joint):
 
 
 class L2(Regularizer):
-    """Squared l2 norm of the image (``pics -R Q``), which is what ``pics -r`` adds."""
+    """Squared l2 norm of the image (``pics -R Q``); the penalty ``pics -r`` adds."""
 
     kind = "Q"
 
@@ -274,11 +274,23 @@ def _pair(values, name: str) -> tuple[float, float]:
 
 
 class TotalGeneralizedVariation(_Weighted):
-    """Total generalized variation over ``axes`` (``pics -R G``).
+    r"""Total generalized variation over ``axes`` (``pics -R G``).
 
-    Adds unknowns to the optimization: :func:`bartorch.tools.pics`,
-    :class:`bartorch.optim.ADMM` and :class:`bartorch.optim.PRIDU` take it, and
-    nothing else does.  See the module's introduction.
+    Second-order TGV, minimized jointly over the image and an auxiliary vector
+    field :math:`z`:
+
+    .. math::
+
+        \min_{x, z} \; \alpha_1 \| \nabla x + z \|_1
+                   + \alpha_0 \| \mathcal{E} z \|_1
+
+    with :math:`\mathcal{E}` the symmetrized gradient and ``alpha`` giving
+    :math:`(\alpha_1, \alpha_0)` (BART's ``tgv_reg``).
+
+    Only :func:`bartorch.tools.pics`, :class:`bartorch.optim.ADMM` and
+    :class:`bartorch.optim.PRIDU` accept this term; the auxiliary variables
+    extend the optimization variable and BART counts that extension across the
+    whole set of terms, so the term cannot be built in isolation.
 
     Parameters
     ----------
@@ -302,16 +314,28 @@ class TotalGeneralizedVariation(_Weighted):
 
 
 class InfimalConvolutionTV(_Weighted):
-    """Infimal convolution of total variation over ``axes`` (``pics -R C``).
+    r"""Infimal convolution of total variation over ``axes`` (``pics -R C``).
 
-    Adds unknowns to the optimization: :func:`bartorch.tools.pics`,
-    :class:`bartorch.optim.ADMM` and :class:`bartorch.optim.PRIDU` take it, and
-    nothing else does.  See the module's introduction.
+    The image is split into two components, each penalized by total variation
+    with its own weight and its own derivative scaling:
 
-    The infimal convolution separates what is smooth over one set of axes
-    from what is smooth over the other, so ``axes`` must name at least one of
-    the image's last three -- BART's spatial axes -- and at least one before
-    them, typically the coefficients of a subspace or the frames of a series.
+    .. math::
+
+        \min_{x, z} \; \gamma_1 \| \nabla_1 (x + z) \|_1
+                   + \gamma_2 \| \nabla_2 z \|_1
+
+    with ``gamma`` giving :math:`(\gamma_1, \gamma_2)` (BART's ``ictv_reg``).
+
+    Only :func:`bartorch.tools.pics`, :class:`bartorch.optim.ADMM` and
+    :class:`bartorch.optim.PRIDU` accept this term; the auxiliary variables
+    extend the optimization variable and BART counts that extension across the
+    whole set of terms, so the term cannot be built in isolation.
+
+    The infimal convolution decomposes the image into a component smooth over
+    one set of axes and a component smooth over the other, so ``axes`` must
+    name at least one of the image's last three -- BART's spatial axes -- and
+    at least one before them, typically subspace coefficients or the frames of
+    a time series.
 
     Parameters
     ----------
@@ -338,16 +362,33 @@ class InfimalConvolutionTV(_Weighted):
 
 
 class InfimalConvolutionTGV(_Weighted):
-    """Infimal convolution of total generalized variation over ``axes`` (``pics -R V``).
+    r"""Infimal convolution of total generalized variation over ``axes`` (``pics -R V``).
 
-    Adds unknowns to the optimization: :func:`bartorch.tools.pics`,
-    :class:`bartorch.optim.ADMM` and :class:`bartorch.optim.PRIDU` take it, and
-    nothing else does.  See the module's introduction.
+    The image is split into two components as for
+    :class:`InfimalConvolutionTV`, each penalized by second-order TGV with its
+    own auxiliary vector field:
 
-    The infimal convolution separates what is smooth over one set of axes
-    from what is smooth over the other, so ``axes`` must name at least one of
-    the image's last three -- BART's spatial axes -- and at least one before
-    them, typically the coefficients of a subspace or the frames of a series.
+    .. math::
+
+        \min_{x, z, u, w} \;
+            \gamma_1 \bigl( \alpha_1 \| \nabla (x + z) + u \|_1
+                          + \alpha_0 \| \mathcal{E} u \|_1 \bigr)
+          + \gamma_2 \bigl( \alpha_1 \| \nabla z + w \|_1
+                          + \alpha_0 \| \mathcal{E} w \|_1 \bigr)
+
+    with ``alpha`` giving :math:`(\alpha_1, \alpha_0)` and ``gamma``
+    :math:`(\gamma_1, \gamma_2)` (BART's ``ictgv_reg``).
+
+    Only :func:`bartorch.tools.pics`, :class:`bartorch.optim.ADMM` and
+    :class:`bartorch.optim.PRIDU` accept this term; the auxiliary variables
+    extend the optimization variable and BART counts that extension across the
+    whole set of terms, so the term cannot be built in isolation.
+
+    The infimal convolution decomposes the image into a component smooth over
+    one set of axes and a component smooth over the other, so ``axes`` must
+    name at least one of the image's last three -- BART's spatial axes -- and
+    at least one before them, typically subspace coefficients or the frames of
+    a time series.
 
     Parameters
     ----------

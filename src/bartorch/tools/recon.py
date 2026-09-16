@@ -93,8 +93,8 @@ def pics(
     initial : tensor, optional
         Warm start (``-W``).
     psf : tensor, optional
-        A point spread function computed elsewhere (``--psf_import``), which
-        is how a normal operator built outside BART is brought in.
+        A point spread function computed elsewhere (``--psf_import``), the
+        route by which a normal operator built outside BART is supplied.
     toeplitz : bool, optional
         ``False`` passes ``--no-toeplitz``; ``None`` leaves BART's default.
     lowmem : bool
@@ -212,8 +212,8 @@ def nlinv(
     real : bool
         Constrain the image to be real (``-c``).
     normalize : bool
-        Divide the image by the root sum of squares of the sensitivities,
-        which is what ``nlinv`` does unless told not to.  BART spells this the
+        Divide the image by the root sum of squares of the sensitivities, as
+        ``nlinv`` does unless told not to.  BART spells this the
         other way round, as ``-N`` for "do not normalize".
     return_sensitivities : bool
         Also return the sensitivities, which BART writes as a second array.

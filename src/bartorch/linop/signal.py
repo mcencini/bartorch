@@ -184,7 +184,7 @@ def Gradient(shape: Shape, axes) -> LinearOperator:  # noqa: N802  (it is a cons
     """Finite differences along ``axes``, stacked on a new leading axis.
 
     BART's ``linop_grad``.  The codomain is ``(len(axes), *shape)``: one
-    difference per axis, side by side, which is what a total-variation term is
+    difference per axis, side by side, which is the operator a total-variation term is
     built on.
 
     The difference is the forward one and the boundary is circular: component

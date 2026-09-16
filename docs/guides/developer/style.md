@@ -9,5 +9,6 @@ existing local conventions, and keep upstream BART unchanged.
 A wrapper around a BART command calls BART; it does not reimplement BART's
 computation in torch.  Torch is for reshaping and marshalling around the call.
 
-Docstrings follow {doc}`documentation`.  Pages are Markdown (MyST).  Document
+Documentation and docstrings follow {doc}`documentation`, which is the
+editorial policy for this project.  Pages are Markdown (MyST).  Document
 implemented behaviour, and separate proposed methods from available APIs.

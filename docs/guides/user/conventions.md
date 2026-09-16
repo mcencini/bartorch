@@ -77,9 +77,22 @@ centring and normalization when comparing reconstructions.
 Applying an operator to a tensor that requires a gradient records it, and the
 backward pass is the adjoint: for complex tensors, the conjugate Wirtinger
 gradient torch expects.  A nonlinear operator's backward pass is the adjoint of
-its derivative at the evaluated point.  BART's commands and solvers
-({mod}`bartorch.tools`, {mod}`bartorch.optim`) record nothing, so no gradient
-flows through a BART reconstruction or solve.
+its derivative at the evaluated point.
+
+The commands in {mod}`bartorch.tools` record nothing, so no gradient flows
+through a BART reconstruction.  The solvers in {mod}`bartorch.optim` do produce
+gradients, by one of three routes:
+
+| Solver | Backward pass |
+| --- | --- |
+| {class}`~bartorch.optim.CG` | One further solve with the same normal operator, then a forward application |
+| {class}`~bartorch.optim.IST`, {class}`~bartorch.optim.FISTA`, {class}`~bartorch.optim.ADMM`, {class}`~bartorch.optim.PRIDU` | The iteration unrolled: the block runs `maxiter` times in Python and is recorded |
+| {class}`~bartorch.optim.FixedPoint` | Implicit differentiation at the fixed point |
+
+In every case BART's proximal operators have no implemented backward pass, and
+the residual norms driving the schedule are deliberately detached.  A
+regularization term is therefore held fixed unless it is a
+{class}`~bartorch.priors.ImplicitPrior`; see {mod}`bartorch.priors`.
 
 ## CFL files
 
