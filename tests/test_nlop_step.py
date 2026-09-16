@@ -260,6 +260,22 @@ def test_off_the_grid_the_two_close_with_the_transforms_tolerance(generator):
     assert distances[2] < 1e-3
 
 
+@pytest.mark.parametrize("off_grid", [False, True])
+def test_an_application_leaves_the_derivative_available_after_a_shared_solve(off_grid):
+    """The inverse's backward pass selects only some derivatives on nodes it shares
+    with the model; the next application of the model has to select them all again."""
+    F = _coil_model(off_grid=off_grid)
+    step = Step(F, nlop.IRGNM(iterations=1, cg_maxiter=10, cg_tol=0.0))
+    forward, inverse = step.flat.operator, step._inverse()
+    point = rand(forward.ishapes[0], torch.Generator().manual_seed(0)) * 0.2 + 1.0
+
+    inverse.forward(point, point, step.weight(1.0))
+    inverse.jacobian(0, 1).adjoint(point)
+
+    value = forward.forward(point)
+    assert torch.isfinite(forward.adjoint(value)).all()
+
+
 # --- BART's own model ---------------------------------------------------------
 
 
