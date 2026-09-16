@@ -94,8 +94,8 @@ def lower(description: Coils) -> NonlinearOperator | None:
     encoding's own normal where it has one -- a point spread function for a
     NUFFT, the transform's own where no k-space factor survives -- and the two
     applications where it has not, which is the pair's cost anyway.  The
-    trade-off is where the data lives; :meth:`Step.prepare` and
-    :attr:`Plan.domain` report it.
+    trade-off is where the data lives; :meth:`IRGNMBlock.start` prepares it and
+    :attr:`Plan.domain` reports it.
 
     ``None`` says it has already been taken, as it has in BART's own
     non-Cartesian model.

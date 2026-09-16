@@ -3,10 +3,10 @@
 BART has the method in two forms.  ``irgnm`` solves the linearized problem
 with its own conjugate gradients; ``irgnm2`` hands that problem to a generic
 regularized least-squares solver, which is how a regularized ``nlinv`` or
-``moba`` works.  The second form's outer loop is written out in Python so the
-inner problem can go to any of the solvers in :mod:`bartorch.optim`; what holds
-that honest is that with conjugate gradients inside it reproduces BART's own
-loop to the bit.
+``moba`` works.  Both are one step of :class:`~bartorch.nlop.IRGNMBlock`
+looped in Python, so the inner problem can go to any of the solvers in
+:mod:`bartorch.optim`; what holds that honest is that each form reproduces
+BART's own loop of that form to the bit.
 """
 
 import pytest
@@ -39,6 +39,27 @@ def test_the_python_loop_with_conjugate_gradients_is_the_library_to_the_last_bit
     library = nlop.IRGNM(**_SETTINGS)._in_library(data, F, x0=start.clone())
     written_out = nlop.IRGNM(**_SETTINGS, inner=optim.CG())(data, F, x0=start.clone())
     torch.testing.assert_close(written_out, library, rtol=0.0, atol=0.0)
+
+
+def test_the_loop_without_an_inner_solver_is_the_first_form_to_the_last_bit():
+    F, data, _ = _decay()
+    start = torch.full((24,), 0.1, dtype=torch.complex64)
+    library = nlop.IRGNM(**_SETTINGS)._first_in_library(data, F, x0=start.clone())
+    looped = nlop.IRGNM(**_SETTINGS)(data, F, x0=start.clone())
+    torch.testing.assert_close(looped, library, rtol=0.0, atol=0.0)
+
+
+def test_with_a_centre_the_first_form_is_noirs_step_and_not_irgnms_arithmetic():
+    # italgos.c adds alpha xref and then subtracts alpha x; noir's step
+    # (model_net.c), which the block is, subtracts alpha (x - xref).  Without a
+    # centre the two are one subtraction.
+    F, data, _ = _decay()
+    start = torch.full((24,), 0.1, dtype=torch.complex64)
+    centre = torch.full((24,), 0.3, dtype=torch.complex64)
+    library = nlop.IRGNM(**_SETTINGS)._first_in_library(data, F, x0=start.clone(), xref=centre)
+    looped = nlop.IRGNM(**_SETTINGS)(data, F, x0=start.clone(), xref=centre)
+    assert not torch.equal(looped, library)
+    torch.testing.assert_close(looped, library, rtol=1e-6, atol=1e-7)
 
 
 def test_it_is_the_library_to_the_last_bit_with_a_regularization_centre_too():
@@ -161,7 +182,7 @@ def test_something_that_is_not_a_solver_at_all_says_so():
         nlop.IRGNM(inner=object())
 
 
-def test_no_inner_solver_runs_the_first_form_inside_the_library():
+def test_no_inner_solver_runs_the_first_form():
     F, data, _ = _decay()
     start = torch.full((24,), 0.1, dtype=torch.complex64)
     plain = nlop.IRGNM(**_SETTINGS)
@@ -229,3 +250,35 @@ def test_the_function_is_its_class():
         rtol=0.0,
         atol=0.0,
     )
+
+
+# --- it differentiates --------------------------------------------------------
+
+
+class _Shrink(torch.nn.Module):
+    def forward(self, x, sigma=None):
+        return 0.9 * x
+
+
+def test_a_proximal_inner_solver_carries_the_gradient_finite_differences_measure(monkeypatch):
+    """Through the linearization at every step, and through the inner solve's
+    implicit backward pass; exact inner solves, so the measurement is the method's."""
+    monkeypatch.setattr(optim.ADMMBlock, "_cg_eps", 0.0)
+    torch.manual_seed(0)
+    F, data, _ = _decay()
+    start = torch.full((24,), 0.1, dtype=torch.complex64)
+    direction = _rand(24)
+    inner = optim.ADMM(priors.ImplicitPrior(_Shrink()), maxiter=4, rho=0.5, cg_maxiter=60)
+    schedule = nlop.IRGNM(iterations=3, alpha=1.0, redu=2.0, inner=inner)
+
+    def loss(x0):
+        return schedule(data, F, x0=x0).abs().square().sum()
+
+    tracked = start.clone().requires_grad_(True)
+    loss(tracked).backward()
+    along = torch.real(torch.sum(tracked.grad.conj() * direction)).item()
+
+    h = 3e-3
+    with torch.no_grad():
+        measured = (loss(start + h * direction) - loss(start - h * direction)).item() / (2 * h)
+    assert abs(along - measured) <= 5e-3 * abs(measured)

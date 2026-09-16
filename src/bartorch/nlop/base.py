@@ -1008,6 +1008,22 @@ class _Flattened(_Unary):
         least = lambda group: (min(group),) if group else ()  # noqa: E731
         return (o if self.inputs_only else least(o)), least(i)
 
+    def _bundle(self):
+        """The inner bundle with its arguments laid out as this operator lays them out."""
+        from bartorch.nlop.bundle import Bundle
+        from bartorch.nlop.step import flattened
+
+        inner = self.x.bundle
+        if inner is None or (not self.inputs_only and 1 != len(self.x.oshapes)):
+            return None
+        made = flattened(inner)
+        derivative, adjoint = made.derivative, made.adjoint
+        if not self.inputs_only:
+            size = (sum(self.out_sizes),)
+            derivative = derivative.reshape_output(0, size)
+            adjoint = adjoint.reshape_input(0, size)
+        return Bundle(self, derivative, adjoint, source=inner.source)
+
     def __repr__(self) -> str:
         return f"{self.x!r}.flatten()"
 

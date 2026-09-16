@@ -23,6 +23,8 @@ class _Apply(torch.autograd.Function):
             ctx.save_for_backward(*xs)
         ctx.real = tuple(isinstance(x, torch.Tensor) and not x.is_complex() for x in xs)
         ctx.dtypes = tuple(x.dtype if isinstance(x, torch.Tensor) else None for x in xs)
+        ctx.shapes = tuple(x.shape if isinstance(x, torch.Tensor) else None for x in xs)
+        ctx.device = next((x.device for x in xs if isinstance(x, torch.Tensor)), None)
         with torch.no_grad():
             return op.forward(*xs)
 
@@ -34,7 +36,7 @@ class _Apply(torch.autograd.Function):
                 op.forward(*ctx.saved_tensors)
         grads = [g.resolve_conj().contiguous() if g is not None else None for g in grads]
         out = [None, None]
-        for at, (real, dtype) in enumerate(zip(ctx.real, ctx.dtypes)):
+        for at, (real, dtype, shape) in enumerate(zip(ctx.real, ctx.dtypes, ctx.shapes)):
             if not ctx.needs_input_grad[at + 2]:
                 out.append(None)
                 continue
@@ -49,10 +51,12 @@ class _Apply(torch.autograd.Function):
                     part = op.jacobian(o, at).adjoint(grad)
                     g = part if g is None else g + part
                 if g is None:
-                    g = torch.zeros(op.ishapes[at], dtype=torch.complex64)
+                    g = torch.zeros(op.ishapes[at], dtype=torch.complex64, device=ctx.device)
             if real:
                 g = g.real
-            out.append(g.to(dtype))
+            # The operator took the input at whatever shape held its entries;
+            # the gradient goes back at that shape.
+            out.append(g.to(dtype).reshape(shape))
         return tuple(out)
 
 

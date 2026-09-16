@@ -37,7 +37,7 @@ from bartorch.nlop.basic import (
 from bartorch.nlop.bundle import Bundle
 from bartorch.nlop.callback import FromTorch, Parameters
 from bartorch.nlop.derivative import Derivative
-from bartorch.nlop.irgnm import IRGNM, irgnm
+from bartorch.nlop.irgnm import IRGNM, IRGNMBlock, irgnm
 from bartorch.nlop.mri import (
     CartesianSense,
     CoilSense,
@@ -65,6 +65,7 @@ __all__ = [
     "FromTorch",
     "FromTorchSim",
     "IRGNM",
+    "IRGNMBlock",
     "InversionRecovery",
     "Inverse",
     "Log",

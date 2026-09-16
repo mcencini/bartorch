@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Timings for the Gauss-Newton step, with the encoding applied both ways.
+"""Timings for Gauss-Newton steps, with the encoding applied both ways.
 
 One case per process, each printing the plan it was lowered into beside its
 times, as ``scripts/benchmark_encodings.py`` does for the linear encodings.
@@ -18,6 +18,7 @@ order alternated between them.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import sys
 import time
 
@@ -57,7 +58,6 @@ def run(
 ) -> None:
     torch.manual_seed(0)
     model = nlop.CoilSense(_encoding(case, n, coils))
-    schedule = nlop.IRGNM(iterations=steps, alpha=1.0, redu=2.0, cg_maxiter=30, cg_tol=0.0)
 
     wanted = (("normal", True), ("paired", False))
     if "both" != variant:
@@ -65,22 +65,27 @@ def run(
 
     times = {}
     for name, fuse in wanted:
-        step = schedule.operator(model, fuse=fuse)
-        data = step.prepare(
-            torch.randn(step.model.oshapes[0], dtype=torch.complex64, device=device)
-        )
-        start = step.start(device=device)
+        block = nlop.IRGNMBlock(alpha=1.0, redu=2.0, cg_maxiter=30, cg_tol=0.0, fuse=fuse)
+        y = torch.randn(model.oshapes[0], dtype=torch.complex64, device=device)
+        initial = block.start(y, model)  # prepares the data, and plans
+        data, start = initial.data, initial.x
 
-        step(data, start, start, 1.0)  # the first call plans
-        times[name] = _timed(lambda: step(data, start, start, 1.0), repeats, device)
+        def stepped(x, initial=initial, block=block):
+            state = dataclasses.replace(initial, x=x)
+            for _ in range(steps):
+                state = block(state, model)
+            return state.x
+
+        stepped(start)  # the first call builds what the steps apply
+        times[name] = _timed(lambda: stepped(start), repeats, device)
 
         def backward():
             iterate = start.clone().requires_grad_(True)
-            step(data, iterate, start, 1.0).abs().square().sum().backward()
+            stepped(iterate).abs().square().sum().backward()
 
         times[name + " backward"] = _timed(backward, repeats, device)
 
-        print(f"  plan {step.plan!r}")
+        print(f"  plan {block.plan(model)!r}")
         print(
             f"  {name:7s} data {tuple(data.shape)}"
             f"  forward {times[name][0]:.3f}-{times[name][1]:.3f} s"

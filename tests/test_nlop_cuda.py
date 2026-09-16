@@ -86,21 +86,30 @@ def test_a_composed_bundle_answers_on_the_card():
 # --- a step on device memory ---------------------------------------------------
 
 
-def _bilinear_step(iterations=2):
-    schedule = nlop.IRGNM(iterations=iterations, alpha=1.0, redu=2.0, cg_maxiter=30, cg_tol=0.0)
-    return schedule.operator(nlop.Multiply((1, 4), (3, 4)))
+STATE = 16
+
+
+def _bilinear():
+    return nlop.Multiply((1, 4), (3, 4))
+
+
+def _stepped(block, F, y, xn, x0, iterations):
+    state = block.start(y, F, x0=xn, xref=x0)
+    for _ in range(iterations):
+        state = block(state, F)
+    return state.x
 
 
 @requires_cuda
 def test_a_gauss_newton_step_answers_on_the_card():
     torch.manual_seed(0)
-    step = _bilinear_step()
-    y = _rand(*step.data_shape)
-    xn = _rand(*step.state_shape) * 0.3 + 1.0
-    x0 = _rand(*step.state_shape) * 0.3
+    F, block = _bilinear(), nlop.IRGNMBlock(alpha=1.0, redu=2.0, cg_maxiter=30)
+    y = _rand(3, 4)
+    xn = _rand(STATE) * 0.3 + 1.0
+    x0 = _rand(STATE) * 0.3
 
-    host = step(y, xn, x0, 1.0)
-    device = step(y.cuda(), xn.cuda(), x0.cuda(), step.weight(1.0, device="cuda"))
+    host = _stepped(block, F, y, xn, x0, 2)
+    device = _stepped(block, F, y.cuda(), xn.cuda(), x0.cuda(), 2)
     assert device.device.type == "cuda"
     torch.testing.assert_close(device.cpu(), host, rtol=1e-3, atol=1e-4)
 
@@ -108,15 +117,35 @@ def test_a_gauss_newton_step_answers_on_the_card():
 @requires_cuda
 def test_a_step_on_the_card_carries_a_gradient_there():
     torch.manual_seed(0)
-    step = _bilinear_step(iterations=1)
-    y = _rand(*step.data_shape).cuda()
-    x0 = (_rand(*step.state_shape) * 0.3).cuda()
-    iterate = (_rand(*step.state_shape) * 0.3 + 1.0).cuda().requires_grad_(True)
+    F, block = _bilinear(), nlop.IRGNMBlock(cg_maxiter=30)
+    y = _rand(3, 4).cuda()
+    x0 = (_rand(STATE) * 0.3).cuda()
+    iterate = (_rand(STATE) * 0.3 + 1.0).cuda().requires_grad_(True)
 
-    step(y, iterate, x0, step.weight(1.0, device="cuda")).abs().square().sum().backward()
+    _stepped(block, F, y, iterate, x0, 1).abs().square().sum().backward()
     assert iterate.grad.device.type == "cuda"
     assert torch.isfinite(iterate.grad).all()
     assert iterate.grad.abs().max() > 0
+
+
+@requires_cuda
+def test_an_inner_solver_on_the_card_carries_a_gradient_there():
+    """The second form: the linearization and its conjugate gradients on device memory."""
+    from bartorch import optim
+
+    torch.manual_seed(0)
+    F = _bilinear()
+    block = nlop.IRGNMBlock(inner=optim.CG(maxiter=30))
+    y = _rand(3, 4)
+    x0 = _rand(STATE) * 0.3
+    host = _stepped(block, F, y, x0 + 1.0, x0, 2)
+
+    iterate = (x0 + 1.0).cuda().requires_grad_(True)
+    device = _stepped(block, F, y.cuda(), iterate, x0.cuda(), 2)
+    torch.testing.assert_close(device.detach().cpu(), host, rtol=1e-3, atol=1e-4)
+    device.abs().square().sum().backward()
+    assert iterate.grad.device.type == "cuda"
+    assert torch.isfinite(iterate.grad).all()
 
 
 # --- the plan, on the card -----------------------------------------------------
@@ -135,28 +164,27 @@ def _coil_model(off_grid, device=None):
 @pytest.mark.parametrize("off_grid", [False, True])
 def test_the_fused_plan_is_taken_on_the_card_too(off_grid):
     """Built from what the encoding holds on the card, so it is that operator's plan."""
-    model = _coil_model(off_grid, device="cuda")
-    step = nlop.IRGNM(iterations=1, cg_maxiter=10, cg_tol=0.0).operator(model)
-    assert step.plan.fused
-    assert "normal" == step.plan.domain
+    plan = nlop.IRGNMBlock().plan(_coil_model(off_grid, device="cuda"))
+    assert plan.fused
+    assert "normal" == plan.domain
+
+
+def _start(model):
+    from bartorch.nlop.step import Linearized
+
+    return _rand(*Linearized(model).state_shape) * 0.2 + 1.0
 
 
 @requires_cuda
 def test_a_fused_coil_step_answers_on_the_card_what_it_answers_on_the_host():
     torch.manual_seed(0)
     model = _coil_model(off_grid=False)
-    step = nlop.IRGNM(iterations=2, alpha=1.0, redu=2.0, cg_maxiter=20, cg_tol=0.0).operator(model)
-
+    block = nlop.IRGNMBlock(alpha=1.0, redu=2.0, cg_maxiter=20)
     kspace = _rand(*model.oshapes[0])
-    start = _rand(*step.state_shape) * 0.2 + 1.0
+    start = _start(model)
 
-    host = step(step.prepare(kspace), start, start, 1.0)
-    device = step(
-        step.prepare(kspace.cuda()),
-        start.cuda(),
-        start.cuda(),
-        step.weight(1.0, device="cuda"),
-    )
+    host = _stepped(block, model, kspace, start, start, 2)
+    device = _stepped(block, model, kspace.cuda(), start.cuda(), start.cuda(), 2)
     assert device.device.type == "cuda"
     torch.testing.assert_close(device.cpu(), host, rtol=1e-3, atol=1e-4)
 
@@ -169,11 +197,10 @@ def test_the_normal_a_fused_step_applies_off_the_grid_is_the_point_spread_functi
     torch.manual_seed(0)
     _finufft.reset_counters()
     model = _coil_model(off_grid=True, device="cuda")
-    step = nlop.IRGNM(iterations=1, cg_maxiter=10, cg_tol=0.0).operator(model)
-
+    block = nlop.IRGNMBlock(cg_maxiter=10)
     kspace = _rand(*model.oshapes[0]).cuda()
-    start = (_rand(*step.state_shape) * 0.2 + 1.0).cuda()
-    step(step.prepare(kspace), start, start, step.weight(1.0, device="cuda"))
+    start = _start(model).cuda()
+    _stepped(block, model, kspace, start, start, 1)
 
     by_psf, by_pair = _finufft.normals_built()
     assert by_psf > 0, f"the step applied the pair {by_pair} times and the function {by_psf}"
@@ -184,15 +211,12 @@ def test_the_normal_a_fused_step_applies_off_the_grid_is_the_point_spread_functi
 def test_the_two_domains_agree_on_the_card_as_they_do_on_the_host():
     torch.manual_seed(0)
     model = _coil_model(off_grid=False)
-    schedule = nlop.IRGNM(iterations=2, alpha=1.0, redu=2.0, cg_maxiter=20, cg_tol=0.0)
-    fused, paired = schedule.operator(model), schedule.operator(model, fuse=False)
-
     kspace = _rand(*model.oshapes[0]).cuda()
-    start = (_rand(*fused.state_shape) * 0.2 + 1.0).cuda()
-    weight = fused.weight(1.0, device="cuda")
-
-    one = fused(fused.prepare(kspace), start, start, weight)
-    other = paired(paired.prepare(kspace), start, start, weight)
+    start = _start(model).cuda()
+    one, other = (
+        _stepped(nlop.IRGNMBlock(cg_maxiter=20, fuse=fuse), model, kspace, start, start, 2)
+        for fuse in (True, False)
+    )
     assert (one - other).abs().max() < 1e-3 * other.abs().max()
 
 
@@ -221,52 +245,47 @@ def test_a_diagonal_set_on_the_card_is_what_the_operator_applies():
 
 
 @requires_cuda
-def test_a_step_on_the_card_answers_for_a_pattern_set_after_assembly():
+def test_a_step_on_the_card_answers_for_a_pattern_set_after_the_model_was_prepared():
     from bartorch.linop.basic import Sampling
 
     torch.manual_seed(0)
     coils, n = 4, 16
     shape = (coils, n, n)
-    schedule = nlop.IRGNM(iterations=2, alpha=1.0, redu=2.0, cg_maxiter=15, cg_tol=0.0)
     kspace = _rand(*shape).cuda()
 
-    def assembled(pattern):
+    def sampled(pattern):
         sampling = Sampling(pattern, shape)
-        model = nlop.CoilSense(sampling @ linop.FFT(shape, axes=(-1, -2)))
-        return sampling, schedule.operator(model)
+        return sampling, nlop.CoilSense(sampling @ linop.FFT(shape, axes=(-1, -2)))
 
     first = (torch.rand(1, n, n) > 0.3).to(torch.complex64).cuda()
     second = (torch.rand(1, n, n) > 0.3).to(torch.complex64).cuda()
 
-    def solve(step):
-        state = step.start(device="cuda")
-        return step(step.prepare(kspace), state, state, step.weight(1.0, device="cuda"))
+    def solve(block, model):
+        state = block.start(kspace, model)
+        for _ in range(2):
+            state = block(state, model)
+        return state.x
 
-    sampling, step = assembled(first)
-    solve(step)
+    block = nlop.IRGNMBlock(alpha=1.0, redu=2.0, cg_maxiter=15)
+    sampling, model = sampled(first)
+    solve(block, model)
     sampling.set(second)
-    reused = solve(step)
+    reused = solve(block, model)
 
-    _, rebuilt = assembled(second)
+    _, rebuilt = sampled(second)
     assert reused.device.type == "cuda"
-    assert torch.equal(reused, solve(rebuilt))
+    assert torch.equal(reused, solve(nlop.IRGNMBlock(cg_maxiter=15), rebuilt))
 
 
 @requires_cuda
-def test_a_batched_step_on_the_card_answers_what_each_item_answers_alone():
-    """``nlop_stack_multiple`` is given ``multigpu = 0``, so the stack stays on one card."""
+def test_a_batch_on_the_card_answers_what_each_item_answers_alone():
     torch.manual_seed(0)
     batch = 3
-    schedule = nlop.IRGNM(iterations=2, alpha=1.0, redu=2.0, cg_maxiter=15, cg_tol=0.0)
-    model = nlop.Multiply((1, 4), (3, 4))
-    one = schedule.operator(model)
-    many = schedule.operator(model, batch=batch)
+    F, block = _bilinear(), nlop.IRGNMBlock(alpha=1.0, redu=2.0, cg_maxiter=15)
+    data = _rand(batch, 3, 4).cuda()
+    state = (_rand(batch, STATE) * 0.3 + 1.0).cuda()
 
-    data = _rand(batch, *one.data_shape).cuda()
-    state = (_rand(batch, *one.state_shape) * 0.3 + 1.0).cuda()
-
-    weight = one.weight(1.0, device="cuda")
-    alone = torch.stack([one(data[i], state[i], state[i], weight) for i in range(batch)])
-    together = many(data, state, state, many.weight(1.0, device="cuda"))
+    alone = torch.stack([_stepped(block, F, data[i], state[i], state[i], 2) for i in range(batch)])
+    together = _stepped(block, F, data, state, state, 2)
     assert together.device.type == "cuda"
     assert torch.equal(alone, together)

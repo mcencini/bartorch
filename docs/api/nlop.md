@@ -137,17 +137,23 @@ nlop.IRGNM(inner=optim.CG())                                 # the unregularized
 nlop.IRGNM(inner=optim.FISTA(priors.Wavelet(axes, 0.001)))   # wavelet-regularized
 ```
 
-{meth}`IRGNM.operator` exposes a single Gauss-Newton step as one operator,
-differentiable with respect to its data, iterate, regularization centre and
-regularization weight.  An unrolled network is then itself one operator:
-chaining the steps leaves the whole graph inside the library, with one crossing
-into Python per step for the prior.
+{class}`IRGNMBlock` is one Gauss-Newton step as a torch module, with the
+interface of the blocks in {mod}`bartorch.optim`: `state = block.start(y, F, x0,
+xref)` prepares the data and the model, `state = block(state, F)` takes one
+step, and `block.output(state, F)` returns the unknowns.  {class}`IRGNM` is
+these calls in a loop.  Without `inner=` a step is differentiable with respect
+to the data, the iterate, the regularization centre and `alpha`.  With
+`inner=` the inner solver runs over the derivative linearized at the iterate,
+and the gradient reaches the iterate through it.  The regularization weight is
+carried in the state and decays from the first block's `alpha`.
 
 ```python
-first, second = (nlop.IRGNM(iterations=1).operator(F) for _ in range(2))
-prior = nlop.FromTorch(lambda x, w: w * x, [state, weights.shape], state)
-whole = nlop.chain(nlop.chain(first, prior, output=0, input=0), second, output=0, input=1)
-whole(y, x0, alpha, packed, ...).abs().square().sum().backward()
+blocks = nn.ModuleList(nlop.IRGNMBlock(cg_maxiter=30) for _ in range(2))
+state = blocks[0].start(y, F)
+for block in blocks:
+    state = block(state, F)
+    state = dataclasses.replace(state, x=denoise(state.x))
+x = blocks[-1].output(state, F)
 ```
 
 ```{eval-rst}
@@ -156,5 +162,6 @@ whole(y, x0, alpha, packed, ...).abs().square().sum().backward()
    :nosignatures:
 
    IRGNM
+   IRGNMBlock
    irgnm
 ```

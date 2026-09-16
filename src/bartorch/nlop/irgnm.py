@@ -1,24 +1,28 @@
 """Nonlinear inverse problems by iteratively regularized Gauss-Newton.
 
-The method comes in two forms and :class:`IRGNM` is both.  ``irgnm`` solves
-each linearized problem with its own conjugate gradients, which is what
-:class:`IRGNM` does without an inner solver.  ``irgnm2`` hands the problem to a
-generic regularized least-squares solver, which is what ``inner=`` selects,
-with the outer loop written out here.  :meth:`IRGNM.operator` exposes one step
-as an operator a network is built of.
+The method comes in two forms, and :class:`IRGNMBlock` takes one step of
+either.  ``irgnm`` solves each linearized problem by conjugate gradients inside
+the library, as ``noir``'s step does, which is the block without an inner
+solver.  ``irgnm2`` hands the problem to a generic regularized least-squares
+solver, which is what ``inner=`` selects.  :class:`IRGNM` loops the block to
+BART's schedule, as the solvers in :mod:`bartorch.optim` loop theirs.
 """
 
 from __future__ import annotations
 
 import copy
+import dataclasses
+import weakref
 
 import torch
+from torch import nn
 
 from bartorch._dispatch import BartError, _lock, _on_device
 from bartorch._lib import library
 from bartorch._operator import as_operand
+from bartorch.optim.blocks import _setting, _value
 
-__all__ = ["IRGNM", "irgnm"]
+__all__ = ["IRGNM", "IRGNMBlock", "irgnm"]
 
 
 def _inner_solver(inner):
@@ -57,8 +61,201 @@ def _at(solver, alpha: float):
     return step
 
 
+class IRGNMBlock(nn.Module):
+    """One step of iteratively regularized Gauss-Newton, ``noir``'s Gauss-Newton step.
+
+    Without ``inner`` the step is BART's first form,
+
+    ``x = xn + (DF^H DF + alpha)^-1 [DF^H (y - F(xn)) - alpha (xn - xref)]``,
+
+    with the inverse computed by conjugate gradients inside the library and
+    differentiated implicitly.  With ``inner`` it is the second form: the
+    solver minimizes ``||DF u - r||^2 + alpha ||u||^2 + R(u)`` for ``DF``
+    linearized at ``xn`` and ``r = y - F(xn) + DF (xn - xref)``, and
+    ``x = u + xref``.  The weight then decays as
+    ``alpha <- (alpha - alpha_min) / redu + alpha_min``, and in the second form
+    is kept above ``alpha_min0``.
+
+    ``state = block.start(y, F, x0, xref)`` prepares the data and the model,
+    ``state = block(state, F)`` takes one step, and ``block.output(state, F)``
+    returns the unknowns.  ``F`` needs a :attr:`~bartorch.nlop.NonlinearOperator.bundle`.
+    A leading batch axis on ``y`` is a batch of independent items, each stepped
+    on its own.
+
+    Parameters
+    ----------
+    alpha : float
+        Initial Tikhonov weight.
+    alpha_min : float
+        What the weight decays towards.
+    alpha_min0 : float
+        Floor the decayed weight is never taken below; second form only.
+    redu : float
+        Factor the weight is divided by after each step.
+    cg_maxiter, cg_tol, cg_lambda : int, float, float
+        The first form's conjugate gradients: ``iter_conjgrad_conf``'s
+        ``maxiter``, ``tol`` and ``l2lambda``.  A nonzero ``tol`` is refused
+        by BART once the step is differentiated.
+    inner : solver, optional
+        A configured solver from :mod:`bartorch.optim` for the linearized
+        problem; its regularizers are ``R``.
+    fuse : bool
+        Lower a coil composition so that its encoding is applied once as its
+        normal operator; see :meth:`plan`.
+
+    Notes
+    -----
+    ``alpha`` and ``redu`` are :class:`torch.nn.Parameter` objects, frozen until
+    ``requires_grad_()``.  The first form is differentiable by the data, the
+    iterate, the centre and ``alpha``.  The second form is differentiable by
+    the data, the iterate, the centre and the inner solver's own settings and
+    priors; it gives ``alpha`` to the solver as a number, so ``alpha`` is held
+    fixed there.
+    """
+
+    @dataclasses.dataclass(frozen=True)
+    class State:
+        x: torch.Tensor
+        xref: torch.Tensor
+        data: torch.Tensor
+        alpha: object
+        space: object
+        k: int = 0
+
+    def __init__(
+        self,
+        *,
+        alpha: float = 1.0,
+        alpha_min: float = 0.0,
+        alpha_min0: float = 0.0,
+        redu: float = 2.0,
+        cg_maxiter: int = 30,
+        cg_tol: float = 0.0,
+        cg_lambda: float = 0.0,
+        inner=None,
+        fuse: bool = True,
+    ):
+        super().__init__()
+        self.inner = None if inner is None else _inner_solver(inner)
+        if self.inner is None and alpha_min0:
+            raise ValueError(
+                "alpha_min0 is the second form's floor; BART's first form has none, so it "
+                "takes an inner solver"
+            )
+        self.alpha = _setting(alpha)
+        self.redu = _setting(redu)
+        self.alpha_min = float(alpha_min)
+        self.alpha_min0 = float(alpha_min0)
+        self.cg_maxiter = int(cg_maxiter)
+        self.cg_tol = float(cg_tol)
+        self.cg_lambda = float(cg_lambda)
+        self.fuse = bool(fuse)
+        self._spaces = weakref.WeakKeyDictionary()
+
+    def _space(self, F):
+        """``F`` prepared for steps, built once per model."""
+        from bartorch.linop.base import LinearOperator
+        from bartorch.nlop.step import Linearized
+
+        made = self._spaces.get(F)
+        if made is None:
+            model = F.to_nonlinear() if isinstance(F, LinearOperator) else F
+            made = Linearized(
+                model,
+                cg_maxiter=self.cg_maxiter,
+                cg_tol=self.cg_tol,
+                cg_lambda=self.cg_lambda,
+                fuse=self.fuse,
+                inverse=self.inner is None,
+            )
+            self._spaces[F] = made
+        return made
+
+    def plan(self, F):
+        """What ``F`` was lowered into, as a :class:`~bartorch.nlop.plan.Plan`.
+
+        ``plan.bundle`` says where the derivative came from, ``plan.domain``
+        whether the step works against the normal operator or applies the
+        encoding forward and adjoint, ``plan.encoding`` the linear part's own
+        plan, and ``plan.fused`` whether the coil model was rewritten.
+        """
+        return self._space(F).plan
+
+    def start(self, y: torch.Tensor, F, x0=None, xref=None) -> State:
+        """The run's state: the prepared data, the start, the centre and the weight.
+
+        ``x0`` and ``xref`` are a state (the unknowns laid end to end), the one
+        unknown of a single-input model at its shape, or a tuple of unknowns.
+        Without ``x0`` the start is ``nlinv``'s: the first unknown ones, the
+        rest zero.  Without ``xref`` the steps are regularized towards zero.
+        """
+        space = self._space(F)
+        data = space.prepare(torch.as_tensor(y))
+        batch = data.shape[:1] if space.batched(data, space.data_shape) else ()
+        if x0 is None:
+            x = space.start(batch, device=data.device)
+        else:
+            x = space.state(x0).expand(*batch, *space.state_shape)
+        centre = torch.zeros_like(x) if xref is None else space.state(xref).expand_as(x)
+        if self.inner is not None:
+            alpha = float(self.alpha)
+        elif self.alpha.requires_grad:
+            alpha = self.alpha.float().to(torch.complex64) * torch.ones_like(x)
+        else:
+            alpha = torch.full_like(x, float(self.alpha))
+        return self.State(x, centre, data, alpha, space)
+
+    def forward(self, state: State, F) -> State:
+        space = state.space
+        take = self._first if self.inner is None else self._second
+        if space.batched(state.x, space.state_shape):
+            items = zip(state.x, state.xref, state.data, _items(state.alpha, len(state.x)))
+            x = torch.stack([take(space, *item) for item in items])
+        else:
+            x = take(space, state.x, state.xref, state.data, state.alpha)
+        return dataclasses.replace(state, x=x, alpha=self._decay(state.alpha), k=state.k + 1)
+
+    def output(self, state: State, F):
+        """The unknowns: a tensor for a model of one input, else one per input."""
+        parts = state.space.split(state.x)
+        return parts[0] if 1 == len(parts) else parts
+
+    def _first(self, space, x, xref, data, alpha):
+        """``noir_gauss_newton_step_create_s``'s expression, one item."""
+        from bartorch.nlop.derivative import _evaluate
+
+        residual = data - _evaluate(space.operator, x)
+        rhs = _evaluate(space.adjoint, residual, x) - alpha * (x - xref)
+        return x + _evaluate(space.inverse(x.device), rhs, x, alpha)
+
+    def _second(self, space, x, xref, data, alpha):
+        """``irgnm2``'s step, one item: the linearization carried to the centre."""
+        from bartorch.nlop.derivative import _evaluate
+
+        residual = data - _evaluate(space.operator, x)
+        derivative = space.flat.at(x)
+        residual = residual + derivative.forward(x - xref)
+        return _at(self.inner, alpha)(residual, derivative) + xref
+
+    def _decay(self, alpha):
+        if self.inner is None:
+            redu = _value(self.redu)
+            return (alpha - self.alpha_min) / redu + self.alpha_min
+        alpha = (alpha - self.alpha_min) / float(self.redu) + self.alpha_min
+        return self.alpha_min0 if alpha < self.alpha_min0 else alpha
+
+    def __repr__(self) -> str:
+        inner = "" if self.inner is None else f", inner={type(self.inner).__name__}(...)"
+        return f"IRGNMBlock(alpha={float(self.alpha)}, redu={float(self.redu)}{inner})"
+
+
+def _items(alpha, count: int):
+    """The weight per item: a batched tensor's rows, or one number for all."""
+    return alpha if isinstance(alpha, torch.Tensor) else [alpha] * count
+
+
 class IRGNM:
-    """Iteratively regularized Gauss-Newton for ``F(x) = y``.
+    """Iteratively regularized Gauss-Newton for ``F(x) = y``, looping :class:`IRGNMBlock`.
 
     Each step linearizes at the current point and solves
 
@@ -89,8 +286,11 @@ class IRGNM:
     inner : solver or None
         A configured solver from :mod:`bartorch.optim` for the linearized
         problem, whose regularizers become the ``R`` above.  ``None`` runs
-        BART's first form, run entirely inside the library, as ``nlinv``
+        BART's first form, with the inverse inside the library, as ``nlinv``
         does.
+    fuse : bool
+        Lower a coil composition so that its encoding is applied once as its
+        normal operator.
 
     Examples
     --------
@@ -124,8 +324,9 @@ class IRGNM:
     step; the second shifts by ``xref``, carries an extra ``DF (x - xref)``
     into the residual, and solves for the iterate itself.  They agree in exact
     arithmetic and differ in the last bits, so a run with ``inner=`` will not
-    reproduce one without it -- but ``inner=optim.CG()`` reproduces
-    ``iter4_irgnm2`` exactly, and the suite holds it to that.
+    reproduce one without it.  Each reproduces BART's own loop of its form --
+    ``iter4_irgnm`` and, with ``inner=optim.CG()``, ``iter4_irgnm2`` -- and the
+    suite holds both to that.
     """
 
     def __init__(
@@ -139,6 +340,7 @@ class IRGNM:
         cg_maxiter: int = 30,
         cg_tol: float = 0.0,
         inner=None,
+        fuse: bool = True,
     ):
         self.iterations = int(iterations)
         self.alpha = float(alpha)
@@ -148,32 +350,55 @@ class IRGNM:
         self.cg_maxiter = int(cg_maxiter)
         self.cg_tol = float(cg_tol)
         self.inner = None if inner is None else _inner_solver(inner)
+        self.fuse = bool(fuse)
 
-    def __call__(
-        self, y: torch.Tensor, F, x0: torch.Tensor, xref: torch.Tensor | None = None
-    ) -> torch.Tensor:
-        """Fit ``F(x) = y`` starting from ``x0``.
+    def _block(self) -> IRGNMBlock:
+        """The step this solver loops over, built from its settings."""
+        return IRGNMBlock(
+            alpha=self.alpha,
+            alpha_min=self.alpha_min,
+            alpha_min0=self.alpha_min0 if self.inner is not None else 0.0,
+            redu=self.redu,
+            cg_maxiter=self.cg_maxiter,
+            cg_tol=self.cg_tol,
+            inner=self.inner,
+            fuse=self.fuse,
+        )
+
+    def __call__(self, y: torch.Tensor, F, x0=None, xref=None):
+        """Fit ``F(x) = y``.
 
         Parameters
         ----------
         y : torch.Tensor
-            Data of ``F.oshape``.
+            Data of ``F.oshape``, with an optional batch axis in front.
         F : NonlinearOperator or LinearOperator
-            The forward model; a linear one is converted with
-            :meth:`~bartorch.linop.LinearOperator.to_nonlinear`, and a model
-            of several unknowns with
-            :meth:`~bartorch.nlop.NonlinearOperator.flatten`.
-        x0 : torch.Tensor
-            Starting point of ``F.ishape``.
-        xref : torch.Tensor, optional
-            Regularization centre of ``F.ishape``.  Without one the steps are
-            regularized towards zero, as BART does.
+            The forward model, with a bundle; a linear one is converted with
+            :meth:`~bartorch.linop.LinearOperator.to_nonlinear`.
+        x0 : torch.Tensor or tuple of torch.Tensor, optional
+            Starting point; see :meth:`IRGNMBlock.start`.
+        xref : torch.Tensor or tuple of torch.Tensor, optional
+            Regularization centre.  Without one the steps are regularized
+            towards zero, as BART does.
 
         Returns
         -------
-        torch.Tensor
-            Complex64 solution of ``F.ishape``.
+        torch.Tensor or tuple of torch.Tensor
+            Complex64 solution, one tensor per input of ``F``.
         """
+        block = self._block()
+        state = block.start(y, F, x0, xref)
+        for _ in range(self.iterations):
+            state = block(state, F)
+        return block.output(state, F)
+
+    # --- BART's own loops, the references the block is held against ---------
+
+    def _first_in_library(
+        self, y: torch.Tensor, F, x0: torch.Tensor, xref: torch.Tensor | None = None
+    ) -> torch.Tensor:
+        """``iter4_irgnm``, BART's first form, run inside the library: the reference
+        the block without an inner solver is held against."""
         from bartorch.linop.base import LinearOperator
 
         if isinstance(F, LinearOperator):
@@ -182,13 +407,6 @@ class IRGNM:
         y = as_operand(y, op.oshape, "y")
         x = as_operand(x0, op.ishape, "x0").clone()
         ref = as_operand(xref, op.ishape, "xref") if xref is not None else None
-        if self.inner is not None:
-            return self._in_python(y, op, x, ref)
-        return self._first_form(y, op, x, ref)
-
-    # --- BART's first form, entirely inside the library --------------------
-
-    def _first_form(self, y, op, x, ref) -> torch.Tensor:
         with _lock, _on_device(op.device or y.device):
             code = library().bartorch_irgnm(
                 op._h.ptr,
@@ -235,128 +453,6 @@ class IRGNM:
             )
         if code != 0:
             raise BartError("Gauss-Newton solve failed; see the log for BART's message")
-        return x
-
-    # --- BART's whole step, as an operator ---------------------------------
-
-    def operator(self, F, *, batch: int = 1, cg_lambda: float = 0.0, fuse: bool = True):
-        """This schedule as one operator ``(y, xn, x0, alpha) -> x``, differentiable by all four.
-
-        ``iterations`` steps, the weight decaying by ``redu`` towards
-        ``alpha_min``, each a conjugate-gradient solve whose backward pass is
-        another.  Steps chain into one operator with
-        :func:`~bartorch.nlop.chain`.
-
-        Every model is the same assembly over the derivative it supplies as a
-        function of the point
-        (:attr:`~bartorch.nlop.NonlinearOperator.bundle`), which for a
-        :class:`~bartorch.nlop.NonlinearSense` is ``noir``'s own Gauss-Newton
-        step written out.  A model that supplies no bundle solves through
-        :meth:`__call__` instead.
-
-        ``xn``, ``x0`` and the answer are the model's unknowns in one flat
-        vector, which ``split()`` and ``join()`` read and write, and ``alpha``
-        may be a number.  ``batch`` items are stacked on the leading axis of
-        every argument, each with its own build of the whole expression, so
-        they share nothing -- not even the inner conjugate gradients.
-
-        A product of two unknowns behind a linear encoding is lowered so the
-        encoding is applied once as its normal, which moves ``y`` from samples
-        to coil images -- ``prepare()`` puts a measurement there and ``plan``
-        says whether it happened.  ``fuse=False`` declines the rewrite and
-        applies the encoding as a pair.
-
-        ``cg_lambda`` is ``iter_conjgrad_conf.l2lambda``, and no value of it
-        has been seen to change an answer -- neither here nor through BART's
-        own step, which takes the same parameter.  It is carried because BART
-        takes it, not because it is known to do anything.
-
-        Notes
-        -----
-        A sampling pattern belongs to the model: a
-        :class:`~bartorch.nlop.NonlinearSense` is built with one, and an
-        encoding composed here carries it as a
-        :class:`~bartorch.linop.basic.Sampling`, whose
-        :meth:`~bartorch.linop.basic.Sampling.set` rewrites it under a step
-        that is already assembled.
-
-        BART's default coil weighting, ``b = 32``, puts part of the coil half's
-        gradient below float32's smallest normal number, where ``checkeps``
-        leaves the solve untouched and the gradient is zeros; a gradient that
-        has to mean something there wants ``sobolev=(220.0, 8.0)``.
-
-        Examples
-        --------
-        BART's noir model, batched:
-
-        >>> F = nlop.CartesianSense((coils, 256, 256), sobolev=(220.0, 8.0), pattern=pattern)
-        >>> step = nlop.IRGNM(iterations=1).operator(F, batch=4)
-        >>> x1 = step(step.prepare(kspace), step.start(), step.start(), 1.0)
-
-        A model assembled here, over the encoding of your choice:
-
-        >>> E = linop.NUFFT(traj, (coils, 1, 256, 256))
-        >>> step = nlop.IRGNM(iterations=8).operator(nlop.CoilSense(E))
-        >>> step.plan.domain
-        'normal'
-        >>> x = step(step.prepare(kspace), start, start, 1.0)
-
-        Notes
-        -----
-        The returned step carries a diagnostic ``plan``: ``plan.bundle`` says
-        where the derivative came from (``"declared"``, ``"chain rule"``,
-        ``"linear"`` or ``"torch"``), ``plan.domain`` whether the step works
-        against the normal operator or applies the encoding forward and
-        adjoint, ``plan.encoding`` the linear part's own
-        :attr:`~bartorch.linop.LinearOperator.plan`, and ``plan.fused`` whether
-        the coil model was rewritten.  Reading it changes nothing.
-        """
-        from bartorch.nlop.step import Step
-
-        if self.inner is not None or self.alpha_min0:
-            raise ValueError(
-                "the operator is BART's first form with its own conjugate gradients: it takes "
-                "no inner solver and no alpha_min0"
-            )
-        if 1 > self.iterations:
-            raise ValueError("a Gauss-Newton operator takes at least one step")
-        if 1 > int(batch):
-            raise ValueError("a batch is at least one")
-        return Step(F, self, batch=batch, cg_lambda=cg_lambda, fuse=fuse)
-
-    # --- BART's second form, with the inner problem anywhere ---------------
-
-    def _in_python(self, y, op, x, ref) -> torch.Tensor:
-        """``irgnm2``, written out.
-
-        Every line below is one of ``italgos.c``'s, in its order.  The
-        arithmetic is a scale and an add, which ``vecops.c`` performs with the
-        same kernel torch does, so the result is bit-for-bit the library's;
-        ``inner=optim.CG()`` against :meth:`_in_library` checks that.
-        """
-        alpha = self.alpha
-        # The derivative is a view of the operator's own, so it is built once
-        # and follows the point every forward call moves it to.
-        jacobian = op.jacobian()
-        for _ in range(self.iterations):
-            # r = y - F(x), with the derivative fixed at this x.
-            r = y - op.forward(x)
-
-            if ref is not None:
-                x = x - ref
-
-            # The linearization is carried to the reference: what is solved
-            # for is the iterate, not the step.
-            r = r + op.derivative(x)
-
-            x = _at(self.inner, alpha)(r, jacobian)
-
-            if ref is not None:
-                x = x + ref
-
-            alpha = (alpha - self.alpha_min) / self.redu + self.alpha_min
-            if alpha < self.alpha_min0:
-                alpha = self.alpha_min0
         return x
 
     def __repr__(self) -> str:

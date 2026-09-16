@@ -1,19 +1,18 @@
-"""BART's Gauss-Newton step, which already has a derivative.
+"""BART's Gauss-Newton step over its noir model, taken by IRGNMBlock.
 
 ``noir/model_net.c`` builds one iteration of ``nlinv`` as an ``nlop``, out of
 ``nlop``s throughout: the forward model, the derivative *as a function of the
 linearisation point*, the adjoint, and ``norm_inv``'s implicitly
-differentiated inverse of the normal operator.  So the step differentiates by
-the data, the iterate, the regularisation centre and the weight, second-order
-terms included -- which is what ``networks/nlinvnet.c`` trains through, and
-what :meth:`~bartorch.nlop.IRGNM.operator` hands to torch.
+differentiated inverse of the normal operator.  :class:`~bartorch.nlop.IRGNMBlock`
+applies the same three operators, so a step differentiates by the data, the
+iterate, the regularisation centre and the weight, second-order terms included
+-- which is what ``networks/nlinvnet.c`` trains through.
 
 The thing to know about the model is that it has no sampling pattern until it
 is given one, and it is given one as a *side effect* of the gridding:
 ``noir_adjoint_fft_fun`` calls ``linop_gdiag_set_diag`` on its way past.  A
 step applied before that reads a diagonal nothing has written, which is a
-segmentation fault; :meth:`prepare` is what writes it, and the operator
-refuses until it has been.
+segmentation fault; preparing the data is what writes it.
 """
 
 import math
@@ -23,27 +22,54 @@ import torch
 
 import bartorch.tools as bt
 from bartorch import linop, nlop, optim
-from bartorch._dispatch import BartError
 
 N, COILS = 16, 2
 
-#: What goes to the model, and what goes to the schedule; the rest is the operator's.
+#: What goes to the model, and what goes to the block.
 _MODEL = {"pattern", "trajectory", "sobolev", "weights", "basis", "mask", "real", "sos", "c"}
-_SCHEDULE = {"iterations", "redu", "alpha_min", "cg_maxiter", "cg_tol"}
+_BLOCK = {"redu", "alpha_min", "cg_maxiter", "cg_tol", "fuse", "inner"}
+
+
+class _Newton:
+    """A noir model, a block over it, and ``iterations`` steps as one call.
+
+    ``newton(y, xn, x0, alpha)`` takes prepared data, the iterate, the centre
+    and the weight -- a number or a vector as long as the state.  The pattern
+    is the model's, so a step is taken over an encoding that already carries it.
+    """
+
+    def __init__(self, image_shape, iterations: int = 1, **settings):
+        model = {k: settings.pop(k) for k in list(settings) if k in _MODEL}
+        block = {k: settings.pop(k) for k in list(settings) if k in _BLOCK}
+        assert not settings, settings
+        if model.get("trajectory") is None:
+            model.setdefault("pattern", _ones(image_shape[-1]))
+        self.model = nlop.NonlinearSense(image_shape, **model)
+        self.iterations = iterations
+        self.block = nlop.IRGNMBlock(**block)
+        self.space = self.block._space(self.model)
+
+    def __getattr__(self, name):
+        return getattr(self.space, name)
+
+    @property
+    def plan(self):
+        return self.block.plan(self.model)
+
+    def weight(self, alpha: float) -> torch.Tensor:
+        return torch.full(self.space.state_shape, float(alpha), dtype=torch.complex64)
+
+    def __call__(self, y, xn, x0, alpha):
+        if not isinstance(alpha, torch.Tensor):
+            alpha = self.weight(alpha)
+        state = self.block.State(xn, x0, y, alpha, self.space)
+        for _ in range(self.iterations):
+            state = self.block(state, self.model)
+        return state.x
 
 
 def _cell(image_shape, **settings):
-    """A noir model, a schedule of one step unless told otherwise, and the operator of the two.
-
-    The sampling pattern is the model's, so a step is assembled over an
-    encoding that already carries it.
-    """
-    model = {k: settings.pop(k) for k in list(settings) if k in _MODEL}
-    schedule = {k: settings.pop(k) for k in list(settings) if k in _SCHEDULE}
-    schedule.setdefault("iterations", 1)
-    if model.get("trajectory") is None:
-        model.setdefault("pattern", _ones(image_shape[-1]))
-    return nlop.IRGNM(**schedule).operator(nlop.NonlinearSense(image_shape, **model), **settings)
+    return _Newton(image_shape, **settings)
 
 
 def _phantom():
@@ -84,13 +110,12 @@ def _decompose(newton, x):
 
 
 @pytest.mark.parametrize("batch", [1, 3])
-def test_the_batch_is_the_leading_axis_of_every_argument(batch):
-    newton = _cell((COILS, 8, 8), batch=batch)
-    expected = (COILS, 1, 8, 8) if 1 == batch else (batch, COILS, 1, 8, 8)
-    assert expected == tuple(newton.data_shape)
-    assert 1 == len(newton.oshapes)
-    if 1 < batch:
-        assert batch == newton.state_shape[0]
+def test_a_batch_is_a_leading_axis_on_the_data(batch):
+    newton = _cell((COILS, 8, 8))
+    kspace = torch.randn(batch, *newton.model.oshapes[0], dtype=torch.complex64)
+    state = newton.block.start(kspace, newton.model)
+    assert (batch, *newton.data_shape) == tuple(state.data.shape)
+    assert (batch, *newton.state_shape) == tuple(state.x.shape)
 
 
 def test_the_unknowns_are_the_models_own():
@@ -102,7 +127,7 @@ def test_the_unknowns_are_the_models_own():
     )
 
 
-def test_off_the_grid_the_step_is_assembled_over_the_asymmetric_stage():
+def test_off_the_grid_the_step_is_taken_over_the_asymmetric_stage():
     trajectory = bt.traj(x=16, y=8, r=True)
     newton = _cell((COILS, 8, 8), trajectory=trajectory)
     assert newton.plan.fused
@@ -268,200 +293,52 @@ def test_a_denoiser_between_two_cells_trains(problem):
     assert abs(weight.grad.item() - measured) <= 1e-3 * abs(measured)
 
 
-# --- what it refuses --------------------------------------------------------------
+# --- what it takes and what it refuses -------------------------------------------
 
 
-def test_no_steps_at_all_is_refused():
-    with pytest.raises(ValueError, match="at least one step"):
-        _cell((COILS, 8, 8), iterations=0)
-
-
-def test_an_empty_batch_is_refused():
-    with pytest.raises(ValueError, match="batch is at least one"):
-        _cell((COILS, 8, 8), batch=0)
-
-
-def test_a_model_of_the_algebra_builds_its_step_over_its_own_bundle():
-    made = nlop.IRGNM().operator(nlop.CoilSense(linop.FFT((COILS, 8, 8), axes=(-1, -2))))
-    assert 4 == len(made.ishapes)
+def test_a_model_of_the_algebra_steps_over_its_own_bundle():
+    model = nlop.CoilSense(linop.FFT((COILS, 1, 8, 8), axes=(-1, -2)))
+    assert "chain rule" == nlop.IRGNMBlock().plan(model).bundle
 
 
 def test_a_model_with_no_bundle_is_refused():
     """A tie has no chain rule of its own, so the composition carrying one has no step."""
     made = nlop.combine(nlop.Exp((4,)), nlop.Log((4,))).link(1, 0)
     with pytest.raises(TypeError, match="no derivative as a function of the point"):
-        nlop.IRGNM().operator(made)
+        nlop.IRGNMBlock().start(torch.zeros(4, dtype=torch.complex64), made)
 
 
-def test_a_model_of_the_algebra_carries_a_batch_too():
-    """The batch is the assembly's, not ``noir2_net``'s, so every model has one."""
-    made = nlop.IRGNM().operator(nlop.CoilSense(linop.FFT((COILS, 8, 8), axes=(-1, -2))), batch=2)
-    assert 2 == made.state_shape[0]
+def test_a_model_of_the_algebra_takes_a_batch_too():
+    """The batch is the block's, not ``noir2_net``'s, so every model has one."""
+    model = nlop.CoilSense(linop.FFT((COILS, 1, 8, 8), axes=(-1, -2)))
+    kspace = torch.randn(2, COILS, 1, 8, 8, dtype=torch.complex64)
+    assert 2 == nlop.IRGNMBlock().start(kspace, model).x.shape[0]
 
 
 def test_the_coil_configurations_barts_network_model_refused_are_taken():
-    """``noir2_net`` fits coils on the image's grid; the assembly here does not care."""
+    """``noir2_net`` fits coils on the image's grid; the step here does not care."""
     trajectory = bt.traj(x=16, y=8, r=True)
     for extra in ({}, {"oversampling_coils": 1.5}, {"oversampled_coils": True}):
-        made = nlop.IRGNM().operator(nlop.NoncartesianSense(trajectory, (COILS, 8, 8), **extra))
-        assert made.plan.fused
+        model = nlop.NoncartesianSense(trajectory, (COILS, 8, 8), **extra)
+        assert nlop.IRGNMBlock().plan(model).fused
 
 
-def test_a_second_solver_inside_the_step_is_refused():
-    with pytest.raises(ValueError, match="no inner solver"):
-        nlop.IRGNM(inner=optim.CG()).operator(nlop.CartesianSense((COILS, 8, 8)))
-
-
-# --- an unrolled network as one BART operator -----------------------------------
-
-
-def _cells(n: int = 2):
-    return [_cell((COILS, N, N), iterations=1, sobolev=_HOLDS) for _ in range(n)]
-
-
-def test_two_cells_chain_into_one_operator(problem):
-    """The step's state is held at rank two and a Python operator at DIMS, so
-    this is also what the rank bridging in :func:`bartorch.nlop.chain` is for.
-    """
+def test_an_inner_solver_takes_the_linearized_problem(problem):
+    """The second form over BART's own model, differentiable by the iterate."""
     _, _, kspace = problem
-    first, second = _cells()
-    ya, yb = first.prepare(kspace), second.prepare(kspace)
-    x0 = first.start()
-
-    whole = nlop.chain(first, second, output=0, input=1)
-    made = whole(yb, x0, second.weight(0.5), ya, x0, x0, first.weight(1.0))
-    torch.testing.assert_close(made, second(yb, first(ya, x0, x0, 1.0), x0, 0.5), rtol=0, atol=0)
-
-
-def test_a_torch_denoiser_goes_between_them_inside_the_one_operator(problem):
-    """NLINV-Net with the prior in Python and everything else in C.
-
-    What comes out is a single ``nlop``: BART drives the whole unrolled
-    network and crosses into Python once a step, for the denoiser alone.
-    """
-    _, _, kspace = problem
-    first, second = _cells()
-    ya, yb = first.prepare(kspace), second.prepare(kspace)
-    x0 = first.start()
-    state = first.state_shape
-
-    crossings = []
-
-    def denoise(x):
-        crossings.append(1)
-        return 0.9 * x
-
-    prior = nlop.FromTorch(denoise, state, state)
-    whole = nlop.chain(nlop.chain(first, prior, output=0, input=0), second, output=0, input=1)
-
-    crossings.clear()
-    made = whole(yb, x0, second.weight(0.5), ya, x0, x0, first.weight(1.0))
-    assert 1 == len(crossings), "the prior should be reached once per application"
-    torch.testing.assert_close(
-        made, second(yb, 0.9 * first(ya, x0, x0, 1.0), x0, 0.5), rtol=0, atol=0
-    )
-
-
-@pytest.mark.parametrize("at", [0, 1, 2, 3])
-def test_the_composed_network_differentiates_by_its_own_arguments(problem, at):
-    _, _, kspace = problem
-    first, second = _cells()
-    ya, yb = first.prepare(kspace), second.prepare(kspace)
-    x0 = first.start()
-    state = first.state_shape
-
-    prior = nlop.FromTorch(lambda x: 0.9 * x, state, state)
-    whole = nlop.chain(nlop.chain(first, prior, output=0, input=0), second, output=0, input=1)
-
-    xs = [yb, x0, second.weight(0.5), ya, x0, x0, first.weight(1.0)]
-    tracked = xs[at].clone().requires_grad_(True)
-    xs[at] = tracked
-    whole(*xs).abs().square().sum().backward()
-    assert tracked.grad is not None
+    newton = _cell((COILS, N, N), iterations=2, sobolev=_HOLDS, inner=optim.CG(maxiter=20))
+    y = newton.prepare(kspace)
+    x0 = newton.start()
+    tracked = x0.clone().requires_grad_(True)
+    state = newton.block.State(tracked, x0, y, 1.0, newton.space)
+    for _ in range(2):
+        state = newton.block(state, newton.model)
+    state.x.abs().square().sum().backward()
     assert torch.isfinite(tracked.grad).all()
     assert torch.any(tracked.grad != 0)
 
 
-def test_a_weight_the_prior_closed_over_does_not_train_through_the_one_operator(problem):
-    """Closing over a weight puts it outside the graph BART applies.
-
-    :class:`~bartorch.nlop.FromTorch` answers for the derivative by its
-    *arguments*, and a weight the function closed over is not one of them, so
-    no gradient reaches it.  The fix is to make it an argument, which is the
-    test below; keeping the loop in Python is the other way.
-    """
-    _, _, kspace = problem
-    first, second = _cells()
-    ya, yb = first.prepare(kspace), second.prepare(kspace)
-    x0 = first.start()
-    state = first.state_shape
-
-    weight = torch.nn.Parameter(torch.tensor(0.9))
-    prior = nlop.FromTorch(lambda x: weight * x, state, state)
-    whole = nlop.chain(nlop.chain(first, prior, output=0, input=0), second, output=0, input=1)
-    made = whole(yb, x0, second.weight(0.5), ya, x0, x0, first.weight(1.0))
-    assert made.grad_fn is None
-
-    # The same network written as a loop does train it.
-    loop = second(yb, weight * first(ya, x0, x0, 1.0), x0, 0.5)
-    loop.abs().square().sum().backward()
-    assert weight.grad is not None and 0.0 != weight.grad
-
-
-def _trainable(problem):
-    """The two-cell network with the prior's weight as an argument of it."""
-    _, _, kspace = problem
-    first, second = _cells()
-    ya, yb = first.prepare(kspace), second.prepare(kspace)
-    x0 = first.start()
-    state = first.state_shape
-
-    prior = nlop.FromTorch(lambda x, w: w * x, [state, ()], state)
-    whole = nlop.chain(nlop.chain(first, prior, output=0, input=0), second, output=0, input=1)
-
-    def run(weight):
-        value = (
-            weight
-            if isinstance(weight, torch.Tensor)
-            else torch.tensor(weight, dtype=torch.complex64)
-        )
-        return whole(yb, x0, second.weight(0.5), value, ya, x0, x0, first.weight(1.0))
-
-    return whole, run
-
-
-def test_a_weight_that_is_an_argument_trains_through_the_one_operator(problem):
-    """The gap closed: BART applies the whole network, and the prior's weight
-    is one of the network's own arguments, so torch reaches it."""
-    whole, run = _trainable(problem)
-    # The weight is the argument the prior contributed.
-    assert () in whole.ishapes
-
-    weight = torch.nn.Parameter(torch.tensor(0.9 + 0j))
-    run(weight).abs().square().sum().backward()
-    assert weight.grad is not None and torch.isfinite(weight.grad)
-
-    h = 1e-3
-    measured = (run(0.9 + h).abs().square().sum() - run(0.9 - h).abs().square().sum()).item() / (
-        2 * h
-    )
-    assert abs(weight.grad.real.item() - measured) <= 1e-2 * abs(measured)
-
-
-def test_the_trained_network_answers_what_the_loop_answers(problem):
-    """Same arithmetic either way; what differs is where the weight lives."""
-    _, _, kspace = problem
-    whole, run = _trainable(problem)
-    first, second = _cells()
-    ya, yb = first.prepare(kspace), second.prepare(kspace)
-    x0 = first.start()
-
-    torch.testing.assert_close(
-        run(0.9), second(yb, 0.9 * first(ya, x0, x0, 1.0), x0, 0.5), rtol=1e-5, atol=1e-6
-    )
-
-
-# --- a real denoiser, trained through the one operator ---------------------------
+# --- a real denoiser, trained between the steps ----------------------------------
 
 
 class _Denoiser(torch.nn.Module):
@@ -507,62 +384,41 @@ def test_a_module_with_nothing_to_train_says_so():
         nlop.Parameters(torch.nn.ReLU())
 
 
-def test_a_convolutional_denoiser_trains_inside_the_one_operator(problem):
-    """The whole of it: BART applies an unrolled network, the prior is a torch
-    module, and an optimizer over the module's weights reduces the loss.
+def test_a_convolutional_denoiser_trains_between_the_steps(problem):
+    """NLINV-Net's shape: two steps, a torch module between them, and an
+    optimizer over the module's weights that reduces the loss.
 
-    Six steps is not a reconstruction -- what it says is that the gradient is
+    Six updates is not a reconstruction -- what it says is that the gradient is
     a real one and points the way it should.
     """
     image, _, kspace = problem
     torch.manual_seed(0)
-    cells = _cells()
-    prepared = [cell.prepare(kspace) for cell in cells]
-    x0 = cells[0].start()
-    state = cells[0].state_shape
+    first, second = (_cell((COILS, N, N), iterations=1, sobolev=_HOLDS) for _ in range(2))
+    ya, yb = first.prepare(kspace), second.prepare(kspace)
+    x0 = first.start()
     pixels = N * N
 
     net = _Denoiser()
-    weights = nlop.Parameters(net)
 
-    def prior(x, w):
+    def prior(x):
         # The denoiser touches the image half of the state; the coil
         # coefficients go through untouched.
-        made = torch.func.functional_call(net, weights.unpack(w), (x[:pixels].reshape(1, N, N),))
+        made = net(x[:pixels].reshape(1, N, N))
         return torch.cat([made.reshape(pixels), x[pixels:]])
 
-    operator = nlop.FromTorch(prior, [state, weights.shape], state)
-    whole = nlop.chain(
-        nlop.chain(cells[0], operator, output=0, input=0), cells[1], output=0, input=1
-    )
-
-    trained = torch.nn.Parameter(weights.pack())
-    optimiser = torch.optim.Adam([trained], lr=1e-2)
+    optimiser = torch.optim.Adam(net.parameters(), lr=1e-2)
     truth = image.abs().reshape(pixels)
 
     losses = []
     for _ in range(6):
         optimiser.zero_grad()
-        made = whole(
-            prepared[1],
-            x0,
-            cells[1].weight(0.5),
-            trained,
-            prepared[0],
-            x0,
-            x0,
-            cells[0].weight(1.0),
-        )[:pixels].abs()
+        made = second(yb, prior(first(ya, x0, x0, 1.0)), x0, 0.5)[:pixels].abs()
         scale = (made * truth).sum() / (made * made).sum().clamp_min(1e-12)
         loss = ((scale * made - truth) ** 2).sum()
         loss.backward()
-        assert trained.grad is not None and torch.isfinite(trained.grad).all()
+        assert all(torch.isfinite(p.grad).all() for p in net.parameters())
         losses.append(loss.item())
         optimiser.step()
 
     assert losses[-1] < losses[0]
     assert losses == sorted(losses, reverse=True), "the loss should fall at every step"
-
-    # And the trained values go back where they came from.
-    weights.load(trained)
-    torch.testing.assert_close(nlop.Parameters(net).pack(), trained.detach(), rtol=1e-5, atol=1e-6)

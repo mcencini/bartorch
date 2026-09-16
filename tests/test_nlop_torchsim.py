@@ -411,20 +411,18 @@ def test_the_bundles_adjoint_is_adjoint_over_the_reals(which):
     assert _inner(forward, dz) == pytest.approx(_inner(dx, back), rel=1e-4, abs=1e-8)
 
 
-def test_a_relaxation_fit_reaches_the_gauss_newton_operator():
-    """Which is what the bundle is for: the step is an operator, not a loop."""
+def test_a_relaxation_fit_reaches_the_gauss_newton_step():
+    """Which is what the bundle is for: the step is BART's, over a torch model."""
     torch.manual_seed(0)
     M = nlop.MultiEcho([10.0, 30.0, 60.0], (6, 6))
     data = M(M.initial(T2=80.0))
     start = M.initial(T2=40.0).reshape(-1)
+    assert "torch" == nlop.IRGNMBlock().plan(M).bundle
 
     errors = []
     for steps in (2, 6, 14):
-        step = nlop.IRGNM(
-            iterations=steps, alpha=1.0, redu=2.0, cg_maxiter=30, cg_tol=0.0
-        ).operator(M)
-        assert "torch" == step.plan.bundle
-        made = step(step.prepare(data), start, start, 1.0)
+        schedule = nlop.IRGNM(iterations=steps, alpha=1.0, redu=2.0, cg_maxiter=30, cg_tol=0.0)
+        made = schedule(data, M, x0=start, xref=start)
         fitted = M.split(made.reshape(M.ishape))["T2"].mean().item()
         errors.append(abs(fitted - 80.0))
 
@@ -442,11 +440,9 @@ def test_the_step_over_a_model_under_an_encoding_answers_the_same():
     start = M.initial(T2=40.0).reshape(-1)
     schedule = nlop.IRGNM(iterations=6, alpha=1.0, redu=2.0, cg_maxiter=30, cg_tol=0.0)
 
-    plain = schedule.operator(M)
-    under = schedule.operator(nlop.chain(M, E.to_nonlinear(), output=0, input=0))
-
-    one = plain(plain.prepare(data), start, start, 1.0)
-    other = under(under.prepare(E.forward(data)), start, start, 1.0)
+    one = schedule(data, M, x0=start, xref=start)
+    under = nlop.chain(M, E.to_nonlinear(), output=0, input=0)
+    other = schedule(E.forward(data), under, x0=start, xref=start)
     assert (one - other).abs().max() < 1e-4 * one.abs().max()
 
 
@@ -455,9 +451,12 @@ def test_the_step_over_a_model_carries_a_gradient_by_its_iterate():
     M = nlop.MultiEcho([10.0, 30.0, 60.0], (4, 4))
     data = M(M.initial(T2=80.0))
     start = M.initial(T2=40.0).reshape(-1)
-    step = nlop.IRGNM(iterations=2, cg_maxiter=20, cg_tol=0.0).operator(M)
+    block = nlop.IRGNMBlock(cg_maxiter=20)
 
     iterate = start.clone().requires_grad_(True)
-    step(step.prepare(data), iterate, start, 1.0).abs().square().sum().backward()
+    state = block.start(data, M, x0=iterate, xref=start)
+    for _ in range(2):
+        state = block(state, M)
+    block.output(state, M).abs().square().sum().backward()
     assert torch.isfinite(iterate.grad).all()
     assert iterate.grad.abs().max() > 0

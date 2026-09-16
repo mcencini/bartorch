@@ -313,3 +313,28 @@ def test_auxiliary_variables_are_refused_over_a_linearization():
     block = optim.ADMMBlock(priors.TotalGeneralizedVariation((-1,), 0.01))
     with pytest.raises(TypeError, match="linearized at a point"):
         block.start(torch.zeros(12, dtype=torch.complex64), _linearized().at(at))
+
+
+def test_conjugate_gradients_over_a_linearization_are_differentiable_by_the_point():
+    """The solve ``IRGNM``'s second form hands to ``optim.CG``, against the torch derivative."""
+    point, y, seed = _at_a_point(torch.Generator().manual_seed(0))
+    solver = optim.CG(maxiter=200, tol=0.0, cclambda=0.5)
+    answers = []
+    for make in (_linearized().at, _Dense):
+        at = point.clone().requires_grad_(True)
+        x = solver(y, make(at))
+        (x.conj() * seed).sum().real.backward()
+        answers.append((x.detach(), at.grad))
+    (ours, our_grad), (theirs, their_grad) = answers
+    assert (ours - theirs).abs().max() < 1e-6 * theirs.abs().max()
+    assert (our_grad - their_grad).abs().max() < 1e-5 * their_grad.abs().max()
+
+    direction = _at_a_point(torch.Generator().manual_seed(1))[0]
+    along = torch.real(torch.sum(their_grad.conj() * direction)).item()
+
+    def loss(at):
+        return (solver(y, _Dense(at)).conj() * seed).sum().real.item()
+
+    h = 3e-3
+    measured = (loss(point + h * direction) - loss(point - h * direction)) / (2 * h)
+    assert abs(along - measured) <= 1e-3 * abs(measured)
