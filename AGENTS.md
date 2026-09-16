@@ -970,7 +970,7 @@ operator is unitary. `nufft` output is scaled by one over the
 square root of the image's voxel count, with a negative exponent.
 
 Write for someone reading the code as it is now. No text about what the code
-used to be. Docstrings follow *Documentation and docstrings* below.
+used to be. Docstrings follow *Documentation* below.
 
 ## What is not done
 
@@ -1026,35 +1026,22 @@ Routing BART's device allocations through torch's allocator is a further step:
 `mem_device_malloc` takes the allocator as a parameter, so replacing
 `num/mem.c` would do it without a BART edit.
 
-## Documentation and docstrings
+## Documentation
 
-`docs/guides/developer/documentation.md` is the editorial policy for everything
-written here -- reference pages, guides and docstrings alike -- and it is
-authoritative.  Read it before writing documentation, and follow it.  What it
-fixes, in short: the reader is an expert in MRI reconstruction and numerical
-optimization; the register is BART's, MRpro's, SigPy's, DeepInv's, PyLops's,
-PyProximal's and Pyxu's; conventional terminology is used and repeated rather
-than paraphrased; a summary line is a classification and not a tagline;
-equations are used where they are more precise than prose; and conversational,
-metaphorical or fragmentary prose is prohibited.
+`docs/guides/developer/documentation.md` is the authoritative documentation guide for both contributors and agents. Read and follow it before creating or substantially modifying documentation, docstrings, examples, tutorials, or explanatory material.
 
-Three rules matter more for an agent than for a person, because an agent is
-likelier to break them:
+Treat its distinction between API reference, gallery examples, conceptual explanation, and tutorials/how-to guides as a requirement. Do not transfer the prose style or level of exposition of one documentation type into another.
 
-**The prose already here is not a style reference.**  Documentation in this
-repository has been rewritten out of an inappropriate register once already.
-Matching the voice of a neighbouring docstring is not a reason to write
-something, and a passage that reads as conspicuously written is a defect
-whether or not it was recently touched.
+Project-specific terminology and conventions take precedence over generic examples in the guide.
 
-**The prose already here is not a description of semantics.**  Before rewriting
-a description, read the implementation, read the tests, and read
-`external/bart` where the behaviour is BART's; the submodule is the upstream
-source and answers most questions about what a term, a solver or an operator
-means.  Do not paraphrase an existing sentence into a new one.  Do not invent
-detail to make a description sound complete -- say what is unclear instead.
+When modifying existing documentation:
 
-**Write for the code as it is now.**  No text about what the code used to be,
-no changelog in a docstring, no note that something was moved or renamed.
-Design rationale goes in this file or in a comment beside the code it explains,
-not into a module docstring.
+* verify substantive semantics against implementation, tests, authoritative upstream specifications/libraries, and literature where appropriate;
+* do not treat existing prose as authoritative;
+* preserve technically good documentation and avoid unrelated stylistic churn;
+* flag unresolved semantic discrepancies rather than guessing;
+* when useful material is in the wrong documentation type, move or develop it in the appropriate location rather than automatically deleting it.
+
+When auditing or refactoring documentation, explicitly check for conversational or literary LLM prose, paraphrastic replacements for established technical terminology, personification, taglines, code narration, and technically imprecise attempts at accessibility.
+
+After substantial documentation work, build the documentation, run relevant documentation tests/examples, and inspect the rendered output.

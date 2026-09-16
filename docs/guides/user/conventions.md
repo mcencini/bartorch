@@ -65,8 +65,9 @@ the tensor's own memory.
 A {class}`~bartorch.linop.LinearOperator` has a forward, an `adjoint` and a
 `normal`, composes with `@` and `+`, and is solved by the classes in
 {mod}`bartorch.optim`.  `P @ F @ S` applies sensitivities, then the Fourier
-transform, then sampling.  {class}`~bartorch.nlop.FromTorch` gives BART's
-Gauss-Newton solver a PyTorch signal model with its derivatives.
+transform, then sampling.  {class}`~bartorch.nlop.TorchOperator` makes a
+differentiable PyTorch function a nonlinear operator, with its derivative from
+autograd, which {class}`~bartorch.nlop.IRGNM` can fit.
 
 {class}`~bartorch.linop.FFT` is centred and unitary by default;
 {func}`bartorch.fft` is centred and unnormalized unless `unitary=True`.  State
@@ -80,14 +81,16 @@ gradient torch expects.  A nonlinear operator's backward pass is the adjoint of
 its derivative at the evaluated point.
 
 The commands in {mod}`bartorch.tools` record nothing, so no gradient flows
-through a BART reconstruction.  The solvers in {mod}`bartorch.optim` do produce
-gradients, by one of three routes:
+through a BART reconstruction.  The solvers in {mod}`bartorch.optim` and
+{mod}`bartorch.nlop` do produce gradients:
 
 | Solver | Backward pass |
 | --- | --- |
 | {class}`~bartorch.optim.CG` | One further solve with the same normal operator, then a forward application |
-| {class}`~bartorch.optim.IST`, {class}`~bartorch.optim.FISTA`, {class}`~bartorch.optim.ADMM`, {class}`~bartorch.optim.PRIDU` | The iteration unrolled: the block runs `maxiter` times in Python and is recorded |
+| {class}`~bartorch.optim.IST`, {class}`~bartorch.optim.FISTA`, {class}`~bartorch.optim.PRIDU` | The iteration unrolled: the block runs `maxiter` times in Python and is recorded |
+| {class}`~bartorch.optim.ADMM` | The iteration unrolled, with each x-update differentiated implicitly by one further solve |
 | {class}`~bartorch.optim.FixedPoint` | Implicit differentiation at the fixed point |
+| {class}`~bartorch.nlop.IRGNM`, {class}`~bartorch.nlop.IRGNMBlock` | Each step recorded; without `inner=` the inner solve is differentiated implicitly by BART's `norm_inv`, with it by the inner solver's own route |
 
 In every case BART's proximal operators have no implemented backward pass, and
 the residual norms driving the schedule are deliberately detached.  A

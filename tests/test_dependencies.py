@@ -10,7 +10,7 @@ is already the price of entry.
 deepinv is an extra: denoisers, losses and samplers come from it through
 `priors.ImplicitPrior` and `bartorch.interop`, and nothing else imports it.
 
-torchsim is a dependency because `nlop.FromTorchSim`
+torchsim is a dependency because `nlop.SignalModel`
 turns any of its simulators into a BART nonlinear operator, and
 `nlop.InversionRecovery`, `nlop.MultiEcho` and `nlop.Bloch` are `moba`'s
 families written on it, so every quantitative reconstruction here imports it.
@@ -69,7 +69,7 @@ def test_torchsim_is_a_dependency_and_not_an_extra():
     """Every quantitative reconstruction here goes through it."""
     project = _pyproject()["project"]
     assert _requirements(project["dependencies"], "torchsim"), (
-        "nlop.FromTorchSim turns a TorchSim simulator into a BART operator and "
+        "nlop.SignalModel turns a TorchSim simulator into a BART operator and "
         "the moba families are written on it; torchsim belongs in dependencies, "
         "not in optional-dependencies"
     )

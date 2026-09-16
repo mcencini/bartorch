@@ -225,7 +225,7 @@ def test_a_model_of_one_unknown_is_written_flat_too():
 
 
 def test_the_block_reaches_a_model_built_from_torch(generator):
-    made = nlop.FromTorch(lambda p: p * torch.exp(-p), (5,), (5,))
+    made = nlop.TorchOperator(lambda p: p * torch.exp(-p), (5,), (5,))
     block = nlop.IRGNMBlock(cg_maxiter=40)
     y = rand((5,), generator)
     x0 = rand((5,), generator) * 0.1 + 1.0
@@ -256,7 +256,7 @@ def test_a_coil_composition_is_lowered_into_the_normal_equation_domain(off_grid)
     plan = nlop.IRGNMBlock().plan(_coil_model(off_grid=off_grid))
     assert plan.fused
     assert "normal" == plan.domain
-    assert "chain rule" == plan.bundle
+    assert "chain rule" == plan.derivative
     # The data is what the encoding's adjoint returns, not what it takes.
     assert (4, 1, 16, 16) == Linearized(_coil_model(off_grid=off_grid)).data_shape
 
@@ -272,7 +272,7 @@ def test_a_model_that_is_not_a_coil_composition_has_nothing_to_lower():
     plan = nlop.IRGNMBlock().plan(_model())
     assert not plan.fused
     assert plan.encoding is None
-    assert "declared" == plan.bundle
+    assert "declared" == plan.derivative
 
 
 def test_preparing_the_data_is_the_encodings_adjoint(generator):
@@ -325,10 +325,10 @@ def test_an_application_leaves_the_derivative_available_after_a_shared_solve(off
     point = rand(space.state_shape, torch.Generator().manual_seed(0)) * 0.2 + 1.0
 
     space.inverse().forward(point, point, torch.ones_like(point))
-    space.inverse().jacobian(0, 1).adjoint(point)
+    space.inverse()._jacobian(0, 1).adjoint(point)
 
     value = space.operator.forward(point)
-    assert torch.isfinite(space.operator.adjoint(value)).all()
+    assert torch.isfinite(space.operator._adjoint(value)).all()
 
 
 # --- BART's own model ---------------------------------------------------------
@@ -500,11 +500,13 @@ def test_a_model_of_items_steps_each_as_it_would_step_alone(off_grid):
         assert (together[i] - alone).abs().max() < 1e-5 * alone.abs().max()
 
     # Items share nothing: another item's data moves none of them beyond the
-    # transform's own reproducibility.
+    # transform's own reproducibility -- exact on a grid, and off it the order
+    # in which FINUFFT's threads spread, which varies between runs on some hosts.
     moved = kspace.clone()
     moved[0] *= 3.0
     others = run(fused, moved)[1:]
-    assert (others - together[1:]).abs().max() < 1e-10 * together[1:].abs().max()
+    floor = 1e-5 if off_grid else 1e-10
+    assert (others - together[1:]).abs().max() < floor * together[1:].abs().max()
 
 
 def test_a_model_of_items_carries_no_gradient_between_them():

@@ -15,6 +15,7 @@ import torch
 
 import bartorch.tools as bt
 from bartorch import linop, nlop, optim
+from bartorch.nlop.base import _chain
 
 torchsim = pytest.importorskip("torchsim")
 
@@ -122,7 +123,7 @@ def test_the_derivative_agrees_with_a_finite_difference():
     at = M.initial(T2=60.0)
     step = torch.randn(M.ishape, dtype=torch.complex64).real.to(torch.complex64)
     M.forward(at)
-    predicted = M.derivative(step)
+    predicted = M._derivative(step)
     h = 1e-4
     taken = (M.forward(at + h * step) - M.forward(at - h * step)) / (2 * h)
     torch.testing.assert_close(predicted, taken, rtol=2e-2, atol=2e-4)
@@ -133,7 +134,7 @@ def test_the_adjoint_is_the_adjoint_of_the_derivative():
     M.forward(M.initial(T2=60.0))
     u = _rand(*M.ishape).real.to(torch.complex64)
     v = _rand(*M.oshape)
-    assert _inner(M.derivative(u), v) == pytest.approx(_inner(u, M.adjoint(v)), rel=1e-3)
+    assert _inner(M._derivative(u), v) == pytest.approx(_inner(u, M._adjoint(v)), rel=1e-3)
 
 
 def test_the_imaginary_half_of_the_domain_is_a_null_direction():
@@ -144,8 +145,8 @@ def test_the_imaginary_half_of_the_domain_is_a_null_direction():
     at = M.initial(T2=50.0)
     torch.testing.assert_close(M(at + 3.0j * torch.ones_like(at)), M(at), rtol=0, atol=0)
     M.forward(at)
-    assert 0.0 == M.derivative(1.0j * torch.ones(M.ishape, dtype=torch.complex64)).abs().max()
-    assert 0.0 == M.adjoint(_rand(*M.oshape)).imag.abs().max()
+    assert 0.0 == M._derivative(1.0j * torch.ones(M.ishape, dtype=torch.complex64)).abs().max()
+    assert 0.0 == M._adjoint(_rand(*M.oshape)).imag.abs().max()
 
 
 # --- reaching the solvers and the algebra ----------------------------------------
@@ -168,7 +169,7 @@ def test_a_model_chains_with_an_encoding_into_one_operator():
     shape = (3, 8, 8)
     M = nlop.MultiEcho(TE, (8, 8))
     E = linop.FFT(shape, axes=(-1, -2))
-    F = nlop.chain(M, E.to_nonlinear())
+    F = _chain(M, E.to_nonlinear())
     assert F.ishapes == (M.ishape,)
     assert F.oshapes == (shape,)
     maps = M.initial(T2=50.0)
@@ -180,7 +181,7 @@ def test_a_model_under_an_encoding_is_solved_for_its_parameters():
     shape = (4, 6, 6)
     M = nlop.MultiEcho(TE, (6, 6))
     E = linop.FFT(shape, axes=(-1, -2))
-    F = nlop.chain(M, E.to_nonlinear())
+    F = _chain(M, E.to_nonlinear())
     truth = M.initial(T2=40.0)
     data = F(truth)
     start = M.initial(T2=120.0)
@@ -230,7 +231,7 @@ def test_an_arbitrary_simulator_has_a_working_adjoint():
     M.forward(M.initial(T1=900.0))
     u = _rand(*M.ishape).real.to(torch.complex64)
     v = _rand(*M.oshape)
-    assert _inner(M.derivative(u), v) == pytest.approx(_inner(u, M.adjoint(v)), rel=1e-3)
+    assert _inner(M._derivative(u), v) == pytest.approx(_inner(u, M._adjoint(v)), rel=1e-3)
 
 
 def test_a_model_operator_can_be_handed_over_directly():
@@ -238,7 +239,7 @@ def test_a_model_operator_can_be_handed_over_directly():
     from torchsim.simulators import MultiEchoSimulator
 
     model = ModelOperator(MultiEchoSimulator(TE=(10.0, 40.0)), "T2", bounds={"T2": (1.0, 500.0)})
-    M = nlop.FromTorchSim(model, (2, 2))
+    M = nlop.SignalModel(model, (2, 2))
     assert M.ishape == (3, 2, 2) and M.oshape == (2, 2, 2)
     assert "MultiEchoSimulator" in repr(M)
 
@@ -385,8 +386,8 @@ def test_the_bundle_is_torchsims_own_pair(which):
     dz = _rand(*M.oshape)
 
     M.forward(x)
-    assert torch.equal(M.bundle.derivative(dx, x), M.derivative(dx))
-    assert torch.equal(M.bundle.adjoint(dz, x), M.adjoint(dz))
+    assert torch.equal(M._bundled.derivative(dx, x), M._derivative(dx))
+    assert torch.equal(M._bundled.adjoint(dz, x), M._adjoint(dz))
 
 
 @pytest.mark.parametrize("which", sorted(_models()))
@@ -394,9 +395,9 @@ def test_the_bundle_does_not_move_with_a_forward_elsewhere(which):
     torch.manual_seed(0)
     M = _models()[which]
     x, dx = M.initial(), _rand(*M.ishape) * 0.01
-    want = M.bundle.derivative(dx, x)
+    want = M._bundled.derivative(dx, x)
     M.forward(M.initial() * 1.5)
-    assert torch.equal(M.bundle.derivative(dx, x), want)
+    assert torch.equal(M._bundled.derivative(dx, x), want)
 
 
 @pytest.mark.parametrize("which", sorted(_models()))
@@ -406,8 +407,8 @@ def test_the_bundles_adjoint_is_adjoint_over_the_reals(which):
     M = _models()[which]
     x = M.initial()
     dx, dz = _rand(*M.ishape) * 0.01, _rand(*M.oshape)
-    forward = M.bundle.derivative(dx, x)
-    back = M.bundle.adjoint(dz, x)
+    forward = M._bundled.derivative(dx, x)
+    back = M._bundled.adjoint(dz, x)
     assert _inner(forward, dz) == pytest.approx(_inner(dx, back), rel=1e-4, abs=1e-8)
 
 
@@ -417,7 +418,7 @@ def test_a_relaxation_fit_reaches_the_gauss_newton_step():
     M = nlop.MultiEcho([10.0, 30.0, 60.0], (6, 6))
     data = M(M.initial(T2=80.0))
     start = M.initial(T2=40.0).reshape(-1)
-    assert "torch" == nlop.IRGNMBlock().plan(M).bundle
+    assert "torch" == nlop.IRGNMBlock().plan(M).derivative
 
     errors = []
     for steps in (2, 6, 14):
@@ -441,7 +442,7 @@ def test_the_step_over_a_model_under_an_encoding_answers_the_same():
     schedule = nlop.IRGNM(iterations=6, alpha=1.0, redu=2.0, cg_maxiter=30, cg_tol=0.0)
 
     one = schedule(data, M, x0=start, xref=start)
-    under = nlop.chain(M, E.to_nonlinear(), output=0, input=0)
+    under = _chain(M, E.to_nonlinear(), output=0, input=0)
     other = schedule(E.forward(data), under, x0=start, xref=start)
     assert (one - other).abs().max() < 1e-4 * one.abs().max()
 

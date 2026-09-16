@@ -22,6 +22,7 @@ import torch
 
 import bartorch.tools as bt
 from bartorch import linop, nlop, optim
+from bartorch.nlop.base import _combine
 
 N, COILS = 16, 2
 
@@ -300,12 +301,12 @@ def test_a_denoiser_between_two_cells_trains(problem):
 
 def test_a_model_of_the_algebra_steps_over_its_own_bundle():
     model = nlop.CoilSense(linop.FFT((COILS, 1, 8, 8), axes=(-1, -2)))
-    assert "chain rule" == nlop.IRGNMBlock().plan(model).bundle
+    assert "chain rule" == nlop.IRGNMBlock().plan(model).derivative
 
 
 def test_a_model_with_no_bundle_is_refused():
     """A tie has no chain rule of its own, so the composition carrying one has no step."""
-    made = nlop.combine(nlop.Exp((4,)), nlop.Log((4,))).link(1, 0)
+    made = _combine(nlop.Exp((4,)), nlop.Log((4,)))._link(1, 0)
     with pytest.raises(TypeError, match="no derivative as a function of the point"):
         nlop.IRGNMBlock().start(torch.zeros(4, dtype=torch.complex64), made)
 
@@ -359,31 +360,6 @@ class _Denoiser(torch.nn.Module):
         parts = torch.view_as_real(x).permute(0, 3, 1, 2)
         made = self.body(parts).permute(0, 2, 3, 1).contiguous()
         return torch.view_as_complex(made)
-
-
-def test_a_modules_parameters_pack_and_come_back():
-    net = _Denoiser()
-    weights = nlop.Parameters(net)
-    assert (sum(p.numel() for p in net.parameters()),) == weights.shape
-
-    packed = weights.pack()
-    assert torch.complex64 == packed.dtype
-    made = weights.unpack(packed)
-    assert all(torch.equal(made[name], p) for name, p in net.named_parameters())
-
-    weights.load(torch.zeros_like(packed))
-    assert all(torch.all(0 == p) for p in net.parameters())
-
-
-def test_a_vector_of_the_wrong_length_says_so():
-    weights = nlop.Parameters(_Denoiser())
-    with pytest.raises(ValueError, match="parameters, not"):
-        weights.unpack(torch.zeros(3, dtype=torch.complex64))
-
-
-def test_a_module_with_nothing_to_train_says_so():
-    with pytest.raises(ValueError, match="no parameters to train"):
-        nlop.Parameters(torch.nn.ReLU())
 
 
 def test_a_convolutional_denoiser_trains_between_the_steps(problem):

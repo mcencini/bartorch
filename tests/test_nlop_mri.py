@@ -66,7 +66,7 @@ def _start(F) -> torch.Tensor:
 
 def _fit(F, kspace, steps: int) -> torch.Tensor:
     """The image, fitted the way ``noir2_recon`` fits it."""
-    flat = F.flatten(inputs_only=True)
+    flat = F._flatten(inputs_only=True)
     solution = nlop.IRGNM(
         iterations=steps, alpha=1.0, redu=2.0, alpha_min=0.0, cg_maxiter=100, cg_tol=0.1
     )(F.prepare(kspace), flat, x0=_start(F))
@@ -165,7 +165,7 @@ def test_the_derivative_by_the_image_is_the_encoding_with_the_coils_in_it():
     step = _rand(*F.ishapes[0])
     coils = F.coils(coefficients)
     torch.testing.assert_close(
-        F.jacobian(0, 0)(step),
+        F._jacobian(0, 0)(step),
         F.transform(F.image(step) * coils),
         rtol=1e-4,
         atol=1e-5,
@@ -176,7 +176,7 @@ def test_both_jacobians_satisfy_the_adjoint_identity():
     F = nlop.CartesianSense((4, 8, 8))
     F.forward(_rand(*F.ishapes[0]), _rand(*F.ishapes[1]))
     for at in (0, 1):
-        J = F.jacobian(0, at)
+        J = F._jacobian(0, at)
         u, v = _rand(*J.ishape), _rand(*J.oshape)
         left = torch.vdot(J(u).flatten(), v.flatten()).real.item()
         right = torch.vdot(u.flatten(), J.adjoint(v).flatten()).real.item()
@@ -188,14 +188,14 @@ def test_both_jacobians_satisfy_the_adjoint_identity():
 
 def test_flattening_lays_the_unknowns_out_one_after_the_other():
     F = nlop.CartesianSense((4, 8, 8))
-    flat = F.flatten(inputs_only=True)
+    flat = F._flatten(inputs_only=True)
     assert flat.ishapes == ((1 * 8 * 8 + 4 * 8 * 8,),)
     assert flat.oshapes == F.oshapes
 
 
 def test_splitting_gives_back_a_tensor_per_unknown():
     F = nlop.CartesianSense((4, 8, 8))
-    flat = F.flatten(inputs_only=True)
+    flat = F._flatten(inputs_only=True)
     image, coefficients = flat.split(torch.arange(flat.ishapes[0][0]).to(torch.complex64))
     assert tuple(image.shape) == F.ishapes[0]
     assert tuple(coefficients.shape) == F.ishapes[1]
@@ -204,7 +204,7 @@ def test_splitting_gives_back_a_tensor_per_unknown():
 
 def test_a_flattened_model_computes_what_the_model_computes():
     F = nlop.CartesianSense((4, 8, 8))
-    flat = F.flatten(inputs_only=True)
+    flat = F._flatten(inputs_only=True)
     image, coefficients = _rand(*F.ishapes[0]), _rand(*F.ishapes[1])
     joined = torch.cat([image.reshape(-1), coefficients.reshape(-1)])
     torch.testing.assert_close(flat(joined), F(image, coefficients), rtol=1e-5, atol=1e-6)
@@ -217,15 +217,15 @@ def test_a_flattened_model_reaches_a_solver():
     # asserted inside BART, which takes the process rather than raising.  The
     # vector is restated at the wrapper's rank; this is what says so.
     F = nlop.CartesianSense((2, 8, 8))
-    flat = F.flatten(inputs_only=True)
+    flat = F._flatten(inputs_only=True)
     flat.forward(torch.zeros(flat.ishape, dtype=torch.complex64))
-    J = flat.jacobian()
+    J = flat._jacobian()
     assert torch.isfinite(optim.CG(maxiter=3)(_rand(*J.oshape), J)).all()
 
 
 def test_flattening_the_outputs_too_gives_one_vector_each_way():
     F = nlop.CartesianSense((4, 8, 8))
-    flat = F.flatten()
+    flat = F._flatten()
     assert 1 == len(flat.ishapes) == len(flat.oshapes)
     assert flat.oshapes == ((4 * 8 * 8,),)
 
@@ -303,7 +303,7 @@ def test_a_noncartesian_fit_converges_to_the_image_it_was_made_from():
     errors = []
     for steps in (4, 8, 12):
         F = nlop.NoncartesianSense(traj, (coils, n, n))
-        flat = F.flatten(inputs_only=True)
+        flat = F._flatten(inputs_only=True)
         solution = nlop.IRGNM(iterations=steps, alpha=1.0, redu=2.0, cg_maxiter=100, cg_tol=0.1)(
             F.prepare(kspace), flat, x0=_start(F)
         )
@@ -327,7 +327,7 @@ def test_a_cartesian_fit_recovers_the_image_it_was_made_from():
     image = _phantom(n, n)
     kspace = _cartesian_data(coils, n)
     F = nlop.CartesianSense((coils, n, n))
-    flat = F.flatten(inputs_only=True)
+    flat = F._flatten(inputs_only=True)
     solution = nlop.IRGNM(iterations=10, alpha=1.0, redu=2.0, cg_maxiter=100, cg_tol=0.1)(
         F.prepare(kspace), flat, x0=_start(F)
     )
@@ -368,7 +368,7 @@ def test_the_recipe_reaches_gauss_newton_like_any_other_model():
     F = nlop.CoilSense(E)
     image, coils = _rand(1, 12, 12), _rand(*shape)
     data = F(image, coils)
-    flat = F.flatten(inputs_only=True)
+    flat = F._flatten(inputs_only=True)
     truth = torch.cat([image.reshape(-1), coils.reshape(-1)])
     # Started at the answer and regularised towards it, the steps have nowhere
     # to go: what this holds is that the model, its derivative and its adjoint
@@ -427,10 +427,10 @@ def test_the_models_bundle_is_the_derivative_bart_takes_for_itself(where):
     dz = _rand(*F.oshapes[0])
 
     F.forward(*xs)
-    jacobians = [F.jacobian(0, at) for at in range(len(F.ishapes))]
+    jacobians = [F._jacobian(0, at) for at in range(len(F.ishapes))]
     want = sum(one.forward(dx) for one, dx in zip(jacobians, dxs))
-    assert torch.allclose(F.bundle.derivative(*dxs, *xs), want, atol=1e-5, rtol=1e-4)
-    for got, one in zip(F.bundle.adjoint(dz, *xs), jacobians):
+    assert torch.allclose(F._bundled.derivative(*dxs, *xs), want, atol=1e-5, rtol=1e-4)
+    for got, one in zip(F._bundled.adjoint(dz, *xs), jacobians):
         assert torch.allclose(got, one.adjoint(dz), atol=1e-5, rtol=1e-4)
 
 
@@ -439,8 +439,8 @@ def test_on_the_grid_the_models_bundle_satisfies_the_adjoint_identity():
     xs = [_rand(*shape) for shape in F.ishapes]
     dxs = [_rand(*shape) for shape in F.ishapes]
     dz = _rand(*F.oshapes[0])
-    forward = (F.bundle.derivative(*dxs, *xs).conj() * dz).sum()
-    back = sum((dx.conj() * one).sum() for dx, one in zip(dxs, F.bundle.adjoint(dz, *xs)))
+    forward = (F._bundled.derivative(*dxs, *xs).conj() * dz).sum()
+    back = sum((dx.conj() * one).sum() for dx, one in zip(dxs, F._bundled.adjoint(dz, *xs)))
     assert abs(forward - back) < 1e-4 * abs(forward)
 
 
@@ -453,15 +453,15 @@ def test_off_the_grid_the_adjoint_is_not_the_adjoint_of_the_derivative():
 
     F.forward(*xs)
     for at in range(len(F.ishapes)):
-        one = F.jacobian(0, at)
+        one = F._jacobian(0, at)
         assert not torch.isclose(
             torch.vdot(one(dxs[at]).flatten(), dz.flatten()),
             torch.vdot(dxs[at].flatten(), one.adjoint(dz).flatten()),
             rtol=1e-2,
         )
 
-    forward = (F.bundle.derivative(*dxs, *xs).conj() * dz).sum()
-    back = sum((dx.conj() * one).sum() for dx, one in zip(dxs, F.bundle.adjoint(dz, *xs)))
+    forward = (F._bundled.derivative(*dxs, *xs).conj() * dz).sum()
+    back = sum((dx.conj() * one).sum() for dx, one in zip(dxs, F._bundled.adjoint(dz, *xs)))
     assert abs(forward - back) > 1e-2 * abs(forward)
 
 
@@ -473,8 +473,8 @@ def test_the_normal_is_self_adjoint_either_way(where):
     dxs = [_rand(*shape) for shape in F.ishapes]
     dys = [_rand(*shape) for shape in F.ishapes]
 
-    forward = sum((one.conj() * dy).sum() for one, dy in zip(F.bundle.normal(*dxs, *xs), dys))
-    back = sum((dx.conj() * one).sum() for dx, one in zip(dxs, F.bundle.normal(*dys, *xs)))
+    forward = sum((one.conj() * dy).sum() for one, dy in zip(F._bundled.normal(*dxs, *xs), dys))
+    back = sum((dx.conj() * one).sum() for dx, one in zip(dxs, F._bundled.normal(*dys, *xs)))
     assert abs(forward - back) < 1e-3 * abs(forward)
 
 
@@ -485,4 +485,4 @@ def test_off_the_grid_the_last_stage_carries_the_normal_and_its_adjoint_carries_
     stage = written.b
     coil_images = _rand(*F.oshapes[0])
     assert torch.allclose(stage.forward(coil_images), F.transform.normal(coil_images), atol=1e-5)
-    assert torch.equal(stage.bundle.adjoint(coil_images, coil_images), coil_images)
+    assert torch.equal(stage._bundled.adjoint(coil_images, coil_images), coil_images)

@@ -20,7 +20,7 @@ from bartorch._lib import DIMS, library
 from bartorch._operator import Built, Shape, _Handle, as_operand, dims
 from bartorch.linop.base import LinearOperator
 from bartorch.linop.mri import _spatial
-from bartorch.nlop.base import NonlinearOperator, _built, chain
+from bartorch.nlop.base import NonlinearOperator, _built, _chain
 from bartorch.nlop.basic import Multiply
 
 __all__ = ["CartesianSense", "CoilSense", "NoncartesianSense", "NonlinearSense"]
@@ -67,8 +67,8 @@ class NonlinearSense(NonlinearOperator):
     r"""Joint image and coil-sensitivity forward model, BART's ``noir``.
 
     The operator has **two** inputs, the image and the coil representation, and
-    one output, the data.  Its Jacobian with respect to either input is a
-    linear operator (:meth:`~bartorch.nlop.NonlinearOperator.jacobian`), and a
+    one output, the data.  Its derivative with respect to either input is a
+    linear operator (:meth:`~bartorch.nlop.NonlinearOperator.linearize`), and a
     Gauss-Newton step solves the linearized problem over both jointly.
 
     The coil unknown is not the sensitivity maps.  It is a k-space
@@ -145,7 +145,7 @@ class NonlinearSense(NonlinearOperator):
     >>> F = NonlinearSense((8, 128, 128), pattern=mask)
     >>> F.ishapes
     ((1, 128, 128), (8, 128, 128))
-    >>> image, coefficients = nlop.IRGNM()(F.prepare(kspace), F.flatten(), ...)
+    >>> image, coefficients = nlop.IRGNM()(kspace, F)
     """
 
     def __init__(
@@ -315,16 +315,16 @@ class NonlinearSense(NonlinearOperator):
 
         image, coils, transform = self.image, self.coils, self.transform
         product = Multiply(image.oshape, coils.oshape)
-        made = chain(coils.to_nonlinear(), product, output=0, input=1)
-        made = chain(image.to_nonlinear(), made, output=0, input=0)
+        made = _chain(coils.to_nonlinear(), product, output=0, input=1)
+        made = _chain(image.to_nonlinear(), made, output=0, input=0)
         # The chain leaves the coil coefficients in front of the image.
-        made = made.permute_inputs([1, 0])
+        made = made._permute_inputs([1, 0])
         last = (
             Asymmetric(transform.gram(), Identity(product.oshape), source=transform)
             if self.noncart
             else transform.to_nonlinear()
         )
-        return chain(made, last, output=0, input=0)
+        return _chain(made, last, output=0, input=0)
 
     def _bundle(self):
         from bartorch.nlop.bundle import of_composition
@@ -451,7 +451,7 @@ def CoilSense(  # noqa: N802  (it is a constructor)
     two unknowns in front of any linear operator from coil images to data -- a
     wave encoding, a field-corrected one, a subspace one, or one of your own::
 
-        chain(Multiply(image_shape, coil_shape), encoding.to_nonlinear())
+        _chain(Multiply(image_shape, coil_shape), encoding.to_nonlinear())
 
     Unlike :class:`NonlinearSense` there is no Sobolev weighting on the coils:
     the sensitivities themselves are the unknown, and nothing constrains them
@@ -494,7 +494,7 @@ def CoilSense(  # noqa: N802  (it is a constructor)
             f"items lead every shape: the image {image_shape}, the coils {coil_shape} and "
             f"the encoding's domain {cim} begin with different counts"
         )
-    made = chain(Multiply(image_shape, coil_shape), encoding.to_nonlinear(), output=0, input=0)
+    made = _chain(Multiply(image_shape, coil_shape), encoding.to_nonlinear(), output=0, input=0)
     if items:
         made.items = cim[0]
     return made

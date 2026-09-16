@@ -24,7 +24,7 @@ from bartorch._operator import (
 )
 from bartorch.nlop.base import NonlinearOperator, _built
 
-__all__ = ["FromTorch", "Parameters"]
+__all__ = ["TorchOperator"]
 
 
 def _shapes(shape) -> tuple[Shape, ...]:
@@ -144,7 +144,7 @@ class _Callback(NonlinearOperator):
         return Built(ptr, ishape, oshape, keep=keep)
 
 
-class FromTorch(_Callback):
+class TorchOperator(_Callback):
     """A nonlinear operator from a differentiable torch function.
 
     The derivative is torch's forward-mode Jacobian-vector product, and its
@@ -161,14 +161,8 @@ class FromTorch(_Callback):
 
     Examples
     --------
-    >>> F = FromTorch(lambda p: p[0] * torch.exp(-t / p[1]), (2,), t.shape)
+    >>> F = TorchOperator(lambda p: p[0] * torch.exp(-t / p[1]), (2,), t.shape)
     >>> nlop.IRGNM()(measured, F, x0=torch.tensor([1.0, 20.0]))
-
-    A denoiser whose weights are an argument, so that they train through a
-    graph BART applies:
-
-    >>> prior = FromTorch(lambda x, w: w * x, [state, ()], state)
-    >>> nlop.chain(cell, prior, output=0, input=0)
 
     Notes
     -----
@@ -232,88 +226,3 @@ class FromTorch(_Callback):
         from bartorch.nlop.bundle import from_torch
 
         return from_torch(self, self.fn)
-
-
-class Parameters:
-    """A module's parameters as one argument of an operator.
-
-    :class:`FromTorch` differentiates by its *arguments*, so a denoiser whose
-    weights are to be trained inside a graph BART applies has to take them
-    rather than close over them.  A module keeps its parameters as several
-    real tensors of several shapes; this is the one complex vector BART can
-    carry, and the way back.
-
-    The weights ride in the real part.  BART's operators are complex
-    throughout, so the vector is complex64 and its imaginary half is an exact
-    null direction: nothing reads it, and the returned gradient is complex with
-    the answer in its real part.  An optimizer over the packed vector therefore
-    works directly on it, so the packed vector is the object to hold as a
-    ``torch.nn.Parameter``.
-
-    Parameters
-    ----------
-    module : torch.nn.Module
-        Read for the names and shapes of its parameters.  It is not kept
-        differentiably: what the operator differentiates is the vector.
-
-    Attributes
-    ----------
-    shape : tuple of int
-        What to give :class:`FromTorch` as the weights' shape.
-
-    Examples
-    --------
-    >>> weights = nlop.Parameters(denoiser)
-    >>> prior = nlop.FromTorch(
-    ...     lambda x, w: torch.func.functional_call(denoiser, weights.unpack(w), (x,)),
-    ...     [state, weights.shape],
-    ...     state,
-    ... )
-    >>> trained = torch.nn.Parameter(weights.pack())
-    >>> torch.optim.Adam([trained], lr=1e-3)
-
-    and afterwards ``weights.load(trained)`` puts them back in the module.
-    """
-
-    def __init__(self, module: torch.nn.Module):
-        self.module = module
-        self.names = [name for name, _ in module.named_parameters()]
-        self.shapes = [tuple(p.shape) for _, p in module.named_parameters()]
-        self.sizes = [p.numel() for _, p in module.named_parameters()]
-        if not self.names:
-            raise ValueError(f"{type(module).__name__} has no parameters to train")
-        self.shape: Shape = (sum(self.sizes),)
-
-    def pack(self) -> torch.Tensor:
-        """The module's parameters as they stand, as one complex vector."""
-        with torch.no_grad():
-            flat = torch.cat([p.reshape(-1) for p in self.module.parameters()])
-        return flat.to(torch.complex64)
-
-    def unpack(self, weights: torch.Tensor) -> dict[str, torch.Tensor]:
-        """``weights`` as the mapping ``torch.func.functional_call`` takes."""
-        if weights.numel() != self.shape[0]:
-            raise ValueError(
-                f"{type(self.module).__name__} has {self.shape[0]} parameters, "
-                f"not {weights.numel()}"
-            )
-        flat = weights.reshape(-1)
-        flat = flat.real if flat.is_complex() else flat
-        out, at = {}, 0
-        for name, shape, size in zip(self.names, self.shapes, self.sizes):
-            out[name] = flat[at : at + size].reshape(shape)
-            at += size
-        return out
-
-    def load(self, weights: torch.Tensor) -> None:
-        """Write ``weights`` back into the module, after training."""
-        made = self.unpack(weights.detach())
-        with torch.no_grad():
-            for name, parameter in self.module.named_parameters():
-                parameter.copy_(made[name].to(parameter.dtype))
-
-    def __len__(self) -> int:
-        return self.shape[0]
-
-    def __repr__(self) -> str:
-        return f"Parameters({type(self.module).__name__}, {self.shape[0]})"

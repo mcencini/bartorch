@@ -18,15 +18,11 @@ them.
 A Gauss-Newton step asks a model for three things at the current iterate `xn`:
 the residual `y - F(xn)`, its adjoint image `DF(xn)^H (y - F(xn))`, and the
 inverse of `DF(xn)^H DF(xn) + alpha`. All three are functions of `xn`, and BART
-supplies only the first that way. `nlop_get_derivative` -- `nlop.Derivative`,
-`F.jacobian()` -- returns a linear operator that reads the point out of the
-operator's own state, where the last `forward` left it.
-
-That is enough to *solve*. `IRGNM(...)(y, F, x0)` evaluates `F` at `xn` and then
-applies the derivative, in that order, every iteration. It is not enough to make
-the step itself an operator, because the step's dependence on `xn` through
-`DF(xn)` is then state rather than an argument, and nothing differentiates by
-state:
+supplies only the first that way. `nlop_get_derivative` -- `F._jacobian()` here
+-- returns a linear operator that reads the point out of the operator's own
+state, where the last `forward` left it. A step differentiated by `xn` cannot
+use it: the step's dependence on `xn` through `DF(xn)` is then state rather
+than an argument, and nothing differentiates by state:
 
 ```
   stored point                              point as an argument
@@ -73,10 +69,10 @@ state -- the same choice `noir_get_forward` makes for itself with
 
 `normal` is carried rather than derived because deriving it throws away the
 cheapest thing the model knows; what it saves is [The normal-equation
-domain](#the-normal-equation-domain). An operator that has no bundle still
-evaluates, differentiates and solves through `IRGNM(...)(y, F, x0)`, and is
-refused only the operator form; [Outside the form](#outside-the-form) says what
-that covers.
+domain](#the-normal-equation-domain). The bundle is internal: `F.linearize(x)`
+is how it reaches a caller. An operator that has no bundle still evaluates and
+differentiates at its stored point, and has no Gauss-Newton step; [Outside the
+form](#outside-the-form) says what that covers.
 
 ## Bundles of the primitives
 
@@ -107,8 +103,8 @@ The rest of what needs declaring is not diagonal:
 | `Add` | `zsadd`, which is `zaxpbz` against a constant (`someops.c:218`) | the identity |
 | `FromLinear(L)` | `nlop_from_linop` | `L` and `L^H`, the point unused |
 | `Constant` | `nlop_const` | no input, so no tangent |
-| `FromTorch` | callbacks | `torch.func.jvp` and the reverse-mode vjp, evaluated at the point given as an argument rather than at the stored one |
-| `FromTorchSim` | TorchSim | ``A_jvp(x, dx)`` and ``A_vjp(x, dy)``, which take the point as an argument already and build no Jacobian |
+| `TorchOperator` | callbacks | `torch.func.jvp` and the reverse-mode vjp, evaluated at the point given as an argument rather than at the stored one |
+| `SignalModel` | TorchSim | ``A_jvp(x, dx)`` and ``A_vjp(x, dy)``, which take the point as an argument already and build no Jacobian |
 
 `Multiply`'s row is what `noir_get_adjoint` and `noir_get_derivative` build by
 hand (`model_net.c:269-287`, `:299-315`), and it is the product rule; nothing
@@ -150,7 +146,7 @@ was written in:
 | `chain(f, g)` | `D_g(D_f(dx, x), f(x))` | `D_f^H(D_g^H(dz, f(x)), x)` |
 | `combine(f, g)` | the two side by side | the two side by side |
 | `dup(a, b)` | the sum of the two tangent paths | the two adjoints, added |
-| `pin(i, v)` | the input leaves both tangent and point | the same |
+| `partial(i, v)` | the input leaves both tangent and point | the same |
 | `del_out(o)` | the output carries no tangent | its cotangent is zero |
 | `reshape`, `permute` | relabelled axes | relabelled axes |
 
@@ -284,9 +280,9 @@ number, so `alpha` is held fixed there.
 
 ## Linearization at a point
 
-The second form hands `DF(xn)` to a solver in `bartorch.optim`. `Bundle.at(xn)` is
-that derivative as a `LinearOperator` holding `xn` as a tensor: its forward,
-adjoint and normal pass the point to the bundle's members. An application
+The second form hands `DF(xn)` to a solver in `bartorch.optim`.
+`F.linearize(xn)` is that derivative as a `LinearOperator` holding `xn` as a
+tensor: its forward, adjoint and normal pass the point to the bundle's members. An application
 therefore does not depend on what was evaluated before it, and is differentiable
 by the point as well as by its argument.
 
@@ -408,11 +404,10 @@ A bundle is refused rather than approximated. What has none:
 
 - An operator BART built that this library did not declare a bundle for and
   cannot read as a composition -- a future BART constructor, or an `nlop` handed
-  in from elsewhere. Its `forward`, `derivative` and `adjoint` still work at the
-  stored point, and `F.jacobian()` is its derivative there; `IRGNMBlock` refuses
-  it, naming the operator.
+  in from elsewhere. It still evaluates, and `F.linearize(x)` answers at the
+  stored point; `IRGNMBlock` refuses it, naming the operator.
 - A bundle member that would need a second forward per sample rather than per
-  application. `FromTorch` is the boundary: `torch.func.jvp` is one extra
+  application. `TorchOperator` is the boundary: `torch.func.jvp` is one extra
   evaluation, which is why it has a bundle, while anything needing a materialised
   Jacobian does not.
 
@@ -434,7 +429,7 @@ that is torch, which can differentiate every primitive in the table:
 | the generic step | a Gauss-Newton loop written out in torch, on a model small enough for its Jacobian to be a matrix, with each inner problem solved exactly rather than by conjugate gradients -- so what is compared is the method and not two paths through one iteration |
 | the step's gradients | torch autograd through that written-out loop, for all four of `y`, `xn`, `x0`, `alpha` |
 | the schedule | `iter4_irgnm` without a centre and, with `optim.CG()` as the solver, `iter4_irgnm2`, both to the bit; a stack of blocks against one block looped, to the bit |
-| a linearization at a point | every proximal block and `optim.CG` over `Bundle.at` against the same solver over the derivative written in torch; ADMM, CG and a whole second-form fit against central differences with exact inner solves |
+| a linearization at a point | every proximal block and `optim.CG` over `F.linearize` against the same solver over the derivative written in torch; ADMM, CG and a whole second-form fit against central differences with exact inner solves |
 | the normal-equation rewrite | the same step with `fuse=False`: to single precision on a grid, and off it to a distance that closes as the transform's tolerance is tightened, which says the transform and not the rewrite separates them |
 | fusion | the plan asserted by `IRGNMBlock.plan`, on a coil composition and on one that is not |
 | a model of items | each item against the same item stepped alone, the items' independence under a change to one item's data, and the gradient of one item by another's data |

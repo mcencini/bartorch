@@ -1,6 +1,6 @@
 """Signal models from TorchSim, as BART nonlinear operators.
 
-:class:`FromTorchSim` bridges TorchSim's
+:class:`SignalModel` bridges TorchSim's
 :class:`~torchsim.recon.ModelOperator` -- a model's value, its
 Jacobian-vector product and its adjoint product, none of which builds a
 Jacobian -- onto the three things BART's ``nlop_s`` asks for.
@@ -29,7 +29,7 @@ import torch
 from bartorch._operator import Shape
 from bartorch.nlop.callback import _Callback
 
-__all__ = ["Bloch", "FromTorchSim", "InversionRecovery", "MultiEcho"]
+__all__ = ["Bloch", "SignalModel", "InversionRecovery", "MultiEcho"]
 
 
 def _operator(acquisition, unknown, bounds, scale, amplitude, subspace):
@@ -45,7 +45,7 @@ def _operator(acquisition, unknown, bounds, scale, amplitude, subspace):
     )
 
 
-class FromTorchSim(_Callback):
+class SignalModel(_Callback):
     """A TorchSim signal model as a BART nonlinear operator.
 
     The operator maps parameter maps to one image per contrast.  What it does
@@ -79,14 +79,14 @@ class FromTorchSim(_Callback):
     >>> model = ModelOperator(
     ...     MultiEchoSimulator(TE=echo_times), "T2", bounds={"T2": (10.0, 300.0)}
     ... )
-    >>> M = FromTorchSim(model, (128, 128))
+    >>> M = SignalModel(model, (128, 128))
     >>> M.ishape, M.oshape
     ((3, 128, 128), (8, 128, 128))
     >>> images = M(M.initial(T2=80.0))
 
     Under an encoding:
 
-    >>> F = nlop.chain(M, encoding.to_nonlinear())
+    >>> F = encoding @ M
     >>> maps = nlop.IRGNM()(kspace, F, x0=M.initial(T2=80.0))
     >>> M.split(maps)["T2"]
     """
@@ -144,7 +144,7 @@ class FromTorchSim(_Callback):
         recorded.
         """
         from bartorch.nlop.bundle import Bundle
-        from bartorch.nlop.callback import FromTorch
+        from bartorch.nlop.callback import TorchOperator
 
         model = self.model
 
@@ -156,8 +156,8 @@ class FromTorchSim(_Callback):
 
         return Bundle(
             self,
-            FromTorch(derivative, [self.ishape, self.ishape], self.oshape),
-            FromTorch(adjoint, [self.oshape, self.ishape], self.ishape),
+            TorchOperator(derivative, [self.ishape, self.ishape], self.oshape),
+            TorchOperator(adjoint, [self.oshape, self.ishape], self.ishape),
             source="torch",
         )
 
@@ -189,13 +189,13 @@ class FromTorchSim(_Callback):
 
     def __repr__(self) -> str:
         return (
-            f"FromTorchSim({type(self.model.acquisition).__name__}, {self.voxels}, "
+            f"SignalModel({type(self.model.acquisition).__name__}, {self.voxels}, "
             f"unknown={list(self.model.unknown)})"
         )
 
 
 def _from(acquisition, unknown, shape, bounds, scale, amplitude, subspace, contrasts):
-    return FromTorchSim(
+    return SignalModel(
         _operator(acquisition, unknown, bounds, scale, amplitude, subspace),
         shape,
         contrasts,
@@ -212,7 +212,7 @@ def InversionRecovery(  # noqa: N802  (it is a constructor)
     amplitude: bool = True,
     subspace: Any = None,
     **scale: float,
-) -> FromTorchSim:
+) -> SignalModel:
     """T1 from an inversion-recovery series.
 
     The longitudinal magnetization read at a series of inversion times.  The
@@ -265,7 +265,7 @@ def MultiEcho(  # noqa: N802  (it is a constructor)
     amplitude: bool = True,
     subspace: Any = None,
     **scale: float,
-) -> FromTorchSim:
+) -> SignalModel:
     """T2 or T2* from a multi-echo readout.
 
     The transverse decay read at a series of echo times.  Which relaxation is
@@ -315,7 +315,7 @@ def Bloch(  # noqa: N802  (it is a constructor)
     subspace: Any = None,
     contrasts: int | None = None,
     **scale: float,
-) -> FromTorchSim:
+) -> SignalModel:
     """Any TorchSim sequence as a model operator, through Bloch simulation.
 
     Fits a Bloch simulation of the sequence rather than a closed-form signal

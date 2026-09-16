@@ -1,10 +1,9 @@
 # Nonlinear operators
 
-`bartorch.nlop`.  A nonlinear operator maps *many* inputs to *many* outputs and
-carries its derivative, and that derivative's adjoint, at the last evaluated
-point.  Arguments are counted outputs first, then inputs.  Applying an operator
-to a tensor that requires a gradient records the application for autograd; the
-backward pass is the adjoint of the derivative at that point.
+`bartorch.nlop`.  A nonlinear operator maps one or more inputs to one or more
+outputs and supplies its derivative and the derivative's adjoint.  Applying an
+operator to a tensor that requires a gradient records the application for
+autograd; the backward pass is the adjoint of the derivative at that point.
 
 ```{eval-rst}
 .. currentmodule:: bartorch.nlop
@@ -43,28 +42,26 @@ contrasts, and is fitted by {class}`IRGNM`.
    :toctree: generated
    :nosignatures:
 
-   FromTorchSim
+   SignalModel
    InversionRecovery
    MultiEcho
    Bloch
 ```
 
-## Nonlinear operators and operator algebra
+## Nonlinear operators
 
-`a @ b` composes, applying `b` first, and accepts a
-{class}`~bartorch.linop.LinearOperator` on either side.  Beyond composition an
-operator with several arguments is rearranged by methods rather than by
-symbols: `F.chain(G, output=i, input=j)` feeds one output into one input,
-`F.combine(G)` places two side by side, and `F.link`, `F.dup`,
-`F.stack_inputs`, `F.permute_inputs`, `F.permute_outputs`, `F.reshape_input`,
-`F.reshape_output` and `F.flatten` rearrange what is left.  {func}`chain` and
-{func}`combine` are the same two operations as functions.  The concrete types
-these return are implementation detail; each is a {class}`NonlinearOperator`.
+`F(x)` applies an operator and, for a tensor that requires a gradient, records
+the application.  `a @ b` composes, applying `b` first; either side may be a
+{class}`~bartorch.linop.LinearOperator`.  `F.partial(i, value)` fixes input
+`i` to `value`, so `nlop.Exp(s) @ nlop.Multiply(s, s).partial(0, -t)` is
+`exp(-t x)`.
 
-{class}`Derivative` is one output's derivative by one input as a linear
-operator, also reached as `F.jacobian(...)`.  {class}`Bundle` declares an
-operator's derivative and adjoint with the linearization point as an explicit
-argument, the form a Gauss-Newton step is assembled over.
+`F.linearize(*x)` is the derivative at `x` as a linear operator.  It holds
+`x`: it answers the same whatever is evaluated afterwards, and it is
+differentiable with respect to `x`.  `input=` selects the input the derivative
+is taken by, with the others held at their values; without it the derivative
+is taken by all inputs laid end to end, which is how a Gauss-Newton step sees
+them.  `output=` selects the output.
 
 ```{eval-rst}
 .. autosummary::
@@ -72,10 +69,6 @@ argument, the form a Gauss-Newton step is assembled over.
    :nosignatures:
 
    NonlinearOperator
-   chain
-   combine
-   Derivative
-   Bundle
 ```
 
 ## Elementary operators
@@ -104,24 +97,17 @@ argument, the form a Gauss-Newton step is assembled over.
 
 ## User-defined operators
 
-A function of several tensors becomes an operator of several inputs, so a
-denoiser's weights become arguments of the operator graph rather than values
-captured by closure.  {meth}`NonlinearOperator.from_callbacks` takes the
-forward, the derivative and the adjoint as functions; {class}`FromTorch` takes
-one differentiable function and obtains the other two from autograd.
-
-A tensor captured by closure inside a Python callback is not an input of the
-operator, so no cotangent is propagated to it.  Pass such weights as explicit
-operator arguments instead; {class}`Parameters` packs a module's parameters
-into one argument for this purpose.
+{meth}`NonlinearOperator.from_callbacks` takes the forward, the derivative and
+the adjoint as functions.  {class}`TorchOperator` takes one differentiable
+function and obtains the other two from autograd.  Either can be fitted by
+{class}`IRGNM`, composed with `@`, and linearized.
 
 ```{eval-rst}
 .. autosummary::
    :toctree: generated
    :nosignatures:
 
-   FromTorch
-   Parameters
+   TorchOperator
 ```
 
 ## Gauss-Newton methods

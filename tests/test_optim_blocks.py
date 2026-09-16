@@ -252,7 +252,7 @@ def _linearized():
     from bartorch.nlop.basic import Multiply
     from bartorch.nlop.step import flattened
 
-    return flattened(Multiply(_IMAGE, _COILS).bundle)
+    return flattened(Multiply(_IMAGE, _COILS)._bundled)
 
 
 _AT_A_POINT = {

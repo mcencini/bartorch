@@ -257,7 +257,7 @@ def test_a_nonlinear_operator_linearises_into_a_linear_one():
     def model(p):
         return p[0] * torch.exp(-t * p[1])
 
-    F = nlop.FromTorch(model, ishape=(2,), oshape=(16,))
+    F = nlop.TorchOperator(model, ishape=(2,), oshape=(16,))
     x = torch.tensor([2.0, 1.5], dtype=torch.complex64)
     D = F.linearize(x)
     assert isinstance(D, linop.LinearOperator)
@@ -271,7 +271,7 @@ def test_a_nonlinear_operators_backward_pass_is_its_adjoint_derivative():
     def model(p):
         return p[0] * torch.exp(-t * p[1])
 
-    F = nlop.FromTorch(model, ishape=(2,), oshape=(16,))
+    F = nlop.TorchOperator(model, ishape=(2,), oshape=(16,))
     w = _rand(16)
 
     x = torch.tensor([2.0, 1.5], dtype=torch.complex64).requires_grad_(True)
@@ -632,3 +632,39 @@ def test_the_values_are_copied_rather_than_held():
     S.set(torch.full((1, 8, 8), 3.0, dtype=torch.complex64))
     gc.collect()
     torch.testing.assert_close(S(x), x * 3.0)
+
+
+def test_a_linearization_holds_its_point():
+    """Evaluating the operator elsewhere leaves it; the point carries a gradient."""
+    t = torch.linspace(0, 1, 16, dtype=torch.complex64)
+    F = nlop.TorchOperator(lambda p: p[0] * torch.exp(-t * p[1]), ishape=(2,), oshape=(16,))
+    x = torch.tensor([2.0, 1.5], dtype=torch.complex64)
+    dx = _rand(2)
+    D = F.linearize(x)
+    before = D(dx)
+    F.forward(torch.tensor([0.5, 3.0], dtype=torch.complex64))
+    assert torch.equal(D(dx), before)
+
+    point = x.clone().requires_grad_(True)
+    F.linearize(point)(dx).abs().square().sum().backward()
+    assert torch.isfinite(point.grad).all() and (point.grad != 0).any()
+
+
+def test_a_linearization_takes_one_input_or_all_of_them():
+    shape = (4,)
+    F = nlop.Multiply(shape, shape)
+    a, b, d = _rand(4), _rand(4), _rand(4)
+    torch.testing.assert_close(F.linearize(a, b, input=0)(d), d * b, rtol=1e-5, atol=1e-5)
+    torch.testing.assert_close(F.linearize(a, b, input=1)(d), a * d, rtol=1e-5, atol=1e-5)
+    whole = F.linearize(a, b)
+    assert ((8,), (4,)) == (whole.ishape, whole.oshape)
+    both = torch.cat([d, 2 * d])
+    torch.testing.assert_close(whole(both), d * b + a * 2 * d, rtol=1e-5, atol=1e-5)
+
+
+def test_a_linearization_takes_one_output():
+    shape = (4,)
+    F = nlop.TorchOperator(lambda x: (torch.exp(x), x * x), shape, [shape, shape])
+    x, d = _rand(4) * 0.3, _rand(4)
+    torch.testing.assert_close(F.linearize(x, output=0)(d), torch.exp(x) * d, rtol=1e-4, atol=1e-5)
+    torch.testing.assert_close(F.linearize(x, output=1)(d), 2 * x * d, rtol=1e-4, atol=1e-5)
