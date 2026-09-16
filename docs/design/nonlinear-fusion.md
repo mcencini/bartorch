@@ -435,38 +435,50 @@ its type restriction; `F.bundle`, `nlop.Bundle` and `Step.plan` are new, and `St
 
 ## Targets
 
-`scripts/benchmark_newton.py`, best of five, one case per process, against the
-same step assembled with `fuse=False`.  Measured on a four-core host with no
-card: 256² with eight coils and eight Newton steps.
+`scripts/benchmark_newton.py`, one case per process, against the same step
+assembled with `fuse=False`.  256² with eight coils and eight Newton steps.
 
-| Case | paired (s) | normal domain (s) | |
+Measured on a four-core host with no card, best of five:
+
+| Case | paired (s) | normal domain (s) | ratio |
 | --- | --- | --- | --- |
-| Cartesian | 4.79 | 4.53 | 1.06x |
-| non-Cartesian, 401 spokes | 14.29 | 7.52 | 1.90x |
+| Cartesian | 4.79 | 4.53 | 1.06 |
+| non-Cartesian, 401 spokes | 14.29 | 7.52 | 1.90 |
 
-Which is the shape the rewrite was expected to have and the reason the note does
-not gate on it: on a grid `linop_get_normal` of an FFT is the same two
-transforms, so there is nothing to win and nothing to lose; off it the point
-spread function halves the step.
+Measured on an otherwise idle RTX 4060 Laptop, one variant per process with the
+A/B order alternated, as the range over several processes per variant:
 
-Two rows are still open, and both want a machine that is not this one: the same
-cases on a card, and the backward pass, whose first measurement here --
-Cartesian, 19.96 s against a 4.70 s forward -- says only that it is the four
-solves and not the rewrite that a training step spends its time in.
+| Case | pass | paired (s) | normal domain (s) | ratio |
+| --- | --- | --- | --- | --- |
+| Cartesian | forward | 0.35-0.39 | 0.30-0.37 | within the spread |
+| Cartesian | backward | 1.34-1.67 | 1.33-1.66 | within the spread |
+| non-Cartesian, 401 spokes | forward | 0.62-0.70 | 0.40-0.46 | 1.5 |
+| non-Cartesian, 401 spokes | backward | 2.71-3.07 | 1.77-2.01 | 1.5 |
+
+A range is reported rather than a best because repeating one variant on this
+card gives a run-to-run spread of ten to fifteen per cent: the Cartesian ranges
+overlap and no difference is resolved there, while the non-Cartesian ranges are
+disjoint.  The absolute times also depend on what else the machine is running --
+a second compute job on the host cores inflates them by tens of per cent without
+changing the ratios -- so the card is measured idle.
+
+On a grid `linop_get_normal` of an FFT is the same two transforms, and neither
+the forward nor the backward pass separates from the spread.  Off the grid the
+normal domain is faster on both machines, by a factor 1.9 on the host and 1.5 on
+the card, and by the same factor in the backward pass; the host measurement of
+the backward pass (Cartesian, 19.96 s against a 4.70 s forward) reflects the four
+linear solves rather than the rewrite.  The normal domain stores the point spread
+function and holds about five per cent more device memory for it.
 
 ## Working constraints
 
-- **Environment.** The implementing session has no GPU. Everything above is
-  checked in the CPU suite as `AGENTS.md` describes, and `tests/test_nlop_cuda.py`
-  is what wants a card: a bundle, a composed bundle, a step and the fused coil
-  step all answering on device memory what they answer on the host, the gradient
-  arriving there, and the counters saying the normal off the grid was the point
-  spread function rather than the pair. Written without a card they were run
-  against the host with the device substituted out, which exercises every
-  assertion and leaves only the dispatch untried -- which is the one thing the
-  card is for. What else wants one: [Targets](#targets) again, where the host
-  numbers are what a four-core container measured rather than what the design is
-  worth.
+- **Environment.** Everything above is checked in the CPU suite as `AGENTS.md`
+  describes.  `tests/test_nlop_cuda.py` requires a card: a bundle, a composed
+  bundle, a step and the fused coil step each answer on device memory what they
+  answer on the host, the gradient arrives there, and the counters report the
+  normal off the grid as the point spread function rather than the pair.  Both
+  that file and the card rows of [Targets](#targets) are measured on an RTX 4060
+  Laptop.
 - **BART.** Not edited. The two new entry points wrap public constructors in
   `src/csrc/ops/`; nothing is compiled in BART's place.
 - **Docstrings.** Two to four lines of contract for each addition. Documentation
