@@ -1,4 +1,4 @@
-"""The regularization term base class."""
+"""The regularizer base class."""
 
 from __future__ import annotations
 
@@ -17,12 +17,21 @@ __all__ = ["Regularizer", "frozen"]
 
 
 class Regularizer(abc.ABC):
-    """One of BART's regularization terms.
+    """Regularization functional with a proximal operator built by BART.
 
-    A term holds the proximal operator and transform BART's
-    ``opt_reg_configure`` builds for it, per image shape, and hands them to a
-    solver as they are: solving twice with a term builds nothing the second
-    time.
+    A regularizer represents :math:`g(G x)`: a linear transform :math:`G` and
+    the proximal operator of a functional :math:`g` acting on its codomain.
+    :math:`G` is the identity for terms that penalize the image directly, and
+    for terms carrying their own transform inside the proximal operator, such
+    as :class:`~bartorch.priors.Wavelet`; it is a genuine operator for terms
+    such as :class:`~bartorch.priors.TotalVariation`, whose functional acts on
+    finite differences.  Both come from BART's ``opt_reg_configure``.
+
+    Only the alternating-direction and primal-dual iterations are given
+    :math:`G`; see :meth:`transform_is_identity`.
+
+    Both are built per image shape and cached, and handed to a solver as they
+    are, so solving twice with the same term builds nothing the second time.
 
     Attributes
     ----------
@@ -41,7 +50,8 @@ class Regularizer(abc.ABC):
     axes: tuple[int, ...] = ()
     joint_axes: tuple[int, ...] = ()
     count: int = 0
-    #: Whether the term adds variables to the optimization, which BART counts
+    #: Whether the term extends the optimization variable with auxiliary ones,
+    #: which BART counts
     #: across the whole set of terms, so that it cannot be built alone.
     _extends: bool = False
 
@@ -109,11 +119,16 @@ class Regularizer(abc.ABC):
     def prox(
         self, x: torch.Tensor, gamma: float = 1.0, *, image_shape: tuple[int, ...] | None = None
     ) -> torch.Tensor:
-        """``prox_{gamma f}(x)``, the operator BART's solvers call.
+        """``prox_{gamma g}(x)``, the operator BART's solvers apply.
 
-        What a solver does between its gradient steps, reached on its own so
-        that an iteration written outside the library calls the same operator
-        the library would have.
+        Exposed directly so that an iteration written outside the library
+        applies the same proximal operator the library would have.
+
+        Raises a :class:`ValueError` for a tensor that requires a gradient: no
+        backward pass is implemented for BART's proximal operators, and
+        treating one as the identity would zero the gradient path through the
+        regularizer.  Use :class:`~bartorch.priors.ImplicitPrior` for a
+        differentiable proximal step, or :func:`frozen` to hold this one fixed.
 
         Parameters
         ----------
@@ -134,12 +149,13 @@ class Regularizer(abc.ABC):
 
         Notes
         -----
-        This is the proximal operator alone.  A term may also carry a
-        transform in front of it -- see :meth:`transform` -- and then what a
-        solver computes is ``prox(transform(x))``.  BART's own ``iter2_ist``
-        applies the proximal operator to the image and ignores the transform,
-        which is why BART's IST and FISTA cannot take a total-variation term:
-        its proximal operator is not shaped like an image.
+        This is the proximal operator alone.  A term may also carry a linear
+        transform in front of it -- see :meth:`transform` -- in which case a
+        solver computes ``prox(transform(x))``.  BART's ``iter2_ist`` applies
+        the proximal operator to the image and ignores the transform entirely,
+        so IST and FISTA admit only terms whose transform is the identity; a
+        total-variation term is excluded, its proximal operator not being
+        shaped like an image.
 
         Examples
         --------
@@ -149,12 +165,11 @@ class Regularizer(abc.ABC):
 
         if _tracking(x):
             raise ValueError(
-                f"{self!r} is one of BART's proximal operators and carries no derivative: "
-                "`operator_p_fun_t` is (data, mu, dst, src), with nowhere for one to live, "
-                "so an iteration with this term in it cannot be differentiated.  Put a "
-                "denoiser where the term goes -- `optim.admm(y, A, denoiser)` differentiates "
-                "end to end -- or `priors.frozen(term)` to say that this one is meant to be a "
-                "constant in the graph"
+                f"{self!r} is one of BART's proximal operators and has no backward pass: "
+                "`operator_p_fun_t` is (data, mu, dst, src), with nowhere to carry one, "
+                "so an iteration containing this term cannot be differentiated.  Use a "
+                "denoiser in place of the term -- `optim.admm(y, A, denoiser)` differentiates "
+                "end to end -- or `priors.frozen(term)` to hold this one fixed in the graph"
             )
 
         image_shape = tuple(x.shape) if image_shape is None else tuple(image_shape)
@@ -208,7 +223,8 @@ class Regularizer(abc.ABC):
         is the transpose, which is the other of ``forward`` and ``adjoint``,
         and ``normal`` itself.  An unrolled network differentiates through the
         transform this way; the proximal operator behind it is BART's and has
-        no derivative, which is what the denoiser slot is for.
+        no implemented backward pass, which is why
+        :class:`~bartorch.priors.ImplicitPrior` exists.
         """
         from bartorch.linop.base import _tracking
 
@@ -261,8 +277,8 @@ class Regularizer(abc.ABC):
         The identity for a term that carries its transform inside the proximal
         operator instead.  The shapes do not say which arrangement a term is:
         the Laplace term's transform is a real convolution whose codomain is
-        shaped like the image, so a caller that guessed from the shape would
-        quietly leave it out.
+        shaped like the image, so a caller inferring the arrangement from the
+        shape would omit it without noticing.
 
         Returns
         -------
@@ -300,14 +316,13 @@ class Regularizer(abc.ABC):
             raise BartError(f"{self!r} could not be rewound")
 
     def transform_is_identity(self, image_shape: tuple[int, ...]) -> bool:
-        """Whether that transform is the identity, as BART decides it.
+        """Whether the term's linear transform is the identity, as BART decides it.
 
-        Not a question about shapes: the Laplace term's transform has the
-        image's shape and is a convolution, and total variation's has a rank
-        BART cannot hand over at all.  It is `linop_is_identity` over the
-        operator itself, which is what `iter2_chambolle_pock` asks of the
-        first term before making it the primal proximal step rather than a
-        dual.
+        Decided by ``linop_is_identity`` on the operator, not by comparing
+        shapes: the Laplace term's transform is a convolution on the image's
+        own shape, and total variation's has a rank BART cannot hand over at
+        all.  ``iter2_chambolle_pock`` asks this of the first term before
+        treating it as the primal proximal step rather than a dual one.
 
         Returns
         -------
@@ -340,7 +355,7 @@ class Regularizer(abc.ABC):
         """Raise if this term cannot be built over an ``ndim``-axis image.
 
         BART states some of a term's preconditions as assertions, which end
-        the process rather than return; and a term that adds variables is
+        the process rather than return; and a term with auxiliary variables is
         built by `opt_reg_configure`, deep inside the solve, where there is
         nothing left to catch.  Whatever can be decided from the rank is
         decided here instead, while an exception still reaches the caller.
@@ -382,8 +397,8 @@ def _handle_shape(query, ptr: int, min_ndim: int) -> tuple[int, ...]:
     """The C-order shape BART records for an operator handle.
 
     The query fills as many entries as it is given and returns the rank it
-    has, which is how a rank past BART's sixteen is noticed rather than
-    quietly truncated.
+    has, so a rank past BART's sixteen is detected rather than truncated
+    without notice.
     """
     vector = _marshal.dim_vector()
     rank = query(ptr, DIMS, vector)
@@ -434,7 +449,7 @@ def _as_terms(regularizers) -> list[Regularizer]:
     if isinstance(regularizers, str):
         raise TypeError(
             f"a regularizer is a term from bartorch.priors, not the string {regularizers!r}; "
-            "`priors.Wavelet(axes=(-1, -2), weight=...)` is what `-R W:3:0:...` says"
+            "`priors.Wavelet(axes=(-1, -2), weight=...)` states what `-R W:3:0:...` does"
         )
     if regularizers is None:
         return []
@@ -497,12 +512,13 @@ def _release(handle: int) -> None:
 
 
 class _Frozen:
-    """A term whose proximal operator is a constant in the graph.
+    """A term whose proximal step is detached, making it a constant in the graph.
 
-    Everything but :meth:`prox` is the term's own, and that one detaches
-    first.  Registered as a :class:`Regularizer` because it is one as far as
-    BART is concerned -- detaching changes no numbers -- so a solve with it in
-    still has a library route and still answers with the library's bits.
+    Everything but :meth:`prox` is the wrapped term's own, and :meth:`prox`
+    detaches its input first.  Registered as a :class:`Regularizer` because as
+    far as BART is concerned it is one -- detaching changes no numbers -- so a
+    solve containing it still has a library route and still reproduces the
+    library's output bit for bit.
     """
 
     def __init__(self, term):
@@ -553,17 +569,19 @@ class _Penalty(Regularizer):
 
 
 def frozen(term: Regularizer) -> Regularizer:
-    """``term``, with its proximal operator a constant in a differentiated solve.
+    """``term`` with its proximal step detached, for a differentiated solve.
 
-    BART's proximal operators carry no derivative, so
-    :meth:`Regularizer.prox` refuses a tensor that is being differentiated
-    rather than quietly contributing a wrong gradient -- soft thresholding is
-    not the constant map, and treating it as one zeroes the whole path through
-    the prior.  Wrapping a term here accepts that: it thresholds as it always
-    did, and the gradient is the one the iteration has with it held fixed.
+    No backward pass is implemented for BART's proximal operators, so
+    :meth:`Regularizer.prox` raises on a tensor that requires a gradient rather
+    than contributing an incorrect one: soft thresholding is not the identity,
+    and differentiating as though it were zeroes the whole gradient path
+    through the regularizer.
 
-    For the mixed solve -- a denoiser in one slot and a term of BART's own in
-    another -- where the gradient is meant to reach the denoiser.
+    This wrapper detaches the proximal step's input instead.  The term
+    thresholds exactly as before, and the gradient obtained is the one the
+    iteration has with this term held fixed.  Its use is the mixed solve, where
+    a differentiable denoiser occupies one term and a BART term another, and
+    the gradient is required only for the denoiser.
 
     Examples
     --------

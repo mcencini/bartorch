@@ -3,7 +3,7 @@
 ``nlop_get_derivative`` gives a derivative at whatever point the last forward
 left behind, which is state and so cannot be differentiated by.  A
 :class:`Bundle` gives the same derivative with the point written out as an
-argument, which is what a Gauss-Newton step is assembled over; see
+argument, over which a Gauss-Newton step is assembled; see
 ``docs/design/nonlinear-fusion.md``.
 """
 
@@ -24,7 +24,7 @@ class _TenMul(NonlinearOperator):
     """``md_ztenmul``: the product of two inputs, summed onto ``out``.
 
     :class:`~bartorch.nlop.Multiply` is this with ``out`` the broadcast of the
-    two, which is what a forward model wants; an adjoint wants the axes the
+    two, as a forward model requires; an adjoint requires the axes the
     broadcast widened summed back instead.
     """
 
@@ -54,7 +54,7 @@ def ignoring(op: NonlinearOperator, shapes) -> NonlinearOperator:
 
     A member that does not need the point still takes it, so that every
     bundle has the one arity.  The extra input reaches no output, so BART
-    answers zero for the derivative by it, which is what the derivative of a
+    answers zero for the derivative by it, which is the derivative of a
     point-independent member by the point is.
     """
     from bartorch.linop.basic import Zero
@@ -176,8 +176,8 @@ class Asymmetric(FromLinear):
 
     ``noir2_join`` builds the non-Cartesian model's last stage as
     ``linop_from_ops(lop_fft->normal, identity->adjoint)`` (``model2.c:176``):
-    the forward carries ``E^H E`` and the adjoint carries nothing, because the
-    measurement has already been through ``E^H``.  That pair is not one linear
+    the forward applies ``E^H E`` and the adjoint applies nothing, the
+    measurement having already been through ``E^H``.  That pair is not one linear
     operator's forward and adjoint, so it is declared here rather than built as
     one.
     """
@@ -208,7 +208,7 @@ def of_chain(node, first, second, output: int, at: int) -> Bundle | None:
     """The chain rule for ``first``'s output ``output`` feeding ``second``'s input ``at``.
 
     The point ``second`` is linearized at is ``first(x)``, recomputed from the
-    point rather than carried, which is what ``noir_get_derivative`` does with
+    point rather than carried, as ``noir_get_derivative`` does with
     the coil model's linear parts.  ``None`` where either operand has no
     bundle, or where ``first`` takes no input and so returns no cotangent.
     """

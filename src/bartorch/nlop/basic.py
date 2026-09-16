@@ -278,7 +278,7 @@ class Sum(_Reduction):
     def _composition(self):
         """``nlop_zss_create``: the point against its own conjugate, summed, made real.
 
-        The product contracts onto the reduced shape, which is what
+        The product contracts onto the reduced shape, as
         ``md_ztenmul`` does with a smaller output (``someops.c:539``).
         """
         from bartorch.linop.basic import Conj

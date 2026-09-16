@@ -19,7 +19,7 @@ first, then inputs.
    NonlinearOperator
 ```
 
-## Composition
+## Operator algebra
 
 The algebra of `nlops/chain.h`.  BART applies a combination back to front, so
 an operator that produces a value goes *second*; {func}`chain` arranges that
@@ -39,7 +39,7 @@ itself.
    Plan
 ```
 
-## Basic
+## Elementary nonlinear operators
 
 ```{eval-rst}
 .. autosummary::
@@ -63,10 +63,13 @@ itself.
    RootSumOfSquares
 ```
 
-## MRI encodings
+## Nonlinear MRI forward models
 
-The coils are a second unknown rather than a fixed tensor, which is what
-`nlinv` inverts.
+The coil sensitivities are a second unknown rather than a fixed tensor, so the
+operator maps an image and a coil representation to data and the reconstruction
+is a joint estimation problem, solved by Gauss-Newton as in `nlinv`.  In
+{class}`NonlinearSense` the coil unknown is not the sensitivity maps themselves
+but a Sobolev-weighted k-space representation of them; see its documentation.
 
 ```{eval-rst}
 .. autosummary::
@@ -96,23 +99,30 @@ holds the curves against `bart signal` and the fits against `bart mobafit`.
    Bloch
 ```
 
-## Gauss-Newton
+## Gauss-Newton methods
 
-BART has Gauss-Newton in two forms and {class}`IRGNM` is both: without
-`inner=` it is `irgnm`, run inside the library, and with one it is `irgnm2`,
-whose linearized problem goes to any solver in {mod}`bartorch.optim`.
+BART implements iteratively regularized Gauss-Newton in two forms, and
+{class}`IRGNM` covers both.  Without `inner=` it is `irgnm`, whose linearized
+problem is solved by conjugate gradients inside the library.  With `inner=` it
+is `irgnm2`, whose linearized problem is handed to any solver in
+{mod}`bartorch.optim`, so the Gauss-Newton step can be regularized by any term
+in {mod}`bartorch.priors`.
 
 ```python
-nlop.IRGNM(inner=optim.CG())                               # iter4_irgnm2, to the bit
-nlop.IRGNM(inner=optim.FISTA(priors.Wavelet(axes, 0.001)))   # moba -l1's shape
+nlop.IRGNM(inner=optim.CG())                                 # iter4_irgnm2, bit for bit
+nlop.IRGNM(inner=optim.FISTA(priors.Wavelet(axes, 0.001)))   # the form moba -l1 uses
 ```
 
-For a {class}`NonlinearSense`, {meth}`IRGNM.operator` is BART's own step of
-`nlinv` as one operator, differentiable by its data, iterate, regularisation
-centre and weight.  An unrolled network is then a *single* `nlop`: chain the
-cells and BART drives the whole thing, crossing into Python once a step for
-the prior.  A weight the prior *closes over* reaches no gradient; give it the
-weights as arguments instead, which is what {class}`Parameters` packs.
+For a {class}`NonlinearSense`, {meth}`IRGNM.operator` exposes one `nlinv`
+Gauss-Newton step as a single operator, differentiable with respect to its
+data, iterate, regularization centre and regularization weight.  An unrolled
+network is then itself one `nlop`: chaining the steps leaves BART driving the
+whole graph, with one crossing into Python per step for the prior.
+
+A tensor captured by closure inside a Python callback is not an input of the
+operator, so no cotangent is propagated to it.  Pass such weights as explicit
+operator arguments instead; {class}`Parameters` packs a module's parameters into
+one argument for this purpose.
 
 ```python
 first, second = (nlop.IRGNM(iterations=1).operator(F) for _ in range(2))
@@ -130,11 +140,11 @@ whole(y, x0, alpha, packed, ...).abs().square().sum().backward()
    irgnm
 ```
 
-## Python-defined
+## User-defined operators
 
-A function of several tensors becomes an `nlop` of several inputs, which is
-what lets a denoiser's weights be *arguments* of a BART graph rather than
-something the function closed over.
+A function of several tensors becomes an `nlop` of several inputs, so a
+denoiser's weights become arguments of a BART operator graph rather than values
+captured by closure.
 {meth}`NonlinearOperator.from_callbacks` takes the forward, the derivative and
 the adjoint as functions; {class}`FromTorch` takes one differentiable function.
 

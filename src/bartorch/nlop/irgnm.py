@@ -1,10 +1,10 @@
 """Nonlinear inverse problems by BART's iteratively regularized Gauss-Newton.
 
 BART has the method in two forms, and :class:`IRGNM` is both.  ``irgnm``
-solves each linearized problem with its own conjugate gradients, which is what
-``nlinv`` runs and what ``IRGNM`` does without an inner solver.  ``irgnm2``
-hands the problem to a generic regularized least-squares solver, which is how a
-regularized ``nlinv`` or ``moba`` works; ``inner=`` is that form, with the outer
+solves each linearized problem with its own conjugate gradients, as ``nlinv``
+does and as ``IRGNM`` does without an inner solver.  ``irgnm2`` hands the
+problem to a generic regularized least-squares solver, the form a regularized
+``nlinv`` or ``moba`` uses; ``inner=`` is that form, with the outer
 loop written out here.  :meth:`IRGNM.operator` is BART's own step of ``nlinv``
 as an operator a network is built of.
 """
@@ -90,8 +90,8 @@ class IRGNM:
     inner : solver or None
         A configured solver from :mod:`bartorch.optim` for the linearized
         problem, whose regularizers become the ``R`` above.  ``None`` runs
-        BART's first form, entirely inside the library, which is what
-        ``nlinv`` runs.
+        BART's first form, run entirely inside the library, as ``nlinv``
+        does.
 
     Examples
     --------
@@ -104,7 +104,7 @@ class IRGNM:
 
     >>> nlop.IRGNM(iterations=8, inner=optim.CG())(kspace, F, x0=start)
 
-    Wavelet-regularized, which is what ``moba -l1`` runs:
+    Wavelet-regularized, the form ``moba -l1`` runs:
 
     >>> nlop.IRGNM(inner=optim.FISTA(priors.Wavelet((-1, -2), 0.001), maxiter=30))(
     ...     kspace, F, x0=start
@@ -126,7 +126,7 @@ class IRGNM:
     into the residual, and solves for the iterate itself.  They agree in exact
     arithmetic and differ in the last bits, so a run with ``inner=`` will not
     reproduce one without it -- but ``inner=optim.CG()`` reproduces
-    ``iter4_irgnm2`` exactly, which is what the suite holds it to.
+    ``iter4_irgnm2`` exactly, and the suite holds it to that.
     """
 
     def __init__(
@@ -168,7 +168,7 @@ class IRGNM:
             Starting point of ``F.ishape``.
         xref : torch.Tensor, optional
             Regularization centre of ``F.ishape``.  Without one the steps are
-            regularized towards zero, which is what BART does.
+            regularized towards zero, as BART does.
 
         Returns
         -------
@@ -321,9 +321,9 @@ class IRGNM:
         """``irgnm2``, written out.
 
         Every line below is one of ``italgos.c``'s, in its order.  The
-        arithmetic is a scale and an add, which ``vecops.c`` does with the
-        same kernel torch does, so the bits are the library's -- that is what
-        ``inner=optim.CG()`` against :meth:`_in_library` checks.
+        arithmetic is a scale and an add, which ``vecops.c`` performs with the
+        same kernel torch does, so the result is bit-for-bit the library's;
+        ``inner=optim.CG()`` against :meth:`_in_library` checks that.
         """
         alpha = self.alpha
         # The derivative is a view of the operator's own, so it is built once

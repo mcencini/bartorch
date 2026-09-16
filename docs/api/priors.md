@@ -1,8 +1,9 @@
 # Regularization and denoising
 
-`bartorch.priors`.  A regularization term is what a solver in
-{mod}`bartorch.optim` takes; BART builds its proximal operator.  The denoisers
-are functions on images.
+`bartorch.priors`.  A regularizer specifies a regularization functional for the
+solvers in {mod}`bartorch.optim`.  BART builds the corresponding proximal
+operator and, where the functional acts on a transform of the image, the linear
+transform in front of it.  The denoisers are functions on images.
 
 ```{eval-rst}
 .. currentmodule:: bartorch.priors
@@ -10,10 +11,18 @@ are functions on images.
 
 ## Regularizer class
 
-What a solver computes is `prox(transform(x))`, and the shapes do not say
-which of the two carries the work.  BART's own `iter2_ist` ignores the
-transform, which is why BART's IST and FISTA cannot take a total-variation
-term.
+A regularizer is a pair: a linear transform `G` and the proximal operator of a
+functional `g`, together representing `g(G x)`.  `G` is the identity for terms
+that penalize the image directly ({class}`L1`, {class}`L2`) or that carry their
+own transform inside the proximal operator ({class}`Wavelet`), and a genuine
+operator for terms such as {class}`TotalVariation`, whose functional acts on
+finite differences.
+
+Only the alternating-direction and primal-dual iterations are given `G`.
+BART's `iter2_ist` takes a single term and ignores the transform array
+entirely, so {class}`~bartorch.optim.IST` and {class}`~bartorch.optim.FISTA`
+admit only terms whose transform is the identity; a term with a non-trivial
+`G` would otherwise be applied as though `G` were the identity.
 
 ```{eval-rst}
 .. autosummary::
@@ -23,13 +32,18 @@ term.
    Regularizer
 ```
 
-## Under differentiation
+## Differentiation
 
-BART's proximal operators carry no derivative, so
-{meth}`Regularizer.prox` refuses a tensor that does; a denoiser is what goes
-in that slot instead, as an {class}`ImplicitPrior`.  {func}`frozen` is for the
-mixed solve, where the gradient is meant to reach the denoiser and another term
-is furniture.
+Proximal operators are evaluated inside BART and no backward pass is
+implemented for them, so {meth}`Regularizer.prox` raises on a tensor that
+requires a gradient rather than contributing an incorrect one: soft
+thresholding is not the identity, and differentiating as though it were zeroes
+the whole path through the regularizer.
+
+{class}`ImplicitPrior` substitutes a differentiable denoiser for the proximal
+operator, as plug-and-play regularization does.  {func}`frozen` detaches a
+BART term's proximal step, so that term stays fixed while the rest of the
+iteration -- including a denoiser in another term -- is differentiated.
 
 ```{eval-rst}
 .. autosummary::
@@ -40,7 +54,7 @@ is furniture.
    frozen
 ```
 
-## Sparsity terms
+## Sparsity regularization
 
 ```{eval-rst}
 .. autosummary::
@@ -55,7 +69,7 @@ is furniture.
    ImaginaryL1
 ```
 
-## Quadratic terms
+## Quadratic regularization
 
 ```{eval-rst}
 .. autosummary::
@@ -66,7 +80,7 @@ is furniture.
    ImaginaryL2
 ```
 
-## Low rank
+## Low-rank regularization
 
 ```{eval-rst}
 .. autosummary::
@@ -86,7 +100,7 @@ is furniture.
    NonNegative
 ```
 
-## Hard thresholding
+## Hard-thresholding terms
 
 ```{eval-rst}
 .. autosummary::
@@ -97,12 +111,15 @@ is furniture.
    ImageNIHT
 ```
 
-## Terms that add unknowns
+## Regularizers with auxiliary variables
 
-These split into several penalties over a variable larger than the image, so
-one cannot be built alone.  {func}`bartorch.tools.pics`,
-{class}`bartorch.optim.ADMM` and {class}`bartorch.optim.PRIDU` take them; their
-blocks walk the image followed by those unknowns, and output the image.
+These functionals are defined by a minimization over auxiliary variables, and
+BART realizes them by extending the optimization variable with those variables
+(`ropts->svars`).  The extension is counted across the whole set of terms, so
+such a term cannot be built in isolation.  {func}`bartorch.tools.pics`,
+{class}`bartorch.optim.ADMM` and {class}`bartorch.optim.PRIDU` accept them; the
+solution vector is the image followed by the auxiliary variables, and the image
+alone is returned.
 
 ```{eval-rst}
 .. autosummary::

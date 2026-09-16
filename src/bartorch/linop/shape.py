@@ -53,7 +53,7 @@ def _axis(axis: int, ndim: int) -> int:
 
 
 def _reduced(shape: Shape, axes) -> tuple[int, ...]:
-    """``shape`` with the given axes set to one, which is what BART reduces to."""
+    """``shape`` with the given axes set to one, the shape BART reduces to."""
     ndim = len(shape)
     keep = {a % ndim for a in (axes if isinstance(axes, (tuple, list)) else (axes,))}
     return tuple(1 if i in keep else n for i, n in enumerate(shape))
@@ -69,7 +69,7 @@ class Real(LinearOperator):
     over the complex numbers, so it is self-adjoint for a real inner product
     and fails a complex dot test on its own.  Composed between operators that
     are complex-linear it behaves like any other term; alone it is a
-    projection, and that is what it is for.
+    projection, which is its purpose here.
 
     Parameters
     ----------
@@ -89,8 +89,8 @@ class Real(LinearOperator):
 class Sum(LinearOperator):
     """Sum over ``axes``, BART's ``linop_sum``.
 
-    The summed axes are kept with size one rather than dropped, which is what
-    BART does and what lets the result broadcast back against the input.  Its
+    The summed axes are kept with size one rather than dropped, as BART does,
+    so the result broadcasts back against the input.  Its
     adjoint is :class:`Repeat`.
 
     BART attaches a closed-form pseudo-inverse to this operator, but it
@@ -121,8 +121,8 @@ class Sum(LinearOperator):
 class ScaledSum(LinearOperator):
     """Sum over ``axes``, divided by the square root of how many were summed.
 
-    BART's ``linop_scaled_sum``.  The scaling is what makes it well behaved:
-    its normal operator is an orthogonal projection rather than a multiple of
+    BART's ``linop_scaled_sum``.  The scaling makes it well behaved: its
+    normal operator is an orthogonal projection rather than a multiple of
     one, so its spectral norm is one and
     :meth:`~bartorch.linop.LinearOperator.pinv` has a closed form -- BART
     solves ``(A^H A + damp I) x = A^H y`` here directly, with no iteration.
@@ -266,8 +266,7 @@ def Hankel(shape: Shape, axis: int, window: int) -> LinearOperator:  # noqa: N80
 
     BART makes the windows by striding rather than by copying, so the overlap
     costs nothing to build; the adjoint adds each sample back into every
-    window it appeared in, which is what makes this an operator rather than a
-    view.
+    window it appeared in, which makes this an operator rather than a view.
 
     Parameters
     ----------
@@ -346,7 +345,7 @@ class Resize(LinearOperator):
 
     An axis the codomain is shorter along is cropped, one it is longer along is
     filled with zeros, and either happens about the middle rather than the
-    corner -- which is what a Fourier transform's conventions want.
+    corner, as a Fourier transform's conventions require.
 
     Parameters
     ----------
@@ -373,8 +372,8 @@ class Extract(LinearOperator):
     """Take the block of ``oshape`` that starts at ``start``, BART's ``linop_extract``.
 
     The restriction operator: its adjoint puts the block back where it came
-    from and leaves the rest zero.  This is what indexing an operator with
-    ``A[...]`` builds.
+    from and leaves the rest zero.  Indexing an operator with ``A[...]``
+    builds one.
 
     Parameters
     ----------

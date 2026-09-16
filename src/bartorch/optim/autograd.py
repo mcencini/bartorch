@@ -1,16 +1,17 @@
 """The linear solve as a torch autograd function; the backward pass is another solve.
 
 ``x = N^-1 A^H y`` with ``N = A^H A + lambda I`` is linear in ``y``, so the
-vector-Jacobian product is ``A N^-1`` -- one more solve with the same normal
-operator, and then one forward application.  Recording the answer rather than
-unrolling the iteration is what ``src/nlops/norm_inv.c`` does too.
+vector-Jacobian product is ``A N^-1``: one further solve with the same normal
+operator, followed by one forward application.  The solution is recorded as a
+single operation rather than by unrolling the iteration, as
+``src/nlops/norm_inv.c`` does.
 
-Three consequences.  A warm start carries no gradient, since the solution of a
-linear system does not depend on where the iteration began.  The backward
-solve is only as accurate as its own iteration count.  And no gradient reaches
-the operator's own data -- sensitivities, a trajectory, a term's weight -- or a
-second derivative, because the backward pass runs inside the library and
-records nothing of its own.
+Three consequences follow.  A warm start receives no gradient, the solution of
+a linear system being independent of the starting point.  The backward solve is
+only as accurate as its own iteration count.  And no gradient reaches the
+operator's own data -- sensitivities, a trajectory, a term's weight -- and no
+second derivative is available, the backward solve running inside the library
+and recording nothing itself.
 """
 
 from __future__ import annotations

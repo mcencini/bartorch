@@ -1,10 +1,10 @@
-"""A term's transform as a torch autograd function; the backward pass is its transpose.
+"""A term's linear transform as a torch autograd function.
 
-The transform is the linear map BART puts in front of a term's proximal
+The transform is the linear map BART places in front of a term's proximal
 operator.  Its three modes are each other's transposes: ``forward`` and
 ``adjoint`` swap, and ``normal`` is its own.  The proximal operator itself is
-not recorded -- BART's carry no derivative -- so a term's threshold is a
-constant in the graph.
+not recorded, no backward pass being implemented for BART's, so the thresholding
+step is a constant in the graph.
 """
 
 from __future__ import annotations

@@ -83,7 +83,7 @@ def _grid_ndim(sensitivities: torch.Tensor, image_shape: Shape, kernels: bool, n
     Given, it is given.  Sensitivities held as maps share the image's spatial
     axes, so the longer match says it.  Kernels share only their number, and a
     bank of four axes is either three spatial ones behind the coils or two
-    behind sets and coils: that is what ``ndim`` is for.
+    behind sets and coils, which ``ndim`` resolves.
     """
     if ndim is not None:
         if int(ndim) not in (2, 3):
@@ -236,14 +236,31 @@ def _behind_permutation(owner, lib, ptr: int, ishape: Shape, order, device) -> i
 
 
 class NoncartesianSense(_SensitivityBatch, LinearOperator):
-    """Sensitivities followed by a NUFFT, applied ``coil_batch`` coils at a time.
+    r"""Non-Cartesian SENSE encoding operator.
 
-    Memory held -- and the doubled grid the Toeplitz normal convolves on --
-    scales with ``coil_batch`` rather than with the number of coils.
+    The forward model is
 
-    On a grid the operator to use is
-    :func:`~bartorch.linop.CartesianSense`, which is this one's Cartesian path
-    under the name that says so.
+    .. math::
+
+        A = W \, \mathrm{NUFFT} \, S
+
+    with :math:`S` multiplication by the coil sensitivities,
+    :math:`\mathrm{NUFFT}` the type-2 non-uniform Fourier transform along
+    ``traj``, and :math:`W` the diagonal density weighting given by
+    ``weights``, the identity when none is given.  The transform carries the
+    weighting itself, applying it on the forward pass and its conjugate on the
+    adjoint, because the Toeplitz normal is built over it.
+
+    With a temporal basis the optimization variable holds subspace
+    coefficients, which the basis maps to the acquired frames on the k-space
+    side of the transform, as for :func:`~bartorch.linop.CartesianSense`.
+
+    Coils are processed ``coil_batch`` at a time, so memory held -- including
+    the doubled grid the Toeplitz normal convolves on -- scales with
+    ``coil_batch`` rather than with the number of coils.
+
+    For Cartesian sampling use :func:`~bartorch.linop.CartesianSense`, which is
+    this operator over an FFT.
 
     Parameters
     ----------
@@ -253,18 +270,17 @@ class NoncartesianSense(_SensitivityBatch, LinearOperator):
         card is transferred a slab at a time.
 
         Several sets of maps -- ESPIRiT's second, ENLIVE's relaxed model --
-        are ``(sets, coils, [z,] y, x)``, which is what
-        :func:`bartorch.tools.ecalib` and :func:`bartorch.tools.nlinv` return
-        for ``maps > 1``.  The image then carries the sets and the samples do
+        are ``(sets, coils, [z,] y, x)``, as returned by
+        :func:`bartorch.tools.ecalib` and :func:`bartorch.tools.nlinv` for
+        ``maps > 1``.  The image then carries the sets and the samples do
         not: the encoding is ``y[c] = sum_m S[m, c] x[m]``.
 
         A batch goes in front of the sets, ``(batch, sets, coils, [z,] y, x)``,
         and its sets axis is written even where there is one set: independent
         slices each with their own maps are ``(nz, 1, coils, y, x)``, where
         ``(nz, coils, y, x)`` would be one set of maps per slice summed
-        together.  Both the image and the samples carry a batch; the
-        trajectory does not, being shared across the items, which is what lets
-        one plan serve them all.
+        together.  Both the image and the samples carry a batch; the trajectory
+        does not, being shared across the items, so one plan serves them all.
     image_shape : tuple of int
         Image shape ``(*batches, [batch,] [sets,] *encoding, [z,] y, x)``: the
         batches first, then the one the sensitivities vary along and the sets
@@ -294,17 +310,17 @@ class NoncartesianSense(_SensitivityBatch, LinearOperator):
         Apply the normal as a convolution with a point spread function.
     modulated : bool
         On a grid, answer in BART's own sample convention rather than the
-        centred one -- a scale and a modulation folded into the sensitivities
-        and the plain transform after them, which is what ``pics`` works in
-        and what its k-space is written in.  The two differ by an ``fftmod``
-        on the sample axes; the default is the centred convention, which is
-        what :func:`bartorch.fft` produces and so what an operator chained
+        centred one: a scale and a modulation folded into the sensitivities,
+        with the plain transform after them.  This is the convention ``pics``
+        works in and the one its k-space is written in.  The two differ by an
+        ``fftmod`` on the sample axes; the default is the centred convention,
+        which :func:`bartorch.fft` produces and which an operator chained
         against one expects.
 
         It does not depend on ``coil_batch``: every slab answers in the
-        convention that was asked for.  At ``coil_batch=0`` this is BART's own
-        operator, arithmetic and all, which is what reproduces ``pics`` to the
-        last bit.  Refused off a grid, where there is only one convention, and
+        convention that was asked for.  At ``coil_batch=0`` the operator is
+        BART's own, arithmetic included, and reproduces ``pics`` bit for
+        bit.  Refused off a grid, where there is only one convention, and
         with ``kernels``, because the modulation is the whole grid's and a
         kernel cannot carry it.
     weights : tensor, optional
@@ -326,8 +342,8 @@ class NoncartesianSense(_SensitivityBatch, LinearOperator):
         divide the coils is cut down to one that does, because the loop steps
         by the slab and the transform is built for a slab.
 
-        What it changes is residency, not arithmetic.  The sample convention
-        is ``modulated``'s to say and not this one's.
+        It changes residency, not arithmetic; the sample convention is set by
+        ``modulated`` alone.
     fold_maps : bool
         Apply the sensitivities inside the transform of the normal, which saves
         two coil images per batch.  Takes effect only where the transform works
@@ -724,8 +740,8 @@ class Coils(_SensitivityBatch, LinearOperator):
     whose transform is not a Fourier transform, and which therefore cannot be
     a SENSE operator.
 
-    Held as maps it is what :class:`~bartorch.linop.MultiplySum` builds, and
-    with ``coil_batch=0`` it *is* that operator.  Held as kernels, or walked a
+    Held as maps it is the operator :class:`~bartorch.linop.MultiplySum`
+    builds, and with ``coil_batch=0`` it is that operator exactly.  Held as kernels, or walked a
     slab at a time, the bank is never resident whole -- the arrangement
     :class:`NoncartesianSense` uses.
 

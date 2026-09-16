@@ -74,8 +74,8 @@ under `external/`.
 - `scripts/`: everything run by hand.  `gen_catalogue.py` extracts BART's
   command tables into the committed catalogue and `gen_abi.py` the ctypes
   signatures from the ABI header; `run_tests.sh` and `build_docs.sh` run the
-  suite and build the documentation; `check_device.py` is what a machine with
-  a card runs.
+  suite and build the documentation; `check_device.py` is run on a machine
+  with a card.
 - `cmake/`: what the build system runs.
 - `tests/`: numerical and interoperability checks.
 - `docs/`: pages and the build configuration.

@@ -37,15 +37,15 @@ __all__ = ["ADMM", "CG", "PRIDU", "FISTA", "IST", "NIHT", "Tikhonov"]
 class Tikhonov:
     """A quadratic penalty ``weight * ||operator x - bias||^2``.
 
-    What generalized Tikhonov regularization is, and what
-    :class:`CG` minimizes alongside the data term.  Without an operator the
-    penalty is on the image itself, and without a bias it is on its size
-    rather than its distance from something.
+    Generalized Tikhonov regularization, minimized by :class:`CG` alongside the
+    data-fidelity term.  Without an operator the penalty is on the image
+    itself; without a bias it penalizes the norm rather than the distance from
+    a reference.
 
-    Every combination is still a least-squares problem, so it is still
-    conjugate gradients that solves it: the terms are stacked under the
-    encoding and the normal operator is the sum of the terms' own, which is
-    what keeps a Toeplitz encoding's normal the convolution it was.
+    Every combination remains a linear least-squares problem and is solved by
+    conjugate gradients: the terms are stacked beneath the encoding, and the
+    normal operator of the stack is the sum of the parts' normals, so a
+    Toeplitz encoding keeps its point spread function convolution.
 
     Parameters
     ----------
@@ -118,15 +118,14 @@ def _as_quadratics(terms: Terms) -> list[Tikhonov]:
 def _stacked(A, y: torch.Tensor, terms: Sequence[Tikhonov]):
     """``(A~, y~)`` for ``min ||A x - y||^2 + sum_i w_i ||G_i x - b_i||^2``.
 
-    Written as one least-squares problem, which is what conjugate gradients
-    solves::
+    Written as one least-squares problem, which conjugate gradients solves::
 
         A~ = [A; sqrt(w_1) G_1; ...]        y~ = [y; sqrt(w_1) b_1; ...]
 
     The codomains have nothing in common -- samples against images against
     differences -- so each is read as the line of numbers it is and they are
-    laid end to end, which is what ``linop_stack_cod`` does and what makes the
-    normal of the whole the sum of the parts' own normals.
+    laid end to end, as ``linop_stack_cod`` does, which makes the normal of
+    the whole the sum of the parts' own normals.
 
     That last part matters.  A^H A for a Toeplitz encoding is a
     convolution rather than two transforms, and it stays one here: the normal
@@ -173,13 +172,13 @@ Regularizers = Regularizer | Iterable[Regularizer] | None
 def maxeigen(
     A, terms: Terms = None, *, cclambda: float = 0.0, precond=None, iterations: int = 30
 ) -> float:
-    """BART's estimate of the largest eigenvalue of the operator a step divides by.
+    """Power-iteration estimate of the largest eigenvalue of the normal operator.
 
-    What ``pics -e`` asks for.  It is a power iteration from a random start,
-    so it draws on BART's own generator: a loop written outside the library
-    has to ask for it here, at the point in the sequence the library would
-    have asked, or the draws that follow -- a wavelet term's cycle spinning,
-    say -- are different ones.
+    The quantity ``pics -e`` uses to scale a proximal step.  The power
+    iteration starts from a random vector drawn from BART's own generator, so
+    an iteration written outside the library must request it here, at the point
+    in the sequence the library would have reached it; otherwise the subsequent
+    draws -- a wavelet term's random cycle spinning, for instance -- differ.
 
     Parameters
     ----------
@@ -187,8 +186,9 @@ def maxeigen(
         The encoding.  Its normal is the operator, with ``cclambda`` on the
         diagonal, as ``lsqr`` builds it.
     terms : Regularizer or iterable of Regularizer, optional
-        Terms whose transforms are added to it.  That is what the primal-dual
-        iteration estimates over; the proximal ones take the encoding alone.
+        Terms whose transforms are added to the normal operator.  The
+        primal-dual iteration estimates over these; the proximal iterations
+        estimate over the encoding alone.
     cclambda : float
         The quadratic weight (``pics -q``).
     precond : LinearOperator, optional
@@ -272,7 +272,7 @@ def _solve(
     lib = library()
     ndim = len(op.ishape)
     flags = [term._flags(ndim) for term in terms]
-    # A term that adds unknowns cannot be built on its own -- the offsets its
+    # A term with auxiliary variables cannot be built on its own -- the offsets its
     # transforms sit at are worked out across the whole set -- so on that path
     # the solve configures the set itself and there is nothing to hand over.
     extends = _extending(terms)
@@ -351,7 +351,7 @@ _SHARED_OPTIONS = (8, "dau2", 1)
 
 
 #: The pairs ``pics`` takes once for the whole set, and BART's own values for
-#: them (`opt_reg_init`, optreg.c:309-313).  Only the terms that add unknowns
+#: them (`opt_reg_init`, optreg.c:309-313).  Only the terms with auxiliary variables
 #: read them.
 _SHARED_PAIRS: dict[str, tuple[float, float]] = {
     "alpha": (1.0, 3.0**0.5),
@@ -383,7 +383,7 @@ def _shared_pairs(terms) -> tuple[tuple[float, float], tuple[float, float]]:
 
 
 def _extending(terms) -> bool:
-    """Whether any of ``terms`` adds unknowns to the optimization variable."""
+    """Whether any of ``terms`` extends the optimization variable with auxiliary ones."""
     return any(getattr(term, "_extends", False) for term in terms)
 
 
@@ -392,7 +392,7 @@ _MAX_PENALTIES = 10
 
 
 def _penalties(terms, image_shape: tuple[int, ...]):
-    """The penalties BART splits a set holding a term that adds unknowns into, and how many it adds.
+    """The penalties BART splits such a set into, and how many variables it adds.
 
     ``opt_reg_configure`` works the offsets out across the whole set, as
     ``bartorch_solve`` does; each penalty's transform maps from the image's
@@ -442,7 +442,7 @@ def _shared_options(terms) -> tuple[int, str, int]:
     """The one block size, wavelet family and shift mode for the whole set.
 
     ``opt_reg_configure`` takes one of each and hands them to whichever terms
-    read them, which is how ``pics`` has a single ``-b`` and a single ``-w``.
+    read them, so ``pics`` has a single ``-b`` and a single ``-w``.
     A term that reads none answers with the defaults, so what is looked for is
     the terms that said something, and two of those disagreeing is refused
     rather than silently resolved.
@@ -469,7 +469,7 @@ class _Solver:
         self.regularizers = _as_terms(regularizers)
         if _extending(self.regularizers) and self._algorithm not in _TAKES_A_TRANSFORM:
             raise TypeError(
-                f"{type(self).__name__} cannot take a term that adds unknowns to the "
+                f"{type(self).__name__} cannot take a term with auxiliary variables in the "
                 "optimization: total generalized variation and the two infimal convolutions "
                 "split into several penalties over the enlarged variable, and only the "
                 "alternating-direction and primal-dual iterations are given a term's "
@@ -552,20 +552,29 @@ class _Solver:
 
 
 class CG(_Solver):
-    """Conjugate gradients for a least-squares problem with quadratic penalties.
+    r"""Conjugate gradients for a least-squares problem with quadratic penalties.
 
-    Without terms it is ``min ||A x - y||^2 + lambda_ ||x||^2``, which is what
-    ``pics`` runs with no regularizer or with ``-r`` alone.  With terms it is
+    Without terms the problem is
 
-    ``min ||A x - y||^2 + lambda_ ||x||^2 + sum_i w_i ||G_i x - b_i||^2``
+    .. math::
 
-    which is still a least-squares problem and so still this iteration.
+        \min_x \; \| A x - y \|^2 + \lambda \| x \|^2
+
+    which ``pics`` solves with no regularizer or with ``-r`` alone.  With terms
+    it is
+
+    .. math::
+
+        \min_x \; \| A x - y \|^2 + \lambda \| x \|^2
+              + \sum_i w_i \| G_i x - b_i \|^2
+
+    still a linear least-squares problem and so still this iteration.
 
     Parameters
     ----------
     lambda_ : float
         Tikhonov weight on the image itself (``pics -r``).  BART adds it to
-        the normal operator, which is what makes this one match the tool.
+        the normal operator, which is why this matches the tool.
     terms : Tikhonov or iterable of Tikhonov, optional
         Quadratic penalties with an operator, a bias, or both.  See
         :class:`Tikhonov`.
@@ -627,15 +636,15 @@ class CG(_Solver):
     ) -> torch.Tensor:
         """Solve, and with ``steps`` say how many iterations it took.
 
-        The count is what an alternating-direction solver budgets by, and the
-        only way to see it from outside the library.
+        An alternating-direction solver budgets by this count, which is not
+        otherwise visible from outside the library.
 
         When ``y`` carries a gradient the solve is recorded: the forward pass
         is the same iteration and the same bits, and the backward pass is
         another solve with the same operator, as
-        :mod:`bartorch.optim.autograd` describes.  That is what lets a solve
-        stand inside an unrolled network -- the data-consistency layer of a
-        MoDL, say -- rather than only at the end of one.
+        :mod:`bartorch.optim.autograd` describes.  A solve can therefore stand
+        inside an unrolled network -- as the data-consistency layer of a MoDL,
+        for instance -- and not only at the end of one.
         """
         from bartorch.linop.base import _tracking
 
@@ -672,7 +681,7 @@ class CG(_Solver):
         same weight go in, so it is the same ``N`` the forward pass inverted;
         and an encoding built with ``toeplitz=True`` keeps its point-spread
         convolution through :meth:`~bartorch.linop.LinearOperator.gram`, so the
-        backward pass costs what the forward one does.
+        backward pass costs the same as the forward one.
         """
         from bartorch.linop import Identity
         from bartorch.linop.base import _WithNormal
@@ -707,7 +716,7 @@ class IST(_Solver):
         Exactly one term.
     maxiter : int
     step : float
-        Step size (``pics -s``); 0.95 is what ``pics`` uses when none is given.
+        Step size (``pics -s``); ``pics`` uses 0.95 when none is given.
     eigen : bool
         Scale the step by the largest eigenvalue of the normal operator,
         estimated with 30 power iterations (``pics -e``).
@@ -779,7 +788,7 @@ class FISTA(IST):
         Exactly one term.
     maxiter : int
     step : float
-        Step size (``pics -s``); 0.95 is what ``pics`` uses when none is given.
+        Step size (``pics -s``); ``pics`` uses 0.95 when none is given.
     eigen : bool
         Scale the step by the largest eigenvalue of the normal operator,
         estimated with 30 power iterations (``pics -e``).
@@ -844,7 +853,7 @@ class ADMM(_Solver):
     Parameters
     ----------
     regularizers : Regularizer or ImplicitPrior, or an iterable of them
-        Terms that add unknowns to the optimization -- total generalized
+        Terms with auxiliary variables -- total generalized
         variation and the two infimal convolutions -- walk the image and the
         fields behind it.
     maxiter : int
@@ -880,7 +889,7 @@ class ADMM(_Solver):
     fast : bool
         Skip the residuals entirely, and with them the stopping test.
     alpha : float
-        Over-relaxation; BART's default of 1.6 is what ``pics`` runs.
+        Over-relaxation; ``pics`` runs BART's default of 1.6.
     mu : float
         How far the residuals must part before ``dynamic_rho`` moves ``rho``.
     tau_max : float
@@ -888,7 +897,7 @@ class ADMM(_Solver):
     abstol, reltol : float
         Boyd's absolute and relative tolerances, which stop the iteration when
         both residuals are inside them.  ``italgo_config`` sets both to zero,
-        so the budget is what stops ``pics``.
+        so only the iteration budget stops ``pics``.
     cg_maxiter_first : int, optional
         A separate budget for the first step's inner solve, where there is no
         warm start to build on; riesling's, not BART's.
@@ -1016,11 +1025,12 @@ class PRIDU(_Solver):
     Parameters
     ----------
     regularizers : Regularizer or ImplicitPrior, or an iterable of them
-        Terms that add unknowns to the optimization walk the image and the
-        fields behind it, as in :class:`ADMM`.
+        Terms with auxiliary variables extend the optimization variable; the
+        step spans the image and the auxiliary fields behind it, as in
+        :class:`ADMM`.
     maxiter : int
     step : float
-        Step size (``pics -s``); 0.95 is what ``pics`` uses when none is given.
+        Step size (``pics -s``); ``pics`` uses 0.95 when none is given.
     sigma_tau_ratio : float
         Ratio of the dual to the primal step: ``sigma = sqrt(step) * ratio``,
         ``tau = sqrt(step) / ratio``.  ``pics`` sets it to the scaling it
@@ -1090,6 +1100,8 @@ class PRIDU(_Solver):
 class NIHT(_Solver):
     """Normalized iterative hard thresholding.
 
+    Cannot be run; see :meth:`__call__`.
+
     Parameters
     ----------
     regularizers : WaveletNIHT or ImageNIHT, or an iterable of them
@@ -1121,14 +1133,14 @@ class NIHT(_Solver):
                 raise TypeError(f"NIHT takes WaveletNIHT and ImageNIHT terms, not {term!r}")
 
     def __call__(self, y: torch.Tensor, A, x0: torch.Tensor | None = None) -> torch.Tensor:
-        """Refused: BART's own iteration cannot run against ``lsqr``'s operator.
+        """Always raises: BART's ``niht`` cannot run against ``lsqr``'s operator.
 
         ``niht`` applies the normal operator in place -- ``iter_op_call(op, g,
-        g)`` at ``iter/niht.c:85`` and ``:212`` -- and the operator ``lsqr2``
-        hands it asserts against exactly that, ``args[0] != args[1]`` at
-        ``iter/lsqr.c:60``.  Every NIHT solve therefore ends in an assertion,
-        ``bart pics -R H`` included, and BART's assertions are ``error()``
-        calls that unwind the process from here rather than returning.
+        g)`` at ``iter/niht.c:85`` and ``:212`` -- while the operator ``lsqr2``
+        supplies asserts that its arguments are not aliased, ``args[0] !=
+        args[1]`` at ``iter/lsqr.c:60``.  Every NIHT solve therefore terminates
+        in an assertion, ``bart pics -R H`` included; here those assertions are
+        ``error()`` calls that unwind rather than ending the process.
         """
         raise NotImplementedError(
             "BART's NIHT cannot run: `niht` applies the normal operator in place "

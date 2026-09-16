@@ -98,7 +98,7 @@ class _SettableDiagonal(LinearOperator):
 
         ``values`` has the shape the operator was built with.  A solve or a
         step assembled over this operator is unaffected structurally and needs
-        no rebuild; what changes is what it computes.
+        no rebuild; only what it computes changes.
         """
         current = getattr(self, self._values)
         made = as_operand(values, tuple(current.shape), self._values)
@@ -160,10 +160,9 @@ class ComponentDiagonal(LinearOperator):
     BART's ``linop_rdiag``, which is ``md_zrmul``: the real part of the input
     is scaled by the real part of ``diag`` and the imaginary part by the
     imaginary part, each on its own.  It is the operator for treating a
-    complex array as two real channels -- not a real-valued diagonal, which is
-    what its BART name suggests and what :class:`Diagonal` already is when
-    given a real diagonal, adjoint included, since conjugating a real number
-    does nothing.
+    complex array as two real channels, not the real-valued diagonal its BART
+    name suggests: that is :class:`Diagonal` given a real diagonal, adjoint
+    included, since conjugating a real number does nothing.
 
     So ``ComponentDiagonal(w)`` with a real ``w`` scales the real part by
     ``w`` and annihilates the imaginary part; scaling both takes
@@ -271,7 +270,7 @@ class MultiplySum(LinearOperator):
 class Identity(LinearOperator):
     """The identity on ``shape``, BART's ``linop_identity``.
 
-    It is what an empty product is: ``A ** 0`` returns one, and it is the term
+    It is the empty product: ``A ** 0`` returns one, and it is the term
     to add when an operator needs a multiple of the identity beside it, as in
     ``A + 0.1 * Identity(A.ishape)``.
 
@@ -316,10 +315,9 @@ class Zero(LinearOperator):
 class Conj(LinearOperator):
     """Complex conjugation, BART's ``linop_zconj``.
 
-    Conjugation is not linear over the complex numbers -- it is conjugate
-    linear -- so this is the operator BART offers under that name, and it is
-    what ``A.conj()`` and ``A.T`` are built from rather than a rule of their
-    own.
+    Conjugation is not linear over the complex numbers, being conjugate
+    linear, so this is the operator BART offers under that name.  ``A.conj()``
+    and ``A.T`` are built from it rather than from a rule of their own.
 
     Parameters
     ----------

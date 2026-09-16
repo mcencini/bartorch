@@ -1,4 +1,4 @@
-"""A block driven to its fixed point, differentiated through the point rather than the run."""
+"""A block driven to its fixed point, differentiated implicitly at that point."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ __all__ = ["FixedPoint"]
 
 
 def _stationary(block) -> None:
-    """Refuse a block whose step is not the same map every time: it has no fixed point."""
+    """Reject a block whose step is not the same map every time: it has no fixed point."""
     if isinstance(block, FISTABlock):
         raise TypeError(
             "FISTA's momentum depends on the iteration count, so its step is a different map "
@@ -64,14 +64,16 @@ def _unpack(state, names, z: torch.Tensor):
 class FixedPoint(nn.Module):
     """``block`` iterated to its fixed point: a deep-equilibrium model.
 
-    The forward iterations run without a graph until the moving state changes
-    by at most ``tol`` of its norm, or ``max_iter`` steps.  The backward pass is
-    implicit: one step from the point, and the vector-Jacobian products of that
-    step iterated to their own fixed point, so memory does not grow with the
-    iterations.  :attr:`iterations` is the last forward's count.
+    The forward iterations run outside the graph until the moving state changes
+    by at most ``tol`` of its norm, or for ``max_iter`` steps.  Differentiation
+    is implicit rather than through the unrolled run: one step is taken from
+    the fixed point, and the vector-Jacobian products of that step are iterated
+    to their own fixed point, so memory does not grow with the iteration count.
+    :attr:`iterations` is the last forward pass's count.
 
-    A step that is not the same map every time -- FISTA's momentum, a moving
-    ``rho``, adaptive or decaying steps -- has no fixed point and is refused.
+    A step that is not the same map at every iteration -- FISTA's momentum, a
+    moving ``rho``, adaptive or decaying step sizes -- has no fixed point and
+    is rejected.
 
     Examples
     --------

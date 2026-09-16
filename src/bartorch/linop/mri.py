@@ -1,11 +1,11 @@
-"""The MRI encodings on a grid, and off-resonance over any of them.
+"""Cartesian and Wave-CAIPI encoding operators, and off-resonance correction.
 
 Each is lowered into one :class:`~bartorch.linop.form.Form` and built by the
-library's single encoding entry point, so what a solver drives is one BART
-operator and each application is one call.  :func:`CartesianSense` and
-:func:`WaveSense` are :class:`~bartorch.linop.NoncartesianSense`'s coil loop
-over a Cartesian or a wave transform; :func:`FieldCorrected` hands the
-planner a contraction over segments and takes what it lowers.
+library's single encoding entry point, so a solver drives one BART operator and
+each application is one call.  :func:`CartesianSense` and :func:`WaveSense` run
+:class:`~bartorch.linop.NoncartesianSense`'s coil-slab loop over a Cartesian or
+a wave transform; :func:`FieldCorrected` passes the planner a contraction over
+time segments.
 """
 
 from __future__ import annotations
@@ -38,10 +38,9 @@ def _spatial(image_shape: Shape) -> tuple[int, tuple[int, ...]]:
 class _GridSense(NoncartesianSense):
     """:class:`~bartorch.linop.NoncartesianSense` over BART's own FFT.
 
-    The same operator, the same coil loop, the same sensitivities held either
-    way -- with the transform each slab carries being the centred unitary FFT
-    rather than a NUFFT.  Private because what a caller wants is the name for
-    the encoding, which is :func:`CartesianSense`.
+    The same operator, coil-slab loop and sensitivity handling, with each
+    slab's transform the centred unitary FFT rather than a NUFFT.  Private:
+    callers reach it through :func:`CartesianSense`.
     """
 
     _needs_traj = False
@@ -125,12 +124,12 @@ class _Segmentable:
 class _CartesianNative(_Segmentable, _GridSense):
     """:class:`_GridSense` with the pattern and the basis inside the coil loop.
 
-    Each slab's transform carries the pattern and the basis, so they run where
-    the transform does and the k-space never crosses back for them.  Its
-    normal transforms only the axes the pattern varies along and applies the
-    collapsed kernel between them; without ``toeplitz`` it is the two
-    applications.  With a basis the image carries its coefficients in front of
-    the spatial axes and the samples its frames in front of them.
+    Each slab's transform applies the pattern and the basis, so the k-space is
+    not revisited for them.  The normal transforms only the axes the pattern
+    varies along and applies the collapsed kernel between them; without
+    ``toeplitz`` it is the forward and adjoint applications.  With a basis the
+    image carries coefficients in front of the spatial axes and the samples
+    carry frames in front of theirs.
     """
 
     def __init__(self, sensitivities, image_shape, pattern, basis, toeplitz=True, **kwargs):
@@ -643,10 +642,10 @@ def _nufft_contraction(encoding, b: torch.Tensor, c: torch.Tensor) -> LinearOper
 
     A basis along the samples is a transform only the substitution computes:
     BART's own gridder asserts that the basis is trivial over the sample axes
-    (``nufft_set_traj`` in ``noncart/nufft.c``).  So where the gridder is what
+    (``nufft_set_traj`` in ``noncart/nufft.c``).  So where the gridder is the
     answers -- ``_finufft.barts_own_gridder()`` and ``use_in_tools(False)``,
     which are the agreement check and the tests -- there is no such operator,
-    and the sum of chains is what the planner falls back to.
+    and the planner falls back to the sum of chains.
     """
     from bartorch import _finufft
 
@@ -817,19 +816,35 @@ def CartesianSense(  # noqa: N802  (it is a constructor)
     toeplitz: bool = True,
     **kwargs,
 ) -> LinearOperator:
-    """Coils, a Fourier transform, and the samples that were taken.
+    r"""Cartesian SENSE encoding operator.
 
-    What ``pics`` encodes on a grid: sensitivities, the centred unitary
-    transform, and a pattern that keeps the samples the sequence acquired.
+    The forward model is
 
-    Without a pattern and without a basis this is
-    :class:`~bartorch.linop.NoncartesianSense` over BART's own FFT -- the same
-    operator, coil batching and all.  With either, the pattern and the basis
-    run inside the coil loop, where the transform does.
+    .. math::
 
-    With a basis it is T2 shuffling, what ``pics -B`` takes: the image holds
-    coefficients and the basis contracts them into the frames that were
-    acquired.
+        A = P F S
+
+    with :math:`S` multiplication by the coil sensitivities, :math:`F` the
+    centred unitary Fourier transform over the spatial axes, and :math:`P` the
+    diagonal sampling operator given by ``pattern``.  This is the encoding
+    ``bart pics`` uses for Cartesian data.
+
+    With a temporal basis :math:`\Phi` of shape ``(coeffs, frames)`` the
+    optimization variable holds subspace coefficients, and the basis maps them
+    to the acquired frames after the Fourier transform and before sampling:
+
+    .. math::
+
+        y[c, t] = P[t] \odot \sum_a \Phi[a, t] \, F(S[c] \odot x[a])
+
+    so the domain carries coefficients where the codomain carries frames.  This
+    is the subspace model of ``bart pics -B``, used for T2 shuffling.
+
+    Given neither a pattern nor a basis the operator reduces to sensitivity
+    encoding followed by the Fourier transform, and
+    :class:`~bartorch.linop.NoncartesianSense` builds it directly.  Given
+    either, the pattern and the basis are applied inside the coil-slab loop
+    together with the transform, so the samples are not revisited afterwards.
 
     Parameters
     ----------
@@ -840,12 +855,12 @@ def CartesianSense(  # noqa: N802  (it is a constructor)
         The image, ``(*batches, [sets,] [coeffs,] [z,] y, x)``.  The samples
         are ``(*batches, coils, [frames,] [z,] y, x)``.
     pattern : tensor, optional
-        Ones where a sample was taken and zeros where it was not, broadcast
-        over one coil's samples ``([frames,] [z,] y, x)`` -- so ``(y, 1)``
-        undersamples a phase encode for every coil and batch item.
+        Binary sampling mask, one at acquired positions and zero elsewhere,
+        broadcast over one coil's samples ``([frames,] [z,] y, x)`` -- so
+        ``(y, 1)`` undersamples a phase encode for every coil and batch item.
     positions : tensor, optional
-        Instead of a pattern, the phase encodes that were sampled, as integer
-        indices ``([frames,] shots, d)``: ``(y,)`` in 2D, ``(z, y)`` in 3D,
+        Instead of a pattern, the acquired phase encodes as integer indices
+        ``([frames,] shots, d)``: ``(y,)`` in 2D, ``(z, y)`` in 3D,
         ``-1`` for padding where frames sample different numbers.  The samples
         are then ``(*batches, coils, [frames,] shots, readout)``, the whole
         readout along each phase encode, and nothing the size of the
@@ -954,27 +969,27 @@ def WaveSense(  # noqa: N802  (it is a constructor)
     device: torch.device | str | None = None,
     ndim: int | None = None,
 ) -> LinearOperator:
-    """Wave-CAIPI encoding, as BART's ``wave`` builds it.
+    """Wave-CAIPI encoding operator.
 
-    The gradients that run during the readout spread each voxel along it, and
-    the spreading is a multiplication by a point-spread function between the
-    readout transform and the phase-encode ones.  So the encoding is what
-    ``src/wave.c`` chains:
+    The gradients played during the readout spread each voxel along it.  That
+    spreading is a multiplication by a point spread function between the
+    readout transform and the phase-encode transforms, so the encoding is the
+    chain ``src/wave.c`` builds:
 
     ``Sampling . FFT(phase) . Diagonal(psf) . FFT(readout) . Resize .
     Coils(maps)``
 
-    all of it after the coils running in the coil loop a slab at a time,
-    where the arithmetic is -- on a card for host arrays -- so what crosses is
-    the image and the samples.
+    Everything after the sensitivities runs in the coil-slab loop, so only the
+    image and the samples cross to the device when the operands are on the
+    host.
 
-    The point-spread function is given, or made from the gradient wave: a sine
-    wave along y and, in 3D, a cosine wave along z, as BART's ``wavepsf`` makes
-    them and ``fmac`` combines them.
+    The point spread function is supplied through ``psf``, or constructed from
+    the gradient waveform: a sine wave along y and, in 3D, a cosine wave along
+    z, as BART's ``wavepsf`` generates them and ``fmac`` combines them.
 
-    With a basis this is Wave-Shuffling: the same encoding over coefficient
-    images, the basis contracting the coefficients into frames, the pattern or
-    the positions keeping the samples.
+    With a temporal basis this is Wave-Shuffling: the same encoding applied to
+    coefficient images, with the basis mapping coefficients to acquired frames
+    and the pattern or positions selecting samples.
 
     Parameters
     ----------
@@ -989,12 +1004,12 @@ def WaveSense(  # noqa: N802  (it is a constructor)
         Length of the oversampled readout, ``wx`` in BART's sources.  At least
         the readout the image has.
     pattern : tensor, optional
-        Ones where a sample was taken, broadcast over one coil's samples
+        Binary sampling mask, broadcast over one coil's samples
         ``([frames,] [z,] y, readout)``.
     centred : bool
-        Centre the two transforms, making them unitary.  BART's ``wave`` leaves
-        them uncentred and unnormalized and this follows it; ``wshfl`` centres
-        them for its calibration path.
+        Centre the two transforms, making them unitary.  The default follows
+        BART's ``wave``, which leaves them uncentred and unnormalized;
+        ``wshfl`` centres them for its calibration path.
     psf : tensor, optional
         The point-spread function on the oversampled grid, broadcast over one
         coil's samples ``([z,] y, readout)``; the same for every frame.  Give
@@ -1017,7 +1032,7 @@ def WaveSense(  # noqa: N802  (it is a constructor)
     scale : float or tuple of float
         How much stronger than nominal each wave is, one value or ``(z, y)``.
     positions : tensor, optional
-        Instead of a pattern, the phase encodes that were sampled, as for
+        Instead of a pattern, the acquired phase encodes, as for
         :func:`CartesianSense`: ``([frames,] shots, d)`` with ``(y,)`` in 2D,
         ``(z, y)`` in 3D and ``-1`` for padding.  The samples are then
         ``(*batches, coils, [frames,] shots, readout)``, the oversampled
@@ -1101,23 +1116,29 @@ def FieldCorrected(  # noqa: N802  (it is a constructor)
     method: str = "svd",
     coefficients: tuple[torch.Tensor, torch.Tensor] | None = None,
 ) -> LinearOperator:
-    """An encoding with off-resonance during the readout, by time segmentation.
+    r"""Off-resonance-corrected encoding operator, by time segmentation.
 
-    A voxel off resonance by ``f`` accrues a phase ``exp(-i 2 pi f t)`` by the
-    time ``t`` of each sample, so the exact operator is a different transform
-    per sample and no transform at all in the usual sense.  Time segmentation
-    approximates it as a short sum of ordinary encodings, each with a spatial
-    weight before it and a sample weight after:
+    A voxel off resonance by :math:`f` accrues a phase
+    :math:`e^{-i 2 \pi f t}` by the acquisition time :math:`t` of each sample,
+    so the exact operator applies a different transform per sample and is not a
+    single transform at all.  Time segmentation approximates it as a short sum
+    of ordinary encodings, each preceded by a spatial weight and followed by a
+    sample weight:
 
-    ``A = sum_l diag(b_l) . E . diag(c_l)``
+    .. math::
 
-    which is ``linop_plus`` over ``linop_chain``: one BART operator, whatever
-    ``E`` is.  So this wraps any encoding -- :func:`CartesianSense`,
-    :func:`WaveSense`, or :class:`~bartorch.linop.NoncartesianSense` -- and
-    the last of those is what mirtorch calls ``Gmri``.
+        A = \sum_{l=1}^{L} \operatorname{diag}(b_l) \, E \,
+            \operatorname{diag}(c_l)
 
-    The coefficients are ``mri-nufft``'s: the fit is a least-squares problem
-    over a histogram of the field map, which BART has no primitive for.
+    This is ``linop_plus`` over ``linop_chain``, so the result is one BART
+    operator for any ``E``.  It therefore wraps any encoding --
+    :func:`CartesianSense`, :func:`WaveSense` or
+    :class:`~bartorch.linop.NoncartesianSense`; the non-Cartesian case
+    corresponds to mirtorch's ``Gmri``.
+
+    The segment coefficients come from ``mri-nufft``.  Fitting them is a
+    least-squares problem over a histogram of the field map, for which BART has
+    no primitive.
 
     Parameters
     ----------
@@ -1130,9 +1151,10 @@ def FieldCorrected(  # noqa: N802  (it is a constructor)
         codomain.  Reciprocal units to ``field_map``.
     mask : tensor, optional
         Where the field map is meaningful; everywhere by default.  The fit
-        weights the histogram by it, so a mask that excludes air spends the
-        segments on tissue.  A map with a single value under the mask is
-        refused: there is nothing to segment, and the correction is one phase.
+        weights the histogram by it, so a mask excluding air concentrates the
+        segments on tissue.  A field map with a single value under the mask is
+        rejected: there is nothing to segment, and the correction reduces to a
+        single phase.
     segments : int
         How many terms the sum has.  ``-1`` lets ``mri-nufft`` choose from the
         spread of the field map and the readout length.
@@ -1146,20 +1168,19 @@ def FieldCorrected(  # noqa: N802  (it is a constructor)
     Notes
     -----
     Over a :class:`~bartorch.linop.NoncartesianSense` with no basis, sets or
-    encoding axes, and sample weights that vary along the shots and the
-    readout alone, the sum is one operator: the spatial weights fan the image
-    out into segment images, and the segments' sample weights are a basis over
-    the samples.  Its normal is then the Toeplitz one over the basis's packed
+    encoding axes, and sample weights varying along the shots and the readout
+    alone, the sum lowers to a single operator: the spatial weights expand the
+    image into one image per segment, and the segments' sample weights act as a
+    basis over the samples.  Its normal is then the Toeplitz one over the basis's packed
     Gram, with the spatial weights on either side -- a point-spread function
     per pair of segments rather than two transforms per segment per coil.
 
     Over :func:`CartesianSense` with a pattern or a basis, and over
-    :func:`WaveSense`, the segments go into the coil loop instead, around the
-    transform each slab carries: the same sum, run where the slab is, with the
-    two applications as its normal.  On a grid the closed form would not save
-    a transform.  Weights that vary along the batches, the coils, the sets or
-    the coefficients keep the sum over the whole encoding, as any other
-    encoding does.
+    :func:`WaveSense`, the segments are folded into the coil-slab loop around
+    each slab's transform instead, and the normal is the forward and adjoint
+    applications; on a grid the closed form would save no transform.  Weights
+    varying along the batches, the coils, the sets or the coefficients leave
+    the sum over the whole encoding, as for any other encoding.
 
     Examples
     --------

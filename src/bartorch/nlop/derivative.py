@@ -14,7 +14,7 @@ class Derivative(LinearOperator):
 
     ``nlop_get_derivative``.  This is a view: the point is wherever the
     operator's last application left it, and it moves with the next one.  That
-    is what makes it usable as the inner problem of a Gauss-Newton step, where
+    makes it usable as the inner problem of a Gauss-Newton step, where
     the linearisation point is the iterate, and what makes it wrong to hold on
     to across an unrelated evaluation.
 

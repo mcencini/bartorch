@@ -138,7 +138,7 @@ class FromTorchSim(_Callback):
         """TorchSim takes the point as an argument already, so the bundle is its own pair.
 
         ``A_jvp`` and ``A_vjp`` are ``(x, v)`` throughout -- no Jacobian is
-        built and no point is stored -- which is what a bundle asks for; the
+        built and no point is stored, as a bundle requires; the
         members are torch operators so that a step differentiating by the point
         differentiates them again rather than reading a derivative this
         recorded.
@@ -169,9 +169,10 @@ class FromTorchSim(_Callback):
     def initial(self, **values: Any) -> torch.Tensor:
         """Maps to start from, in this operator's layout.
 
-        Takes what :meth:`~torchsim.recon.ModelOperator.initial` takes --
-        ``{name: value}`` in each property's own units -- and returns a
-        complex tensor of :attr:`ishape`.
+        Accepts the arguments of
+        :meth:`~torchsim.recon.ModelOperator.initial` -- ``{name: value}`` in
+        each property's own units -- and returns a complex tensor of
+        :attr:`ishape`.
         """
         maps = self.model.initial(self.voxels, **values)
         return maps.movedim(-1, 0).to(torch.complex64).contiguous()
@@ -180,7 +181,7 @@ class FromTorchSim(_Callback):
         """The named maps ``x`` stands for, in their own units.
 
         The inverse of the packing :meth:`initial` does: what a fit returns is
-        the variables actually solved for, and this is what turns them back
+        the variables actually solved for, and this turns them back
         into a T1 in milliseconds and a complex amplitude.
         """
         maps = x.reshape(self.channels, *self.voxels).movedim(0, -1).real.contiguous()
@@ -215,7 +216,7 @@ def InversionRecovery(  # noqa: N802  (it is a constructor)
     """T1 from an inversion recovery: ``moba -L``'s family, on TorchSim.
 
     The longitudinal magnetization read at a series of inversion times, which
-    is what ``moba``'s Look-Locker models fit.  ``moba -L`` solves for
+    is the model ``moba``'s Look-Locker family fits.  ``moba -L`` solves for
     ``(Mss, M0, R1*)`` and this solves for ``T1`` and a complex amplitude, so
     the two agree on the recovery and not on the variables.
 
@@ -230,7 +231,7 @@ def InversionRecovery(  # noqa: N802  (it is a constructor)
         fully relaxed when each inversion arrives.
     bounds : dict, optional
         ``{name: (low, high)}``; ``T1`` defaults to ``(10, 5000)`` ms, which
-        is what keeps a Gauss-Newton iterate physical.
+        keeps a Gauss-Newton iterate physical.
     unknown : sequence of str
         What to solve for.  ``inv_efficiency`` and ``offset`` are the other
         things the model exposes.
@@ -319,7 +320,7 @@ def Bloch(  # noqa: N802  (it is a constructor)
     """Any TorchSim sequence as a model operator: ``moba --bloch``'s family.
 
     ``moba --bloch`` fits a Bloch simulation of the sequence rather than a
-    closed form, which is what makes it work for sequences that have none.
+    closed form, so it serves sequences that have none.
     This is the same idea with TorchSim doing the simulating: an FSE train, a
     fingerprinting schedule, a bSSFP sweep, a sequence of your own -- anything
     with a ``simulate`` -- becomes an operator BART's Gauss-Newton solves.

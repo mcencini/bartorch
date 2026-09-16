@@ -1,4 +1,4 @@
-"""A denoiser where a regularization term goes."""
+"""A denoiser in place of a regularization term."""
 
 from __future__ import annotations
 
@@ -9,13 +9,16 @@ __all__ = ["ImplicitPrior"]
 
 
 class ImplicitPrior(nn.Module):
-    """A denoiser standing where a :mod:`bartorch.priors` term goes.
+    """A denoiser substituted for a :mod:`bartorch.priors` regularizer.
 
-    Its proximal operator is ``denoiser(x, sigma)`` whatever the step, as
-    plug-and-play takes it, or ``denoiser(x)`` without a ``sigma``.  The
-    denoiser sees a leading batch axis, of one for a single image, and a
-    complex image as it is.  ``sigma`` is a parameter, frozen until
-    ``requires_grad_()``.
+    The proximal operator is ``denoiser(x, sigma)`` independently of the step,
+    as plug-and-play regularization defines it, or ``denoiser(x)`` where no
+    ``sigma`` is given.  Unlike a BART proximal operator this one is
+    differentiable, so a solve containing it can be differentiated end to end.
+
+    The denoiser receives a leading batch axis, of length one for a single
+    image, and a complex image unchanged.  ``sigma`` is a
+    :class:`torch.nn.Parameter`, frozen until ``requires_grad_()`` is called.
 
     Examples
     --------

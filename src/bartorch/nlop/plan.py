@@ -1,8 +1,8 @@
 """Matching a nonlinear composition against the coil model, and lowering it.
 
-A product of two unknowns behind a linear encoding is what ``noir`` fits, and
+A product of two unknowns behind a linear encoding is the model ``noir`` fits, and
 the rewriting that pays is to apply the encoding once as its normal rather than
-twice as a pair -- which is what ``noir2_join`` already does off the grid.  See
+twice as a pair, as ``noir2_join`` already does off the grid.  See
 ``docs/design/nonlinear-fusion.md``.
 """
 
@@ -18,7 +18,7 @@ __all__ = ["Plan"]
 
 @dataclass(frozen=True)
 class Plan:
-    """What a model was lowered into, and how a step over it applies the encoding.
+    """Lowered form of a nonlinear model, and how a Gauss-Newton step applies its encoding.
 
     Attributes
     ----------
@@ -93,9 +93,9 @@ def lower(description: Coils) -> NonlinearOperator | None:
     Taken wherever the composition matches: ``linop_get_normal`` is the
     encoding's own normal where it has one -- a point spread function for a
     NUFFT, the transform's own where no k-space factor survives -- and the two
-    applications where it has not, which is what the pair costs anyway.  What
-    it trades is where the data lives, and :meth:`Step.prepare` and
-    :attr:`Plan.domain` are what say so.
+    applications where it has not, which is the pair's cost anyway.  The
+    trade-off is where the data lives; :meth:`Step.prepare` and
+    :attr:`Plan.domain` report it.
 
     ``None`` says it has already been taken, as it has in BART's own
     non-Cartesian model.
@@ -117,7 +117,7 @@ def build(F, *, fuse: bool = True) -> tuple[NonlinearOperator, LinearOperator | 
     The operator comes back unchanged where there is nothing to rewrite; the
     preparation is ``E^H`` where the step works in the normal-equation domain
     and ``None`` where it does not.  ``fuse=False`` declines the rewrite, which
-    is what the fused answer is held against, and a model BART already built in
+    is the reference the fused answer is held against, and a model BART already built in
     that domain is past declining.
     """
     description = describe(F)

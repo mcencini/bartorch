@@ -1,12 +1,13 @@
 """One step of each of BART's proximal iterations, as a torch module.
 
-A block is the only copy of its iteration's step: a solver loops over one, and
-a network stacks several.  ``state = block.start(y, A, x0)`` sets a run up,
-``state = block(state, A)`` takes a step, and ``block.output(state, A)`` is the
-image.  Step sizes and weights are parameters, frozen until ``requires_grad_()``;
-while frozen, a step answers with the library's bits.  ``cclambda`` and
-``precond`` are ``lsqr2_create``'s: the step sees ``M (A^H A + cclambda) x`` and
-``M A^H y``.
+A block is the single implementation of its iteration's step: a solver loops
+over one, and a network stacks several.  ``state = block.start(y, A, x0)``
+initializes a run, ``state = block(state, A)`` takes one step, and
+``block.output(state, A)`` returns the image.  Step sizes and penalty weights
+are :class:`torch.nn.Parameter`s, frozen until ``requires_grad_()`` is called;
+while frozen, a step reproduces the library's output bit for bit.  ``cclambda``
+and ``precond`` are ``lsqr2_create``'s, so the step sees
+``M (A^H A + cclambda) x`` and ``M A^H y``.
 """
 
 from __future__ import annotations
@@ -38,7 +39,12 @@ def _value(p: nn.Parameter):
 
 
 def _plain(v) -> float:
-    """``v`` as a detached float: what steers the schedule, not the model."""
+    """``v`` as a detached float.
+
+    Values that control the iteration schedule -- an adaptive ``rho``, an
+    adaptive step size -- are deliberately kept out of the graph, so they steer
+    the run without contributing gradients.
+    """
     return float(v.detach()) if isinstance(v, torch.Tensor) else float(v)
 
 
@@ -190,7 +196,7 @@ def _terms(priors, name: str) -> list:
     terms = _as_terms(priors)
     if any(getattr(t, "_extends", False) for t in terms):
         raise TypeError(
-            f"{name} thresholds the image, and a term that adds unknowns walks the fields "
+            f"{name} thresholds the image, and a term with auxiliary variables spans the fields "
             "behind it too; ADMMBlock and PRIDUBlock take it"
         )
     return terms
@@ -199,14 +205,14 @@ def _terms(priors, name: str) -> list:
 def _refuse_preconditioner(precond, name: str) -> None:
     if precond is not None:
         raise ValueError(
-            f"{name} takes no preconditioner with a term that adds unknowns: it maps the "
-            "image, and the step walks the image and the fields behind it"
+            f"{name} takes no preconditioner with a term with auxiliary variables: it maps the "
+            "image, and the step spans the image and the auxiliary fields behind it"
         )
 
 
 @dataclasses.dataclass(frozen=True)
 class _Space:
-    """The vector a step walks with a term that adds unknowns: the image, then those unknowns."""
+    """The extended optimization variable: the image, then the auxiliary variables."""
 
     terms: list
     A: object
@@ -372,7 +378,7 @@ class _Resolvent(torch.autograd.Function):
     """``x = K^-1 b`` with ``K = N + rho S``; the backward pass is one more solve with ``K``.
 
     ``dx = K^-1 (db - drho S x)``, so ``b`` gets ``w = K^-1 g`` and ``rho`` gets
-    ``-Re <w, S x>``.  The warm start carries no gradient.
+    ``-Re <w, S x>``.  No gradient is propagated to the warm start.
     """
 
     @staticmethod
@@ -399,10 +405,11 @@ class ADMMBlock(nn.Module):
     For ``min 0.5 ||A x - y||^2 + sum_j f_j(G_j x - b_j)``: conjugate gradients on
     ``A^H A + cclambda + rho sum_j G_j^H G_j`` from the previous ``x``, then each
     term's split and dual.  The state's ``done`` is Boyd's residual test, and
-    ``invokes`` counts inner iterations, which is what BART's ``maxiter`` budgets.
+    ``invokes`` counts inner iterations, the quantity BART's ``maxiter`` budgets.
     Each step takes its own ``rho`` unless ``dynamic_rho`` or ``hogwild`` moves
-    it, and then the state carries it.  With a term that adds unknowns the state
-    walks the image followed by them, and :meth:`output` is the image.
+    it, in which case the state carries it.  With a term that introduces
+    auxiliary variables the state vector is the image followed by those
+    variables, and :meth:`output` returns the image alone.
     """
 
     @dataclasses.dataclass(frozen=True)
@@ -475,7 +482,7 @@ class ADMMBlock(nn.Module):
         y, x = _begin(y, A, x0)
         space = _space(self.terms, A, self.precond, type(self).__name__)
         if space is not None and any(b is not None for b in self.biases):
-            raise ValueError("a set holding a term that adds unknowns takes no biases")
+            raise ValueError("a set holding a term with auxiliary variables takes no biases")
         terms, walked = (self.terms, A) if space is None else (space.terms, space.A)
         if space is not None:
             x = _lengthen(x, A.ishape, walked.ishape)
@@ -716,8 +723,9 @@ class PRIDUBlock(nn.Module):
     eigenvalue; ``hogwild`` decays by 0.95 a step.  Each step takes its own
     ``sigma`` and ``tau`` unless ``adaptive_step`` moves them, and then the state
     carries them.  ``done`` is BART's absolute tolerance on the two residuals.
-    With a term that adds unknowns the state walks the image followed by them,
-    and :meth:`output` is the image.
+    With a term that introduces auxiliary variables the state vector is the
+    image followed by those variables, and :meth:`output` returns the image
+    alone.
     """
 
     @dataclasses.dataclass(frozen=True)

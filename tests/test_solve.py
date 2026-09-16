@@ -259,7 +259,7 @@ def test_no_other_iteration_takes_a_term_that_adds_unknowns(term, solver):
     """``italgo_choose`` sends these to the alternating directions for the same
     reason: nothing else is given the transform that reaches the extra
     unknowns."""
-    with pytest.raises(TypeError, match="adds unknowns"):
+    with pytest.raises(TypeError, match="auxiliary variables"):
         solver(term)
 
 
@@ -346,12 +346,12 @@ def test_two_terms_cannot_ask_for_different_shared_options():
 
 
 def test_a_term_that_adds_unknowns_refuses_a_tracked_right_hand_side():
-    """Its penalties are BART's proximal operators, which carry no derivative;
+    """Its penalties are BART's proximal operators, which have no backward pass;
     frozen, the gradient is the one with them held fixed."""
     A = linop.FFT((1, 8, 8), axes=(-1, -2))
     y = _rand(1, 8, 8).requires_grad_()
     term = priors.TotalGeneralizedVariation((-1, -2), 0.01)
-    with pytest.raises(ValueError, match="carries no derivative"):
+    with pytest.raises(ValueError, match="no backward pass"):
         optim.ADMM(term, maxiter=4)(y, A)
     made = optim.ADMM(priors.frozen(term), maxiter=4)(y, A)
     made.abs().square().sum().backward()

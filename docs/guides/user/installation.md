@@ -85,8 +85,8 @@ found, and `patch` retries it by hand.
 
 `KMP_DUPLICATE_LIB_OK=TRUE` is the other thing people reach for, and bartorch
 neither sets nor suggests it: it tells one runtime to tolerate a second live
-copy, which its own authors document as unsafe -- a crash later, or a wrong
-answer quietly -- where pointing the two at one copy leaves one runtime.  The
+copy, which its own authors document as unsafe -- a later crash, or a silently
+wrong answer -- whereas pointing the two at one copy leaves a single runtime.  The
 same collision is
 [open upstream in mri-nufft](https://github.com/mind-inria/mri-nufft/issues/333).
 

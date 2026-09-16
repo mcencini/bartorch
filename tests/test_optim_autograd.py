@@ -250,13 +250,13 @@ def test_a_first_admm_step_does_not_depend_on_the_prior_and_says_nothing_else():
     assert two.grad_fn is not None
 
 
-# --- what has no derivative to give -------------------------------------------
+# --- what has no backward pass ------------------------------------------------
 
 
 def test_a_bart_term_refuses_rather_than_giving_a_wrong_gradient(problem):
     A, y = problem
     data = y.clone().requires_grad_(True)
-    with pytest.raises(ValueError, match="carries no derivative"):
+    with pytest.raises(ValueError, match="no backward pass"):
         optim.admm(data, A, priors.L1(0.01), maxiter=2, cg_maxiter=8)
 
 

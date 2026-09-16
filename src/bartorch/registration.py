@@ -76,7 +76,7 @@ def register_affine(
         ``p_moved = A @ p_ref + t``, each in its own grid's field-of-view
         units ``(index - n // 2) / n`` (``motion/affine.c:152-171``,
         ``:428-465``): content of ``moved`` displaced by ``d`` voxels along
-        the last axis gives ``t[-1] = d / n``.  This is what
+        the last axis gives ``t[-1] = d / n``.  This is the convention
         :func:`bartorch.affine_transform` takes:
         ``affine_transform(moved, matrix, axes=tuple(range(-k, 0)))``
         resamples ``moved`` onto ``reference``.

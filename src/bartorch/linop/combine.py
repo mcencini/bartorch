@@ -184,7 +184,7 @@ def stack(ops: Sequence[LinearOperator], axis: int = 0) -> LinearOperator:
 def hstack(ops: Sequence[LinearOperator], axis: int = 0) -> LinearOperator:
     """Split the input between the operators and add up what they return.
 
-    ``[A B] @ [x; y] = A x + B y``, which is what pylops calls ``HStack``: the
+    ``[A B] @ [x; y] = A x + B y``, which pylops calls ``HStack``: the
     operators share a codomain, and their domains agree except along ``axis``.
 
     BART has no constructor for this, and it needs none: the adjoint of
@@ -243,7 +243,7 @@ def block_diag(
 
 
 def block(rows: Sequence[Sequence[LinearOperator]], axis: int = 0) -> LinearOperator:
-    """A grid of operators, as a block matrix is.
+    """A block matrix of operators.
 
     Every operator in a row shares a codomain and every operator in a column
     shares a domain; the row is :func:`hstack` and the rows together are

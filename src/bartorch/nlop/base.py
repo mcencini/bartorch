@@ -133,7 +133,7 @@ class NonlinearOperator(Operator):
     An operator may take more than one input and return more than one output;
     :attr:`ishapes` and :attr:`oshapes` are the shape of each, and
     :attr:`ishape` and :attr:`oshape` are the whole of it when there is one of
-    each.  The algebra in :mod:`bartorch.nlop` is what builds the many-argument
+    each.  The algebra in :mod:`bartorch.nlop` builds the many-argument
     ones: :func:`combine`, :func:`chain`, :meth:`link`, :meth:`dup`.
 
     A subclass is defined either by :meth:`_create`, which builds one of
@@ -203,7 +203,7 @@ class NonlinearOperator(Operator):
         """Raise unless BART agrees on the arity and on every argument's shape.
 
         The combinators work out what they produce from what they were given,
-        which is how a user's own ranks survive them; this is what holds that
+        which is how a user's own ranks survive them; this holds that
         bookkeeping to BART's.
         """
         lib = library()
@@ -385,7 +385,7 @@ class NonlinearOperator(Operator):
         """This operator with one input's shape written differently.
 
         ``nlop_reshape_in``.  The number of entries has to be the same; what
-        changes is how BART reads them, which is what lets two arguments of
+        changes is how BART reads them, which lets two arguments of
         the same shape but different rank meet in :func:`chain` or
         :meth:`link`, both of which apply it themselves.
         """
@@ -402,7 +402,7 @@ class NonlinearOperator(Operator):
         """Make two inputs of the same shape one input, kept at ``a``.
 
         ``nlop_dup``.  The derivative by the surviving input is the sum of the
-        two, which is what makes this the way to tie a parameter to itself.
+        two, which makes this the way to tie a parameter to itself.
         """
         return _Dup(self, a, b)
 
