@@ -8,6 +8,8 @@ The rows are ``docs/design/nonlinear-fusion.md``'s targets.
     python scripts/benchmark_newton.py                 every case
     python scripts/benchmark_newton.py cartesian       one of them
     python scripts/benchmark_newton.py --device cuda   on a card
+    python scripts/benchmark_newton.py --batch 8          eight items, stepped one by one
+    python scripts/benchmark_newton.py --batch 8 --items  the same eight as one model
 
 On a card the spread between runs of the *same* variant is wide enough to be
 mistaken for a difference between two, so a range is printed rather than a best,
@@ -28,11 +30,21 @@ import bartorch.tools as bt
 from bartorch import linop, nlop
 
 
-def _encoding(case: str, n: int, coils: int):
-    shape = (coils, 1, n, n)
+def _encoding(case: str, n: int, coils: int, lead=()):
+    shape = (*lead, coils, 1, n, n)
     if "cartesian" == case:
         return linop.FFT(shape, axes=(-1, -2))
     return linop.NUFFT(bt.traj(x=n, y=401), shape)
+
+
+def _model(case: str, n: int, coils: int, batch: int, items: bool):
+    """The coil model and the shape of its data: a batch in front, or items inside."""
+    if items:
+        model = nlop.CoilSense(_encoding(case, n, coils, (batch,)), items=True)
+        return model, tuple(model.oshapes[0])
+    model = nlop.CoilSense(_encoding(case, n, coils))
+    lead = (batch,) if 1 < batch else ()
+    return model, (*lead, *model.oshapes[0])
 
 
 def _sync(device: str) -> None:
@@ -54,10 +66,19 @@ def _timed(fn, repeats: int, device: str) -> tuple[float, float]:
 
 
 def run(
-    case: str, *, n: int, coils: int, steps: int, repeats: int, device: str, variant: str
+    case: str,
+    *,
+    n: int,
+    coils: int,
+    steps: int,
+    repeats: int,
+    device: str,
+    variant: str,
+    batch: int = 1,
+    items: bool = False,
 ) -> None:
     torch.manual_seed(0)
-    model = nlop.CoilSense(_encoding(case, n, coils))
+    model, shape = _model(case, n, coils, batch, items)
 
     wanted = (("normal", True), ("paired", False))
     if "both" != variant:
@@ -66,7 +87,7 @@ def run(
     times = {}
     for name, fuse in wanted:
         block = nlop.IRGNMBlock(alpha=1.0, redu=2.0, cg_maxiter=30, cg_tol=0.0, fuse=fuse)
-        y = torch.randn(model.oshapes[0], dtype=torch.complex64, device=device)
+        y = torch.randn(shape, dtype=torch.complex64, device=device)
         initial = block.start(y, model)  # prepares the data, and plans
         data, start = initial.data, initial.x
 
@@ -119,6 +140,8 @@ def main(argv=None) -> int:
     )
     parser.add_argument("--size", type=int, default=None, help="override the grid")
     parser.add_argument("--steps", type=int, default=None, help="override the Newton steps")
+    parser.add_argument("--batch", type=int, default=1, help="independent items")
+    parser.add_argument("--items", action="store_true", help="the batch as one model")
     args = parser.parse_args(argv)
 
     for name in [args.case] if args.case else sorted(CASES):
@@ -127,8 +150,17 @@ def main(argv=None) -> int:
             settings["n"] = args.size
         if args.steps is not None:
             settings["steps"] = args.steps
-        print(f"{name}: {settings} on {args.device}")
-        run(name, repeats=args.repeats, device=args.device, variant=args.variant, **settings)
+        kind = "one model" if args.items else "one by one"
+        print(f"{name}: {settings}, batch {args.batch} {kind}, on {args.device}")
+        run(
+            name,
+            repeats=args.repeats,
+            device=args.device,
+            variant=args.variant,
+            batch=args.batch,
+            items=args.items,
+            **settings,
+        )
     return 0
 
 

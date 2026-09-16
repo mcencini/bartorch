@@ -433,3 +433,102 @@ def test_a_batch_carries_a_gradient():
     stepped(block, F, data, iterate, centre, 1).abs().square().sum().backward()
     assert torch.isfinite(iterate.grad).all()
     assert 0 < iterate.grad.abs().max()
+
+
+# --- a batch of items in one model ------------------------------------------------
+
+
+def _phantoms(count, n=16, coils=4):
+    """An image and smooth coils per item, each a little different."""
+    yy, xx = torch.meshgrid(torch.linspace(-1, 1, n), torch.linspace(-1, 1, n), indexing="ij")
+    centres = ((-0.5, 0.0), (0.5, 0.0), (0.0, -0.5), (0.0, 0.5))[:coils]
+    profiles = torch.stack([torch.exp(-((xx - s) ** 2 + (yy - t) ** 2)) for s, t in centres])
+    images, maps = [], []
+    for i in range(count):
+        images.append(((xx**2 + yy**2) < 0.3 + 0.1 * i).to(torch.complex64).reshape(1, 1, n, n))
+        maps.append((profiles * (1.0 + 0.2 * i)).to(torch.complex64).reshape(coils, 1, n, n))
+    return images, maps
+
+
+def _encodings(off_grid, n=16):
+    import bartorch.tools as bt
+
+    if off_grid:
+        trajectory = bt.traj(x=n, y=21)
+        return lambda shape: linop.NUFFT(trajectory, shape)
+    return lambda shape: linop.FFT(shape, axes=(-1, -2))
+
+
+def test_a_model_of_items_leads_every_shape_with_them():
+    F = nlop.CoilSense(linop.FFT((3, 4, 1, 8, 8), axes=(-1, -2)), items=True)
+    assert 3 == F.items
+    assert ((3, 1, 1, 8, 8), (3, 4, 1, 8, 8)) == F.ishapes
+    space = Linearized(F)
+    assert (3, 64 + 256) == space.state_shape
+    image, coils = space.split(space.start())
+    assert torch.equal(image, torch.ones(3, 1, 1, 8, 8, dtype=torch.complex64))
+    assert torch.equal(coils, torch.zeros(3, 4, 1, 8, 8, dtype=torch.complex64))
+    assert torch.equal(space.join(image, coils), space.start())
+
+
+def test_items_that_disagree_on_their_count_are_refused():
+    with pytest.raises(ValueError, match="items lead every shape"):
+        nlop.CoilSense(
+            linop.FFT((3, 4, 1, 8, 8), axes=(-1, -2)), image_shape=(2, 1, 1, 8, 8), items=True
+        )
+
+
+@pytest.mark.parametrize("off_grid", [False, True])
+def test_a_model_of_items_steps_each_as_it_would_step_alone(off_grid):
+    """One model for the batch, and each item's inner problem solved on its own."""
+    items, n, coils = 3, 16, 4
+    encoding = _encodings(off_grid, n)
+    fused = nlop.CoilSense(encoding((items, coils, 1, n, n)), items=True)
+    single = nlop.CoilSense(encoding((coils, 1, n, n)))
+    kspace = torch.stack([single.forward(*pair) for pair in zip(*_phantoms(items, n, coils))])
+
+    def run(F, y):
+        block = nlop.IRGNMBlock(cg_maxiter=30)
+        state = block.start(y, F)
+        for _ in range(4):
+            state = block(state, F)
+        return state.x
+
+    together = run(fused, kspace)
+    for i in range(items):
+        alone = run(single, kspace[i])
+        assert (together[i] - alone).abs().max() < 1e-5 * alone.abs().max()
+
+    # Items share nothing: another item's data moves none of them beyond the
+    # transform's own reproducibility.
+    moved = kspace.clone()
+    moved[0] *= 3.0
+    others = run(fused, moved)[1:]
+    assert (others - together[1:]).abs().max() < 1e-10 * together[1:].abs().max()
+
+
+def test_a_model_of_items_carries_no_gradient_between_them():
+    items, n, coils = 2, 8, 2
+    encoding = _encodings(False, n)
+    fused = nlop.CoilSense(encoding((items, coils, 1, n, n)), items=True)
+    images, maps = _phantoms(items, n, coils)
+    single = nlop.CoilSense(encoding((coils, 1, n, n)))
+    kspace = torch.stack([single.forward(a, b) for a, b in zip(images, maps)])
+    kspace.requires_grad_(True)
+
+    block = nlop.IRGNMBlock(cg_maxiter=30)
+    state = block.start(kspace, fused)
+    for _ in range(2):
+        state = block(state, fused)
+    state.x[1].abs().square().sum().backward()
+    assert (kspace.grad[0].abs().max() < 1e-6 * kspace.grad[1].abs().max()).item()
+    assert (kspace.grad[1] != 0).any()
+
+
+def test_an_inner_solver_over_a_model_of_items_is_refused():
+    from bartorch import optim
+
+    F = nlop.CoilSense(linop.FFT((2, 2, 1, 8, 8), axes=(-1, -2)), items=True)
+    block = nlop.IRGNMBlock(inner=optim.CG())
+    with pytest.raises(ValueError, match="several items"):
+        block.start(torch.zeros(F.oshapes[0], dtype=torch.complex64), F)

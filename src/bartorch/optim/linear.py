@@ -460,6 +460,24 @@ def _shared_options(terms) -> tuple[int, str, int]:
     return next(iter(asked))
 
 
+def _item_by_item(solve, y, A, x0, **kwargs):
+    """A batch in front of ``y`` solved one item at a time; ``None`` for a single item.
+
+    BART runs one solve per item: its stopping rule, its adaptive steps and a
+    term's random shifts all belong to the run, so a batch taken as one would
+    share them between items.
+    """
+    y = torch.as_tensor(y)
+    if y.ndim != len(A.oshape) + 1:
+        return None
+    if x0 is None:
+        starts = [None] * len(y)
+    else:
+        x0 = torch.as_tensor(x0)
+        starts = list(x0) if x0.ndim == len(A.ishape) + 1 else [x0] * len(y)
+    return torch.stack([solve(item, A, start, **kwargs) for item, start in zip(y, starts)])
+
+
 class _Solver:
     """Base of the solvers: a block looped to BART's schedule, or BART's ``lsqr2``."""
 
@@ -517,8 +535,12 @@ class _Solver:
         Returns
         -------
         torch.Tensor
-            Complex64 solution of ``A.ishape``.
+            Complex64 solution of ``A.ishape``, with ``y``'s batch in front.  A
+            batch is solved one item at a time, each as its own run.
         """
+        made = _item_by_item(self, y, A, x0)
+        if made is not None:
+            return made
         block = self._block()
         state = block.start(y, A, x0)
         if self._declines(state):
@@ -647,6 +669,10 @@ class CG(_Solver):
         for instance -- and not only at the end of one.
         """
         from bartorch.linop.base import _tracking
+
+        made = _item_by_item(self, y, A, x0, steps=steps)
+        if made is not None:
+            return made
 
         if self.terms:
             A, y = _stacked(A, y, self.terms)

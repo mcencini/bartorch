@@ -274,7 +274,6 @@ SYMBOLS = (
     "bartorch_nlop_dup",
     "bartorch_nlop_stack_inputs",
     "bartorch_nlop_stack_outputs",
-    "bartorch_nlop_stack_multiple",
     "bartorch_nlop_permute",
     "bartorch_nlop_del_out",
     "bartorch_nlop_flatten",
@@ -294,7 +293,6 @@ SYMBOLS = (
     "bartorch_nlop_const",
     "bartorch_nlop_set_input_const",
     "bartorch_nlop_free",
-    "bartorch_nlop_checkpoint",
     "bartorch_nlop_norm_inv_lambda",
     "bartorch_noir_create",
     "bartorch_noir_model",
@@ -980,17 +978,6 @@ def bind(lib: ctypes.CDLL) -> ctypes.CDLL:
         ctypes.c_int,
         ctypes.c_int,
     ]
-    lib.bartorch_nlop_stack_multiple.restype = ctypes.c_void_p
-    lib.bartorch_nlop_stack_multiple.argtypes = [
-        ctypes.c_int,
-        ctypes.POINTER(ctypes.c_void_p),
-        ctypes.c_int,
-        ctypes.POINTER(ctypes.c_int),
-        ctypes.c_int,
-        ctypes.POINTER(ctypes.c_int),
-        ctypes.c_int,
-        ctypes.c_int,
-    ]
     lib.bartorch_nlop_permute.restype = ctypes.c_void_p
     lib.bartorch_nlop_permute.argtypes = [
         ctypes.c_void_p,
@@ -1073,14 +1060,13 @@ def bind(lib: ctypes.CDLL) -> ctypes.CDLL:
     ]
     lib.bartorch_nlop_free.restype = None
     lib.bartorch_nlop_free.argtypes = [ctypes.c_void_p]
-    lib.bartorch_nlop_checkpoint.restype = ctypes.c_void_p
-    lib.bartorch_nlop_checkpoint.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
     lib.bartorch_nlop_norm_inv_lambda.restype = ctypes.c_void_p
     lib.bartorch_nlop_norm_inv_lambda.argtypes = [
         ctypes.c_void_p,
         ctypes.c_int,
         ctypes.c_float,
         ctypes.c_float,
+        ctypes.c_long,
     ]
     lib.bartorch_noir_create.restype = ctypes.c_void_p
     lib.bartorch_noir_create.argtypes = [

@@ -83,7 +83,9 @@ class IRGNMBlock(nn.Module):
     stack of blocks with the same ``alpha``, is BART's schedule, and a stack
     whose blocks learn ``alpha`` learns a weight per step.  ``F`` needs a
     :attr:`~bartorch.nlop.NonlinearOperator.bundle`.  A leading batch axis on
-    ``y`` is a batch of independent items, each stepped on its own.
+    ``y`` is a batch of independent items, each stepped on its own; a model that
+    holds its items, as ``CoilSense(..., items=True)`` does, is stepped as one,
+    with each item's inner problem solved on its own.
 
     Parameters
     ----------
@@ -192,6 +194,12 @@ class IRGNMBlock(nn.Module):
         rest zero.  Without ``xref`` the steps are regularized towards zero.
         """
         space = self._space(F)
+        if self.inner is not None and 1 < space.items:
+            raise ValueError(
+                "a model holding several items is stepped by the first form; a solver from "
+                "bartorch.optim takes a batch one run per item, so give the batch as a leading "
+                "axis on the data of a single-item model instead"
+            )
         data = space.prepare(torch.as_tensor(y))
         batch = data.shape[:1] if space.batched(data, space.data_shape) else ()
         if x0 is None:

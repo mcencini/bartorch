@@ -8,6 +8,11 @@ are :class:`torch.nn.Parameter`s, frozen until ``requires_grad_()`` is called;
 while frozen, a step reproduces the library's output bit for bit.  ``cclambda``
 and ``precond`` are ``lsqr2_create``'s, so the step sees
 ``M (A^H A + cclambda) x`` and ``M A^H y``.
+
+A leading batch axis is applied item by item, and a term that draws random
+shifts draws them per item.  Scalars a step computes from its vectors --
+ADMM's and PRIDU's adaptive steps, and PRIDU's stopping test -- are computed
+over the whole batch; a solver takes a batch one item at a time instead.
 """
 
 from __future__ import annotations
@@ -186,11 +191,14 @@ def _normal(A, x: torch.Tensor, cclambda: float, precond=None) -> torch.Tensor:
 
 
 def _prox(term, w: torch.Tensor, gamma, image_shape) -> torch.Tensor:
+    """``term``'s proximal step; a batch item by item, each with its own generator."""
     if getattr(term, "_batches", False):
         return term.prox(w, gamma, image_shape=image_shape)
-    return _batched(
-        lambda v: term.prox(v, gamma, image_shape=image_shape), w, term.prox_shape(image_shape)
-    )
+    if w.ndim == len(term.prox_shape(image_shape)) + 1:
+        return torch.stack(
+            [term.prox(v, gamma, image_shape=image_shape, item=i) for i, v in enumerate(w)]
+        )
+    return term.prox(w, gamma, image_shape=image_shape)
 
 
 def _transform(term, x: torch.Tensor, image_shape, mode: str = "forward") -> torch.Tensor:

@@ -25,28 +25,34 @@ from bartorch.nlop.bundle import Bundle
 __all__: list[str] = []
 
 
-def _laid_out(op: NonlinearOperator, first: int, count: int, sizes) -> NonlinearOperator:
+def _laid_out(op: NonlinearOperator, first: int, count: int, sizes, items: int = 1):
     """``count`` inputs from ``first`` flattened and laid end to end as one.
 
     ``nlop_flatten_in`` and then ``nlop_stack_inputs``, which is how
-    ``noir_get_forward`` makes one vector of the image and the coils.
+    ``noir_get_forward`` makes one vector of the image and the coils.  With
+    ``items`` the leading axis of every input is an item, and each item's
+    unknowns are laid end to end: ``(items, n)``, items slowest.
     """
     made = op
     for at in range(count):
-        made = made.reshape_input(first + at, (sizes[at],))
+        made = made.reshape_input(first + at, _row(sizes[at], items))
     for _ in range(count - 1):
-        made = made.stack_inputs(first, first + 1, 0)
+        made = made.stack_inputs(first, first + 1, len(_row(1, items)) - 1)
     return made
 
 
-def flattened(bundle: Bundle) -> Bundle:
-    """``bundle`` over one flat vector of the model's unknowns.
+def _row(size: int, items: int) -> Shape:
+    return (size,) if 1 == items else (items, size // items)
+
+
+def flattened(bundle: Bundle, items: int = 1) -> Bundle:
+    """``bundle`` over one vector of the model's unknowns per item.
 
     ``noir_gauss_newton_step_create_s`` asserts its state is one axis
     (``model_net.c:367``), so every model is written this way before a step is
-    assembled over it -- one unknown or several, since what the assertion is
-    about is the rank and not the count.  Laying shapes end to end moves no
-    bytes.
+    taken over it -- one unknown or several.  With ``items`` the vector is
+    ``(items, n)``, the layout ``conjgrad_batch`` solves item by item.  Laying
+    shapes end to end moves no bytes.
     """
     op = bundle.operator
     n, m = len(op.ishapes), len(op.oshapes)
@@ -56,16 +62,16 @@ def flattened(bundle: Bundle) -> Bundle:
     # axes, and the step asserts its state is one (`model_net.c:367`).  So each
     # member is written the way `noir_get_forward` writes itself: every
     # argument flattened on its own and then stacked.
-    forward = _laid_out(op, 0, n, sizes)
+    forward = _laid_out(op, 0, n, sizes, items)
 
     # The point first, so flattening it leaves the tangents where they are.
-    derivative = _laid_out(_laid_out(bundle.derivative, n, n, sizes), 0, n, sizes)
+    derivative = _laid_out(_laid_out(bundle.derivative, n, n, sizes, items), 0, n, sizes, items)
 
-    adjoint = _laid_out(bundle.adjoint, m, n, sizes)
+    adjoint = _laid_out(bundle.adjoint, m, n, sizes, items)
     for at in range(n):
-        adjoint = adjoint.reshape_output(at, (sizes[at],))
+        adjoint = adjoint.reshape_output(at, _row(sizes[at], items))
     for _ in range(n - 1):
-        adjoint = adjoint.stack_outputs(0, 1, 0)
+        adjoint = adjoint.stack_outputs(0, 1, len(_row(1, items)) - 1)
 
     return Bundle(forward, derivative, adjoint)
 
@@ -90,11 +96,14 @@ class _Built(NonlinearOperator):
         return f"<{self.what}>"
 
 
-def _inverse(normal, maxiter: int, tol: float, l2lambda: float) -> NonlinearOperator:
-    """``(b, xn, alpha) -> (DF^H DF + alpha)^-1 b``, differentiated through the solve."""
+def _inverse(normal, maxiter: int, tol: float, l2lambda: float, items: int) -> NonlinearOperator:
+    """``(b, xn, alpha) -> (DF^H DF + alpha)^-1 b``, differentiated through the solve.
+
+    With ``items`` the conjugate gradients solve each item's system on its own.
+    """
     return _Built(
         library().bartorch_nlop_norm_inv_lambda,
-        (normal, int(maxiter), float(tol), float(l2lambda)),
+        (normal, int(maxiter), float(tol), float(l2lambda), int(items)),
         keep=(normal,),
         what="the inverse of the normal operator",
     )
@@ -123,9 +132,11 @@ class Linearized:
                 f"{len(F.oshapes)}"
             )
         self.model = F
+        #: How many independent items the model holds along its leading axes.
+        self.items = int(getattr(F, "items", 1))
         #: What the model was lowered into, what prepares its data, and the plan.
         self.lowered, self._prepare, self.plan = _plan.build(F, fuse=fuse)
-        self.flat = flattened(self.lowered.bundle)
+        self.flat = flattened(self.lowered.bundle, self.items)
         self._solve = (cg_maxiter, cg_tol, cg_lambda) if inverse else None
         self._inverses: dict = {}
 
@@ -150,7 +161,7 @@ class Linearized:
         key = str(torch.device(device)) if device is not None else "cpu"
         made = self._inverses.get(key)
         if made is None:
-            made = self._inverses[key] = _inverse(self.flat.normal, *self._solve)
+            made = self._inverses[key] = _inverse(self.flat.normal, *self._solve, self.items)
         return made
 
     @property
@@ -168,11 +179,14 @@ class Linearized:
         return x.ndim == len(shape) + 1
 
     def prepare(self, y: torch.Tensor) -> torch.Tensor:
-        """A measurement at the data shape: ``E^H y`` where the plan says the normal domain."""
+        """A measurement at the data shape: ``E^H y`` where the plan says the normal domain.
+
+        Recorded for autograd when ``y`` requires a gradient.
+        """
         model = tuple(self.model.oshapes[0])
 
         def one(item):
-            made = item if self._prepare is None else self._prepare.forward(item)
+            made = item if self._prepare is None else self._prepare(item)
             return made.reshape(self.data_shape)
 
         return torch.stack([one(v) for v in y]) if self.batched(y, model) else one(y)
@@ -180,10 +194,10 @@ class Linearized:
     def split(self, x: torch.Tensor) -> tuple[torch.Tensor, ...]:
         """A state back into a tensor per unknown of the model, batch first."""
         batch = x.shape[:1] if self.batched(x, self.state_shape) else ()
-        flat = x.reshape(*batch, -1)
+        flat = x.reshape(*batch, self.items, -1)
         out, at = [], 0
         for shape in self.lowered.ishapes:
-            size = math.prod(shape)
+            size = math.prod(shape) // self.items
             out.append(flat[..., at : at + size].reshape(*batch, *shape))
             at += size
         return tuple(out)
@@ -192,7 +206,8 @@ class Linearized:
         """A tensor per unknown laid end to end into a state, batch first."""
         first = self.lowered.ishapes[0]
         batch = xs[0].shape[:1] if xs[0].ndim == len(first) + 1 else ()
-        return torch.cat([x.reshape(*batch, -1) for x in xs], dim=-1)
+        made = torch.cat([x.reshape(*batch, self.items, -1) for x in xs], dim=-1)
+        return made.reshape(*batch, *self.state_shape)
 
     def state(self, x) -> torch.Tensor:
         """``x`` as a state: a tuple is joined, a tensor laid flat, batch first.
@@ -222,5 +237,5 @@ class Linearized:
         coefficients.
         """
         made = torch.zeros((*batch, *self.state_shape), dtype=torch.complex64, device=device)
-        made[..., : math.prod(self.lowered.ishapes[0])] = 1.0
+        made[..., : math.prod(self.lowered.ishapes[0]) // self.items] = 1.0
         return made

@@ -56,17 +56,20 @@ class Regularizer(abc.ABC):
     #: across the whole set of terms, so that it cannot be built alone.
     _extends: bool = False
 
-    def build(self, shape: tuple[int, ...]) -> int:
+    def build(self, shape: tuple[int, ...], item: int = 0) -> int:
         """The BART operator for this term over an image of C-order ``shape``.
 
-        Built on first use for each shape.  The returned handle is owned by
-        this term and freed with it.
+        Built on first use for each shape.  A term that draws random shifts
+        is built once per ``item`` of a batch, so that each item draws the
+        sequence it would draw alone.  The returned handle is owned by this
+        term and freed with it.
         """
         shape = tuple(shape)
         if not hasattr(self, "_handles"):
             self._handles = {}
-        if shape in self._handles:
-            return self._handles[shape]
+        key = shape if 0 == item or 1 != self._options()[2] else (shape, int(item))
+        if key in self._handles:
+            return self._handles[key]
 
         _ensure_ready()
         xflags, jflags = self._flags(len(shape))
@@ -90,7 +93,7 @@ class Regularizer(abc.ABC):
             raise BartError(f"{self!r} could not be built: {said}")
 
         handle = out.value
-        self._handles[shape] = handle
+        self._handles[key] = handle
         weakref.finalize(self, _release, handle)
         return handle
 
@@ -118,7 +121,12 @@ class Regularizer(abc.ABC):
         return tuple(shape)
 
     def prox(
-        self, x: torch.Tensor, gamma: float = 1.0, *, image_shape: tuple[int, ...] | None = None
+        self,
+        x: torch.Tensor,
+        gamma: float = 1.0,
+        *,
+        image_shape: tuple[int, ...] | None = None,
+        item: int = 0,
     ) -> torch.Tensor:
         """``prox_{gamma g}(x)``, the operator BART's solvers apply.
 
@@ -143,6 +151,9 @@ class Regularizer(abc.ABC):
             is shaped like -- which is the case for total variation, whose
             proximal operator works on the components of a gradient.  By
             default ``x``'s own shape, which is right for every other term.
+        item : int
+            Which item of a batch ``x`` is; a term that draws random shifts
+            keeps a generator per item.
 
         Returns
         -------
@@ -180,7 +191,7 @@ class Regularizer(abc.ABC):
                 f"over an image of {image_shape}, {self!r} works on {shape}, not {tuple(x.shape)}"
             )
 
-        handle = self.build(image_shape)
+        handle = self.build(image_shape, item)
         src = as_operand(x, shape, "x")
         out = torch.empty_like(src)
 
@@ -310,11 +321,18 @@ class Regularizer(abc.ABC):
         does this before it iterates, whether the loop is BART's or written
         out here; a term with no such generator is left alone.
         """
-        handle = self.build(tuple(image_shape))
-        with _lock:
-            code = library().bartorch_prox_rewind(handle)
-        if code != 0:
-            raise BartError(f"{self!r} could not be rewound")
+        image_shape = tuple(image_shape)
+        self.build(image_shape)
+        handles = [
+            handle
+            for key, handle in self._handles.items()
+            if key == image_shape or (2 == len(key) and key[0] == image_shape)
+        ]
+        for handle in handles:
+            with _lock:
+                code = library().bartorch_prox_rewind(handle)
+            if code != 0:
+                raise BartError(f"{self!r} could not be rewound")
 
     def transform_is_identity(self, image_shape: tuple[int, ...]) -> bool:
         """Whether the term's linear transform is the identity, as BART decides it.
@@ -532,8 +550,8 @@ class _Frozen:
             raise AttributeError(name)
         return getattr(self.term, name)
 
-    def prox(self, x, gamma: float = 1.0, *, image_shape=None):
-        return self.term.prox(x.detach(), gamma, image_shape=image_shape)
+    def prox(self, x, gamma: float = 1.0, *, image_shape=None, item: int = 0):
+        return self.term.prox(x.detach(), gamma, image_shape=image_shape, item=item)
 
     def __repr__(self) -> str:
         return f"frozen({self.term!r})"
@@ -556,13 +574,13 @@ class _Penalty(Regularizer):
         self._frozen = bool(frozen)
         weakref.finalize(self, _release, handle)
 
-    def build(self, shape: tuple[int, ...]) -> int:
+    def build(self, shape: tuple[int, ...], item: int = 0) -> int:
         shape = tuple(shape)
         if shape not in self._handles:
             raise ValueError(f"this penalty walks {next(iter(self._handles))}, not {shape}")
         return self._handles[shape]
 
-    def prox(self, x, gamma: float = 1.0, *, image_shape=None):
+    def prox(self, x, gamma: float = 1.0, *, image_shape=None, item: int = 0):
         return super().prox(x.detach() if self._frozen else x, gamma, image_shape=image_shape)
 
     def __repr__(self) -> str:

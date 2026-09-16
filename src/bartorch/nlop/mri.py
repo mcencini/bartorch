@@ -442,6 +442,8 @@ def CoilSense(  # noqa: N802  (it is a constructor)
     encoding,
     image_shape: Shape | None = None,
     coil_shape: Shape | None = None,
+    *,
+    items: bool = False,
 ) -> NonlinearOperator:
     """Product of an image and unknown coil sensitivities, through any encoding.
 
@@ -464,6 +466,11 @@ def CoilSense(  # noqa: N802  (it is a constructor)
         Where the image lives; by default the encoding's domain with one coil.
     coil_shape : tuple of int, optional
         Where the sensitivities live; by default the encoding's domain.
+    items : bool
+        The encoding's leading axis holds independent items, each with its own
+        image and coils; the coils are the next axis.  A Gauss-Newton step then
+        applies the model to every item at once and solves each item's inner
+        problem on its own.
 
     Returns
     -------
@@ -478,6 +485,16 @@ def CoilSense(  # noqa: N802  (it is a constructor)
     ((1, 128, 128), (8, 128, 128))
     """
     cim = tuple(encoding.ishape)
-    image_shape = tuple(image_shape) if image_shape is not None else (1,) + cim[1:]
+    lead = cim[:1] if items else ()
+    body = cim[1:] if items else cim
+    image_shape = tuple(image_shape) if image_shape is not None else lead + (1,) + body[1:]
     coil_shape = tuple(coil_shape) if coil_shape is not None else cim
-    return chain(Multiply(image_shape, coil_shape), encoding.to_nonlinear(), output=0, input=0)
+    if items and not (image_shape[0] == coil_shape[0] == cim[0]):
+        raise ValueError(
+            f"items lead every shape: the image {image_shape}, the coils {coil_shape} and "
+            f"the encoding's domain {cim} begin with different counts"
+        )
+    made = chain(Multiply(image_shape, coil_shape), encoding.to_nonlinear(), output=0, input=0)
+    if items:
+        made.items = cim[0]
+    return made
