@@ -665,12 +665,41 @@ class CG(_Solver):
                 **self._settings(),
             )
 
+        if getattr(A, "_records", False) and not self.terms:
+            return self._at_a_point(y, A, forward)
+
         if not _tracking(y):
             return forward(y)
 
         from bartorch.optim.autograd import apply_solve
 
         return apply_solve(y, forward, lambda g: A.forward(self._inverse(A, g)))
+
+    def _at_a_point(self, y, A, forward):
+        """The solve over an encoding linearized at a point, recorded through the encoding.
+
+        ``b = A^H y`` is recorded by the encoding itself, which differentiates by
+        the point as well; ``N(p)^-1 b`` is ADMM's resolvent with no penalty,
+        whose backward pass gives the point ``-d/dp Re <w, N(p) x>``.  The
+        forward pass is the same library solve either way.
+        """
+        from bartorch.linop.autograd import apply_normal
+        from bartorch.linop.base import _tracking
+        from bartorch.optim.blocks import _moving, _Resolvent
+
+        point = _moving(A)
+        if not (_tracking(y) or point is not None):
+            return forward(y)
+        rhs = A.adjoint(y)
+
+        def solve(b, warm):
+            return forward(y) if warm else self._inverse(A, b)
+
+        def data(v, at):
+            return apply_normal(A.at(at), v)
+
+        rate = torch.zeros((), dtype=torch.float64)
+        return _Resolvent.apply(rhs, rate, point, solve, None, data)
 
     def _inverse(self, A, g: torch.Tensor) -> torch.Tensor:
         """``N^-1 g``, driven from the right-hand side rather than from data.

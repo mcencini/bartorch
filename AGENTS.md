@@ -789,11 +789,13 @@ operators beside them. Anything else written here would be a second
 implementation that drifts, and a result that is nearly BART's is worth less
 than no result.
 
-So `priors/` computes nothing, and `optim` writes out only the proximal
-steps: one block each in `optim/blocks.py`, every operator in it BART's, held
-to the library's bits by `tests/test_optim_iterators.py`, and looped by its
-solver.  Conjugate gradients and NIHT go to `bartorch_solve` -- or
-`bartorch_irgnm`, for `IRGNM` -- which configures BART's iteration exactly as
+So `priors/` computes nothing, and the iterations write out only their
+steps: the proximal steps, one block each in `optim/blocks.py`, and the
+Gauss-Newton step, `IRGNMBlock` in `nlop/irgnm.py`, whose operators -- the
+model, its adjoint derivative and `norm_inv`'s inverse -- are BART's.  Each is
+held to the library's bits (`tests/test_optim_iterators.py`,
+`tests/test_nlop_irgnm.py`) and looped by its solver.  Conjugate gradients and
+NIHT go to `bartorch_solve`, which configures BART's iteration exactly as
 `pics` does. A term fills
 the table `opt_reg_configure` reads -- which kind, over which axes, with what
 weight -- from an object rather than from a `-R` string, and holds the

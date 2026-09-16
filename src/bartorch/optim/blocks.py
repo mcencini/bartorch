@@ -146,6 +146,14 @@ def _begin(y, A, x0):
     return y, torch.zeros((*batch, *A.ishape), dtype=torch.complex64, device=y.device)
 
 
+def _moving(A):
+    """The point ``A`` is linearized at, where a gradient is to reach it; else ``None``."""
+    from bartorch.linop.base import _tracking
+
+    point = getattr(A, "point", None)
+    return point if getattr(A, "_records", False) and _tracking(point) else None
+
+
 def _preconditioner(precond, shape):
     """``precond``, checked to map the image to itself."""
     if precond is not None and not (tuple(precond.ishape) == tuple(precond.oshape) == tuple(shape)):
@@ -227,6 +235,11 @@ def _space(terms, A, precond, name: str) -> _Space | None:
     from bartorch.optim.linear import _penalties
 
     _refuse_preconditioner(precond, name)
+    if getattr(A, "_records", False):
+        raise TypeError(
+            f"{name} walks total generalized variation and the infimal convolutions over a "
+            "fixed encoding; one linearized at a point is not composed into that variable"
+        )
     total = math.prod(A.ishape)
     penalties, svars = _penalties(terms, tuple(A.ishape))
     encoding = A @ Reshape(A.ishape, (total,)) @ Extract((0,), (total,), (total + svars,))
@@ -375,28 +388,35 @@ class FISTABlock(ISTBlock):
 
 
 class _Resolvent(torch.autograd.Function):
-    """``x = K^-1 b`` with ``K = N + rho S``; the backward pass is one more solve with ``K``.
+    """``x = K^-1 b`` with ``K = N(p) + rho S``; the backward pass is one more solve with ``K``.
 
-    ``dx = K^-1 (db - drho S x)``, so ``b`` gets ``w = K^-1 g`` and ``rho`` gets
-    ``-Re <w, S x>``.  No gradient is propagated to the warm start.
+    ``dx = K^-1 (db - drho S x - dN x)``, so ``b`` gets ``w = K^-H g``, ``rho``
+    gets ``-Re <w, S x>``, and a point ``p`` the encoding is linearized at gets
+    ``-d/dp Re <w, N(p) x>``, from one more application of ``data(x, p)``.  No
+    gradient is propagated to the warm start.
     """
 
     @staticmethod
-    def forward(ctx, b, rho, solve, spread):  # noqa: D102
-        ctx.solve, ctx.spread = solve, spread
+    def forward(ctx, b, rho, point, solve, spread, data):  # noqa: D102
+        ctx.solve, ctx.spread, ctx.data = solve, spread, data
         with torch.no_grad():
             x = solve(b, True)
-        ctx.save_for_backward(x)
+        ctx.save_for_backward(x, point)
         return x
 
     @staticmethod
     def backward(ctx, g):  # noqa: D102
-        (x,) = ctx.saved_tensors
+        x, point = ctx.saved_tensors
         w = ctx.solve(g.resolve_conj().contiguous(), False)
-        rho = None
+        rho = moved = None
         if ctx.needs_input_grad[1]:
             rho = -torch.real(torch.sum(w.conj() * ctx.spread(x))).float()
-        return w, rho, None, None
+        if ctx.needs_input_grad[2]:
+            with torch.enable_grad():
+                at = point.detach().requires_grad_(True)
+                (moved,) = torch.autograd.grad(ctx.data(x, at), at, grad_outputs=w)
+            moved = -moved
+        return w, rho, moved, None, None, None
 
 
 class ADMMBlock(nn.Module):
@@ -604,6 +624,7 @@ class ADMMBlock(nn.Module):
             return torch.stack(made), worst
 
         from bartorch.linop import Identity
+        from bartorch.linop.autograd import apply_forward, apply_normal
         from bartorch.linop.base import LinearOperator, _tracking, _WithNormal
         from bartorch.optim.linear import CG
 
@@ -644,10 +665,17 @@ class ADMMBlock(nn.Module):
             )
             return solver(b, _WithNormal(Identity(shape), transposed))
 
+        def data(v, point):
+            normal = apply_normal(A.at(point), v)
+            if self.precond is not None:
+                normal = apply_forward(self.precond, normal)
+            return normal
+
         learned = isinstance(rho, torch.Tensor) and rho.requires_grad
-        if _tracking(rhs) or learned:
+        point = _moving(A)
+        if _tracking(rhs) or learned or point is not None:
             rate = rho if isinstance(rho, torch.Tensor) else torch.tensor(rho)
-            out = _Resolvent.apply(rhs, rate, solve, spread)
+            out = _Resolvent.apply(rhs, rate, point, solve, spread, data)
         else:
             out = solve(rhs, True)
         return out, steps[0]

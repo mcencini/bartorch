@@ -192,3 +192,151 @@ def test_a_step_from_a_power_iteration_is_estimated_at_start(problem):
     A = linop.Diagonal(diag, SHAPE)
     state = optim.FISTABlock(priors.L1(0.05), eigen=True).start(A(_rand(*SHAPE)), A)
     assert state.divisor == pytest.approx(maxeigen(A), rel=1e-4)
+
+
+# --- an encoding linearized at a point ----------------------------------------------
+
+
+_IMAGE, _COILS = (1, 4), (3, 4)
+_STATE = 16
+
+
+def _jacobian(point):
+    """``DF(point)`` of ``a * b`` as a dense matrix, differentiable by the point."""
+    a, b = point[:4].reshape(_IMAGE), point[4:].reshape(_COILS)
+    columns = []
+    for at in range(_STATE):
+        unit = torch.zeros(_STATE, dtype=torch.complex64)
+        unit[at] = 1.0
+        da, db = unit[:4].reshape(_IMAGE), unit[4:].reshape(_COILS)
+        columns.append((da * b + a * db).reshape(-1))
+    return torch.stack(columns, dim=1)
+
+
+class _Dense(linop.LinearOperator):
+    """The same linearization written in torch, which differentiates it by itself."""
+
+    _records = True
+
+    def __init__(self, point):
+        self.point, self.ishape, self.oshape = point, (_STATE,), (12,)
+        super().__init__()
+
+    def at(self, point):
+        return _Dense(point)
+
+    def forward(self, x, out=None):
+        return _jacobian(self.point) @ x
+
+    def adjoint(self, y, out=None):
+        return _jacobian(self.point).conj().T @ y
+
+    def normal(self, x, out=None):
+        J = _jacobian(self.point)
+        return J.conj().T @ (J @ x)
+
+    def _as_callbacks(self):
+        def plain(apply):
+            def run(v):
+                with torch.no_grad():
+                    return apply(v)
+
+            return run
+
+        return linop.LinearOperator.from_callbacks(
+            self.oshape, self.ishape, plain(self.forward), plain(self.adjoint), plain(self.normal)
+        )
+
+
+def _linearized():
+    from bartorch.nlop.basic import Multiply
+    from bartorch.nlop.step import flattened
+
+    return flattened(Multiply(_IMAGE, _COILS).bundle)
+
+
+_AT_A_POINT = {
+    "ist": lambda: optim.ISTBlock(priors.ImplicitPrior(_Scale(0.9)), step=0.1),
+    "fista": lambda: optim.FISTABlock(priors.ImplicitPrior(_Scale(0.9)), step=0.1),
+    "admm": lambda: optim.ADMMBlock(priors.ImplicitPrior(_Scale(0.9)), rho=0.5, cg_maxiter=200),
+    "pridu": lambda: optim.PRIDUBlock(priors.ImplicitPrior(_Scale(0.9)), step=0.5),
+}
+
+
+def _at_a_point(generator):
+    def rand(*shape):
+        real = torch.randn(*shape, generator=generator)
+        return (real + 1j * torch.randn(*shape, generator=generator)).to(torch.complex64)
+
+    return rand(_STATE) * 0.3 + 1.0, rand(12), rand(_STATE)
+
+
+@pytest.mark.parametrize("name", sorted(_AT_A_POINT))
+def test_a_block_over_a_linearization_is_differentiable_by_the_point(name):
+    """Against the same block over the derivative written in torch."""
+    point, y, seed = _at_a_point(torch.Generator().manual_seed(0))
+    bundle = _linearized()
+    answers = []
+    for make in (bundle.at, _Dense):
+        at = point.clone().requires_grad_(True)
+        x = _run([_AT_A_POINT[name]()] * 3, y, make(at))
+        (x.conj() * seed).sum().real.backward()
+        answers.append((x.detach(), at.grad))
+    (ours, our_grad), (theirs, their_grad) = answers
+    # BART's arithmetic against torch's: equal to rounding, not to the bit,
+    # which varies with the BLAS each platform links.
+    assert (ours - theirs).abs().max() < 1e-6 * theirs.abs().max()
+    assert (our_grad - their_grad).abs().max() < 1e-5 * their_grad.abs().max()
+
+
+def test_the_point_gradient_through_the_inner_solve_is_the_one_finite_differences_measure(
+    monkeypatch,
+):
+    """With the inner solve exact; BART's own tolerance moves it by as much as that."""
+    monkeypatch.setattr(optim.ADMMBlock, "_cg_eps", 0.0)
+    point, y, seed = _at_a_point(torch.Generator().manual_seed(0))
+    direction = _at_a_point(torch.Generator().manual_seed(1))[0]
+
+    def loss(at):
+        return (_run([_AT_A_POINT["admm"]()] * 3, y, _Dense(at)).conj() * seed).sum().real
+
+    at = point.clone().requires_grad_(True)
+    loss(at).backward()
+    along = torch.real(torch.sum(at.grad.conj() * direction)).item()
+
+    h = 3e-3
+    with torch.no_grad():
+        measured = (loss(point + h * direction) - loss(point - h * direction)).item() / (2 * h)
+    assert abs(along - measured) <= 1e-3 * abs(measured)
+
+
+def test_auxiliary_variables_are_refused_over_a_linearization():
+    at = _at_a_point(torch.Generator().manual_seed(0))[0]
+    block = optim.ADMMBlock(priors.TotalGeneralizedVariation((-1,), 0.01))
+    with pytest.raises(TypeError, match="linearized at a point"):
+        block.start(torch.zeros(12, dtype=torch.complex64), _linearized().at(at))
+
+
+def test_conjugate_gradients_over_a_linearization_are_differentiable_by_the_point():
+    """The solve ``IRGNM``'s second form hands to ``optim.CG``, against the torch derivative."""
+    point, y, seed = _at_a_point(torch.Generator().manual_seed(0))
+    solver = optim.CG(maxiter=200, tol=0.0, cclambda=0.5)
+    answers = []
+    for make in (_linearized().at, _Dense):
+        at = point.clone().requires_grad_(True)
+        x = solver(y, make(at))
+        (x.conj() * seed).sum().real.backward()
+        answers.append((x.detach(), at.grad))
+    (ours, our_grad), (theirs, their_grad) = answers
+    assert (ours - theirs).abs().max() < 1e-6 * theirs.abs().max()
+    assert (our_grad - their_grad).abs().max() < 1e-5 * their_grad.abs().max()
+
+    direction = _at_a_point(torch.Generator().manual_seed(1))[0]
+    along = torch.real(torch.sum(their_grad.conj() * direction)).item()
+
+    def loss(at):
+        return (solver(y, _Dense(at)).conj() * seed).sum().real.item()
+
+    h = 3e-3
+    measured = (loss(point + h * direction) - loss(point - h * direction)) / (2 * h)
+    assert abs(along - measured) <= 1e-3 * abs(measured)

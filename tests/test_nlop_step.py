@@ -1,6 +1,6 @@
-"""BART's Gauss-Newton step assembled over any model's bundle.
+"""BART's Gauss-Newton step, taken by IRGNMBlock over any model's bundle.
 
-The step is held against a Gauss-Newton loop written out in torch, whose inner
+The block is held against a Gauss-Newton loop written out in torch, whose inner
 problem is solved exactly rather than by conjugate gradients -- so what is
 compared is the method and not two paths through the same iteration.  What
 pins the noir composition is the reconstruction in
@@ -11,11 +11,8 @@ import pytest
 import torch
 
 from bartorch import linop, nlop
-from bartorch.linop.basic import Identity
-from bartorch.nlop.base import chain
 from bartorch.nlop.basic import Multiply
-from bartorch.nlop.bundle import Asymmetric
-from bartorch.nlop.step import Step
+from bartorch.nlop.step import Linearized
 
 #: A bilinear model small enough to write its Jacobian out as a matrix.
 IMAGE, COILS = (1, 4), (3, 4)
@@ -65,45 +62,59 @@ def written_out(y, xn, x0, alpha, *, iterations, redu=2.0, alpha_min=0.0):
     return x
 
 
-def _step(iterations, redu=2.0, alpha_min=0.0):
-    schedule = nlop.IRGNM(
-        iterations=iterations, redu=redu, alpha_min=alpha_min, cg_maxiter=200, cg_tol=0.0
-    )
-    return Step(nlop.Multiply(IMAGE, COILS), schedule)
+def _model():
+    return Multiply(IMAGE, COILS)
 
 
-def _arguments(step, generator, alpha=1.0):
+def stepped(block, F, y, xn, x0, iterations):
+    """``iterations`` steps from ``xn`` towards the centre ``x0``; the state it reaches."""
+    state = block.start(y, F, x0=xn, xref=x0)
+    for _ in range(iterations):
+        state = block(state, F)
+    return state.x
+
+
+def _arguments(generator):
     return (
-        rand(step.data_shape, generator),
+        rand((3, 4), generator),
         rand((STATE,), generator) * 0.3 + 1.0,
         rand((STATE,), generator) * 0.3,
-        step.weight(alpha),
     )
 
 
-# --- what the step is --------------------------------------------------------
-
-
-def test_the_step_takes_the_data_the_iterate_the_centre_and_the_weight():
-    step = _step(1)
-    assert step.ishapes == ((3, 4), (STATE,), (STATE,), (STATE,))
-    assert step.oshapes == ((STATE,),)
+# --- what the block takes and returns ----------------------------------------
 
 
 def test_the_state_is_the_unknowns_laid_end_to_end(generator):
-    step = _step(1)
+    space = Linearized(_model())
     image, coils = rand(IMAGE, generator), rand(COILS, generator)
-    state = step.join(image, coils)
+    state = space.join(image, coils)
     assert (STATE,) == tuple(state.shape)
-    back = step.split(state)
+    back = space.split(state)
     assert torch.equal(back[0], image)
     assert torch.equal(back[1], coils)
 
 
-def test_a_weight_given_as_a_number_becomes_a_vector():
-    step = _step(1)
-    assert (STATE,) == tuple(step.weight(0.5).shape)
-    assert torch.equal(step.weight(0.5), torch.full((STATE,), 0.5, dtype=torch.complex64))
+def test_a_start_is_a_state_or_the_unknowns(generator):
+    F, block = _model(), nlop.IRGNMBlock()
+    y, xn, _ = _arguments(generator)
+    laid = block.start(y, F, x0=xn)
+    apart = block.start(y, F, x0=_split(xn))
+    assert torch.equal(laid.x, apart.x)
+    assert torch.equal(laid.xref, torch.zeros(STATE, dtype=torch.complex64))
+
+
+def test_the_output_is_one_tensor_per_unknown(generator):
+    F, block = _model(), nlop.IRGNMBlock(cg_maxiter=10)
+    y, xn, x0 = _arguments(generator)
+    state = block(block.start(y, F, x0=xn, xref=x0), F)
+    image, coils = block.output(state, F)
+    assert (IMAGE, COILS) == (tuple(image.shape), tuple(coils.shape))
+
+
+def test_alpha_min0_is_refused_without_an_inner_solver():
+    with pytest.raises(ValueError, match="second form"):
+        nlop.IRGNMBlock(alpha_min0=0.1)
 
 
 # --- against a loop written out outside BART ---------------------------------
@@ -112,70 +123,120 @@ def test_a_weight_given_as_a_number_becomes_a_vector():
 @pytest.mark.parametrize(
     ("iterations", "alpha", "redu"), [(1, 1.0, 2.0), (3, 1.0, 2.0), (4, 0.5, 3.0)]
 )
-def test_the_step_is_the_method_written_out(iterations, alpha, redu, generator):
-    step = _step(iterations, redu=redu)
-    y, xn, x0, weight = _arguments(step, generator, alpha)
-    got = step(y, xn, x0, weight)
+def test_the_block_is_the_method_written_out(iterations, alpha, redu, generator):
+    block = nlop.IRGNMBlock(alpha=alpha, redu=redu, cg_maxiter=200)
+    y, xn, x0 = _arguments(generator)
+    got = stepped(block, _model(), y, xn, x0, iterations)
+    weight = torch.full((STATE,), alpha, dtype=torch.complex64)
     want = written_out(y, xn, x0, weight, iterations=iterations, redu=redu)
     assert (got - want).abs().max() < 1e-4 * want.abs().max()
 
 
 def test_the_weight_decays_towards_its_floor(generator):
-    step = _step(3, redu=2.0, alpha_min=0.25)
-    y, xn, x0, weight = _arguments(step, generator)
-    got = step(y, xn, x0, weight)
+    block = nlop.IRGNMBlock(redu=2.0, alpha_min=0.25, cg_maxiter=200)
+    y, xn, x0 = _arguments(generator)
+    got = stepped(block, _model(), y, xn, x0, 3)
+    weight = torch.ones(STATE, dtype=torch.complex64)
     want = written_out(y, xn, x0, weight, iterations=3, redu=2.0, alpha_min=0.25)
     assert (got - want).abs().max() < 1e-4 * want.abs().max()
 
 
-@pytest.mark.parametrize("at", [0, 1, 2, 3])
+@pytest.mark.parametrize("at", ["y", "xn", "x0", "alpha"])
 def test_every_argument_carries_the_gradient_the_written_out_loop_does(at, generator):
     """Including the second-order terms, which the implicit solve is what supplies."""
-    step = _step(2)
-    base = _arguments(step, generator)
+    names = ("y", "xn", "x0")
+    base = _arguments(generator)
     seed = rand((STATE,), generator)
 
+    block = nlop.IRGNMBlock(cg_maxiter=200)
     mine = [one.clone() for one in base]
-    mine[at].requires_grad_(True)
-    (step(*mine).conj() * seed).sum().real.backward()
+    if "alpha" == at:
+        block.alpha.requires_grad_(True)
+    else:
+        mine[names.index(at)].requires_grad_(True)
+    (stepped(block, _model(), *mine, 2).conj() * seed).sum().real.backward()
 
     theirs = [one.clone() for one in base]
-    theirs[at].requires_grad_(True)
-    (written_out(*theirs, iterations=2).conj() * seed).sum().real.backward()
+    alpha = torch.tensor(1.0, dtype=torch.float64, requires_grad="alpha" == at)
+    if "alpha" != at:
+        theirs[names.index(at)].requires_grad_(True)
+    weight = alpha.float().to(torch.complex64) * torch.ones(STATE, dtype=torch.complex64)
+    (written_out(*theirs, weight, iterations=2).conj() * seed).sum().real.backward()
 
-    assert (mine[at].grad - theirs[at].grad).abs().max() < 1e-4 * theirs[at].grad.abs().max()
-
-
-# --- BART against BART -------------------------------------------------------
-
-
-def _normal_domain(F):
-    """``noir_get_forward``: the two unknowns multiplied, then the transform's normal."""
-    image, coils, transform = F.image, F.coils, F.transform
-    product = Multiply(image.oshape, coils.oshape)
-    made = chain(coils.to_nonlinear(), product, output=0, input=1)
-    made = chain(image.to_nonlinear(), made, output=0, input=0).permute_inputs([1, 0])
-    stage = Asymmetric(transform.gram(), Identity(product.oshape))
-    return chain(made, stage, output=0, input=0)
+    if "alpha" == at:
+        got, want = block.alpha.grad, alpha.grad
+    else:
+        got, want = mine[names.index(at)].grad, theirs[names.index(at)].grad
+    assert (got - want).abs().max() < 1e-4 * want.abs().max()
 
 
-# --- what reaches it ---------------------------------------------------------
+def _stack(blocks, F, y, xn, x0):
+    state = blocks[0].start(y, F, x0=xn, xref=x0)
+    for block in blocks:
+        state = block(state, F)
+    return state.x
 
 
-def test_a_model_of_one_unknown_is_written_flat_too(generator):
+def test_a_stack_of_blocks_with_one_alpha_is_the_schedule_to_the_bit(generator):
+    y, xn, x0 = _arguments(generator)
+    F = _model()
+    looped = stepped(nlop.IRGNMBlock(cg_maxiter=30), F, y, xn, x0, 3)
+    stacked = _stack([nlop.IRGNMBlock(cg_maxiter=30) for _ in range(3)], F, y, xn, x0)
+    schedule = nlop.IRGNM(iterations=3, cg_maxiter=30)(y, F, x0=xn, xref=x0)
+    assert torch.equal(looped, stacked)
+    image, coils = schedule
+    assert torch.equal(looped, torch.cat([image.reshape(-1), coils.reshape(-1)]))
+
+
+def test_a_block_at_step_k_applies_its_own_alpha_decayed_k_times(generator):
+    y, xn, x0 = _arguments(generator)
+    F = _model()
+    blocks = [
+        nlop.IRGNMBlock(alpha=0.8, cg_maxiter=200),
+        nlop.IRGNMBlock(alpha=3.0, cg_maxiter=200),
+    ]
+    got = _stack(blocks, F, y, xn, x0)
+    first = written_out(y, xn, x0, torch.full((STATE,), 0.8, dtype=torch.complex64), iterations=1)
+    want = written_out(y, first, x0, torch.full((STATE,), 1.5, dtype=torch.complex64), iterations=1)
+    assert (got - want).abs().max() < 1e-4 * want.abs().max()
+
+
+def test_learned_weights_are_one_per_block(generator):
+    y, xn, x0 = _arguments(generator)
+    F = _model()
+    frozen = _stack([nlop.IRGNMBlock(cg_maxiter=30) for _ in range(3)], F, y, xn, x0)
+    blocks = [nlop.IRGNMBlock(cg_maxiter=30) for _ in range(3)]
+    for block in blocks:
+        block.alpha.requires_grad_(True)
+    learned = _stack(blocks, F, y, xn, x0)
+    assert torch.equal(learned.detach(), frozen)
+
+    learned.abs().square().sum().backward()
+    grads = [block.alpha.grad.item() for block in blocks]
+    assert all(0 != g for g in grads)
+    assert len(set(grads)) == len(grads)
+
+
+def test_a_model_of_one_unknown_is_written_flat_too():
     """What the step asserts is the state's rank, not how many unknowns made it."""
-    F = linop.FFT((2, 3), axes=(-1,)).to_nonlinear()
-    step = nlop.IRGNM(iterations=1, cg_maxiter=40, cg_tol=0.0).operator(F)
-    assert step.state_shape == (6,)
-    assert step.split(torch.zeros(6, dtype=torch.complex64))[0].shape == (2, 3)
+    space = Linearized(linop.FFT((2, 3), axes=(-1,)).to_nonlinear())
+    assert space.state_shape == (6,)
+    assert space.split(torch.zeros(6, dtype=torch.complex64))[0].shape == (2, 3)
 
 
-def test_the_step_reaches_a_model_built_from_torch(generator):
+def test_the_block_reaches_a_model_built_from_torch(generator):
     made = nlop.FromTorch(lambda p: p * torch.exp(-p), (5,), (5,))
-    step = nlop.IRGNM(iterations=1, cg_maxiter=40, cg_tol=0.0).operator(made)
+    block = nlop.IRGNMBlock(cg_maxiter=40)
     y = rand((5,), generator)
     x0 = rand((5,), generator) * 0.1 + 1.0
-    assert (5,) == tuple(step(y, x0, x0, 1.0).shape)
+    state = block(block.start(y, made, x0=x0, xref=x0), made)
+    assert (5,) == tuple(block.output(state, made).shape)
+
+
+def test_a_model_without_a_bundle_is_refused():
+    """The library's own inverse is built in C and declares no derivative of the point."""
+    with pytest.raises(TypeError, match="no derivative as a function of the point"):
+        Linearized(Linearized(_model()).inverse())
 
 
 # --- the plan the step took --------------------------------------------------
@@ -192,53 +253,53 @@ def _coil_model(n=16, coils=4, off_grid=False):
 
 @pytest.mark.parametrize("off_grid", [False, True])
 def test_a_coil_composition_is_lowered_into_the_normal_equation_domain(off_grid):
-    step = nlop.IRGNM(iterations=1, cg_maxiter=10, cg_tol=0.0).operator(
-        _coil_model(off_grid=off_grid)
-    )
-    assert step.plan.fused
-    assert "normal" == step.plan.domain
-    assert "chain rule" == step.plan.bundle
+    plan = nlop.IRGNMBlock().plan(_coil_model(off_grid=off_grid))
+    assert plan.fused
+    assert "normal" == plan.domain
+    assert "chain rule" == plan.bundle
     # The data is what the encoding's adjoint returns, not what it takes.
-    assert (4, 1, 16, 16) == step.data_shape
+    assert (4, 1, 16, 16) == Linearized(_coil_model(off_grid=off_grid)).data_shape
 
 
 @pytest.mark.parametrize("off_grid", [False, True])
 def test_the_rewrite_is_declined_when_it_is_declined(off_grid):
-    step = nlop.IRGNM(iterations=1, cg_maxiter=10, cg_tol=0.0).operator(
-        _coil_model(off_grid=off_grid), fuse=False
-    )
-    assert not step.plan.fused
-    assert "paired" == step.plan.domain
+    plan = nlop.IRGNMBlock(fuse=False).plan(_coil_model(off_grid=off_grid))
+    assert not plan.fused
+    assert "paired" == plan.domain
 
 
 def test_a_model_that_is_not_a_coil_composition_has_nothing_to_lower():
-    step = nlop.IRGNM(iterations=1, cg_maxiter=10, cg_tol=0.0).operator(nlop.Multiply(IMAGE, COILS))
-    assert not step.plan.fused
-    assert step.plan.encoding is None
-    assert "declared" == step.plan.bundle
+    plan = nlop.IRGNMBlock().plan(_model())
+    assert not plan.fused
+    assert plan.encoding is None
+    assert "declared" == plan.bundle
 
 
 def test_preparing_the_data_is_the_encodings_adjoint(generator):
     encoding = linop.FFT((4, 1, 16, 16), axes=(-1, -2))
-    step = nlop.IRGNM(iterations=1, cg_maxiter=10, cg_tol=0.0).operator(nlop.CoilSense(encoding))
+    F = nlop.CoilSense(encoding)
     kspace = rand((4, 1, 16, 16), generator)
-    assert torch.equal(step.prepare(kspace), encoding.adjoint(kspace))
+    assert torch.equal(nlop.IRGNMBlock().start(kspace, F).data, encoding.adjoint(kspace))
+
+
+def _fused_and_paired(F, kspace, start):
+    answers = []
+    for fuse in (True, False):
+        block = nlop.IRGNMBlock(alpha=1.0, redu=2.0, cg_maxiter=60, fuse=fuse)
+        answers.append(stepped(block, F, kspace, start, start, 2))
+    return answers
 
 
 def test_the_grid_leaves_the_fused_and_the_paired_answers_agreeing(generator):
     """On a grid the two are the same arithmetic up to single precision."""
     F = _coil_model()
-    schedule = nlop.IRGNM(iterations=2, alpha=1.0, redu=2.0, cg_maxiter=60, cg_tol=0.0)
-    fused, paired = schedule.operator(F), schedule.operator(F, fuse=False)
-
-    kspace = rand(paired.data_shape, generator)
-    start = rand(paired.state_shape, generator) * 0.2 + 1.0
-    one = fused(fused.prepare(kspace), start, start, 1.0)
-    other = paired(paired.prepare(kspace), start, start, 1.0)
+    kspace = rand(tuple(F.oshape), generator)
+    start = rand(Linearized(F).state_shape, generator) * 0.2 + 1.0
+    one, other = _fused_and_paired(F, kspace, start)
     assert (one - other).abs().max() < 1e-4 * other.abs().max()
 
 
-def test_off_the_grid_the_two_close_with_the_transforms_tolerance(generator):
+def test_off_the_grid_the_two_close_with_the_transforms_tolerance():
     """Which says what separates them is the NUFFT's accuracy and not the rewrite."""
     from bartorch import _finufft
 
@@ -246,18 +307,28 @@ def test_off_the_grid_the_two_close_with_the_transforms_tolerance(generator):
     for tolerance in (1e-2, 1e-3, 1e-5):
         _finufft.use_in_tools(tolerance=tolerance)
         F = _coil_model(off_grid=True)
-        schedule = nlop.IRGNM(iterations=2, alpha=1.0, redu=2.0, cg_maxiter=60, cg_tol=0.0)
-        fused, paired = schedule.operator(F), schedule.operator(F, fuse=False)
-
         state = torch.Generator().manual_seed(4)
-        kspace = rand(paired.data_shape, state)
-        start = rand(paired.state_shape, state) * 0.2 + 1.0
-        one = fused(fused.prepare(kspace), start, start, 1.0)
-        other = paired(paired.prepare(kspace), start, start, 1.0)
+        kspace = rand(tuple(F.oshape), state)
+        start = rand(Linearized(F).state_shape, state) * 0.2 + 1.0
+        one, other = _fused_and_paired(F, kspace, start)
         distances.append(((one - other).abs().max() / other.abs().max()).item())
 
     assert distances[0] > distances[1] > distances[2]
     assert distances[2] < 1e-3
+
+
+@pytest.mark.parametrize("off_grid", [False, True])
+def test_an_application_leaves_the_derivative_available_after_a_shared_solve(off_grid):
+    """The inverse's backward pass selects only some derivatives on nodes it shares
+    with the model; the next application of the model has to select them all again."""
+    space = Linearized(_coil_model(off_grid=off_grid), cg_maxiter=10)
+    point = rand(space.state_shape, torch.Generator().manual_seed(0)) * 0.2 + 1.0
+
+    space.inverse().forward(point, point, torch.ones_like(point))
+    space.inverse().jacobian(0, 1).adjoint(point)
+
+    value = space.operator.forward(point)
+    assert torch.isfinite(space.operator.adjoint(value)).all()
 
 
 # --- BART's own model ---------------------------------------------------------
@@ -274,111 +345,91 @@ def test_barts_noir_model_arrives_lowered_off_the_grid_and_not_on_it():
 
 def test_the_planner_lowers_the_model_bart_left_paired():
     """Which is the ground the planner adds: on a grid BART applies the pair."""
-    schedule = nlop.IRGNM(iterations=1, cg_maxiter=10, cg_tol=0.0)
-    step = Step(nlop.CartesianSense((4, 16, 16))._composition(), schedule)
-    assert step.plan.fused
-    assert "normal" == step.plan.domain
-    assert not Step(
-        nlop.CartesianSense((4, 16, 16))._composition(), schedule, fuse=False
-    ).plan.fused
+    model = nlop.CartesianSense((4, 16, 16))._composition()
+    assert nlop.IRGNMBlock().plan(model).fused
+    assert "normal" == nlop.IRGNMBlock().plan(model).domain
+    assert not nlop.IRGNMBlock(fuse=False).plan(model).fused
 
 
-# --- a pattern rewritten under a built step ------------------------------------
+# --- a pattern rewritten under a prepared model -------------------------------
 
 
-def _assembled(pattern, shape, schedule):
-    """A step over a coil model whose encoding carries ``pattern``, and that pattern."""
+def _sampled(pattern, shape):
+    """A coil model whose encoding carries ``pattern``, and its sampling operator."""
     from bartorch.linop.basic import Sampling
 
     sampling = Sampling(pattern, shape)
-    model = nlop.CoilSense(sampling @ linop.FFT(shape, axes=(-1, -2)))
-    return sampling, Step(model, schedule)
+    return sampling, nlop.CoilSense(sampling @ linop.FFT(shape, axes=(-1, -2)))
 
 
-def test_a_step_answers_for_a_pattern_set_after_it_was_assembled():
-    """A new mask costs no reassembly, which is the reuse BART's noir model had.
+def test_a_block_answers_for_a_pattern_set_after_the_model_was_prepared():
+    """A new mask costs no rebuild, which is the reuse BART's noir model had.
 
-    Held against a step assembled over the second pattern from the start, which
-    is the answer the caller would have got by rebuilding.
+    Held against a block over a model built with the second pattern from the
+    start, which is the answer the caller would have got by rebuilding.
     """
     torch.manual_seed(0)
     coils, n = 4, 16
     shape = (coils, n, n)
-    schedule = nlop.IRGNM(iterations=2, alpha=1.0, redu=2.0, cg_maxiter=15, cg_tol=0.0)
-
     first = (torch.rand(1, n, n) > 0.3).to(torch.complex64)
     second = (torch.rand(1, n, n) > 0.3).to(torch.complex64)
     kspace = torch.randn(*shape, dtype=torch.complex64)
 
-    def solve(step, pattern):
-        state = torch.zeros(step.state_shape, dtype=torch.complex64)
-        state[: n * n] = 1.0
-        return step(step.prepare(kspace * pattern), state, state, 1.0)
+    def solve(block, model, pattern):
+        state = block.start(kspace * pattern, model)
+        for _ in range(2):
+            state = block(state, model)
+        return state.x
 
-    sampling, step = _assembled(first, shape, schedule)
-    on_first = solve(step, first)
+    block = nlop.IRGNMBlock(alpha=1.0, redu=2.0, cg_maxiter=15)
+    sampling, model = _sampled(first, shape)
+    on_first = solve(block, model, first)
 
     sampling.set(second)
-    reused = solve(step, second)
+    reused = solve(block, model, second)
 
-    _, rebuilt = _assembled(second, shape, schedule)
+    _, rebuilt = _sampled(second, shape)
     assert not torch.allclose(on_first, reused), "the swap changed nothing"
-    assert torch.equal(reused, solve(rebuilt, second))
+    assert torch.equal(reused, solve(nlop.IRGNMBlock(cg_maxiter=15), rebuilt, second))
 
 
 # --- a batch of independent items ----------------------------------------------
 
 
-def test_a_batched_step_answers_what_each_item_answers_alone():
+def test_a_batch_answers_what_each_item_answers_alone():
     """The claim the batch makes: items share nothing, not even the inner solve.
 
     Conjugate gradients couple through global inner products, so a batch laid
-    into one state would *not* answer this; ``nlop_stack_multiple`` builds the
-    whole expression per item, which does.
+    into one state would *not* answer this; the block takes each item's step on
+    its own.
     """
     torch.manual_seed(0)
     batch = 4
-    schedule = nlop.IRGNM(iterations=2, alpha=1.0, redu=2.0, cg_maxiter=15, cg_tol=0.0)
-    model = Multiply((1, 4), (3, 4))
-    one, many = Step(model, schedule), Step(model, schedule, batch=batch)
+    F, block = _model(), nlop.IRGNMBlock(alpha=1.0, redu=2.0, cg_maxiter=15)
+    data = torch.randn(batch, 3, 4, dtype=torch.complex64)
+    start = torch.randn(batch, STATE, dtype=torch.complex64) * 0.3 + 1.0
 
-    assert (batch, *one.state_shape) == tuple(many.state_shape)
-    assert (batch, *one.data_shape) == tuple(many.data_shape)
-
-    data = torch.randn(batch, *one.data_shape, dtype=torch.complex64)
-    state = torch.randn(batch, *one.state_shape, dtype=torch.complex64) * 0.3 + 1.0
-
-    alone = torch.stack([one(data[i], state[i], state[i], 1.0) for i in range(batch)])
-    together = many(data, state, state, many.weight(1.0))
+    together = stepped(block, F, data, start, start, 2)
+    assert (batch, STATE) == tuple(together.shape)
+    alone = torch.stack([stepped(block, F, data[i], start[i], start[i], 2) for i in range(batch)])
     assert torch.equal(alone, together)
 
 
 def test_a_batched_state_splits_and_joins_with_the_batch_in_front():
     torch.manual_seed(0)
-    schedule = nlop.IRGNM(iterations=1, cg_maxiter=5, cg_tol=0.0)
-    step = Step(Multiply((1, 4), (3, 4)), schedule, batch=3)
-    state = torch.randn(*step.state_shape, dtype=torch.complex64)
-
-    parts = step.split(state)
-    assert [(3, *shape) for shape in step.lowered.ishapes] == [tuple(p.shape) for p in parts]
-    assert torch.equal(step.join(*parts), state)
+    space = Linearized(_model())
+    state = torch.randn(3, STATE, dtype=torch.complex64)
+    parts = space.split(state)
+    assert [(3, *shape) for shape in space.lowered.ishapes] == [tuple(p.shape) for p in parts]
+    assert torch.equal(space.join(*parts), state)
 
 
-def test_a_batched_step_carries_a_gradient():
+def test_a_batch_carries_a_gradient():
     torch.manual_seed(0)
-    schedule = nlop.IRGNM(iterations=1, cg_maxiter=10, cg_tol=0.0)
-    step = Step(Multiply((1, 4), (3, 4)), schedule, batch=2)
-    data = torch.randn(*step.data_shape, dtype=torch.complex64)
-    start = torch.randn(*step.state_shape, dtype=torch.complex64) * 0.3
-    iterate = (torch.randn(*step.state_shape, dtype=torch.complex64) * 0.3 + 1.0).requires_grad_(
-        True
-    )
-
-    step(data, iterate, start, step.weight(1.0)).abs().square().sum().backward()
+    F, block = _model(), nlop.IRGNMBlock(cg_maxiter=10)
+    data = torch.randn(2, 3, 4, dtype=torch.complex64)
+    centre = torch.randn(2, STATE, dtype=torch.complex64) * 0.3
+    iterate = (torch.randn(2, STATE, dtype=torch.complex64) * 0.3 + 1.0).requires_grad_(True)
+    stepped(block, F, data, iterate, centre, 1).abs().square().sum().backward()
     assert torch.isfinite(iterate.grad).all()
     assert 0 < iterate.grad.abs().max()
-
-
-def test_a_batch_below_one_is_refused():
-    with pytest.raises(ValueError):
-        Step(Multiply((1, 4), (3, 4)), nlop.IRGNM(iterations=1), batch=0)

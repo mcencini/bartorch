@@ -27,12 +27,13 @@ class _Solve(torch.autograd.Function):
         ctx.solve = backward
         ctx.real = not y.is_complex()
         ctx.dtype = y.dtype
+        ctx.shape = y.shape
         with torch.no_grad():
             return forward(y)
 
     @staticmethod
     def backward(ctx, grad):  # noqa: D102
-        g = ctx.solve(grad.resolve_conj().contiguous())
+        g = ctx.solve(grad.resolve_conj().contiguous()).reshape(ctx.shape)
         return (g.real.to(ctx.dtype) if ctx.real else g.to(ctx.dtype)), None, None
 
 

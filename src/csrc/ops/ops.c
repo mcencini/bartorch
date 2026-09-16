@@ -1367,7 +1367,7 @@ static int nlop_apply_worker(void* p)
 	const struct iovec_s* cod = nlop_codomain(a->h->op);
 
 	switch (a->mode) {
-	case 0: nlop_apply(a->h->op, cod->N, cod->dims, a->dst, dom->N, dom->dims, a->src); break;
+	case 0: nlop_generic_apply_select_derivative_unchecked(a->h->op, 2, (void*[]){ a->dst, (void*)a->src }, ~0UL, ~0UL); break;
 	case 1: nlop_derivative(a->h->op, cod->N, cod->dims, a->dst, dom->N, dom->dims, a->src); break;
 	default: nlop_adjoint(a->h->op, dom->N, dom->dims, a->dst, cod->N, cod->dims, a->src); break;
 	}
@@ -1449,13 +1449,22 @@ int bartorch_nlop_output_codomain(const bartorch_nlop* h, int o, int N, long* di
  * `nlop_generic_apply_unchecked` takes.  It also fixes the point every
  * derivative is taken at, exactly as the one-argument `bartorch_nlop_apply`
  * does.
+ *
+ * Both select every derivative.  Whether a node stores its derivative is a
+ * flag on the node (`nlop_der_requested`), and an application that selects
+ * only some -- `norm_inv`'s inner solves, a checkpoint, a stack -- leaves it
+ * cleared on every node it reached, including nodes another operator shares.
+ * A plain `nlop_apply` never sets it again, and that other operator's next
+ * derivative fails with "derivative not available".  Selecting all of them
+ * resets the flags on every node the application reaches, which is the state
+ * a node is created in.
  */
 struct nlop_generic_args { const bartorch_nlop* h; int nargs; void** args; };
 
 static int nlop_generic_worker(void* p)
 {
 	struct nlop_generic_args* a = p;
-	nlop_generic_apply_unchecked(a->h->op, a->nargs, a->args);
+	nlop_generic_apply_select_derivative_unchecked(a->h->op, a->nargs, a->args, ~0UL, ~0UL);
 	return 0;
 }
 

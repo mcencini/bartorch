@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Timings for the Gauss-Newton step, with the encoding applied both ways.
+"""Timings for Gauss-Newton steps, with the encoding applied both ways.
 
 One case per process, each printing the plan it was lowered into beside its
 times, as ``scripts/benchmark_encodings.py`` does for the linear encodings.
@@ -7,11 +7,18 @@ The rows are ``docs/design/nonlinear-fusion.md``'s targets.
 
     python scripts/benchmark_newton.py                 every case
     python scripts/benchmark_newton.py cartesian       one of them
+    python scripts/benchmark_newton.py --device cuda   on a card
+
+On a card the spread between runs of the *same* variant is wide enough to be
+mistaken for a difference between two, so a range is printed rather than a best,
+and ``--variant`` runs one of them alone: an A/B wants a process each, and its
+order alternated between them.
 """
 
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import sys
 import time
 
@@ -28,48 +35,72 @@ def _encoding(case: str, n: int, coils: int):
     return linop.NUFFT(bt.traj(x=n, y=401), shape)
 
 
-def _timed(fn, repeats: int) -> float:
-    """The best of ``repeats``, which is what a scattered machine reports honestly."""
-    best = float("inf")
+def _sync(device: str) -> None:
+    """A card queues the work: without this the clock reads the launch, not the run."""
+    if "cuda" == device:
+        torch.cuda.synchronize()
+
+
+def _timed(fn, repeats: int, device: str) -> tuple[float, float]:
+    """The range over ``repeats``, which is what decides whether a difference is one."""
+    times = []
     for _ in range(repeats):
+        _sync(device)
         start = time.perf_counter()
         fn()
-        best = min(best, time.perf_counter() - start)
-    return best
+        _sync(device)
+        times.append(time.perf_counter() - start)
+    return min(times), max(times)
 
 
-def run(case: str, *, n: int, coils: int, steps: int, repeats: int) -> None:
+def run(
+    case: str, *, n: int, coils: int, steps: int, repeats: int, device: str, variant: str
+) -> None:
     torch.manual_seed(0)
     model = nlop.CoilSense(_encoding(case, n, coils))
-    schedule = nlop.IRGNM(iterations=steps, alpha=1.0, redu=2.0, cg_maxiter=30, cg_tol=0.0)
+
+    wanted = (("normal", True), ("paired", False))
+    if "both" != variant:
+        wanted = tuple(one for one in wanted if one[0] == variant)
 
     times = {}
-    for name, fuse in (("normal", True), ("paired", False)):
-        step = schedule.operator(model, fuse=fuse)
-        data = step.prepare(torch.randn(step.model.oshapes[0], dtype=torch.complex64))
-        start = torch.zeros(step.state_shape, dtype=torch.complex64)
-        start[: n * n] = 1.0
+    for name, fuse in wanted:
+        block = nlop.IRGNMBlock(alpha=1.0, redu=2.0, cg_maxiter=30, cg_tol=0.0, fuse=fuse)
+        y = torch.randn(model.oshapes[0], dtype=torch.complex64, device=device)
+        initial = block.start(y, model)  # prepares the data, and plans
+        data, start = initial.data, initial.x
 
-        step(data, start, start, 1.0)  # the first call plans
-        times[name] = _timed(lambda: step(data, start, start, 1.0), repeats)
+        def stepped(x, initial=initial, block=block):
+            state = dataclasses.replace(initial, x=x)
+            for _ in range(steps):
+                state = block(state, model)
+            return state.x
+
+        stepped(start)  # the first call builds what the steps apply
+        times[name] = _timed(lambda: stepped(start), repeats, device)
 
         def backward():
             iterate = start.clone().requires_grad_(True)
-            step(data, iterate, start, 1.0).abs().square().sum().backward()
+            stepped(iterate).abs().square().sum().backward()
 
-        times[name + " backward"] = _timed(backward, repeats)
+        times[name + " backward"] = _timed(backward, repeats, device)
 
-        if "normal" == name:
-            print(f"  plan {step.plan!r}")
+        print(f"  plan {block.plan(model)!r}")
         print(
             f"  {name:7s} data {tuple(data.shape)}"
-            f"  forward {times[name]:.3f} s"
-            f"  backward {times[name + ' backward']:.3f} s"
+            f"  forward {times[name][0]:.3f}-{times[name][1]:.3f} s"
+            f"  backward {times[name + ' backward'][0]:.3f}-{times[name + ' backward'][1]:.3f} s"
         )
 
+    if "both" != variant:
+        return
     for what in ("", " backward"):
-        ratio = times["paired" + what] / times["normal" + what]
-        print(f"  normal domain is {ratio:.2f}x the paired transform{what or ' forward'}")
+        paired, normal = times["paired" + what], times["normal" + what]
+        apart = "" if paired[0] > normal[1] or normal[0] > paired[1] else " -- inside the spread"
+        print(
+            f"  normal domain is {paired[0] / normal[0]:.2f}x the paired transform"
+            f"{what or ' forward'}{apart}"
+        )
 
 
 CASES = {
@@ -82,6 +113,10 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("case", nargs="?", choices=sorted(CASES))
     parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument("--device", default="cpu", help="cpu, or cuda for a card")
+    parser.add_argument(
+        "--variant", default="both", choices=["both", "normal", "paired"], help="one side alone"
+    )
     parser.add_argument("--size", type=int, default=None, help="override the grid")
     parser.add_argument("--steps", type=int, default=None, help="override the Newton steps")
     args = parser.parse_args(argv)
@@ -92,8 +127,8 @@ def main(argv=None) -> int:
             settings["n"] = args.size
         if args.steps is not None:
             settings["steps"] = args.steps
-        print(f"{name}: {settings}")
-        run(name, repeats=args.repeats, **settings)
+        print(f"{name}: {settings} on {args.device}")
+        run(name, repeats=args.repeats, device=args.device, variant=args.variant, **settings)
     return 0
 
 
