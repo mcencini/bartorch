@@ -1,11 +1,10 @@
-"""Nonlinear inverse problems by BART's iteratively regularized Gauss-Newton.
+"""Nonlinear inverse problems by iteratively regularized Gauss-Newton.
 
-BART has the method in two forms, and :class:`IRGNM` is both.  ``irgnm``
-solves each linearized problem with its own conjugate gradients, as ``nlinv``
-does and as ``IRGNM`` does without an inner solver.  ``irgnm2`` hands the
-problem to a generic regularized least-squares solver, the form a regularized
-``nlinv`` or ``moba`` uses; ``inner=`` is that form, with the outer
-loop written out here.  :meth:`IRGNM.operator` is BART's own step of ``nlinv``
+The method comes in two forms and :class:`IRGNM` is both.  ``irgnm`` solves
+each linearized problem with its own conjugate gradients, which is what
+:class:`IRGNM` does without an inner solver.  ``irgnm2`` hands the problem to a
+generic regularized least-squares solver, which is what ``inner=`` selects,
+with the outer loop written out here.  :meth:`IRGNM.operator` exposes one step
 as an operator a network is built of.
 """
 
@@ -49,7 +48,7 @@ def _at(solver, alpha: float):
     linearization point *and* with alpha, so a fixed step diverges the moment
     it exceeds ``2 / L``.  BART's own inner FISTA does not offer the choice --
     ``moba/iter_l1.c``'s ``inverse_fista`` computes ``alpha + power(20,
-    normal)`` and scales by it every single step -- so neither does this.
+    normal)`` and rescales at every step -- so neither does this.
     """
     step = copy.copy(solver)
     step.cclambda = float(alpha)
@@ -104,7 +103,7 @@ class IRGNM:
 
     >>> nlop.IRGNM(iterations=8, inner=optim.CG())(kspace, F, x0=start)
 
-    Wavelet-regularized, the form ``moba -l1`` runs:
+    Wavelet-regularized:
 
     >>> nlop.IRGNM(inner=optim.FISTA(priors.Wavelet((-1, -2), 0.001), maxiter=30))(
     ...     kspace, F, x0=start
@@ -301,6 +300,16 @@ class IRGNM:
         >>> step.plan.domain
         'normal'
         >>> x = step(step.prepare(kspace), start, start, 1.0)
+
+        Notes
+        -----
+        The returned step carries a diagnostic ``plan``: ``plan.bundle`` says
+        where the derivative came from (``"declared"``, ``"chain rule"``,
+        ``"linear"`` or ``"torch"``), ``plan.domain`` whether the step works
+        against the normal operator or applies the encoding forward and
+        adjoint, ``plan.encoding`` the linear part's own
+        :attr:`~bartorch.linop.LinearOperator.plan`, and ``plan.fused`` whether
+        the coil model was rewritten.  Reading it changes nothing.
         """
         from bartorch.nlop.step import Step
 
@@ -359,5 +368,33 @@ class IRGNM:
 
 
 def irgnm(y: torch.Tensor, F, *, x0=None, xref=None, inner=None, **settings):
-    """Gauss-Newton for a nonlinear ``F``.  See :class:`IRGNM`."""
+    """Solve ``F(x) = y`` by iteratively regularized Gauss-Newton.
+
+    Linearizes ``F`` at the current iterate and solves the linearized problem
+    under a Tikhonov weight that decays from ``alpha`` towards ``alpha_min``,
+    so early steps are strongly regularized and later ones are not.
+
+    Parameters
+    ----------
+    y : tensor
+        Data of ``F.oshapes[0]``.
+    F : NonlinearOperator
+        The forward model.
+    x0 : tensor or tuple of tensor, optional
+        Starting iterate; without one the model's own initial value is used.
+    xref : tensor or tuple of tensor, optional
+        Regularization centre the steps are pulled towards; without one they
+        are regularized towards zero.
+    inner : solver, optional
+        Solver for the linearized problem, from :mod:`bartorch.optim`.  Without
+        one it is solved by conjugate gradients inside the library.
+    **settings
+        Settings of :class:`IRGNM`, among them ``iterations`` (8), ``alpha``,
+        ``alpha_min`` and ``redu``.
+
+    Returns
+    -------
+    torch.Tensor or tuple of torch.Tensor
+        The solution, one tensor per input of ``F``.
+    """
     return IRGNM(inner=inner, **settings)(y, F, x0=x0, xref=xref)

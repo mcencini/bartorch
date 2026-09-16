@@ -42,7 +42,27 @@ is.
 {class}`NIHT` cannot be run.  BART's `niht` applies the normal operator in
 place, and the operator `lsqr2` supplies asserts that its arguments are not
 aliased (`iter/niht.c:85`, `iter/lsqr.c:60`), so every NIHT solve terminates in
-an assertion -- `bart pics -R H` included.
+an assertion.
+
+## Functional interface
+
+Each solver has a function that constructs it and calls it in one expression;
+`optim.fista(y, A, term, maxiter=30)` is `optim.FISTA(term, maxiter=30)(y, A)`.
+The class form is needed where a solver object is passed as an argument, as in
+{class}`bartorch.nlop.IRGNM`'s `inner=`.
+
+```{eval-rst}
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   cg
+   ist
+   fista
+   admm
+   pridu
+   niht
+```
 
 ## Iteration blocks
 
@@ -103,31 +123,6 @@ does not grow with the iteration count -- a deep-equilibrium model.
 
    FixedPoint
 ```
-
-## Functional interface
-
-`optim.fista(y, A, term, maxiter=30)` is `optim.FISTA(term, maxiter=30)(y, A)`.
-The class form is needed where a solver object is passed as an argument, as in
-{class}`bartorch.nlop.IRGNM`'s `inner=`.
-
-```{eval-rst}
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
-
-   cg
-   ist
-   fista
-   admm
-   pridu
-   niht
-```
-
-## Preconditioning
-
-BART calls two unrelated things preconditioning.  `precond=` is
-`lsqr2_create`'s `precond_op`, which every solver here takes; `pics --precond`
-reformulates the data fidelity instead.
 
 ## Data scaling
 

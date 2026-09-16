@@ -93,10 +93,10 @@ def tgv(
     input : torch.Tensor
         At most 15 axes.
     alpha : (float, float), optional
-        ``(alpha1, alpha0)`` (``--alpha``); BART's default is ``(1, sqrt(3))``.
+        The pair ``(alpha1, alpha0)``; BART's default is ``(1, sqrt(3))``.
     tvscales : tuple of float, optional
         Nonzero weight on the derivative along each axis in ``axes``, in the same
-        order, applied in both ``D`` and ``E`` (``--tvscales``).
+        order, applied in both ``D`` and ``E``.
     """
     _check_ndim(input, "tgv")
     out = dispatch(
@@ -131,14 +131,14 @@ def nlmeans(
     Parameters
     ----------
     patch_length : int, optional
-        Odd patch length per axis (``-p``); BART's default is 5.
+        Odd patch length per axis; BART's default is 5.
     patch_distance : int, optional
-        Search radius per axis (``-d``); BART's default is 5.  Zero returns ``input``.
+        Search radius per axis; BART's default is 5.  Zero returns ``input``.
     h : float, optional
-        Filter strength in the units of ``input``'s values (``-H``); BART's default
+        Filter strength in the units of ``input``'s values; BART's default
         is 0.04.  A large ``h`` makes the filter a box mean.
     a : float, optional
-        Standard deviation of ``g``, in voxels (``-a``); BART's default is
+        Standard deviation of ``g``, in voxels; BART's default is
         ``(patch_length - 1) / 4``.
     """
     if patch_length is not None and int(patch_length) % 2 != 1:

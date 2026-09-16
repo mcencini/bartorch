@@ -101,7 +101,7 @@ class Bundle:
         ``DF^H DF`` where the operator has a cheaper one than the two chained;
         by default they are chained, as ``noir_get_normal`` chains them.
     source : str
-        Where the bundle came from, for :attr:`bartorch.nlop.plan.Plan.bundle`:
+        Where the bundle came from, as reported by a model's ``plan``:
         ``"declared"``, ``"linear"``, ``"torch"`` or ``"chain rule"``.
     """
 

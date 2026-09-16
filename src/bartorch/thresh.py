@@ -24,7 +24,7 @@ def soft_thresh(
     input : torch.Tensor
     joint_axes : int or tuple of int
         Axes over which ``|x|`` is the Euclidean norm, so that each fibre
-        along them is shrunk as one vector (``-j``); empty for element-wise.
+        along them is shrunk as one vector; empty for element-wise.
 
     Returns
     -------
@@ -38,7 +38,7 @@ def soft_thresh(
 
 @curated("threshold")
 def hard_thresh(lamda: float, input: torch.Tensor) -> torch.Tensor:
-    """Hard thresholding: keep ``x`` where ``|x| > lamda``, zero elsewhere (``-H``).
+    """Hard thresholding: keep ``x`` where ``|x| > lamda``, zero elsewhere.
 
     Returns
     -------

@@ -19,8 +19,8 @@ returned shapes rather than assuming every singleton is removed.  Use
 Axis arguments are indices, negative ones included:
 `bartorch.fft(x, axes=(-2, -1))`, and no argument takes a BART bitmask.  A
 set of indices that are not axes -- coil channels, parameter maps -- is a
-tuple of indices too.  Regularization is a list of `bartorch.priors` terms,
-never a `-R` string: `pics(..., regularizers=priors.Wavelet((-1, -2), 0.005))`.
+tuple of indices too.  Regularization is given as `bartorch.priors` terms rather than as a string:
+`pics(..., regularizers=priors.Wavelet((-1, -2), 0.005))`.
 A command that reads no array, such as `seq`, counts axes from the last one
 and takes negative axes only.  Trajectories carry `kx, ky, kz` in grid units,
 not radians or cycles per metre.

@@ -827,7 +827,7 @@ def CartesianSense(  # noqa: N802  (it is a constructor)
     with :math:`S` multiplication by the coil sensitivities, :math:`F` the
     centred unitary Fourier transform over the spatial axes, and :math:`P` the
     diagonal sampling operator given by ``pattern``.  This is the encoding
-    ``bart pics`` uses for Cartesian data.
+    BART uses for Cartesian data.
 
     With a temporal basis :math:`\Phi` of shape ``(coeffs, frames)`` the
     optimization variable holds subspace coefficients, and the basis maps them
@@ -838,7 +838,7 @@ def CartesianSense(  # noqa: N802  (it is a constructor)
         y[c, t] = P[t] \odot \sum_a \Phi[a, t] \, F(S[c] \odot x[a])
 
     so the domain carries coefficients where the codomain carries frames.  This
-    is the subspace model of ``bart pics -B``, used for T2 shuffling.
+    is the subspace model used for T2 shuffling.
 
     Given neither a pattern nor a basis the operator reduces to sensitivity
     encoding followed by the Fourier transform, and
@@ -849,11 +849,11 @@ def CartesianSense(  # noqa: N802  (it is a constructor)
     Parameters
     ----------
     sensitivities : tensor
-        Coil sensitivities ``([sets,] coils, [z,] y, x)``, or their k-space
-        kernels with ``kernels=True``.
+        Coil sensitivities ``([batch, sets,] coils, [z,] y, x)``, or their
+        k-space kernels with ``kernels=True``.
     image_shape : tuple of int
-        The image, ``(*batches, [sets,] [coeffs,] [z,] y, x)``.  The samples
-        are ``(*batches, coils, [frames,] [z,] y, x)``.
+        The image, ``(*batches, [batch,] [sets,] [coeffs,] [z,] y, x)``.  The
+        samples are ``(*batches, coils, [frames,] [z,] y, x)``.
     pattern : tensor, optional
         Binary sampling mask, one at acquired positions and zero elsewhere,
         broadcast over one coil's samples ``([frames,] [z,] y, x)`` -- so
@@ -872,13 +872,26 @@ def CartesianSense(  # noqa: N802  (it is a constructor)
     basis : tensor, optional
         Temporal subspace basis ``(coeffs, frames)``.
     toeplitz : bool
-        Apply the normal in closed form; see the notes.  Without it the
-        normal is the two applications.
-    **kwargs
-        Passed to :class:`~bartorch.linop.NoncartesianSense`: ``coil_batch``,
-        ``kernels``, ``modulated``, ``device``, ``ndim`` and the rest.
-        ``modulated`` asks for BART's own sample convention -- the one
-        ``pics`` works in -- instead of the centred one.
+        Apply the normal in closed form rather than as the forward and
+        adjoint applications; see the notes.
+    kernels : bool
+        Read ``sensitivities`` as k-space kernels rather than maps.
+    coil_batch : int
+        Coils applied at once; 0 applies every coil together.
+    modulated : bool
+        Answer in BART's uncentred sample convention rather than the centred
+        one.  The two differ by an ``fftmod`` on the sample axes; the centred
+        convention is the default and is the one :func:`bartorch.fft` produces.
+    device : device, optional
+        Where the operator is built and does its arithmetic.
+    ndim : int, optional
+        Number of spatial axes, where the sensitivities and the image do not
+        determine it.
+    kspace_shape : tuple of int, optional
+        Sample shape, where it is not the default above.
+    fold_maps : bool
+        Apply the sensitivities inside the normal's transform where the
+        arrangement allows it.
 
     Notes
     -----
@@ -994,18 +1007,18 @@ def WaveSense(  # noqa: N802  (it is a constructor)
     Parameters
     ----------
     sensitivities : tensor
-        Coil sensitivities ``([sets,] coils, [z,] y, x)``, or their k-space
-        kernels with ``kernels=True``.
+        Coil sensitivities ``([batch, sets,] coils, [z,] y, x)``, or their
+        k-space kernels with ``kernels=True``.
     image_shape : tuple of int
-        The image, ``(*batches, [sets,] [coeffs,] [z,] y, x)``, before the
-        readout is oversampled.  The samples are ``(*batches, coils,
+        The image, ``(*batches, [batch,] [sets,] [coeffs,] [z,] y, x)``, before
+        the readout is oversampled.  The samples are ``(*batches, coils,
         [frames,] [z,] y, readout)``.
     readout : int
         Length of the oversampled readout, ``wx`` in BART's sources.  At least
         the readout the image has.
     pattern : tensor, optional
-        Binary sampling mask, broadcast over one coil's samples
-        ``([frames,] [z,] y, readout)``.
+        Binary sampling mask, one at acquired positions and zero elsewhere,
+        broadcast over one coil's samples ``([frames,] [z,] y, readout)``.
     centred : bool
         Centre the two transforms, making them unitary.  The default follows
         BART's ``wave``, which leaves them uncentred and unnormalized;
@@ -1040,20 +1053,21 @@ def WaveSense(  # noqa: N802  (it is a constructor)
     basis : tensor, optional
         Temporal subspace basis ``(coeffs, frames)``.
     toeplitz : bool
-        Apply the normal as one coefficient-by-coefficient kernel between the
-        phase-encode transforms, with the point-spread function on either
-        side, rather than as the two applications.  A pattern that varies
-        along the readout has no such form, and keeps the two applications.
+        Apply the normal in closed form rather than as the forward and
+        adjoint applications: one coefficient-by-coefficient kernel between the
+        phase-encode transforms, with the point spread function on either side.
+        A pattern varying along the readout has no such form and keeps the two
+        applications.
     kernels : bool
-        Read ``sensitivities`` as k-space kernels.
+        Read ``sensitivities`` as k-space kernels rather than maps.
     coil_batch : int
-        Coils applied at once; 0 is every coil at once, as BART chains it.
+        Coils applied at once; 0 applies every coil together.
     device : device, optional
         Where the operator is built and does its arithmetic.
     ndim : int, optional
-        Spatial axes, where the sensitivities and the image do not say: a bank
-        of four kernel axes is either three behind the coils or two behind
-        sets and coils.
+        Number of spatial axes, where the sensitivities and the image do not
+        determine it: a bank of four kernel axes is either three behind the
+        coils or two behind sets and coils.
 
     Examples
     --------

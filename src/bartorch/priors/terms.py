@@ -1,4 +1,4 @@
-"""BART's regularization terms, one class per ``pics -R`` letter.
+"""The regularization terms, one class per BART regularizer.
 
 Total generalized variation and the two infimal convolutions extend the
 optimization variable, which BART counts across the whole set of terms, so
@@ -54,7 +54,7 @@ class _Weighted(Regularizer):
 
 
 class Wavelet(_Weighted):
-    """l1 norm of the wavelet transform over ``axes`` (``pics -R W``).
+    """l1 norm of the wavelet transform over ``axes``.
 
     Parameters
     ----------
@@ -64,9 +64,9 @@ class Wavelet(_Weighted):
     joint_axes : int or tuple of int, optional
         Axes along which a coefficient is kept or zeroed together.
     family : {'haar', 'dau2', 'cdf44'}
-        Wavelet family (``pics --wavelet``).
+        Wavelet family.
     randshift : bool
-        Cycle-spin the transform by a random shift; ``pics -n`` turns it off.
+        Cycle-spin the transform by a random shift between solves.
 
     Examples
     --------
@@ -90,13 +90,13 @@ class Wavelet(_Weighted):
 
 
 class TotalVariation(_Weighted):
-    """l1 norm of the finite differences over ``axes`` (``pics -R T``)."""
+    """l1 norm of the finite differences over ``axes``, i.e. total variation."""
 
     kind = "T"
 
 
 class LocallyLowRank(_Weighted):
-    """Nuclear norm of blocks over ``axes`` (``pics -R L``).
+    """Nuclear norm of overlapping blocks over ``axes``, i.e. locally low rank.
 
     Parameters
     ----------
@@ -106,11 +106,11 @@ class LocallyLowRank(_Weighted):
     joint_axes : int or tuple of int, optional
         Axes forming the columns of each block's matrix.
     block : int
-        Block edge length (``pics -b``).
+        Block edge length.
     randshift : bool
-        Shift the block grid by a random offset; ``pics -n`` turns it off.
+        Shift the block grid by a random offset between solves.
     overlapping : bool
-        Fully overlapping blocks instead of a shifted grid (``pics -N``).
+        Fully overlapping blocks instead of a shifted grid.
     """
 
     kind = "L"
@@ -138,13 +138,13 @@ class LocallyLowRank(_Weighted):
 
 
 class Laplace(_Weighted):
-    """Laplacian penalty over ``axes`` (``pics -R P``)."""
+    """Laplacian penalty over ``axes``."""
 
     kind = "P"
 
 
 class FourierL1(_Weighted):
-    """l1 norm of the Fourier transform over ``axes`` (``pics -R F``)."""
+    """l1 norm of the Fourier transform over ``axes``."""
 
     kind = "F"
 
@@ -158,25 +158,25 @@ class _Joint(Regularizer):
 
 
 class L1(_Joint):
-    """l1 norm of the image (``pics -R I``)."""
+    """l1 norm of the image."""
 
     kind = "I"
 
 
 class ImaginaryL1(_Joint):
-    """l1 norm of the image's imaginary part (``pics -R R1``)."""
+    """l1 norm of the image's imaginary part."""
 
     kind = "R1"
 
 
 class ImaginaryL2(_Joint):
-    """Squared l2 norm of the image's imaginary part (``pics -R R2``)."""
+    """Squared l2 norm of the image's imaginary part."""
 
     kind = "R2"
 
 
 class L2(Regularizer):
-    """Squared l2 norm of the image (``pics -R Q``); the penalty ``pics -r`` adds."""
+    """Squared l2 norm of the image, i.e. Tikhonov regularization."""
 
     kind = "Q"
 
@@ -185,7 +185,7 @@ class L2(Regularizer):
 
 
 class NonNegative(Regularizer):
-    """Projection onto non-negative images (``pics -R S``); it has no weight."""
+    """Projection onto non-negative images; it has no weight."""
 
     kind = "S"
 
@@ -200,7 +200,7 @@ class _Counted(Regularizer):
 
 
 class WaveletNIHT(_Counted):
-    """Keep the ``count`` largest wavelet coefficients over ``axes`` (``pics -R H``).
+    """Keep the ``count`` largest wavelet coefficients over ``axes``.
 
     Parameters
     ----------
@@ -210,9 +210,9 @@ class WaveletNIHT(_Counted):
     joint_axes : int or tuple of int, optional
         Axes along which a coefficient is kept or zeroed together.
     family : {'haar', 'dau2', 'cdf44'}
-        Wavelet family (``pics --wavelet``).
+        Wavelet family.
     randshift : bool
-        Cycle-spin the transform by a random shift; ``pics -n`` turns it off.
+        Cycle-spin the transform by a random shift between solves.
     """
 
     kind = "H"
@@ -232,7 +232,7 @@ class WaveletNIHT(_Counted):
 
 
 class ImageNIHT(_Counted):
-    """Keep the ``count`` largest image entries (``pics -R N``)."""
+    """Keep the ``count`` largest image entries."""
 
     kind = "N"
 
@@ -274,7 +274,7 @@ def _pair(values, name: str) -> tuple[float, float]:
 
 
 class TotalGeneralizedVariation(_Weighted):
-    r"""Total generalized variation over ``axes`` (``pics -R G``).
+    r"""Total generalized variation over ``axes``.
 
     Second-order TGV, minimized jointly over the image and an auxiliary vector
     field :math:`z`:
@@ -299,7 +299,7 @@ class TotalGeneralizedVariation(_Weighted):
     weight : float
     joint_axes : int or tuple of int, optional
     alpha : tuple of float
-        BART's ``alpha1:alpha0`` pair (``pics --alpha``).
+        The pair :math:`(\alpha_1, \alpha_0)` in the objective above.
     """
 
     kind = "G"
@@ -314,7 +314,7 @@ class TotalGeneralizedVariation(_Weighted):
 
 
 class InfimalConvolutionTV(_Weighted):
-    r"""Infimal convolution of total variation over ``axes`` (``pics -R C``).
+    r"""Infimal convolution of total variation over ``axes``.
 
     The image is split into two components, each penalized by total variation
     with its own weight and its own derivative scaling:
@@ -344,7 +344,7 @@ class InfimalConvolutionTV(_Weighted):
     weight : float
     joint_axes : int or tuple of int, optional
     gamma : tuple of float
-        BART's ``gamma1:gamma2`` pair (``pics --gamma``).
+        The pair :math:`(\gamma_1, \gamma_2)` in the objective above.
     """
 
     kind = "C"
@@ -362,7 +362,7 @@ class InfimalConvolutionTV(_Weighted):
 
 
 class InfimalConvolutionTGV(_Weighted):
-    r"""Infimal convolution of total generalized variation over ``axes`` (``pics -R V``).
+    r"""Infimal convolution of total generalized variation over ``axes``.
 
     The image is split into two components as for
     :class:`InfimalConvolutionTV`, each penalized by second-order TGV with its
@@ -397,9 +397,9 @@ class InfimalConvolutionTGV(_Weighted):
     weight : float
     joint_axes : int or tuple of int, optional
     alpha : tuple of float
-        BART's ``alpha1:alpha0`` pair (``pics --alpha``).
+        The pair :math:`(\alpha_1, \alpha_0)` in the objective above.
     gamma : tuple of float
-        BART's ``gamma1:gamma2`` pair (``pics --gamma``).
+        The pair :math:`(\gamma_1, \gamma_2)` in the objective above.
     """
 
     kind = "V"

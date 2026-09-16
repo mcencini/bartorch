@@ -265,93 +265,69 @@ class NoncartesianSense(_SensitivityBatch, LinearOperator):
     Parameters
     ----------
     sensitivities : tensor
-        Coil sensitivities ``(coils, [z,] y, x)``, or their k-space kernels when
-        ``kernels`` is set.  A bank on the host while the transform is on a
-        card is transferred a slab at a time.
-
-        Several sets of maps -- ESPIRiT's second, ENLIVE's relaxed model --
-        are ``(sets, coils, [z,] y, x)``, as returned by
-        :func:`bartorch.tools.ecalib` and :func:`bartorch.tools.nlinv` for
-        ``maps > 1``.  The image then carries the sets and the samples do
-        not: the encoding is ``y[c] = sum_m S[m, c] x[m]``.
-
-        A batch goes in front of the sets, ``(batch, sets, coils, [z,] y, x)``,
-        and its sets axis is written even where there is one set: independent
-        slices each with their own maps are ``(nz, 1, coils, y, x)``, where
-        ``(nz, coils, y, x)`` would be one set of maps per slice summed
-        together.  Both the image and the samples carry a batch; the trajectory
-        does not, being shared across the items, so one plan serves them all.
+        Coil sensitivities ``([batch, sets,] coils, [z,] y, x)``, or their
+        k-space kernels with ``kernels=True``.  The image carries the sets and
+        the samples do not, so several sets encode as
+        ``y[c] = sum_m S[m, c] x[m]``; a batch is carried by both.
     image_shape : tuple of int
         Image shape ``(*batches, [batch,] [sets,] *encoding, [z,] y, x)``: the
-        batches first, then the one the sensitivities vary along and the sets
-        where they carry them, then the
-        trajectory's encoding axes -- with a basis, its coefficients in place of
-        the last -- then the spatial axes the trajectory has.
+        batches, then the axis the sensitivities vary along and their sets,
+        then the trajectory's encoding axes -- with a basis, its coefficients
+        in place of the last -- then the spatial axes.
     traj : tensor
-        Trajectory ``(*encoding, shots, samples, ndim)`` in grid units, as
-        :func:`bartorch.tools.traj` produces: ``kx, ky`` or ``kx, ky, kz``.
-
-        A stack on the image's z grid (``z`` blocks of shots at
-        ``kz = j - z // 2``, each with the same in-plane trajectory and weights)
-        is applied as an FFT along z over 2D transforms, given ``coil_batch=1``
-        and one set; ``plan.cartesian`` reports it.
-        Encoding axes the image also carries are items, each with its own
-        trajectory and normal kernel under one coil loop; ``plan.items``
-        reports them.
+        Trajectory ``(*encoding, shots, samples, ndim)`` in grid units,
+        ``kx, ky`` or ``kx, ky, kz``, as :func:`bartorch.tools.traj` produces.
+        It carries no batch axis, being shared across the batch.
     kspace_shape : tuple of int, optional
         Sample shape; by default ``(*batches, coils, *encoding, shots,
         samples)``, and on a grid ``(*batches, coils, *encoding, [z,] y, x)``.
     kernels : bool
-        Read ``sensitivities`` as k-space kernels, zero-padded to the image grid
-        and transformed a slab at a time.  The operator then applies the maps
-        band-limited to the kernel; :func:`bartorch.maps_to_kernels` makes such
-        kernels and :func:`bartorch.kernels_to_maps` gives the maps they stand for.
+        Read ``sensitivities`` as k-space kernels rather than maps.  The
+        operator then applies the maps band-limited to the kernel;
+        :func:`bartorch.maps_to_kernels` and :func:`bartorch.kernels_to_maps`
+        convert between the two.
     toeplitz : bool
-        Apply the normal as a convolution with a point spread function.
+        Apply the normal in closed form rather than as the forward and
+        adjoint applications: a convolution with a point spread function.
     modulated : bool
-        On a grid, answer in BART's own sample convention rather than the
-        centred one: a scale and a modulation folded into the sensitivities,
-        with the plain transform after them.  This is the convention ``pics``
-        works in and the one its k-space is written in.  The two differ by an
-        ``fftmod`` on the sample axes; the default is the centred convention,
-        which :func:`bartorch.fft` produces and which an operator chained
-        against one expects.
-
-        It does not depend on ``coil_batch``: every slab answers in the
-        convention that was asked for.  At ``coil_batch=0`` the operator is
-        BART's own, arithmetic included, and reproduces ``pics`` bit for
-        bit.  Refused off a grid, where there is only one convention, and
-        with ``kernels``, because the modulation is the whole grid's and a
-        kernel cannot carry it.
+        On a grid, answer in BART's uncentred sample convention rather than the
+        centred one.  The two differ by an ``fftmod`` on the sample axes; the
+        centred convention is the default and is the one :func:`bartorch.fft`
+        produces.  Rejected off a grid, where there is only one convention, and
+        with ``kernels``, the modulation belonging to the whole grid.
     weights : tensor, optional
-        Diagonal in k-space, broadcast over ``(*encoding, shots, samples)``.
+        Diagonal in k-space, broadcast over ``(*encoding, shots, samples)``,
+        applied on the forward pass and conjugated on the adjoint.
     basis : tensor, optional
-        Subspace basis ``(coeffs, frames)`` over the last encoding axis, as
-        :class:`~bartorch.linop.NUFFT` takes it.
+        Temporal subspace basis ``(coeffs, frames)`` over the last encoding
+        axis.
     device : device, optional
-        Where the operator is built and does its arithmetic; by default where the
-        trajectory is, or the sensitivities for a Cartesian operator.  With a card
-        here, operands may stay on the host: the image crosses once each way per
-        application, the samples a slab at a time, and between applications the
-        card holds the operator only.
+        Where the operator is built and does its arithmetic; by default where
+        the trajectory is, or the sensitivities on a grid.
     coil_batch : int
-        Coils applied at once; 0 uses BART's own operator over all coils, which
-        lays the samples out BART's way and so is refused where they have
-        encoding axes.  A larger batch is faster and holds proportionally more.
-        A single-coil operator is always BART's own.  A batch that does not
-        divide the coils is cut down to one that does, because the loop steps
-        by the slab and the transform is built for a slab.
-
-        It changes residency, not arithmetic; the sample convention is set by
-        ``modulated`` alone.
+        Coils applied at once; 0 applies every coil together.  A batch that
+        does not divide the coils is reduced to one that does.  It changes
+        residency and speed, not the result.
     fold_maps : bool
-        Apply the sensitivities inside the transform of the normal, which saves
-        two coil images per batch.  Takes effect only where the transform works
-        one coefficient at a time, the gathered arrangement of a compressed
-        Toeplitz function.
+        Apply the sensitivities inside the normal's transform, saving two coil
+        images per slab.  Takes effect only where the transform works one
+        coefficient at a time.
     ndim : int, optional
-        Spatial axes of a transform on a grid, where the sensitivities and the
-        image do not say; off a grid the trajectory says.
+        Number of spatial axes, where the sensitivities and the image do not
+        determine it; off a grid the trajectory does.
+
+    Notes
+    -----
+    A trajectory lying on the image's own z grid -- ``z`` blocks of shots at
+    ``kz = j - z // 2``, each with the same in-plane trajectory and weights --
+    is applied as an FFT along z over two-dimensional transforms, given
+    ``coil_batch=1`` and one set; ``plan.cartesian`` reports it.  Encoding axes
+    the image also carries become items, each with its own trajectory and
+    normal kernel under one coil loop, which ``plan.items`` reports.
+
+    With the operator on a card its operands may stay on the host: the image
+    crosses once each way per application, the samples and a kernel bank a slab
+    at a time, and between applications the card holds the operator alone.
     """
 
     #: Whether a trajectory is required.  The Cartesian encoding is the same
@@ -748,26 +724,27 @@ class Coils(_SensitivityBatch, LinearOperator):
     Parameters
     ----------
     sensitivities : tensor
-        Coil sensitivities ``([batch, sets,] [sets,] coils, [z,] y, x)``, or
-        their k-space kernels when ``kernels`` is set.
+        Coil sensitivities ``([batch, sets,] coils, [z,] y, x)``, or their
+        k-space kernels with ``kernels=True``.
     image_shape : tuple of int
         Image shape ``(*batches, [batch,] [sets,] [coeffs,] [z,] y, x)``.  The
         coil images are ``(*batches, [batch,] coils, [coeffs,] [z,] y, x)``.
     kernels : bool
-        Read ``sensitivities`` as k-space kernels, zero-padded to the image
-        grid and transformed a slab at a time, as :class:`NoncartesianSense`
-        reads them.
+        Read ``sensitivities`` as k-space kernels rather than maps, as
+        :class:`NoncartesianSense` does.
     device : device, optional
         Where the operator is built and does its arithmetic; by default where
         the sensitivities are.
     coil_batch : int
-        Coils applied at once; 0 uses BART's own ``fmac`` over all of them.
+        Coils applied at once; 0 applies every coil together.  The
+        sensitivities are the same either way.
     coeffs : int
         Subspace coefficients the image carries, on an axis of their own in
-        front of the spatial ones: the sensitivities are the same for every
-        coefficient, so nothing about the multiply changes.
+        front of the spatial ones.  The sensitivities are shared across them,
+        so the multiply is unchanged.
     ndim : int, optional
-        Spatial axes, where the sensitivities and the image do not say.
+        Number of spatial axes, where the sensitivities and the image do not
+        determine it.
 
     Examples
     --------
