@@ -3,7 +3,8 @@
 For complex tensors that is the conjugate Wirtinger gradient torch expects.  A
 real input is treated as embedded in the complex numbers, and its gradient is
 the real part.  Gradients with respect to the operator's own data (sensitivities,
-trajectory) are not computed.
+trajectory) are not computed, except by an operator that records its own
+applications (``_records``), which these wrappers hand the argument to.
 """
 
 from __future__ import annotations
@@ -49,11 +50,15 @@ class _Adjoint(torch.autograd.Function):
 
 def apply_forward(op, x: torch.Tensor) -> torch.Tensor:
     """``A x``, recorded so that the backward pass is ``A^H``."""
+    if getattr(op, "_records", False):
+        return op.forward(x)
     return _Forward.apply(x, op)
 
 
 def apply_adjoint(op, y: torch.Tensor) -> torch.Tensor:
     """``A^H y``, recorded so that the backward pass is ``A``."""
+    if getattr(op, "_records", False):
+        return op.adjoint(y)
     return _Adjoint.apply(y, op)
 
 
@@ -75,4 +80,6 @@ class _NormalOp(torch.autograd.Function):
 
 def apply_normal(op, x: torch.Tensor) -> torch.Tensor:
     """``A^H A x``, recorded so that the backward pass is ``A^H A`` again."""
+    if getattr(op, "_records", False):
+        return op.normal(x)
     return _NormalOp.apply(x, op)

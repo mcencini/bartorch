@@ -167,6 +167,16 @@ class Bundle:
             made = made.dup(n + at, 2 * n)
         return made
 
+    def at(self, point):
+        """``DF(point)`` as a linear operator that holds its point.
+
+        Applications do not depend on what was evaluated before them, and are
+        differentiable by ``point``.  For an operator of one input and one output.
+        """
+        from bartorch.nlop.derivative import Linearization
+
+        return Linearization(self, point)
+
     def __repr__(self) -> str:
         return f"Bundle({self.operator!r})"
 
