@@ -65,7 +65,7 @@ the tensor's own memory.
 A {class}`~bartorch.linop.LinearOperator` has a forward, an `adjoint` and a
 `normal`, composes with `@` and `+`, and is solved by the classes in
 {mod}`bartorch.optim`.  `P @ F @ S` applies sensitivities, then the Fourier
-transform, then sampling.  {class}`~bartorch.nlop.FromTorch` gives BART's
+transform, then sampling.  {class}`~bartorch.nlop.TorchOperator` gives BART's
 Gauss-Newton solver a PyTorch signal model with its derivatives.
 
 {class}`~bartorch.linop.FFT` is centred and unitary by default;

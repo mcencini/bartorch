@@ -225,7 +225,7 @@ def test_a_model_of_one_unknown_is_written_flat_too():
 
 
 def test_the_block_reaches_a_model_built_from_torch(generator):
-    made = nlop.FromTorch(lambda p: p * torch.exp(-p), (5,), (5,))
+    made = nlop.TorchOperator(lambda p: p * torch.exp(-p), (5,), (5,))
     block = nlop.IRGNMBlock(cg_maxiter=40)
     y = rand((5,), generator)
     x0 = rand((5,), generator) * 0.1 + 1.0

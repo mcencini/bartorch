@@ -107,8 +107,8 @@ The rest of what needs declaring is not diagonal:
 | `Add` | `zsadd`, which is `zaxpbz` against a constant (`someops.c:218`) | the identity |
 | `FromLinear(L)` | `nlop_from_linop` | `L` and `L^H`, the point unused |
 | `Constant` | `nlop_const` | no input, so no tangent |
-| `FromTorch` | callbacks | `torch.func.jvp` and the reverse-mode vjp, evaluated at the point given as an argument rather than at the stored one |
-| `FromTorchSim` | TorchSim | ``A_jvp(x, dx)`` and ``A_vjp(x, dy)``, which take the point as an argument already and build no Jacobian |
+| `TorchOperator` | callbacks | `torch.func.jvp` and the reverse-mode vjp, evaluated at the point given as an argument rather than at the stored one |
+| `SignalModel` | TorchSim | ``A_jvp(x, dx)`` and ``A_vjp(x, dy)``, which take the point as an argument already and build no Jacobian |
 
 `Multiply`'s row is what `noir_get_adjoint` and `noir_get_derivative` build by
 hand (`model_net.c:269-287`, `:299-315`), and it is the product rule; nothing
@@ -150,7 +150,7 @@ was written in:
 | `chain(f, g)` | `D_g(D_f(dx, x), f(x))` | `D_f^H(D_g^H(dz, f(x)), x)` |
 | `combine(f, g)` | the two side by side | the two side by side |
 | `dup(a, b)` | the sum of the two tangent paths | the two adjoints, added |
-| `pin(i, v)` | the input leaves both tangent and point | the same |
+| `partial(i, v)` | the input leaves both tangent and point | the same |
 | `del_out(o)` | the output carries no tangent | its cotangent is zero |
 | `reshape`, `permute` | relabelled axes | relabelled axes |
 
@@ -412,7 +412,7 @@ A bundle is refused rather than approximated. What has none:
   stored point, and `F.jacobian()` is its derivative there; `IRGNMBlock` refuses
   it, naming the operator.
 - A bundle member that would need a second forward per sample rather than per
-  application. `FromTorch` is the boundary: `torch.func.jvp` is one extra
+  application. `TorchOperator` is the boundary: `torch.func.jvp` is one extra
   evaluation, which is why it has a bundle, while anything needing a materialised
   Jacobian does not.
 

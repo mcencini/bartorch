@@ -452,7 +452,7 @@ class Constant(NonlinearOperator):
 
     Combined with another operator and linked into one of its inputs, this is
     how a model's fixed quantity -- a sampling pattern, an echo time -- is
-    pinned; :meth:`~bartorch.nlop.NonlinearOperator.pin` does exactly that in
+    pinned; :meth:`~bartorch.nlop.NonlinearOperator.partial` does exactly that in
     one step.  BART copies the tensor, so the one passed in is free afterwards.
     """
 

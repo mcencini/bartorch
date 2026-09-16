@@ -191,7 +191,7 @@ def test_a_link_refuses_two_arguments_of_different_shapes():
         made.link(1, 0)
 
 
-# --- dup, stack, permute, del_out, pin ---------------------------------------
+# --- dup, stack, permute, del_out, partial ---------------------------------------
 
 
 def test_dup_makes_two_inputs_one():
@@ -291,7 +291,7 @@ def test_the_only_output_cannot_be_dropped():
 
 def test_pinning_an_input_fixes_it_to_a_tensor():
     coils = _rand(3, 4, 4)
-    P = nlop.Multiply((1, 4, 4), (3, 4, 4)).pin(1, coils)
+    P = nlop.Multiply((1, 4, 4), (3, 4, 4)).partial(1, coils)
     assert P.ishapes == ((1, 4, 4),)
     x = _rand(1, 4, 4)
     torch.testing.assert_close(P(x), x * coils, rtol=1e-5, atol=1e-6)
@@ -300,7 +300,7 @@ def test_pinning_an_input_fixes_it_to_a_tensor():
 def test_a_pinned_operator_does_not_hold_the_caller_s_tensor():
     # BART copies, so writing to the tensor afterwards must change nothing.
     coils = torch.ones(4, dtype=torch.complex64)
-    P = nlop.Multiply((4,), (4,)).pin(1, coils)
+    P = nlop.Multiply((4,), (4,)).partial(1, coils)
     coils.fill_(7.0)
     x = _rand(4)
     torch.testing.assert_close(P(x), x, rtol=1e-5, atol=1e-6)
@@ -462,7 +462,7 @@ def test_the_adjoint_of_a_derivative_is_the_adjoint_of_what_it_applies(make):
 
 
 def test_a_torch_function_of_two_tensors_is_an_operator_of_two_inputs():
-    F = nlop.FromTorch(lambda x, w: w * x, [(4,), ()], (4,))
+    F = nlop.TorchOperator(lambda x, w: w * x, [(4,), ()], (4,))
     assert ((4,), ()) == F.ishapes
     assert ((4,),) == F.oshapes
 
@@ -476,7 +476,7 @@ def test_each_partial_derivative_is_the_one_it_should_be():
     The tangent is zero in every argument but the one being asked about,
     which is what makes a forward-mode product a *partial* derivative.
     """
-    F = nlop.FromTorch(lambda x, w: w * x, [(4,), ()], (4,))
+    F = nlop.TorchOperator(lambda x, w: w * x, [(4,), ()], (4,))
     x, w = _rand(4), torch.tensor(0.9, dtype=torch.complex64)
     F(x, w)
 
@@ -487,7 +487,7 @@ def test_each_partial_derivative_is_the_one_it_should_be():
 
 
 def test_the_adjoints_are_the_adjoints_of_those():
-    F = nlop.FromTorch(lambda x, w: w * x, [(4,), ()], (4,))
+    F = nlop.TorchOperator(lambda x, w: w * x, [(4,), ()], (4,))
     x, w = _rand(4), torch.tensor(0.7, dtype=torch.complex64)
     F(x, w)
 
@@ -499,7 +499,7 @@ def test_the_adjoints_are_the_adjoints_of_those():
 
 
 def test_a_gradient_reaches_every_argument():
-    F = nlop.FromTorch(lambda x, w: w * x, [(4,), ()], (4,))
+    F = nlop.TorchOperator(lambda x, w: w * x, [(4,), ()], (4,))
     x = _rand(4).requires_grad_(True)
     w = torch.tensor(0.9, dtype=torch.complex64).requires_grad_(True)
     F(x, w).abs().square().sum().backward()
@@ -510,14 +510,14 @@ def test_a_gradient_reaches_every_argument():
 def test_a_function_of_one_tensor_is_the_operator_it_always_was():
     """The single-argument form goes through BART's single-argument
     constructor, unchanged: this is what says nothing moved under it."""
-    F = nlop.FromTorch(lambda x: torch.exp(x), (4,), (4,))
+    F = nlop.TorchOperator(lambda x: torch.exp(x), (4,), (4,))
     assert 1 == len(F.ishapes) == len(F.oshapes)
     x = _rand(4)
     torch.testing.assert_close(F(x), torch.exp(x), rtol=1e-5, atol=1e-6)
 
 
 def test_several_outputs_come_back_in_order():
-    F = nlop.FromTorch(lambda x: (x + 1.0, 2.0 * x), (3,), [(3,), (3,)])
+    F = nlop.TorchOperator(lambda x: (x + 1.0, 2.0 * x), (3,), [(3,), (3,)])
     x = _rand(3)
     first, second = F(x)
     torch.testing.assert_close(first, x + 1.0, rtol=1e-5, atol=1e-6)
@@ -549,7 +549,7 @@ def test_a_callback_of_many_arguments_says_which_pair_it_is_asked_for():
 
 def test_a_shape_that_is_not_one_says_so():
     with pytest.raises(TypeError, match="a shape is a tuple of ints"):
-        nlop.FromTorch(lambda x: x, 4, (4,))
+        nlop.TorchOperator(lambda x: x, 4, (4,))
 
 
 # --- rank, and the two shapes that are the same shape -------------------------
@@ -629,7 +629,7 @@ def test_a_composed_model_is_solved_by_gauss_newton():
     truth = torch.full((16,), 0.7, dtype=torch.complex64)
     data = torch.exp(-t * truth)
 
-    F = nlop.chain(nlop.Multiply((16,), (16,)).pin(0, -t), nlop.Exp((16,)))
+    F = nlop.chain(nlop.Multiply((16,), (16,)).partial(0, -t), nlop.Exp((16,)))
     assert F.ishapes == ((16,),)
     fitted = nlop.IRGNM(iterations=12)(data, F, x0=torch.full((16,), 0.1, dtype=torch.complex64))
     torch.testing.assert_close(fitted.real, truth.real, rtol=1e-2, atol=1e-2)

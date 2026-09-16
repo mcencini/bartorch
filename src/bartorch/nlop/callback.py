@@ -24,7 +24,7 @@ from bartorch._operator import (
 )
 from bartorch.nlop.base import NonlinearOperator, _built
 
-__all__ = ["FromTorch", "Parameters"]
+__all__ = ["TorchOperator", "Parameters"]
 
 
 def _shapes(shape) -> tuple[Shape, ...]:
@@ -144,7 +144,7 @@ class _Callback(NonlinearOperator):
         return Built(ptr, ishape, oshape, keep=keep)
 
 
-class FromTorch(_Callback):
+class TorchOperator(_Callback):
     """A nonlinear operator from a differentiable torch function.
 
     The derivative is torch's forward-mode Jacobian-vector product, and its
@@ -161,13 +161,13 @@ class FromTorch(_Callback):
 
     Examples
     --------
-    >>> F = FromTorch(lambda p: p[0] * torch.exp(-t / p[1]), (2,), t.shape)
+    >>> F = TorchOperator(lambda p: p[0] * torch.exp(-t / p[1]), (2,), t.shape)
     >>> nlop.IRGNM()(measured, F, x0=torch.tensor([1.0, 20.0]))
 
     A denoiser whose weights are an argument, so that they train through a
     graph BART applies:
 
-    >>> prior = FromTorch(lambda x, w: w * x, [state, ()], state)
+    >>> prior = TorchOperator(lambda x, w: w * x, [state, ()], state)
     >>> nlop.chain(cell, prior, output=0, input=0)
 
     Notes
@@ -237,7 +237,7 @@ class FromTorch(_Callback):
 class Parameters:
     """A module's parameters as one argument of an operator.
 
-    :class:`FromTorch` differentiates by its *arguments*, so a denoiser whose
+    :class:`TorchOperator` differentiates by its *arguments*, so a denoiser whose
     weights are to be trained inside a graph BART applies has to take them
     rather than close over them.  A module keeps its parameters as several
     real tensors of several shapes; this is the one complex vector BART can
@@ -259,12 +259,12 @@ class Parameters:
     Attributes
     ----------
     shape : tuple of int
-        What to give :class:`FromTorch` as the weights' shape.
+        What to give :class:`TorchOperator` as the weights' shape.
 
     Examples
     --------
     >>> weights = nlop.Parameters(denoiser)
-    >>> prior = nlop.FromTorch(
+    >>> prior = nlop.TorchOperator(
     ...     lambda x, w: torch.func.functional_call(denoiser, weights.unpack(w), (x,)),
     ...     [state, weights.shape],
     ...     state,

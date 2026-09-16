@@ -163,7 +163,7 @@ def test_a_constant_has_no_cotangent_to_return(generator):
 
 def test_a_torch_operators_bundle_differentiates_the_function(generator):
     fn = lambda p: p * torch.exp(-p)  # noqa: E731
-    made = nlop.FromTorch(fn, SHAPE, SHAPE)
+    made = nlop.TorchOperator(fn, SHAPE, SHAPE)
     x, dx, dz = rand(SHAPE, generator), rand(SHAPE, generator), rand(SHAPE, generator)
 
     forward = made.bundle.derivative(dx, x)
@@ -224,7 +224,7 @@ def composed(generator):
         "reshape_input": nlop.Exp(SHAPE).reshape_input(0, (1, 6)),
         "reshape_output": nlop.Exp(SHAPE).reshape_output(0, (1, 6)),
         "del_out": combine(nlop.Exp(SHAPE), nlop.Log(SHAPE)).del_out(1),
-        "pin": nlop.Multiply(SHAPE, SHAPE).pin(1, rand(SHAPE, generator) + 3.0),
+        "partial": nlop.Multiply(SHAPE, SHAPE).partial(1, rand(SHAPE, generator) + 3.0),
         "nested": chain(
             nlop.Exp(SHAPE) @ nlop.Log(SHAPE), nlop.Multiply(SHAPE, SHAPE), output=0, input=1
         ),

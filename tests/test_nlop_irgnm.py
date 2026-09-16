@@ -22,7 +22,7 @@ def _rand(*shape):
 def _decay(n: int = 24):
     """``exp(-t p)`` as one BART operator, and data from a known ``p``."""
     t = torch.linspace(0.2, 3.0, n, dtype=torch.complex64)
-    F = nlop.chain(nlop.Multiply((n,), (n,)).pin(0, -t), nlop.Exp((n,)))
+    F = nlop.chain(nlop.Multiply((n,), (n,)).partial(0, -t), nlop.Exp((n,)))
     truth = torch.full((n,), 0.7, dtype=torch.complex64)
     return F, torch.exp(-t * truth), truth
 

@@ -43,7 +43,7 @@ contrasts, and is fitted by {class}`IRGNM`.
    :toctree: generated
    :nosignatures:
 
-   FromTorchSim
+   SignalModel
    InversionRecovery
    MultiEcho
    Bloch
@@ -115,7 +115,7 @@ operator without a bundle.  A bundle is what {class}`IRGNMBlock` applies.
 A function of several tensors becomes an operator of several inputs, so a
 denoiser's weights become arguments of the operator graph rather than values
 captured by closure.  {meth}`NonlinearOperator.from_callbacks` takes the
-forward, the derivative and the adjoint as functions; {class}`FromTorch` takes
+forward, the derivative and the adjoint as functions; {class}`TorchOperator` takes
 one differentiable function and obtains the other two from autograd.
 
 A tensor captured by closure inside a Python callback is not an input of the
@@ -128,7 +128,7 @@ into one argument for this purpose.
    :toctree: generated
    :nosignatures:
 
-   FromTorch
+   TorchOperator
    Parameters
 ```
 

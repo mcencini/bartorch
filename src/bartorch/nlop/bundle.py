@@ -362,8 +362,8 @@ def of_pinned(node, x, at: int, value) -> Bundle | None:
     n, m = len(x.ishapes), len(x.oshapes)
     zero = torch.zeros_like(value)
     # The point first, so pinning it does not move the tangent's index.
-    derivative = inner.derivative.pin(n + at, value).pin(at, zero)
-    adjoint = inner.adjoint.pin(m + at, value).del_out(at)
+    derivative = inner.derivative.partial(n + at, value).partial(at, zero)
+    adjoint = inner.adjoint.partial(m + at, value).del_out(at)
     return Bundle(node, derivative, adjoint, source="chain rule")
 
 
@@ -375,7 +375,7 @@ def of_del_out(node, x, at: int) -> Bundle | None:
 
     derivative = inner.derivative.del_out(at)
     zero = torch.zeros(x.oshapes[at], dtype=torch.complex64)
-    adjoint = inner.adjoint.pin(at, zero)
+    adjoint = inner.adjoint.partial(at, zero)
     return Bundle(node, derivative, adjoint, source="chain rule")
 
 
@@ -449,7 +449,7 @@ def from_torch(operator: NonlinearOperator, fn) -> Bundle:
     the point differentiates ``fn`` a second time rather than reading a
     derivative this recorded.
     """
-    from bartorch.nlop.callback import FromTorch
+    from bartorch.nlop.callback import TorchOperator
 
     ins, outs = operator.ishapes, operator.oshapes
     one_in, one_out = 1 == len(ins), 1 == len(outs)
@@ -467,7 +467,7 @@ def from_torch(operator: NonlinearOperator, fn) -> Bundle:
 
     return Bundle(
         operator,
-        FromTorch(derivative, [*ins, *ins], outs[0] if one_out else list(outs)),
-        FromTorch(adjoint, [*outs, *ins], ins[0] if one_in else list(ins)),
+        TorchOperator(derivative, [*ins, *ins], outs[0] if one_out else list(outs)),
+        TorchOperator(adjoint, [*outs, *ins], ins[0] if one_in else list(ins)),
         source="torch",
     )

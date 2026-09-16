@@ -238,7 +238,7 @@ def test_a_model_operator_can_be_handed_over_directly():
     from torchsim.simulators import MultiEchoSimulator
 
     model = ModelOperator(MultiEchoSimulator(TE=(10.0, 40.0)), "T2", bounds={"T2": (1.0, 500.0)})
-    M = nlop.FromTorchSim(model, (2, 2))
+    M = nlop.SignalModel(model, (2, 2))
     assert M.ishape == (3, 2, 2) and M.oshape == (2, 2, 2)
     assert "MultiEchoSimulator" in repr(M)
 

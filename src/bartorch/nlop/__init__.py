@@ -35,7 +35,7 @@ from bartorch.nlop.basic import (
     Weighted,
 )
 from bartorch.nlop.bundle import Bundle
-from bartorch.nlop.callback import FromTorch, Parameters
+from bartorch.nlop.callback import Parameters, TorchOperator
 from bartorch.nlop.derivative import Derivative
 from bartorch.nlop.irgnm import IRGNM, IRGNMBlock, irgnm
 from bartorch.nlop.mri import (
@@ -46,9 +46,9 @@ from bartorch.nlop.mri import (
 )
 from bartorch.nlop.simulation import (
     Bloch,
-    FromTorchSim,
     InversionRecovery,
     MultiEcho,
+    SignalModel,
 )
 
 __all__ = [
@@ -62,8 +62,8 @@ __all__ = [
     "Derivative",
     "Divide",
     "Exp",
-    "FromTorch",
-    "FromTorchSim",
+    "TorchOperator",
+    "SignalModel",
     "IRGNM",
     "IRGNMBlock",
     "InversionRecovery",

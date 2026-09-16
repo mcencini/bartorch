@@ -257,7 +257,7 @@ def test_a_nonlinear_operator_linearises_into_a_linear_one():
     def model(p):
         return p[0] * torch.exp(-t * p[1])
 
-    F = nlop.FromTorch(model, ishape=(2,), oshape=(16,))
+    F = nlop.TorchOperator(model, ishape=(2,), oshape=(16,))
     x = torch.tensor([2.0, 1.5], dtype=torch.complex64)
     D = F.linearize(x)
     assert isinstance(D, linop.LinearOperator)
@@ -271,7 +271,7 @@ def test_a_nonlinear_operators_backward_pass_is_its_adjoint_derivative():
     def model(p):
         return p[0] * torch.exp(-t * p[1])
 
-    F = nlop.FromTorch(model, ishape=(2,), oshape=(16,))
+    F = nlop.TorchOperator(model, ishape=(2,), oshape=(16,))
     w = _rand(16)
 
     x = torch.tensor([2.0, 1.5], dtype=torch.complex64).requires_grad_(True)
@@ -635,9 +635,9 @@ def test_the_values_are_copied_rather_than_held():
 
 
 def test_a_linearization_holds_its_point():
-    """Evaluating the operator elsewhere leaves it where it was, and the point carries a gradient."""
+    """Evaluating the operator elsewhere leaves it; the point carries a gradient."""
     t = torch.linspace(0, 1, 16, dtype=torch.complex64)
-    F = nlop.FromTorch(lambda p: p[0] * torch.exp(-t * p[1]), ishape=(2,), oshape=(16,))
+    F = nlop.TorchOperator(lambda p: p[0] * torch.exp(-t * p[1]), ishape=(2,), oshape=(16,))
     x = torch.tensor([2.0, 1.5], dtype=torch.complex64)
     dx = _rand(2)
     D = F.linearize(x)

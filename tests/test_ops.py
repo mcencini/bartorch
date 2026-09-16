@@ -108,7 +108,7 @@ def test_torch_function_becomes_a_bart_nonlinear_operator_with_a_correct_adjoint
     def fn(x):
         return x * x.abs() + x.conj() * 0.5
 
-    F = nlop.FromTorch(fn, shape, shape)
+    F = nlop.TorchOperator(fn, shape, shape)
     x = _rand(*shape)
     torch.testing.assert_close(F(x), fn(x))
     dx, dy = _rand(*shape), _rand(*shape)
@@ -131,7 +131,7 @@ def test_gauss_newton_fits_a_mono_exponential_decay():
     def model(p):
         return p[0][:, None] * torch.exp(-p[1][:, None] * t[None, :])
 
-    F = nlop.FromTorch(model, (2, nvox), (nvox, nechoes))
+    F = nlop.TorchOperator(model, (2, nvox), (nvox, nechoes))
     y = model(truth)
     x0 = torch.ones(2, nvox, dtype=torch.complex64)
     gauss_newton = nlop.IRGNM(iterations=10, alpha=1.0, alpha_min=1e-6, redu=3.0, cg_maxiter=50)
@@ -151,7 +151,7 @@ def test_model_based_reconstruction_chains_a_torch_model_with_a_bart_encoding():
         return p[0][None] * torch.exp(-p[1][None] * t[:, None, None])
 
     F = linop.FFT((nechoes, n, n), axes=(-1, -2))
-    M = nlop.FromTorch(model, (2, n, n), (nechoes, n, n))
+    M = nlop.TorchOperator(model, (2, n, n), (nechoes, n, n))
     A = F @ M
     assert A.ishape == (2, n, n) and A.oshape == (nechoes, n, n)
     y = A(truth)

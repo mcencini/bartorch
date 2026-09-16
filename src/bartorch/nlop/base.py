@@ -442,7 +442,7 @@ class NonlinearOperator(Operator):
         """Move one output to another position, the rest closing up behind it."""
         return self.permute_outputs(_shifted(len(self.oshapes), new, old))
 
-    def pin(self, input: int, value) -> NonlinearOperator:  # noqa: A002
+    def partial(self, input: int, value) -> NonlinearOperator:  # noqa: A002
         """Fix one input to ``value``; the input goes away.
 
         ``nlop_set_input_const``.  What a model's fixed quantities are -- an
@@ -1071,7 +1071,7 @@ class _Pinned(_Unary):
         return of_pinned(self, self.x, self.input, self.value)
 
     def __repr__(self) -> str:
-        return f"{self.x!r}.pin({self.input}, ...)"
+        return f"{self.x!r}.partial({self.input}, ...)"
 
 
 def combine(a: NonlinearOperator, b: NonlinearOperator) -> NonlinearOperator:
