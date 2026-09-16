@@ -38,7 +38,6 @@
 #include "nlops/cast.h"
 #include "nlops/chain.h"
 #include "nlops/const.h"
-#include "nlops/checkpointing.h"
 #include "nlops/nlop.h"
 #include "nlops/norm_inv.h"
 #include "nlops/someops.h"
@@ -1642,56 +1641,6 @@ bartorch_nlop* bartorch_nlop_stack_inputs(const bartorch_nlop* x, int a, int b, 
 	return (0 == guarded(nlop_stack_inputs_worker, &v)) ? v.result : NULL;
 }
 
-struct nlop_stack_multiple_args {
-
-	int n; const bartorch_nlop* const* ops;
-	int II; const int* in_stack_dim;
-	int OO; const int* out_stack_dim;
-	int container; int multigpu;
-	bartorch_nlop* result;
-};
-
-static int nlop_stack_multiple_worker(void* p)
-{
-	struct nlop_stack_multiple_args* a = p;
-
-	const struct nlop_s* nlops[a->n];
-	int istack[a->II];
-	int ostack[a->OO];
-
-	/* `nlop_stack_multiple_F` consumes what it is given, and these handles
-	 * belong to the caller, so each goes in as a reference of its own. */
-	for (int i = 0; i < a->n; i++)
-		nlops[i] = nlop_clone(a->ops[i]->op);
-
-	for (int i = 0; i < a->II; i++)
-		istack[i] = a->in_stack_dim[i];
-
-	for (int i = 0; i < a->OO; i++)
-		ostack[i] = a->out_stack_dim[i];
-
-	a->result = wrap_nlop(nlop_stack_multiple_F(a->n, nlops, a->II, istack, a->OO, ostack,
-			a->container, a->multigpu));
-	return 0;
-}
-
-bartorch_nlop* bartorch_nlop_stack_multiple(int n, const bartorch_nlop* const* ops,
-		int II, const int* in_stack_dim, int OO, const int* out_stack_dim,
-		int container, int multigpu)
-{
-	if ((NULL == ops) || (1 > n))
-		return NULL;
-
-	for (int i = 0; i < n; i++)
-		if ((NULL == ops[i]) || (NULL == ops[i]->op))
-			return NULL;
-
-	struct nlop_stack_multiple_args v = { n, ops, II, in_stack_dim, OO, out_stack_dim,
-			container, multigpu, NULL };
-
-	return (0 == guarded(nlop_stack_multiple_worker, &v)) ? v.result : NULL;
-}
-
 static int nlop_stack_outputs_worker(void* p)
 {
 	struct nlop_index2_args* v = p;
@@ -2088,25 +2037,6 @@ bartorch_nlop* bartorch_nlop_set_input_const(const bartorch_nlop* a, int i, int 
 	return (0 == guarded(nlop_set_input_const_worker, &v)) ? v.result : NULL;
 }
 
-
-struct nlop_checkpoint_args { const bartorch_nlop* x; int der_once; int clear_mem; bartorch_nlop* result; };
-
-static int nlop_checkpoint_worker(void* p)
-{
-	struct nlop_checkpoint_args* v = p;
-	v->result = wrap_nlop(nlop_checkpoint_create(v->x->op, v->der_once, v->clear_mem));
-	return 0;
-}
-
-bartorch_nlop* bartorch_nlop_checkpoint(const bartorch_nlop* x, int der_once, int clear_mem)
-{
-	if (NULL == x)
-		return NULL;
-
-	struct nlop_checkpoint_args v = { x, der_once, clear_mem, NULL };
-
-	return (0 == guarded(nlop_checkpoint_worker, &v)) ? v.result : NULL;
-}
 
 struct nlop_norm_inv_args { const bartorch_nlop* normal; int maxiter; float tol; float l2lambda; bartorch_nlop* result; };
 

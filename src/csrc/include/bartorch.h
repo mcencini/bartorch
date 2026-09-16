@@ -685,15 +685,6 @@ BARTORCH_API bartorch_nlop* bartorch_nlop_link(const bartorch_nlop* x, int oo, i
 BARTORCH_API bartorch_nlop* bartorch_nlop_dup(const bartorch_nlop* x, int a, int b);
 BARTORCH_API bartorch_nlop* bartorch_nlop_stack_inputs(const bartorch_nlop* x, int a, int b, int dim);
 BARTORCH_API bartorch_nlop* bartorch_nlop_stack_outputs(const bartorch_nlop* x, int a, int b, int dim);
-/* `n` operators of the same arity applied together, each argument stacked
- * along the axis `in_stack_dim` or `out_stack_dim` names for it, in BART's
- * dimension order.  This is how `noir_gauss_newton_step_create` gives the
- * noir step its batch: one operator built per item and the set stacked, so
- * the items share nothing and answer exactly as they would alone.
- * The operators are referenced, so the caller still frees them. */
-BARTORCH_API bartorch_nlop* bartorch_nlop_stack_multiple(int n, const bartorch_nlop* const* ops,
-		int II, const int* in_stack_dim, int OO, const int* out_stack_dim,
-		int container, int multigpu);
 /* `outputs` non-zero permutes the outputs, zero the inputs. */
 BARTORCH_API bartorch_nlop* bartorch_nlop_permute(const bartorch_nlop* x, int outputs, int n, const int* perm);
 BARTORCH_API bartorch_nlop* bartorch_nlop_del_out(const bartorch_nlop* x, int o);
@@ -734,11 +725,7 @@ BARTORCH_API bartorch_nlop* bartorch_nlop_set_input_const(const bartorch_nlop* a
 
 BARTORCH_API void bartorch_nlop_free(bartorch_nlop* h);
 
-/* Two of the operators `noir/model_net.c` assembles its Gauss-Newton step out
- * of, which a step assembled over any model needs just as much.
- *
- * `checkpoint` trades the recomputation of a forward pass against the memory a
- * backward pass would otherwise hold on to.
+/* One of the operators `noir/model_net.c` takes its Gauss-Newton step with.
  *
  * `norm_inv_lambda` inverts `normal + lambda` by conjugate gradients and
  * differentiates through the solve implicitly rather than through its
@@ -748,7 +735,6 @@ BARTORCH_API void bartorch_nlop_free(bartorch_nlop* h);
  * differentiated, and no value of `l2lambda` has been seen to change an
  * answer -- `noir_normal_inversion_create` passes it the same way.
  */
-BARTORCH_API bartorch_nlop* bartorch_nlop_checkpoint(const bartorch_nlop* x, int der_once, int clear_mem);
 BARTORCH_API bartorch_nlop* bartorch_nlop_norm_inv_lambda(const bartorch_nlop* normal, int maxiter, float tol, float l2lambda);
 
 /* The nonlinear SENSE model `nlinv` inverts, from `noir/model2.c`.
