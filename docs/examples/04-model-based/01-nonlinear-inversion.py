@@ -267,7 +267,7 @@ STEPS = 12
 
 reconstruction, estimated = bt.nlinv(measured, maxiter=STEPS, return_sensitivities=True)
 
-print(f"NRMSE {bartorch.nrmse(image.abs(), reconstruction.abs(), scaled=True):.3f}")
+print(f"NRMSE {bt.nrmse(image.abs(), reconstruction.abs(), scaled=True):.3f}")
 
 # %%
 
@@ -346,7 +346,7 @@ difference = float(
     (fitted.squeeze() - bt.nlinv(measured, maxiter=STEPS, normalize=False)).abs().max()
 )
 print(f"largest difference from nlinv: {difference / float(fitted.abs().max()):.1e}")
-print(f"NRMSE {bartorch.nrmse(image.abs(), combined.abs(), scaled=True):.3f}")
+print(f"NRMSE {bt.nrmse(image.abs(), combined.abs(), scaled=True):.3f}")
 
 # %%
 #

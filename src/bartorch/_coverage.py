@@ -29,6 +29,7 @@ TOOLS_MODULES = (
     "bartorch.tools.sampling",
     "bartorch.tools.calib",
     "bartorch.tools.recon",
+    "bartorch.tools.process",
 )
 
 #: Every module holding hand-written wrappers.
@@ -38,8 +39,6 @@ CURATED_MODULES = (
     "bartorch.wavelet",
     "bartorch.thresh",
     "bartorch.interp",
-    "bartorch.registration",
-    "bartorch.metrics",
     "bartorch.io",
     "bartorch.priors.denoise",
     *TOOLS_MODULES,

@@ -290,12 +290,12 @@ plt.show()
 # --------------------
 #
 # Averaging repetitions that moved between them blurs the average.
-# :func:`bartorch.estimate_shift` measures a translation from the phase of the
+# :func:`bartorch.tools.estimate_shift` measures a translation from the phase of the
 # cross-spectrum of two arrays, to a fraction of a voxel, and returns it in
 # voxels along the axes it was given.
 
 moved = bartorch.circshift(image, (3, -5), (-2, -1))
-shift = bartorch.estimate_shift(image, moved, axes=(-2, -1))
+shift = bt.estimate_shift(image, moved, axes=(-2, -1))
 
 print(f"shift estimated as {shift.tolist()} voxels")
 
@@ -303,11 +303,11 @@ print(f"shift estimated as {shift.tolist()} voxels")
 #
 # A whole-voxel shift is undone by :func:`bartorch.circshift`, and a
 # sub-voxel one by resampling -- :func:`bartorch.interpolate` on a shifted
-# grid, or :func:`bartorch.fovshift`, which applies the corresponding linear
+# grid, or :func:`bartorch.tools.fovshift`, which applies the corresponding linear
 # phase in k-space instead. Rotation and scaling need
-# :func:`bartorch.register_affine`, which fits an affine transform by mutual
-# information, and :func:`bartorch.affine_transform` or
-# :func:`bartorch.warp` to apply what it returns.
+# :func:`bartorch.tools.register_affine`, which fits an affine transform by mutual
+# information, and :func:`bartorch.tools.affine_transform` or
+# :func:`bartorch.tools.warp` to apply what it returns.
 
 realigned = bartorch.circshift(moved, (-3, 5), (-2, -1))
 print(f"residual after realignment: {float((realigned - image).abs().max()):.1e}")
@@ -336,7 +336,7 @@ print(f"{tuple(image.shape)} -> {tuple(interpolated.shape)}")
 # Measuring a result
 # ------------------
 #
-# :func:`bartorch.nrmse`, :func:`bartorch.psnr` and :func:`bartorch.ssim`
+# :func:`bartorch.tools.nrmse`, :func:`bartorch.tools.psnr` and :func:`bartorch.tools.ssim`
 # compare an estimate against a reference. The comparison is between
 # magnitudes, since a SENSE reconstruction leaves the phase of the
 # sensitivities in the image.
@@ -352,21 +352,21 @@ maps = bt.ecalib(kspace[:, None], maps=1, crop=0.8)
 estimate = bt.pics(kspace[:, None], maps, l2=0.01, maxiter=20).abs()
 common = estimate * float((image.abs() * estimate).sum() / (estimate**2).sum())
 
-print(f"NRMSE {bartorch.nrmse(image.abs(), estimate, scaled=True):.3f}")
-print(f"PSNR  {bartorch.psnr(image.abs(), common):.1f} dB")
-print(f"SSIM  {bartorch.ssim(image.abs(), common):.3f}")
+print(f"NRMSE {bt.nrmse(image.abs(), estimate, scaled=True):.3f}")
+print(f"PSNR  {bt.psnr(image.abs(), common):.1f} dB")
+print(f"SSIM  {bt.ssim(image.abs(), common):.3f}")
 
 # %%
 #
-# :func:`bartorch.roi_stat` reports a statistic over a region rather than over
+# :func:`bartorch.tools.roi_stat` reports a statistic over a region rather than over
 # the whole image, which is how a phantom measurement is reported.
 
 region = (memberships[CLASS["WM"]] > 0.8).to(torch.complex64)
 
 for name, values in (("phantom", image.abs()), ("reconstruction", common)):
     volume = values.to(torch.complex64)
-    mean = float(bartorch.roi_stat(region, volume, "mean").real)
-    deviation = float(bartorch.roi_stat(region, volume, "std").real)
+    mean = float(bt.roi_stat(region, volume, "mean").real)
+    deviation = float(bt.roi_stat(region, volume, "std").real)
     print(f"{name:>14}, white matter: {mean:.3f} +/- {deviation:.3f}")
 
 # %%

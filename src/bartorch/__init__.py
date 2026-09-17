@@ -15,11 +15,9 @@ from bartorch import (
     interp,
     io,
     linop,
-    metrics,
     nlop,
     optim,
     priors,
-    registration,
     thresh,
     tools,
     util,
@@ -29,8 +27,6 @@ from bartorch._dispatch import BartError
 from bartorch._settings import *  # noqa: F401,F403
 from bartorch.fourier import *  # noqa: F401,F403
 from bartorch.interp import *  # noqa: F401,F403
-from bartorch.metrics import *  # noqa: F401,F403
-from bartorch.registration import *  # noqa: F401,F403
 from bartorch.thresh import *  # noqa: F401,F403
 from bartorch.util import *  # noqa: F401,F403
 from bartorch.wavelet import *  # noqa: F401,F403
@@ -53,8 +49,6 @@ __all__ = [
     *_settings.__all__,
     *fourier.__all__,
     *interp.__all__,
-    *metrics.__all__,
-    *registration.__all__,
     *thresh.__all__,
     *util.__all__,
     *wavelet.__all__,

@@ -73,35 +73,6 @@ argument is an index into a tensor's shape.
    :nosignatures:
 
    interpolate
-   warp
-   affine_transform
-   fovshift
-```
-
-## Registration
-
-```{eval-rst}
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
-
-   register_affine
-   register_nonrigid
-   estimate_shift
-```
-
-## Image-quality metrics
-
-```{eval-rst}
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
-
-   nrmse
-   mse
-   ssim
-   psnr
-   roi_stat
 ```
 
 ## Coil kernels

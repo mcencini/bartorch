@@ -12,9 +12,18 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-from bartorch.interp import affine_transform, warp
-from bartorch.metrics import mse, nrmse, psnr, roi_stat, ssim
-from bartorch.registration import estimate_shift, register_affine, register_nonrigid
+from bartorch.tools.process import (
+    affine_transform,
+    estimate_shift,
+    mse,
+    nrmse,
+    psnr,
+    register_affine,
+    register_nonrigid,
+    roi_stat,
+    ssim,
+    warp,
+)
 
 N = 32
 

@@ -360,7 +360,7 @@ plt.show()
 # %%
 
 for name, estimate in (("gridding", gridded), ("total variation", reconstruction)):
-    print(f"{name:>16}  NRMSE {bartorch.nrmse(image.abs(), estimate.abs(), scaled=True):.3f}")
+    print(f"{name:>16}  NRMSE {bt.nrmse(image.abs(), estimate.abs(), scaled=True):.3f}")
 
 # %%
 #
