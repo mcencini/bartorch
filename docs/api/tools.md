@@ -16,16 +16,9 @@ own declaration of the command and take its options under their long names.
    :nosignatures:
 
    phantom
-   bloch
    coils
-   epg
    fakeksp
-   mobasig
    noise
-   pulse
-   seq
-   signal
-   sim
 ```
 
 ## Sampling and trajectories
@@ -40,7 +33,6 @@ own declaration of the command and take its options under their long names.
    estdelay
    estdims
    grid
-   nufftbase
    pattern
    poisson
    psf

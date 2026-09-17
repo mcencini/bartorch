@@ -94,7 +94,7 @@ def phantom(
 
 
 #: Commands in this section without a hand-written wrapper, built from the catalogue.
-_DERIVED = ("bloch", "coils", "epg", "fakeksp", "mobasig", "noise", "pulse", "seq", "signal", "sim")
+_DERIVED = ("coils", "fakeksp", "noise")
 
 for _name in _DERIVED:
     globals()[_name] = _call.build(_name, __name__)

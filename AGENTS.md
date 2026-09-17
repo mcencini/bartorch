@@ -789,6 +789,14 @@ operators beside them. Anything else written here would be a second
 implementation that drifts, and a result that is nearly BART's is worth less
 than no result.
 
+Signal simulation is the exception in the other direction: it is TorchSim's,
+not BART's.  `bloch`, `epg`, `sim`, `signal`, `mobasig`, `pulse` and `seq` are
+private, because what a command returns is a curve and what a fit needs is a
+model -- a forward it can differentiate, with bounds and a starting state --
+which is what `nlop`'s `SignalModel` is over a TorchSim simulator.  The
+commands stay reachable through `_call.build` so a test can pin TorchSim's
+physics against BART's closed forms, which `tests/test_nlop_torchsim.py` does.
+
 So `priors/` computes nothing, and the iterations write out only their
 steps: the proximal steps, one block each in `optim/blocks.py`, and the
 Gauss-Newton step, `IRGNMBlock` in `nlop/irgnm.py`, whose operators -- the

@@ -143,6 +143,7 @@ import brainweb_dl
 import numpy as np
 import torch
 from brainweb_dl import get_mri
+from torchsim.simulators import MPnRAGESimulator
 
 import bartorch
 import bartorch.tools as bt
@@ -153,8 +154,7 @@ COILS = 8
 FRAMES = 400
 RANK = 4
 
-TR = 0.0041  # s
-TE = 0.0021  # s
+TR = 4.1  # ms
 FLIP = 6.0  # degrees
 
 # %%
@@ -162,18 +162,21 @@ FLIP = 6.0  # degrees
 # The dictionary and its subspace
 # -------------------------------
 #
-# :func:`bartorch.tools.signal` evaluates BART's analytical signal models.
-# ``F`` selects FLASH and ``I`` the inversion-recovery preparation in front of
-# it; ``flag_1`` is BART's ``-1``, the range of :math:`T_1` values as
-# ``min:max:count``. BART steps it by ``(max - min) / count`` from ``min``, so
-# the last entry falls one step short of ``max``; the fit below indexes the
-# same values. The result is one curve per entry, sampled at the frame times
-# the repetition time implies.
+# The dictionary is simulated rather than tabulated: one curve per
+# :math:`T_1`, from the sequence that will be played.
+# :class:`~torchsim.simulators.MPnRAGESimulator` is that sequence -- an
+# inversion followed by a spoiled gradient-echo train with every shot read --
+# and ``simulate`` evaluates it over an array of parameters at once, giving
+# ``(entries, frames)``.
+#
+# The same object serves the fit: handed to :func:`bartorch.nlop.Bloch` it is
+# a model operator, which is how :doc:`../04-model-based/02-quantitative-models`
+# solves for the maps directly. Here only its forward evaluation is wanted.
 
-T1_RANGE = (0.1, 4.5, 200)  # s, as BART's -1 takes it
-t1_values = T1_RANGE[0] + (T1_RANGE[1] - T1_RANGE[0]) / T1_RANGE[2] * torch.arange(T1_RANGE[2])
+t1_values = torch.linspace(100.0, 4500.0, 200)  # ms
 
-dictionary = bt.signal(F=True, I=True, r=TR, e=TE, f=FLIP, n=FRAMES, flag_1=T1_RANGE).squeeze()
+sequence = MPnRAGESimulator(nshots=FRAMES, flip=FLIP, TR=TR)
+dictionary = torch.as_tensor(sequence.simulate(T1=t1_values))
 
 left = torch.linalg.svd(dictionary.T.to(torch.complex64), full_matrices=False)[0]
 basis = left[:, :RANK].T.contiguous()
@@ -276,15 +279,12 @@ image = (signal * torch.exp(0.8j * (grid_x**2 - 0.5 * grid_y**2))).to(torch.comp
 # sphinx_gallery_start_ignore
 # One inversion-recovery curve per tissue class, from the same signal model the
 # dictionary came from, combined by membership and proton density.
+curves = torch.as_tensor(sequence.simulate(T1=torch.as_tensor(tissue_t1)))
 series = torch.zeros(FRAMES, SIZE, SIZE, dtype=torch.complex64)
 occupancy = torch.zeros(SIZE, SIZE)
 for index in range(len(TISSUES)):
-    seconds = float(tissue_t1[index]) / 1000.0
-    curve = bt.signal(
-        F=True, I=True, r=TR, e=TE, f=FLIP, n=FRAMES, flag_1=(seconds, seconds, 1)
-    ).squeeze()
     weighted = memberships[index] * float(tissue_pd[index])
-    series += weighted[None].to(torch.complex64) * curve[:, None, None]
+    series += weighted[None].to(torch.complex64) * curves[index][:, None, None]
     occupancy += weighted
 # sphinx_gallery_end_ignore
 
@@ -369,7 +369,7 @@ for name, index in CLASS.items():
     selected = support & pure & (dominant == index)
     if int(selected.sum()) < 20:
         continue
-    estimate = 1000.0 * float(t1_map[selected].median())
+    estimate = float(t1_map[selected].median())
     print(
         f"{name:>13}  table {tissue_t1[index]:6.0f} ms"
         f"   fitted {estimate:6.0f} ms   ({int(selected.sum())} voxels)"
@@ -390,7 +390,7 @@ figure.suptitle("subspace coefficient maps, each on its own scale")
 figure, axes = panels(1, 3)
 for axis, values, title in (
     (axes[0, 0], T1, "membership-weighted $T_1$"),
-    (axes[0, 1], 1000.0 * t1_map, "fitted $T_1$"),
+    (axes[0, 1], t1_map, "fitted $T_1$"),
 ):
     parameter(axis, torch.where(support, values, torch.zeros(())), "T1", title)
 scalebar(figure, axes[0, 1], name="T1")

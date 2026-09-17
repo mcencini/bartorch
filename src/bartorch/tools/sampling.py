@@ -75,7 +75,6 @@ _DERIVED = (
     "estdelay",
     "estdims",
     "grid",
-    "nufftbase",
     "pattern",
     "poisson",
     "psf",

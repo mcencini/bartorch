@@ -102,9 +102,6 @@ TRANSLATED: dict[tuple[str, str], _Takes] = {
     ("ccapply", "-A"): _Takes("axis", "Align the coil sensitivities along this axis."),
     ("coils", "-b"): _Takes("indices", "Channels to keep, by index."),
     ("ecalib", "-e"): _Takes("axis", "Split the second step along this axis."),
-    ("epg", "-u"): _Takes(
-        "indices", "Unknowns, by index: 0 is T1, 1 is T2, 2 is B1 and 3 is off-resonance."
-    ),
     ("homodyne", "dim"): _Takes("axis", "Axis the partial-Fourier fraction is along."),
     ("lrmatrix", "-m"): _Takes("axes", "Axes reshaped into the matrix columns."),
     ("lrmatrix", "-f"): _Takes("axes", "Axes the multi-scale partition is along."),
@@ -134,9 +131,6 @@ TRANSLATED: dict[tuple[str, str], _Takes] = {
     ("pics", "-L"): _Takes("axes", "Axes reconstructed one at a time (batch mode)."),
     ("pics", "--shared-img-dims"): _Takes("axes", "Axes the image is shared along."),
     ("pics", "--mpi"): _Takes("axes", "Axes distributed over MPI processes."),
-    ("seq", "--raga_flags"): _Takes(
-        "axes", "Axes RAGA-aligned, as negative axes: seq reads no array.", input=None
-    ),
     ("sqpics", "-R"): _Takes("regularizers", "Regularization terms.", kinds=_SQPICS_KINDS),
     ("ssa", "-g"): _Takes("indices", "Grouping, as a set of indices."),
     ("wshfl", "-R"): _Takes("regularizers", "Regularization terms.", kinds=_PICS_KINDS),
