@@ -46,6 +46,13 @@ operator, as plug-and-play regularization does.  {func}`frozen` detaches a
 BART term's proximal step, so that term stays fixed while the rest of the
 iteration -- including a denoiser in another term -- is differentiated.
 
+{class}`ImplicitPrior` accepts a `transform` like any other term, so that the
+denoiser may be applied on a domain other than the image: the
+alternating-direction and primal-dual iterations then split the variable at
+`G x`, and the denoiser is applied on the codomain of `G`.
+{class}`bartorch.learning.Denoiser` adapts a network operating on real planes
+to that interface.
+
 ```{eval-rst}
 .. autosummary::
    :toctree: generated

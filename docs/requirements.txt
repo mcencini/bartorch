@@ -2,11 +2,13 @@
 # enough) but not the compiled library.
 numpy>=1.24
 torch>=2.2
-# `bartorch.optim.iterators` builds its classes on top of deepinv's the first
-# time one is asked for, so autosummary cannot import a single one of them
-# without it.  A dependency rather than an extra since the proximal solvers
-# started running those iterations.
+# The denoiser the deep-learning example unrolls, and what it is trained
+# with.  Only `--execute` needs them; they are here rather than in a list of
+# their own because that is where the gallery's other dependencies are.
 deepinv>=0.2
+lightning>=2.2
+torchio>=0.19
+monai>=1.3
 sphinx>=7.3,<9
 sphinx-book-theme>=1.1,<2
 sphinx-copybutton>=0.5,<1
