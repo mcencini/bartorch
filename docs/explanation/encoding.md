@@ -78,15 +78,15 @@ The constructors in {mod}`bartorch.linop` —
 {func}`~bartorch.linop.CartesianSense`,
 {class}`~bartorch.linop.NoncartesianSense`,
 {func}`~bartorch.linop.WaveSense`, {func}`~bartorch.linop.FieldCorrected` —
-are names for particular fillings of that expression, and one executor applies
+each name a particular instance of that expression, and one executor applies
 all of them.
 
-## Why this matters to a caller
+## Composition and lowering
 
 A reconstruction assembled by composition, `P @ F @ S`, would apply its factors
 in sequence, each writing a full intermediate array: for a volume with many
-channels those intermediates, rather than the arithmetic, are what exhausts the
-memory. Recognizing the composition as one encoding lets it be executed
+channels those intermediates exhaust the memory before the arithmetic becomes
+the limit. Recognizing the composition as one encoding lets it be executed
 differently — one channel or one slab of channels at a time, with the
 element-wise factors folded into the same pass as the transform, and the
 intermediates never formed for the whole array at once.
@@ -131,7 +131,7 @@ costs a pair of FFTs on a doubled grid instead of a pair of non-uniform
 transforms over every sample of every channel. {doc}`non-cartesian` takes this
 up in detail.
 
-## Subspaces, batches and what they cost
+## Encoding axes and batches
 
 Two axes are easy to confuse, and the library keeps them apart.
 
@@ -142,8 +142,8 @@ coefficients where the samples carry frames.
 
 A **batch** is an axis the transform does not see: independent slices,
 averages, repetitions that share a trajectory and a pattern. Each item is
-encoded on its own, and off the grid one plan serves all of them, which is
-what a batch of transforms against one point set is for.
+encoded on its own, and off the grid one plan serves all of them: a batch of
+transforms against one point set costs one plan rather than one per item.
 
 The distinction has a consequence worth stating: a trajectory that varies
 across frames is still one transform. Every sample the trajectory indexes

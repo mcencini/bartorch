@@ -67,7 +67,7 @@ inner problem can go to the conjugate gradients inside BART, as in `nlinv`, or
 to a solver from {mod}`bartorch.optim`, whose regularization terms then apply
 to the step.
 
-## Identifiability, and what makes the factorization unique
+## Identifiability of the factorization
 
 The bilinear problem has a symmetry: $S_c \cdot x$ is unchanged by
 $S_c \mapsto \gamma S_c$, $x \mapsto x/\gamma$ for any nonzero function
@@ -98,7 +98,7 @@ returns are read back with
 {meth}`~bartorch.nlop.SignalModel.split` rather than taken directly from the
 state.
 
-## What model-based reconstruction buys
+## Model-based estimation against the two-step route
 
 The alternative to putting the model in the operator is the two-step route:
 reconstruct the series of contrasts, then fit the model voxel by voxel. The

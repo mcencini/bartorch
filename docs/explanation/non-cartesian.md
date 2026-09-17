@@ -19,12 +19,12 @@ Computed directly this costs $O(NM)$, which for a 2D acquisition of realistic
 size is minutes per application and therefore hours per reconstruction.
 
 A **non-uniform fast Fourier transform** (NUFFT) computes it to a requested
-accuracy in $O(N \log N + M)$. Every implementation of one does the same three
-things: convolve the data with a smooth kernel onto an oversampled grid, take
-an FFT of that grid, and divide out the kernel's Fourier transform
-(deapodization). The kernel and the oversampling factor set the accuracy, and
-the classical accounts of the method — Beatty et al., and O'Sullivan's gridding
-— are about how to choose them.
+accuracy in $O(N \log N + M)$. Every implementation of one is the same three
+operations: a spreading or an interpolation between the samples and a grid
+oversampled with respect to the image, an FFT of that grid, and a division by
+the kernel's Fourier transform, which is the **deapodization** that undoes the
+spreading. The kernel and the oversampling factor set the accuracy, and the
+classical accounts of the method are about how to choose them.
 
 In bartorch this transform is [FINUFFT](https://finufft.readthedocs.io), and
 what a caller sees is not a kernel and an oversampling but a **tolerance**: the

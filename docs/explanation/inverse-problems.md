@@ -54,8 +54,8 @@ $$
 
 whose solutions satisfy the **normal equations** $A^H A \hat{x} = A^H y$. The
 operator $A^H A$ is the **normal operator**, or Gram operator; it maps the
-image space to itself, it is self-adjoint and positive semidefinite, and it is
-what an iterative solver applies once per iteration. Its condition number is
+image space to itself, it is self-adjoint and positive semidefinite, and an
+iterative solver applies it once per iteration. Its condition number is
 the square of $A$'s, which is why the normal equations are solved iteratively
 rather than by forming and factorizing anything.
 
@@ -63,8 +63,9 @@ rather than by forming and factorizing anything.
 of iterations governed by the spectrum of $A^H A$, needing only its
 application. With a full-rank $A$ and enough iterations it converges to the
 least-squares solution — which, on undersampled data, is the wrong thing to
-converge to: the null space is unconstrained and the noise in the
-poorly-determined directions is amplified without limit. Stopping the
+converge to: the null space is unconstrained, and the noise along the
+poorly-determined directions is amplified by the inverse of their singular
+values. Stopping the
 iteration early is a form of regularization, and an unreliable one, since the
 number of iterations that is right depends on the data.
 
@@ -165,7 +166,7 @@ transform array: {class}`~bartorch.optim.IST` and
 {class}`~bartorch.optim.FISTA` therefore refuse a term with a nontrivial $G$
 rather than applying it as though $G$ were the identity.
 
-## Scaling, and what a weight means
+## Data scaling and the regularization weight
 
 The weight $\lambda$ is not dimensionless: multiplying the data by a constant
 multiplies the data term by its square and leaves the penalty unchanged, so
@@ -182,10 +183,10 @@ transfers to another only because of this step.
 a normal, composable with `@` and `+`.  {mod}`bartorch.priors` supplies $R$ as
 a proximal operator and its transform. {mod}`bartorch.optim` supplies the
 algorithms, each called as `solver(y, A)`.
-{func}`bartorch.tools.pics` is these three assembled by BART's own
+{func}`bartorch.tools.pics` assembles the three itself, inside BART's own
 application: it estimates the scaling, builds the encoding from the coil
-sensitivities and the sampling, turns its `-R` arguments into proximal
-operators, and hands all of it to the same iteration.
+sensitivities and the sampling, turns its ``regularizers`` argument into
+proximal operators, and hands all of it to the same iteration.
 
 Two things follow from this arrangement. A reconstruction written as an
 operator and a solver is the application's arithmetic rather than an

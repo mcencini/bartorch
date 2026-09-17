@@ -107,8 +107,8 @@ sensitivities = sensitivities / bartorch.rss(sensitivities, axes=(0,), keepdim=T
 # coils share their thermal noise and their preamplifier coupling. Least
 # squares is the maximum-likelihood estimator only for noise that is white, so
 # the data is transformed by the inverse square root of the noise covariance
-# first, which is what a noise scan -- an acquisition with no excitation -- is
-# measured for.
+# first, and a noise scan -- an acquisition with no excitation -- is measured
+# to estimate that covariance.
 #
 # The simulation below correlates the channels' noise by a factor falling with
 # the distance between them, which is the structure a ring of coils produces,
@@ -209,8 +209,8 @@ print(f"residual after realignment: {float((realigned - image).abs().max()):.1e}
 # :func:`bartorch.resize` crops or zero-pads around the centre, which in
 # k-space is a change of resolution and in image space a change of field of
 # view. Zero-padding k-space to twice its size interpolates the image onto
-# twice the grid without adding information to it, which is what a scanner's
-# reconstruction filter does.
+# twice the grid without adding information to it, as a scanner's
+# interpolation filter does.
 
 interpolated = bartorch.ifft(
     bartorch.resize(bartorch.fft(image, axes=(-2, -1), unitary=True), (2 * SIZE, 2 * SIZE)),
