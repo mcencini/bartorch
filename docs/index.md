@@ -14,6 +14,20 @@ guides/user/issues
 
 ```{toctree}
 :hidden:
+:caption: Examples
+
+auto_examples/index
+```
+
+```{toctree}
+:hidden:
+:caption: Explanation
+
+explanation/index
+```
+
+```{toctree}
+:hidden:
 :caption: API reference
 
 api/index

@@ -1,7 +1,8 @@
 # Regularization and denoising
 
 `bartorch.priors`.  A regularizer specifies a regularization functional for the
-solvers in {mod}`bartorch.optim`.  BART builds the corresponding proximal
+solvers in {mod}`bartorch.optim`; {doc}`../explanation/inverse-problems`
+introduces the functionals and their proximal operators.  BART builds the corresponding proximal
 operator and, where the functional acts on a transform of the image, the linear
 transform in front of it.  The denoisers are functions on images.
 

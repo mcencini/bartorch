@@ -1045,3 +1045,25 @@ When modifying existing documentation:
 When auditing or refactoring documentation, explicitly check for conversational or literary LLM prose, paraphrastic replacements for established technical terminology, personification, taglines, code narration, and technically imprecise attempts at accessibility.
 
 After substantial documentation work, build the documentation, run relevant documentation tests/examples, and inspect the rendered output.
+
+The documentation is in four parts, and a page belongs to whichever it is:
+`docs/api/` is the reference, extracted from the docstrings; `docs/examples/`
+is the example gallery, executable scripts rendered by sphinx-gallery;
+`docs/explanation/` is the conceptual material; `docs/guides/` is the user and
+developer guides.
+
+An example is a Python script under `docs/examples/<section>/`, named
+`NN-title.py`, whose module docstring becomes the page and whose numeric prefix
+orders it within its section. A section is a directory with a `README.rst`
+holding its heading and a paragraph; `docs/conf.py` lists the sections in the
+order a reader meets them. Code that is not about this library -- figure
+layout, colormaps, the phantom's arithmetic -- goes between
+`# sphinx_gallery_start_ignore` and `# sphinx_gallery_end_ignore`, which keeps
+it off the page and in the downloadable script and notebook. Anything a reader
+would type themselves stays visible.
+
+`./scripts/build_docs.sh` renders the example pages without running them, which
+needs no compiled library; `--execute` runs them, which needs one and the
+packages `docs/examples/README.rst` names. The docs workflow does both, and
+publishes the executed build.
+

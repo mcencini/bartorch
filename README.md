@@ -29,6 +29,12 @@ platform notes.
 | Transform, filter or register arrays | the functions in `bartorch` |
 | Fit a torch signal model | `bartorch.nlop`: `SignalModel`, `TorchOperator`, `IRGNM` |
 
+The example gallery (`docs/examples/`) is complete reconstructions written with
+these -- Cartesian and radial SENSE, a dynamic golden-angle series, subspace
+and model-based quantitative imaging -- and the
+[explanation pages](docs/explanation/index.md) introduce the encoding model,
+the estimators and the non-Cartesian transform.
+
 ## Quickstart
 
 ```python

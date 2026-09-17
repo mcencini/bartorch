@@ -1,6 +1,8 @@
 # Optimization
 
-`bartorch.optim`.  A *block* is one step of a BART iteration as a torch module.
+`bartorch.optim`.  {doc}`../explanation/inverse-problems` states the problems
+these algorithms solve and which one applies where.  A *block* is one step of a
+BART iteration as a torch module.
 A solver loops a block, reproducing BART's iteration schedule -- step sizes,
 penalty updates and stopping -- and is called as `solver(y, A, x0=None)`.  The
 functional forms, such as `optim.fista(y, A, term)`, construct a solver and call

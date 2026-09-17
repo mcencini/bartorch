@@ -3,10 +3,12 @@
 # Build the reference locally, the way the docs workflow builds it.
 #
 #   ./scripts/build_docs.sh                  render, warnings are errors
+#   ./scripts/build_docs.sh --execute        run the gallery's examples too
 #   ./scripts/build_docs.sh --clean --serve  start over, then serve the result
 #
 # Rendering imports bartorch from src/, which needs torch but not the compiled
-# library.
+# library.  Executing the examples needs the compiled library, and the packages
+# `docs/examples/README.rst` names.
 
 set -euo pipefail
 
@@ -19,10 +21,13 @@ serve=""
 strict="-W --keep-going"
 
 usage() {
-    sed -n '3,9p' "${BASH_SOURCE[0]}" | sed 's/^#\{1,\} \{0,1\}//'
+    sed -n '3,11p' "${BASH_SOURCE[0]}" | sed 's/^#\{1,\} \{0,1\}//'
     cat <<'EOF'
 
 Options:
+  --execute       Run the gallery's examples and render their output.  Off by
+                  default: it needs a built library and the example
+                  dependencies, and it takes minutes rather than seconds.
   --online        Resolve intersphinx against python.org, numpy and torch.
                   Off by default so the build works without a network.
   --clean         Remove the built HTML and everything generated into the
@@ -37,6 +42,7 @@ EOF
 
 while [ $# -gt 0 ]; do
     case "$1" in
+        --execute) export BARTORCH_DOCS_EXECUTE=1 ;;
         --online) export BARTORCH_DOCS_ONLINE=1 ;;
         --clean) clean=1 ;;
         --lax) strict="" ;;
@@ -51,7 +57,7 @@ while [ $# -gt 0 ]; do
     shift
 done
 
-if ! "${PYTHON}" -c "import sphinx, sphinx_book_theme, myst_parser, torch" 2>/dev/null; then
+if ! "${PYTHON}" -c "import sphinx, sphinx_book_theme, myst_parser, sphinx_gallery, matplotlib, torch" 2>/dev/null; then
     echo "build_docs.sh: the documentation requirements are not installed." >&2
     echo "  ${PYTHON} -m pip install -r docs/requirements.txt" >&2
     echo "or pass --install." >&2
@@ -63,7 +69,9 @@ if [ "${clean}" = 1 ]; then
     # something that has since been renamed would survive an ordinary rebuild
     # and be linked from nothing.
     rm -rf "${ROOT}/docs/_build" \
-           "${ROOT}/docs/api/generated"
+           "${ROOT}/docs/api/generated" \
+           "${ROOT}/docs/auto_examples" \
+           "${ROOT}/docs/sg_execution_times.rst"
 fi
 
 # shellcheck disable=SC2086
