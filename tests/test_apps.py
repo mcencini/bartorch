@@ -12,7 +12,7 @@ import torch
 
 import bartorch
 import bartorch.tools as bt
-from bartorch import _dispatch, apps, linop, optim, priors
+from bartorch import _dispatch, _finufft, apps, linop, priors
 
 SIZE, COILS, ACCEL = 24, 4, 2
 
@@ -104,42 +104,29 @@ def test_an_unknown_solver_is_refused():
         apps.pics(kspace, maps, solver="newton")
 
 
-def _radial(size=32, coils=4, spokes=16):
+def _radial(size=32, coils=4, spokes=32):
+    sens = bt.coils(t=bt.grid(D=(size, size, 1)), n=coils)[:, 0]
+    sens = sens / bartorch.rss(sens, axes=(0,), keepdim=True)
     traj = bt.traj(readout=size, spokes=spokes, radial=True, golden=True)
-    maps = bt.coils(t=bt.grid(D=(size, size, 1)), n=coils)[:, 0]
-    maps = maps / bartorch.rss(maps, axes=(0,), keepdim=True)
-    E = linop.NoncartesianSense(maps, (size, size), traj=traj)
-    return traj, maps, E(bt.phantom(size).to(torch.complex64))
+    encoding = linop.NoncartesianSense(sens, (size, size), traj=traj)
+    image = torch.as_tensor(bt.phantom(size)).to(torch.complex64)
+    return traj, sens[:, None], bt.noise(encoding(image), n=1e-6, s=7)
 
 
-def test_off_the_grid_the_app_is_the_assembly_the_radial_example_writes():
-    """Not the bits, and the tool is not either.
-
-    Where the difference is has been narrowed and not found: it is not the
-    scaling, since forcing the tool onto this one with ``-w`` leaves the two
-    4e-07 apart, and it is not the coil loop, since walking every coil at once
-    the way the application does changes nothing measurable.  What is left is
-    the non-uniform transform itself.  Pinned here at round-off so that a
-    change which is more than that shows up."""
+def test_off_the_grid_the_app_is_the_tool_to_round_off():
+    """Not the bits, and they cannot be: a non-uniform transform spread over
+    threads sums in the order the threads finish in, so nothing off the grid is
+    bit-reproducible.  ``pics`` is not reproducible against itself there --
+    twice over the same data it differs by about 6e-07 of the peak, the same
+    size as the difference asserted here -- so an equality would be a statement
+    about the thread count rather than about the pipeline.
+    """
     traj, maps, measured = _radial()
-    term = _tv()
-
-    A = linop.NoncartesianSense(maps, tuple(maps.shape[1:]), traj=traj)
-    assembled = optim.ADMM(term, maxiter=10)(
-        measured / optim.data_scaling(measured[..., None], A=A), A
+    term = _tv(0.001)
+    tool = bt.pics(
+        measured[..., None], maps, traj=traj, regularizers=term, solver="admm", maxiter=10
     ).squeeze()
     ours = apps.pics(
-        measured, maps[:, None], traj=traj, regularizers=term, solver="admm", maxiter=10
+        measured, maps, traj=traj, regularizers=term, solver="admm", maxiter=10
     ).squeeze()
-    tool = bt.pics(
-        measured[..., None],
-        maps[:, None],
-        traj=traj,
-        regularizers=term,
-        solver="admm",
-        maxiter=10,
-    ).squeeze()
-
-    peak = float(tool.abs().max())
-    assert float((ours - assembled).abs().max()) < 1e-5 * peak
-    assert float((ours - tool).abs().max()) < 1e-5 * peak
+    assert float((ours - tool).abs().max()) < 1e-5 * float(tool.abs().max())

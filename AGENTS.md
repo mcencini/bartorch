@@ -859,6 +859,13 @@ spinning it does unless `-n`, and PRIDU's `sigma_tau_ratio`.
 `tests/test_solve.py` holds nine configurations of `pics` against the
 assembly with `torch.equal`, and they are equal.
 
+Off a grid nothing is bit-exact, the tool against itself included: FINUFFT
+spreads over threads and sums in the order they finish in, so two `pics` calls
+over the same data differ by about 6e-07 of the peak.  So a comparison there is
+to round-off and not to the bits, which is what `tests/test_apps.py` asserts --
+holding the threads down to buy an equality would be measuring the thread count
+rather than the arithmetic.
+
 One thing is not bit-exact and cannot be: `-e` estimates the largest
 eigenvalue by a power iteration whose starting vector comes from BART's
 process-global generator, so a solve here and a `pics` call in the same
