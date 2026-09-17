@@ -48,6 +48,29 @@ place, and the operator `lsqr2` supplies asserts that its arguments are not
 aliased (`iter/niht.c:85`, `iter/lsqr.c:60`), so every NIHT solve terminates in
 an assertion.
 
+## Projection onto convex sets
+
+{class}`POCS` is not a least-squares solver: it has no data term, no step size
+and no residual.  Each iteration is one sweep of a list of projections, applied
+in turn and in place, which is the whole of `italgos.c`'s `pocs`.  What the
+iterate is, and what the sets are, belong to the projections -- for
+{func}`bartorch.apps.pocsense` they are the measured samples, the range of the
+coil sensitivities and a sparsity threshold, and the iterate is coil k-space.
+
+A projection is a callable on a tensor, or a {mod}`bartorch.priors` term, which
+enters as its proximal operator at `mu = 1`.  {class}`POCSBlock` takes an
+operator argument and ignores it, so that it has the calling convention the
+other blocks have and {class}`bartorch.learning.Unrolled` can stack it.
+
+```{eval-rst}
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   POCS
+   POCSBlock
+```
+
 ## Functional interface
 
 Each solver has a function that constructs it and calls it in one expression;
@@ -66,7 +89,11 @@ The class form is needed where a solver object is passed as an argument, as in
    admm
    pridu
    niht
+   pocs
 ```
+
+{func}`pocs` takes its projections where the others take an encoding and a
+term, because that is where a projection method keeps the problem.
 
 ## Iteration blocks
 

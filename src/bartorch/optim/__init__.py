@@ -15,6 +15,7 @@ from bartorch.optim.functional import (
     fista,
     ist,
     niht,
+    pocs,
     pridu,
 )
 from bartorch.optim.linear import (
@@ -27,6 +28,7 @@ from bartorch.optim.linear import (
     Tikhonov,
     maxeigen,
 )
+from bartorch.optim.pocs import POCS, POCSBlock
 from bartorch.optim.scaling import data_scaling
 
 __all__ = [
@@ -39,6 +41,8 @@ __all__ = [
     "IST",
     "ISTBlock",
     "NIHT",
+    "POCS",
+    "POCSBlock",
     "PRIDU",
     "PRIDUBlock",
     "Tikhonov",
@@ -48,6 +52,7 @@ __all__ = [
     "fista",
     "ist",
     "niht",
+    "pocs",
     "maxeigen",
     "pridu",
 ]
