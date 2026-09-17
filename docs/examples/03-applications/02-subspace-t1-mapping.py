@@ -321,9 +321,19 @@ print(A.plan)
 # operator is a point spread function over the basis as well as the
 # trajectory, so a subspace reconstruction costs per iteration what a plain one
 # costs.
+#
+# The penalty is locally low rank: the coefficient maps are stacked into a
+# matrix per block of voxels, and its nuclear norm is penalized.
+# ``joint_axes`` is what makes the coefficients the columns of that matrix,
+# which is what states the thing a subspace reconstruction knows and a
+# wavelet penalty does not -- that neighbouring voxels follow the *same* few
+# curves, not that each coefficient map is separately sparse. Penalizing the
+# maps one at a time instead leaves the coefficients free to disagree with
+# each other, and the recovered curves with them.
 
 data = measured / optim.data_scaling(measured[..., None], A=A)
-coefficients = optim.ADMM(priors.Wavelet(axes=(-1, -2), weight=0.002), maxiter=30)(data, A)
+term = priors.LocallyLowRank(axes=(-1, -2), weight=0.005, joint_axes=(-3,), block=8)
+coefficients = optim.ADMM(term, maxiter=30)(data, A)
 
 recovered = torch.einsum("af,ayx->fyx", basis.to(torch.complex64), coefficients)
 
@@ -404,10 +414,11 @@ plt.show()
 
 # %%
 #
-# The first two coefficient maps carry the magnetization and its recovery and
-# look like images; the third and fourth carry what the first two cannot
-# represent and look like nothing in particular, as a basis estimated from a
-# dictionary rather than from anatomy will.
+# The coefficient maps are not images of anything: each is the weight of one
+# singular vector of the dictionary, and only the first carries the
+# magnetization in a form an eye reads. The later ones carry what the earlier
+# ones cannot represent, which is a difference between recovery curves rather
+# than a tissue.
 #
 # The recovered curve is the reconstruction's, which determines it only up to a
 # global scale -- the data was normalized before the solve -- so the panel
