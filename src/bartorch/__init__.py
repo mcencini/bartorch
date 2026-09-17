@@ -10,6 +10,7 @@ from importlib.metadata import PackageNotFoundError, version
 
 from bartorch import (
     _settings,
+    apps,
     fourier,
     interop,
     interp,
@@ -39,6 +40,7 @@ except PackageNotFoundError:
 __all__ = [
     "BartError",
     "__version__",
+    "apps",
     "interop",
     "io",
     "linop",

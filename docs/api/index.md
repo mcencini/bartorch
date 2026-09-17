@@ -7,6 +7,7 @@
 | {doc}`priors` | `bartorch.priors`: regularization terms and denoisers |
 | {doc}`optim` | `bartorch.optim`: iterative algorithms, and the data normalization a reconstruction applies |
 | {doc}`nlop` | `bartorch.nlop`: the nonlinear operator class, composition, operators defined in Python or torch |
+| {doc}`apps` | `bartorch.apps`: BART's reconstruction pipelines, assembled from this package |
 | {doc}`tools` | `bartorch.tools`: simulation, sampling and trajectories, coil calibration, reconstruction, and the operations around one -- resampling, registration, measurement |
 | {doc}`io` | `bartorch.io`: CFL files |
 | {doc}`interop` | `bartorch.interop`: adapters to deepinv |
@@ -23,6 +24,7 @@ linop
 priors
 optim
 nlop
+apps
 tools
 io
 interop
