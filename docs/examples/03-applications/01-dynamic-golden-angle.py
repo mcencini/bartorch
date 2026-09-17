@@ -330,7 +330,7 @@ for name, volume in curves.items():
         continue
     enhancement = volume[:, region].mean(-1)
     curve = float((enhancement - truth).norm() / truth.norm())
-    frames = bartorch.nrmse(series.abs(), volume, scaled=True)
+    frames = bt.nrmse(series.abs(), volume, scaled=True)
     print(f"{name:>12}  curve NRMSE {curve:.3f}   frame NRMSE {frames:.3f}")
 
 # %%

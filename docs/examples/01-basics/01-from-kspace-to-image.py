@@ -365,7 +365,7 @@ wavelet = bt.pics(
 # The sensitivities ESPIRiT estimates and the ones the acquisition was
 # simulated with differ by a phase that varies from voxel to voxel, so the
 # reconstructed image does too, and the comparison is between magnitudes.
-# :func:`bartorch.nrmse` with ``scaled=True`` divides out the one degree of
+# :func:`bartorch.tools.nrmse` with ``scaled=True`` divides out the one degree of
 # freedom a SENSE reconstruction leaves undetermined, the global scale.
 
 for name, estimate in (
@@ -373,8 +373,8 @@ for name, estimate in (
     ("SENSE", sense),
     ("wavelet", wavelet),
 ):
-    error = bartorch.nrmse(image.abs(), estimate.abs(), scaled=True)
-    similarity = bartorch.ssim(image.abs(), scaled(estimate, image))
+    error = bt.nrmse(image.abs(), estimate.abs(), scaled=True)
+    similarity = bt.ssim(image.abs(), scaled(estimate, image))
     print(f"{name:>20}  NRMSE {error:.3f}  SSIM {similarity:.3f}")
 
 # %%

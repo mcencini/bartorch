@@ -97,3 +97,26 @@ own declaration of the command and take its options under their long names.
    wave
    wshfl
 ```
+
+## Around a reconstruction
+
+Resampling, registration and measurement: the array operations a
+reconstruction is surrounded by, none of which is one.
+
+```{eval-rst}
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   warp
+   affine_transform
+   fovshift
+   register_affine
+   register_nonrigid
+   estimate_shift
+   nrmse
+   mse
+   ssim
+   psnr
+   roi_stat
+```
