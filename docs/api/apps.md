@@ -12,10 +12,13 @@ convention BART iterates in, the scaling it estimates -- so an app is a
 re-expression of the application and not an arithmetic that agrees with it.
 
 On a Cartesian grid `tests/test_apps.py` holds the two to `torch.equal` across
-fifteen configurations. Off the grid they agree to single-precision round-off
-rather than to the bit, and so does the application against itself when its
-scaling is supplied rather than estimated; where that difference comes from is
-the non-uniform transform and not the pipeline around it.
+fifteen configurations.
+
+Off the grid they agree to round-off instead, and no assertion there could say
+more: a non-uniform transform spread over threads sums in the order the threads
+finish in, so nothing off the grid is bit-reproducible.
+{func}`bartorch.tools.pics` run twice over the same data differs from itself by
+about 6e-07 of the peak -- the same size as its difference from the app.
 
 ```{eval-rst}
 .. autosummary::
