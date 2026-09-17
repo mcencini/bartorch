@@ -1,14 +1,14 @@
 Deep learning
 -------------
 
-Reconstructions whose regularizer is learned rather than written down.
+Reconstructions whose regularizer is learned rather than specified.
 
-An unrolled network is an iteration with a network inside it: the data term
-stays the encoding operator and the solver, and what is learned is the
-proximal step and the scalars around it. The page here builds MoDL that way,
-with BART's alternating-direction iteration as the backbone, and trains it with
-``lightning``, ``torchio`` and a denoiser from ``deepinv``.
+An unrolled network is an iteration with a network in its proximal step: the
+data term remains the encoding operator and the solver, and what is learned is
+the proximal step and the scalars accompanying it. MoDL is constructed this
+way below, over BART's alternating-direction iteration, and trained with
+``lightning`` and ``torchio`` against a denoiser from ``deepinv``.
 
-Running it needs those three and ``monai``::
+Running the section additionally requires::
 
     pip install lightning torchio monai deepinv

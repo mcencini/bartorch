@@ -1,4 +1,4 @@
-"""A complex image as real channels, which is what a network and torchio take."""
+"""Complex tensors in the channel-first real layout networks and ``torchio`` use."""
 
 from __future__ import annotations
 
@@ -8,26 +8,29 @@ __all__ = ["as_complex", "as_real"]
 
 
 def as_real(input: torch.Tensor) -> torch.Tensor:
-    """``input`` with its real and imaginary parts in a leading channel axis.
+    """Real and imaginary parts of ``input`` stacked along a new leading axis.
 
-    A complex tensor of shape ``s`` becomes a real one of ``(2, *s)`` -- the
-    pair in front rather than at the back, where :func:`torch.view_as_real`
-    puts it, because that is where a convolution's channels are and where
-    ``torchio``'s images carry theirs.  A real tensor is given a zero
-    imaginary part, so that one k-space and one magnitude image can be
-    carried the same way.
+    The pair is placed in front rather than in the trailing axis used by
+    :func:`torch.view_as_real`, matching the channel-first convention of
+    convolutional networks and of ``torchio.ScalarImage``.
 
     Parameters
     ----------
     input : torch.Tensor
-        Complex or real, of any shape.
+        Complex tensor of any shape.  A real tensor is given a zero imaginary
+        part, so that magnitude images and complex k-space can be carried in
+        the same layout.
 
     Returns
     -------
     torch.Tensor
-        Real, of ``(2, *input.shape)``.  A ``torchio.ScalarImage`` wants four
-        axes, so a slice is unsqueezed to ``(2, height, width, 1)`` before it
-        is handed over.
+        Real tensor of shape ``(2, *input.shape)``.
+
+    Notes
+    -----
+    ``torchio.ScalarImage`` requires four axes, ``(channels, width, height,
+    depth)``, so a two-dimensional image is unsqueezed to
+    ``(2, height, width, 1)`` before it is passed on.
 
     Examples
     --------
@@ -40,23 +43,25 @@ def as_real(input: torch.Tensor) -> torch.Tensor:
 
 
 def as_complex(input: torch.Tensor) -> torch.Tensor:
-    """The complex tensor :func:`as_real` made ``input`` from.
+    """Complex tensor formed from a leading axis of real and imaginary parts.
+
+    Inverse of :func:`as_real`.
 
     Parameters
     ----------
     input : torch.Tensor
-        Real, with a leading axis of two.
+        Real tensor whose leading axis has length two.
 
     Returns
     -------
     torch.Tensor
-        Complex, of ``input.shape[1:]``.
+        Complex tensor of shape ``input.shape[1:]``.
     """
     if input.is_complex():
         raise TypeError(f"as_complex takes the real pair, and {input.dtype} is complex already")
     if 0 == input.ndim or 2 != input.shape[0]:
         raise ValueError(
-            f"the real and imaginary parts are the leading axis, so it is two long, "
-            f"and {tuple(input.shape)} is not"
+            f"the real and imaginary parts are the leading axis, so it has length two, "
+            f"and {tuple(input.shape)} does not"
         )
     return torch.complex(input[0], input[1])

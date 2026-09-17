@@ -26,19 +26,17 @@ same splitting with a dual variable :math:`u` carried along:
    z^{k+1} &= D_w(x^{k+1} + u^{k}) \\
    u^{k+1} &= u^{k} + x^{k+1} - z^{k+1},
 
-so MoDL is this iteration with :math:`u` held at zero. The dual accumulates the
-mismatch between the data-consistent iterate and the denoised one, which is what
-makes the fixed point of the iteration a solution of the constrained problem
-rather than of the penalized one: the denoiser's strength stops being something
-:math:`\rho` has to be balanced against at every step.
+MoDL is therefore this iteration with :math:`u` fixed at zero. The dual
+variable accumulates the mismatch between the data-consistent and the denoised
+iterate, so that a fixed point of the iteration solves the constrained problem
+rather than the penalized one.
 
-Nothing of that iteration is written here. :class:`bartorch.optim.ADMMBlock` is
-``admm.c``'s step, x-update included -- BART's ``cg_xupdate`` is the conjugate
-gradients MoDL's own implementation writes out -- and
-:class:`bartorch.learning.Unrolled` is the loop over it. What the network
-contributes is the proximal step, through
+The iteration itself is BART's. :class:`bartorch.optim.ADMMBlock` implements
+``admm.c``'s step, including the conjugate-gradient x-update that MoDL's own
+implementation writes out, and :class:`bartorch.learning.Unrolled` applies it
+repeatedly. The network supplies the proximal step, through
 :class:`bartorch.priors.ImplicitPrior`, and :math:`\rho`, which is a
-:class:`torch.nn.Parameter` like any weight.
+:class:`torch.nn.Parameter`.
 
 Aggarwal HK, Mani MP, Jacob M. *MoDL: model-based deep learning architecture
 for inverse problems.* IEEE Trans Med Imaging 38(2):394-405 (2019).
@@ -114,19 +112,19 @@ torch.manual_seed(0)
 
 # %%
 #
-# The images
-# ----------
+# Images
+# ------
 #
-# A stack of axial slices of one BrainWeb subject, each turned into a
-# :math:`T_1`-weighted spin-echo image the way
-# :doc:`../01-basics/01-from-kspace-to-image` turns one, and given a smooth
-# phase so that nothing here depends on the image being real. The slices are
-# split into a training set and a validation set by position rather than at
-# random, so that a validation slice is not the neighbour of a training one.
+# Axial slices of one BrainWeb subject, each converted into a
+# :math:`T_1`-weighted spin-echo image as in
+# :doc:`../01-basics/01-from-kspace-to-image` and given a smooth phase, so that
+# no step below depends on the image being real. The slices are split into
+# training and validation sets by position rather than at random, so that a
+# validation slice is not adjacent to a training slice.
 #
-# This is a demonstration of the assembly, not of a trained network: one
-# subject, one sampling pattern and twenty-four slices are a phantom, and the
-# weights that come out of it mean nothing beyond this page.
+# One subject, twenty-four slices and a single sampling pattern constitute a
+# phantom. The weights obtained below are not expected to generalize, and the
+# page demonstrates the construction rather than a trained model.
 
 # sphinx_gallery_start_ignore
 TISSUES = (1, 2, 3, 4, 5, 6, 8)  # everything the table gives relaxation times
@@ -150,7 +148,7 @@ phase = torch.exp(0.8j * (grid_x**2 - 0.5 * grid_y**2))
 
 
 def _slice_image(index):
-    """One axial slice as the complex image a spin-echo experiment would measure."""
+    """One axial slice as the complex image a spin-echo acquisition would measure."""
     fractions = np.flipud(volume[index])[..., list(TISSUES)].copy()
     occupied = np.nonzero(fractions.sum(-1) > 0.5)
     middle = [int((axis.min() + axis.max()) / 2) for axis in occupied]
@@ -190,15 +188,15 @@ print(f"{len(train_images)} slices to train on, {len(valid_images)} to validate 
 
 # %%
 #
-# The acquisition
-# ---------------
+# Acquisition
+# -----------
 #
 # Eight channels of BART's analytical head coil, and a variable-density random
-# undersampling of the phase encodes with the centre of k-space kept -- the
-# one-dimensional Cartesian mask MoDL is posed over. The pattern is fixed for
-# the whole dataset, so one operator serves every slice; where the sampling
-# varies per item the operator does too, and it is built per item, because its
-# data is not a batch axis of it.
+# undersampling of the phase encodes with a fully sampled k-space centre: the
+# one-dimensional Cartesian sampling MoDL is posed over. The pattern is the
+# same for every slice, so a single operator serves the whole dataset. Where
+# the sampling varies between items, an operator is constructed per item: its
+# sensitivities and pattern are not batch axes of it.
 
 ACCELERATION = 4
 CENTRE = 8  # phase encodes always acquired
@@ -219,17 +217,17 @@ print(f"A: {A.ishape} -> {A.oshape}")
 
 # %%
 #
-# The measured k-space of a slice is :math:`A x` with complex Gaussian noise
-# added. An operator is built for one image and not for a batch of them, so a
-# batch is applied item by item; the iteration blocks in
-# :mod:`bartorch.optim` do the same thing internally, which is why the network
-# below takes a batch and the operator does not.
+# The measured k-space of a slice is :math:`A x` with additive complex
+# Gaussian noise. An operator is constructed for a single image, so a batch is
+# applied item by item; the iteration blocks in :mod:`bartorch.optim` do the
+# same internally, and the network below therefore accepts a batch where the
+# operator does not.
 
 NOISE = 0.005
 
 
 def measure(images, generator=None):
-    """The k-space of each image, and the adjoint reconstruction a network starts from."""
+    """Simulate k-space for each image, with the adjoint reconstruction to start from."""
     x = torch.stack(list(images))
     y = torch.stack([A(item) for item in x])
     y = y + NOISE * torch.randn(y.shape, dtype=torch.complex64, generator=generator)
@@ -238,21 +236,22 @@ def measure(images, generator=None):
 
 # %%
 #
-# The dataset
-# -----------
+# Dataset
+# -------
 #
-# ``torchio`` carries the images and augments them. Its ``ScalarImage`` holds a
-# real tensor of ``(channels, width, height, depth)``, which
+# ``torchio`` holds the images and augments them. Its ``ScalarImage`` requires
+# a real tensor of shape ``(channels, width, height, depth)``;
 # :func:`bartorch.learning.as_real` and :func:`~bartorch.learning.as_complex`
-# convert to and from: the real and imaginary parts become the two channels,
-# and a slice is a volume one voxel deep.
+# convert between that layout and a complex image, the real and imaginary parts
+# becoming the two channels and a slice a volume one voxel deep.
 #
-# The augmentation is the reason to use it rather than a list. A transform is
-# drawn per subject and applied to every image in that subject, so an image and
-# anything that has to stay registered to it -- its coil sensitivities, its
-# parameter maps -- move together; here there is one image per subject, and the
-# transform is a flip and a small rotation, which keep the tissue statistics a
-# denoiser learns while changing the anatomy it sees.
+# Augmentation is the reason to prefer it to a plain list. A transform is drawn
+# per subject and applied to every image of that subject, so an image and
+# anything that must remain registered with it -- coil sensitivities, parameter
+# maps -- are transformed consistently. Here each subject holds one image, and
+# the transform is a flip and a rotation of at most eight degrees, which
+# preserve the tissue statistics the denoiser is trained on while varying the
+# anatomy.
 
 augmentation = torchio.Compose(
     [
@@ -270,7 +269,7 @@ def subjects(images):
 
 
 def collate(batch):
-    """A batch of subjects as the images, the k-space and the adjoint reconstruction."""
+    """Collate subjects into images, simulated k-space and adjoint reconstructions."""
     return measure(learning.as_complex(subject["image"][torchio.DATA][..., 0]) for subject in batch)
 
 
@@ -286,31 +285,32 @@ valid_loader = DataLoader(
 
 # %%
 #
-# The network
-# -----------
+# Network
+# -------
 #
-# Four objects, each of which is one thing:
+# Four objects:
 #
-# * ``deepinv``'s ``DnCNN`` is the denoiser MoDL's own five-layer residual
-#   network belongs to the family of. It is an ``nn.Module`` taking real
-#   images, and needs no adapter of its own.
-# * :class:`bartorch.learning.Denoiser` is the layout between that network and
-#   an image here: two channels for the real and imaginary parts, the batch
-#   folded, and each image scaled to unit peak modulus around the call.
-# * :class:`bartorch.priors.ImplicitPrior` puts it where a regularizer goes.
-# * :class:`bartorch.learning.Unrolled` applies the ADMM step
-#   ``ITERATIONS`` times. One block is shared by every iteration, which is the
-#   weight sharing MoDL means, and ``rho`` is asked for a gradient, which is
-#   MoDL's learned :math:`\lambda`.
+# * ``deepinv``'s ``DnCNN``, a residual convolutional denoiser of the family
+#   MoDL's own five-layer network belongs to. It is an ``nn.Module`` operating
+#   on real images.
+# * :class:`bartorch.learning.Denoiser`, which converts between that layout and
+#   a complex image: two channels for the real and imaginary parts, the batch
+#   axes folded, and each image scaled to unit peak modulus around the call.
+# * :class:`bartorch.priors.ImplicitPrior`, which presents the result as a
+#   regularization term.
+# * :class:`bartorch.learning.Unrolled`, which applies the ADMM step
+#   ``ITERATIONS`` times. A single block is shared by every iteration, the
+#   weight sharing MoDL specifies, and ``rho`` is made differentiable, MoDL's
+#   learned :math:`\lambda`.
 #
-# ``alpha=1.0`` turns off BART's over-relaxation, so the step is the iteration
-# written above; ``cg_maxiter`` is the budget of the x-update, MoDL's ten.
+# ``alpha=1.0`` disables BART's over-relaxation, so that the step is the
+# iteration written above; ``cg_maxiter`` is the x-update budget, MoDL's ten.
 
 from deepinv.models import DnCNN
 
 
 def modl():
-    """A fresh unrolled network, and the block whose weights it shares."""
+    """Construct an unrolled network and return it with the block it shares."""
     network = DnCNN(in_channels=2, out_channels=2, depth=5, pretrained=None)
     denoiser = learning.Denoiser(network, channels=2)
     block = optim.ADMMBlock(priors.ImplicitPrior(denoiser), rho=0.05, alpha=1.0, cg_maxiter=10)
@@ -330,15 +330,15 @@ print(f"rho starts at {float(block.rho.detach()):.3f}")
 #
 # ``lightning`` runs the loop. The module is the ordinary supervised one: a
 # forward pass, a loss against the fully sampled image, and metrics from
-# ``monai``. Nothing about the reconstruction reaches into it -- by the time
-# the loss is taken, the output is a tensor.
+# ``monai``. The loss is taken on a tensor and requires nothing of the
+# reconstruction that produced it.
 
 psnr = PSNRMetric(max_val=1.0)
 ssim = SSIMMetric(spatial_dims=2, data_range=1.0)
 
 
 class Reconstruction(lightning.LightningModule):
-    """The unrolled network, trained against fully sampled images."""
+    """Supervised training of an unrolled network against fully sampled images."""
 
     def __init__(self, model, lr=1e-3):
         super().__init__()
@@ -378,13 +378,13 @@ print(f"rho ended at {float(block.rho.detach()):.3f}")
 
 # %%
 #
-# What it reconstructs
-# --------------------
+# Results
+# -------
 #
-# Against three reconstructions of the same k-space that learn nothing: the
-# adjoint, which is what the network starts from; a conjugate-gradient SENSE
-# fit, which is the data term alone; and the same ADMM iteration with a
-# wavelet penalty in place of the denoiser, run to fifty iterations rather than
+# Three reconstructions of the same k-space serve as references: the adjoint,
+# which the network is started from; a conjugate-gradient SENSE fit, which
+# minimizes the data term alone; and the same ADMM iteration with a wavelet
+# penalty in place of the denoiser, run for fifty iterations rather than
 # five.
 
 torch.manual_seed(7)
@@ -403,7 +403,7 @@ wavelet = torch.stack(
 
 
 def quality(estimate):
-    """PSNR and SSIM of a batch of magnitudes against the truth's."""
+    """PSNR and SSIM of a batch of magnitudes against the reference magnitudes."""
     a, b = estimate.abs()[:, None], truth.abs()[:, None]
     return float(psnr(a, b).mean()), float(ssim(a, b).mean())
 
@@ -420,13 +420,13 @@ for name, estimate in rows.items():
 
 # %%
 #
-# What the table is not is a comparison of methods. Fifteen epochs over
-# twenty-four slices of one subject, against a wavelet penalty with fifty
-# iterations and a weight chosen by hand, says nothing about either on real
-# data -- five learned iterations landing in the same range as fifty
-# hand-written ones is the whole of what it shows. A network trained to be
-# believed is trained on many subjects, validated on subjects it never saw, and
-# compared at a fixed reconstruction time.
+# The table is not a comparison of methods. Fifteen epochs over twenty-four
+# slices of one subject, set against a wavelet penalty of fifty iterations with
+# a manually chosen weight, supports no conclusion about either on measured
+# data; the observation available here is that five learned iterations reach
+# the range of fifty hand-specified ones. A quantitative comparison would
+# require many subjects, validation on subjects excluded from training, and a
+# fixed reconstruction time.
 
 # %%
 
@@ -443,30 +443,30 @@ plt.show()
 
 # %%
 #
-# Training a stack that does not fit
-# ----------------------------------
+# Differentiating a deeper stack
+# ------------------------------
 #
-# Five iterations of a two-dimensional encoding record a graph that fits
-# anywhere. A three-dimensional non-Cartesian encoding with ten of them does
-# not, and the memory is the denoiser's activations: an operator's backward
-# pass is another application of the operator and stores nothing that grows
-# with the iteration count, while a convolutional network's stores every
-# activation it made, once per iteration.
+# Five iterations of a two-dimensional encoding record a graph of modest size.
+# Ten iterations of a three-dimensional non-Cartesian encoding do not, and the
+# memory is dominated by the denoiser's activations: the backward pass of an
+# operator is a further application of that operator and stores nothing growing
+# with the iteration count, whereas a convolutional network stores every
+# activation, once per iteration.
 #
-# :class:`~bartorch.learning.Unrolled` takes both ways around that, and neither
-# changes what the network computes:
+# :class:`~bartorch.learning.Unrolled` provides two alternatives, neither of
+# which alters the value the network computes:
 #
-# * ``detach=True`` starts each iteration from a detached state, so the graph
-#   spans one iteration. With a loss on each of
-#   :meth:`~bartorch.learning.Unrolled.steps` this is greedy per-iteration
-#   training, whose memory does not depend on the count at all.
-# * ``checkpoint=True`` keeps the states between iterations and recomputes a
-#   step's interior in the backward pass. The gradient is the end-to-end one,
-#   to the bit; each block is applied twice.
+# * ``detach=True`` starts each iteration from a detached state, so that the
+#   graph spans one iteration. With a loss on each image yielded by
+#   :meth:`~bartorch.learning.Unrolled.steps`, this is greedy per-iteration
+#   training, whose memory is independent of the iteration count.
+# * ``checkpoint=True`` retains the states between iterations and recomputes
+#   the interior of a step during the backward pass. The gradient is the
+#   end-to-end one and each block is applied twice.
 #
-# Pretraining the denoiser on its own, then training greedily, then fine-tuning
-# the whole stack with checkpointing, is the staged schedule a fully
-# three-dimensional unrolled reconstruction is trained with.
+# Pretraining the denoiser in isolation, then greedy per-iteration training,
+# then end-to-end fine-tuning with checkpointing, is the staged schedule
+# reported for a fully three-dimensional unrolled reconstruction.
 #
 # Urman Y, Nishimura M, Abraham DR, Cao X, Setsompop K. *Fully 3D unrolled
 # magnetic resonance fingerprinting reconstruction via staged pretraining and
@@ -480,7 +480,7 @@ x, y, start = measure(train_images[:2], torch.Generator().manual_seed(3))
 
 for step in range(3):
     optimizer.zero_grad()
-    # One loss per iteration, each reaching only the step that made it.
+    # One loss per iteration, each propagating only into the step that produced it.
     for image in greedy.steps(y, A, x0=start):
         (image - x).abs().square().mean().backward()
     optimizer.step()
@@ -489,10 +489,10 @@ print(f"greedy: rho {float(greedy_block.rho.detach()):.3f}")
 
 # %%
 #
-# Checkpointing answers with the same gradient as recording the whole stack,
-# which is what says it is a memory decision and not a modelling one. Here it
-# is the gradient of ``rho``, which reaches through every iteration and through
-# each x-update's conjugate-gradient solve.
+# Checkpointing yields the same gradient as recording the whole stack,
+# establishing that the choice is one of memory and not of model. The gradient
+# shown is that of ``rho``, which propagates through every iteration and
+# through the conjugate-gradient solve of each x-update.
 
 x, y, start = measure(valid_images[:1])
 made = []
@@ -508,8 +508,8 @@ print(f"rho's gradient: {made[0]:.6g} recorded, {made[1]:.6g} recomputed")
 
 # %%
 #
-# The third route is not to unroll at all.
-# :class:`bartorch.optim.FixedPoint` drives the block to its fixed point and
-# differentiates there by solving the adjoint fixed-point equation, so its
-# memory is one step's whatever the iteration count -- a deep-equilibrium
-# model, of which this stack is the truncated version.
+# A third alternative is not to unroll. :class:`bartorch.optim.FixedPoint`
+# drives the block to its fixed point and differentiates there by solving the
+# adjoint fixed-point equation, so that its memory is that of a single step
+# irrespective of the iteration count. This is a deep-equilibrium model, of
+# which the stack above is the truncated form.

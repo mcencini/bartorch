@@ -1,4 +1,4 @@
-"""A network trained on real images, applied to the images a reconstruction carries."""
+"""Real-valued image networks applied to the complex images of a reconstruction."""
 
 from __future__ import annotations
 
@@ -7,71 +7,76 @@ from torch import nn
 
 __all__ = ["Denoiser"]
 
-#: What a modulus is held above, so that an empty image divides by something.
+#: Lower bound on a modulus, so that an all-zero image is not divided by zero.
 _TINY = 1e-12
 
 _PARTS = ("channels", "separate", "magnitude")
 
 
 class Denoiser(nn.Module):
-    """``net``, which takes real images, applied to a complex one of this package's.
+    """Adapter applying a real-valued image network to a complex image.
 
-    A denoiser from an image-restoration library takes a real tensor of
-    ``(n, channels, height, width)`` whose values are around the unit range.
-    An image here is complex, carries frames, contrasts or subspace
-    coefficients in front of its spatial axes, is sometimes a volume, and is
-    scaled by whatever the k-space was scaled by.  This module is the four
-    conversions between the two, and nothing else:
+    Image-restoration networks operate on real tensors of shape
+    ``(n, channels, *spatial)`` whose values are of order unity.  An image
+    here is complex, may carry frames, contrasts or subspace coefficients in
+    front of its spatial axes, may be volumetric, and is scaled by the
+    normalization applied to the measured data.  This module performs the four
+    conversions between the two representations:
 
-    * the last ``spatial`` axes are the image the network sees, and every axis
-      in front of them but the first is folded into its batch;
-    * the complex values become real planes, as ``parts`` says;
-    * a plane is repeated across ``channels`` where the network takes three,
-      and the three that come back are averaged;
-    * each item of the leading axis is divided by its own peak modulus before
-      the network and multiplied by it after.
+    1. the last ``spatial`` axes form the image seen by the network, the
+       leading axis is a batch, and the axes between them are folded into the
+       network's batch axis;
+    2. the complex values are laid out as real planes according to ``parts``;
+    3. a single plane is replicated across three channels, and the three
+       returned channels are averaged, where the network is an RGB one;
+    4. each item of the leading axis is divided by its own peak modulus before
+       the call and multiplied by it afterwards.
 
-    It is called as ``denoiser(x)`` or ``denoiser(x, sigma)``, which is what
-    :class:`~bartorch.priors.ImplicitPrior` asks of a denoiser, so it stands
-    wherever a regularizer does.  Nothing here is specific to one library: a
-    ``deepinv`` denoiser, a ``monai`` network and a network written by hand
-    are all ``nn.Module``\\s called the same way.
+    Instances are called as ``denoiser(x)`` or ``denoiser(x, sigma)``, the
+    interface :class:`bartorch.priors.ImplicitPrior` requires of a denoiser,
+    and are therefore accepted wherever a regularizer is.  The wrapped network
+    may come from any library: a ``deepinv`` denoiser, a ``monai`` network and
+    a network defined locally are :class:`torch.nn.Module` objects with the
+    same calling convention, differing from this package only in input layout.
 
     Parameters
     ----------
     net : callable
         Called as ``net(planes)``, or as ``net(planes, sigma)`` when a
-        ``sigma`` reaches :meth:`forward`, on a real tensor of
+        ``sigma`` is supplied to :meth:`forward`, on a real tensor of shape
         ``(n, channels, *spatial)``.
     spatial : int
-        How many trailing axes of the image the network takes as one of its
-        own: 2 for a network trained on slices, 3 for one trained on volumes.
+        Number of trailing image axes the network operates on: 2 for a
+        network trained on slices, 3 for one trained on volumes.
     channels : int
-        What the network's first layer takes.  1 is a grayscale network and 3
-        an RGB one, each of which takes one plane at a time; 2 is a network
-        that takes the real and imaginary planes together, as MoDL's does.
+        Number of input channels the network expects.  A grayscale network
+        takes 1 and an RGB network 3, both operating on one plane at a time;
+        2 is a network taking the real and imaginary planes jointly, as
+        MoDL's does.
     parts : {"channels", "separate", "magnitude"}, optional
-        How the complex values become real planes.  ``"channels"`` puts the
-        real and imaginary parts in the network's two channels.
-        ``"separate"`` passes each of them through on its own, in one call
-        over a doubled batch.  ``"magnitude"`` denoises the modulus and
-        multiplies the phase back in, which leaves the phase untouched.  The
-        default is ``"channels"`` for a two-channel network and
-        ``"separate"`` otherwise.
+        Representation of the complex values as real planes.  ``"channels"``
+        assigns the real and imaginary parts to the network's two input
+        channels.  ``"separate"`` applies the network to each part
+        independently, in a single call over a doubled batch axis.
+        ``"magnitude"`` applies it to the modulus and restores the original
+        phase, leaving the phase unaltered.  Defaults to ``"channels"`` for a
+        two-channel network and ``"separate"`` otherwise.
     normalize : bool
-        Whether each image is scaled to unit peak modulus around the network.
-        A denoiser trained on images in the unit range has a noise level that
-        means nothing without this.  The scale is measured rather than
-        learned: no gradient reaches the image through it.
+        Whether each image is scaled to unit peak modulus around the call.
+        The noise level of a network trained on images in the unit range is
+        not interpretable without this scaling.
 
     Notes
     -----
-    ``sigma`` is in the units of the scaled image, which is the convention a
-    plug-and-play noise level follows; it is passed to the network as it
-    stands.
+    ``sigma`` is expressed in the units of the scaled image, following the
+    convention of plug-and-play noise levels, and is passed to the network
+    unchanged.
 
-    A real input is treated as a complex image with no imaginary part, and
-    what comes back is the real part of the answer.
+    A real-valued input is treated as a complex image with zero imaginary
+    part, and the real part of the result is returned.
+
+    The scale of step 4 is detached, so no gradient propagates to the input
+    through the normalization.
 
     Examples
     --------
@@ -120,17 +125,17 @@ class Denoiser(nn.Module):
         self.normalize = bool(normalize)
 
     def forward(self, input: torch.Tensor, sigma=None) -> torch.Tensor:
-        """``input`` denoised, of its own shape and dtype.
+        """Denoise ``input``, returning its own shape and dtype.
 
         Parameters
         ----------
         input : torch.Tensor
-            ``(batch, *rest, *spatial)``, complex or real.  The leading axis is
-            the batch each scale is measured over; a tensor of exactly
-            ``spatial`` axes is one image.
+            Complex or real, of shape ``(batch, *rest, *spatial)``.  The
+            leading axis is the batch over which each scale is measured; a
+            tensor of exactly ``spatial`` axes is a single image.
         sigma : float or torch.Tensor, optional
-            Passed to the network as its second argument when it is given, and
-            not passed at all when it is not.
+            Passed to the network as its second argument when supplied, and
+            omitted from the call otherwise.
         """
         if input.ndim < self.spatial:
             raise ValueError(
@@ -144,7 +149,7 @@ class Denoiser(nn.Module):
         return out.real.to(input.dtype) if real else out.to(input.dtype)
 
     def _scale(self, x: torch.Tensor) -> torch.Tensor:
-        """The peak modulus of each item of the leading axis, ready to divide by."""
+        """Peak modulus of each item of the leading axis, shaped to divide ``x``."""
         if not self.normalize:
             return torch.ones((), dtype=x.real.dtype, device=x.device)
         lead = 1 if x.ndim > self.spatial else 0
@@ -152,7 +157,7 @@ class Denoiser(nn.Module):
         return peak.reshape(*x.shape[:lead], *(1,) * (x.ndim - lead))
 
     def _denoise(self, x: torch.Tensor, sigma) -> torch.Tensor:
-        """The network over the planes ``parts`` makes of ``x``, put back together."""
+        """Apply the network to the planes ``parts`` specifies and recombine the result."""
         spatial = tuple(x.shape[-self.spatial :])
 
         if "magnitude" == self.parts:
@@ -171,7 +176,7 @@ class Denoiser(nn.Module):
         return torch.complex(made[0], made[1]).reshape(x.shape)
 
     def _net(self, planes: torch.Tensor, sigma, wanted: int) -> torch.Tensor:
-        """One call, with the channels the network takes and the planes it owes back."""
+        """A single call, matching the network's channel count and checking its output."""
         if 3 == self.channels and 1 == planes.shape[1]:
             planes = planes.repeat(1, 3, *(1,) * self.spatial)
         made = self.net(planes) if sigma is None else self.net(planes, sigma)

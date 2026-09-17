@@ -43,7 +43,7 @@ would otherwise have been linked against.
 | `src/csrc/substitute/backend.[ch]`, `ref_blas.c`, `cblas_shim.c`, `lapacke_shim.c` | CBLAS and LAPACKE as BART calls them, forwarded to a table of Fortran-ABI routines with reference BLAS as the fallback. |
 | `src/csrc/substitute/finufft.c`, `nufft_finufft.c` | FINUFFT's and cuFINUFFT's entry points, and BART's NUFFT operator built out of a pair of their plans -- and the normal, which stores one of those in BART's operator through `noncart/nufft_priv.h` rather than letting it grid one. |
 | `src/csrc/substitute/psf.c` | The three `compute_psf*` entry points, so that the adjoint transform a point spread function is comes from the substitution. |
-| `src/bartorch/` | The package.  Public: the functions in `fourier.py`, `wavelet.py`, `thresh.py`, `util.py`, `interp.py` and `_settings.py`, re-exported flat as `bartorch.*`; `linop/` and `nlop/` (a class per operator); `optim/` (a class per BART iteration); `priors/` (BART's regularization terms, and its denoisers); `learning/` (a real-valued image network where a regularizer goes, and an iteration as a network); `apps/` (BART's reconstruction pipelines, assembled from this package rather than run as commands); `tools/` (BART's applications, in five sections); `io.py` (CFL files); `interop.py` (the deepinv adapter).  Private: `_abi.py` (the ctypes signatures, generated from the header), `_lib.py` (finding and loading the library), `_marshal.py` (what an ABI argument looks like), `_backend.py` (which library serves BLAS and LAPACK), `_buffer.py` (a tensor over one of BART's buffers, host or device), `_dispatch.py` (running a command on tensors), `_operator.py` (what every operator shares), `_grid.py` (what the operations on a grid share, including BART's motion layout), `_finufft.py` and `_cuda.py` (the substitution's and the card's controls), `_catalogue.py` and `_options.py` (what BART declares, and what each option is called here), `_call.py` (the mark on a hand-written wrapper, and wrappers built from the catalogue), `_coverage.py` (where each command is exposed, or why not), `_macos_openmp.py` (pointing FINUFFT's OpenMP runtime at torch's, so one is loaded); inside `linop/`, `form.py` (the encoding form and the plan it reports) and `plan.py` (matching a composition against that form). |
+| `src/bartorch/` | The package.  Public: the functions in `fourier.py`, `wavelet.py`, `thresh.py`, `util.py`, `interp.py` and `_settings.py`, re-exported flat as `bartorch.*`; `linop/` and `nlop/` (a class per operator); `optim/` (a class per BART iteration); `priors/` (BART's regularization terms, and its denoisers); `learning/` (adapters between neural networks and this package's images and iterations); `apps/` (BART's reconstruction pipelines, assembled from this package rather than run as commands); `tools/` (BART's applications, in five sections); `io.py` (CFL files); `interop.py` (the deepinv adapter).  Private: `_abi.py` (the ctypes signatures, generated from the header), `_lib.py` (finding and loading the library), `_marshal.py` (what an ABI argument looks like), `_backend.py` (which library serves BLAS and LAPACK), `_buffer.py` (a tensor over one of BART's buffers, host or device), `_dispatch.py` (running a command on tensors), `_operator.py` (what every operator shares), `_grid.py` (what the operations on a grid share, including BART's motion layout), `_finufft.py` and `_cuda.py` (the substitution's and the card's controls), `_catalogue.py` and `_options.py` (what BART declares, and what each option is called here), `_call.py` (the mark on a hand-written wrapper, and wrappers built from the catalogue), `_coverage.py` (where each command is exposed, or why not), `_macos_openmp.py` (pointing FINUFFT's OpenMP runtime at torch's, so one is loaded); inside `linop/`, `form.py` (the encoding form and the plan it reports) and `plan.py` (matching a composition against that form). |
 | `scripts/gen_abi.py` | Generates `_abi.py` from `src/csrc/include/bartorch.h`. Run after changing the header; `tests/test_abi.py` fails when the checked-in file is not what it writes. |
 | `scripts/gen_catalogue.py` | Generates `_catalogue.py` from the BART sources: every command, its arguments, and every option with both spellings. Run after a submodule bump. |
 | `scripts/run_tests.sh` | Builds whatever changed on the C side, then runs the suite against `src/`, without installing. |
@@ -780,49 +780,52 @@ instead would put that import in the path of every operator and tie releases
 here to releases there. The wrapper's own work is `deepinv`'s batch axis,
 which a BART operator does not have, and `A_dagger` as `optim.CG`.
 
-It is needed for what deepinv does *with* a physics -- its samplers, and the
-losses that read the forward model -- and for nothing else. A denoiser is an
-`nn.Module` called as `net(x)` or `net(x, sigma)`, so it goes into
-`priors.ImplicitPrior` by duck typing with no adapter at all; a supervised loss
-or a metric sees a tensor and does not know where it came from; a loss that
-does read the forward model is written over the operator, which is already a
-callable with an adjoint. `bartorch.learning` is what is between a network and
-this package, and it imports neither deepinv nor anything else.
+It is required only for the deepinv algorithms that evaluate a physics: its
+samplers, and the losses defined in terms of the forward model. A denoiser is
+an `nn.Module` called as `net(x)` or `net(x, sigma)` and is accepted by
+`priors.ImplicitPrior` directly; a supervised loss or a metric takes a
+reconstructed tensor and a reference and refers to no forward model; a loss
+that does evaluate one is written over the operator, which is already a
+callable with an adjoint. `bartorch.learning` holds the conversions between a
+network and this package, and imports neither deepinv nor anything else.
 
-**A training library is not written here.** Loops belong to `lightning`,
+**No training library is written here.** Loops belong to `lightning`,
 datasets, augmentation and patch sampling to `torchio`, and networks, losses
-and metrics to `monai`, `deepinv` and `torchmetrics`. What none of them knows
-is this package's data -- complex images with frames, contrasts or subspace
+and metrics to `monai`, `deepinv` and `torchmetrics`. None of them represents
+this package's data -- complex images carrying frames, contrasts or subspace
 coefficients in front of their spatial axes, reconstructed by an iteration --
-so `learning/` is the adapters between the two and holds nothing else.
-`Denoiser` is the layout between a network taking real
-`(n, channels, height, width)` planes in the unit range and an image here: the
-spatial axes are kept, the axes in front of them are folded into the network's
-batch, the complex values become real planes, a plane is repeated where the
-network takes three, and each image is scaled to unit peak modulus around the
-call. `Unrolled` is the loop over one of `optim`'s blocks, and `as_real` and
-`as_complex` are the leading channel axis a `torchio.ScalarImage` and a
-convolution both want.
+so `learning/` holds the conversions between the two and nothing else.
+`Denoiser` converts between a network taking real `(n, channels, *spatial)`
+planes of order unity and an image here: the spatial axes are retained, the
+axes in front of them are folded into the network's batch axis, the complex
+values are laid out as real planes, a plane is replicated where the network
+takes three channels, and each image is scaled to unit peak modulus around the
+call. `Unrolled` applies one of `optim`'s blocks repeatedly, and `as_real` and
+`as_complex` convert to and from the leading channel axis a
+`torchio.ScalarImage` and a convolution both require.
 
-`Unrolled` also carries what makes a deep stack trainable, and neither setting
-changes what it computes: `detach=True` starts each iteration from a detached
-state, which with a loss on each of `steps()` is greedy per-iteration training,
-and `checkpoint=True` keeps the states between iterations and recomputes a
-step's interior, for the end-to-end gradient at one step's memory. Those are
-the stages a fully three-dimensional unrolled reconstruction is trained in
-(Urman et al., Magn Reson Med 96(5):2516-2529, 2026); `optim.FixedPoint` is the
-third route, with no iteration count to unroll. The memory is the denoiser's:
-an operator's backward pass is another application of the operator and stores
-nothing that grows with the count.
+`Unrolled` also carries the two strategies that make a deep stack trainable,
+neither of which changes the value computed: `detach=True` starts each
+iteration from a detached state, which together with a loss on each image
+yielded by `steps()` is greedy per-iteration training, and `checkpoint=True`
+retains the states between iterations and recomputes the interior of a step,
+giving the end-to-end gradient at the memory of one step. These are the stages
+in which a fully three-dimensional unrolled reconstruction is trained (Urman et
+al., Magn Reson Med 96(5):2516-2529, 2026); `optim.FixedPoint` is a third
+alternative, with no iteration count to unroll. The memory is dominated by the
+denoiser: the backward pass of an operator is a further application of that
+operator and stores nothing growing with the iteration count.
 
-**A denoiser can act in a domain the image is not in.** `ImplicitPrior` takes
-the `transform` a BART term carries, the `G` of `g(G x)`, so the
-alternating-direction and primal-dual iterations split at `Gx` -- one auxiliary
-variable and one dual per term, and `G^H G` in the x-update -- and the denoiser
-is handed `G`'s codomain. That is what a prior learned somewhere else needs:
-weighted contrast images a subspace basis makes of coefficient maps, say,
-denoised by a network trained on weighted MRI. Half-quadratic splitting cannot
-express it, and a sum of terms each with its own `G` is what ADMM is for.
+**A denoiser may be applied on a domain other than the image.**
+`ImplicitPrior` accepts the `transform` a BART term carries, the `G` of
+`g(G x)`, so that the alternating-direction and primal-dual iterations split
+the variable at `Gx`, introducing one auxiliary variable and one dual variable
+per term and adding `G^H G` to the x-update, and the denoiser is applied on the
+codomain of `G`. This accommodates a prior learned in another representation:
+contrast-weighted images obtained from subspace coefficient maps, denoised by a
+network trained on weighted MRI. Half-quadratic splitting cannot express it,
+since it carries a single quadratic penalty and no dual variable, whereas ADMM
+admits a sum of terms each with its own `G`.
 
 ## Nothing here is an algorithm
 

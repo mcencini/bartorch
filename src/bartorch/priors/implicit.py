@@ -9,7 +9,7 @@ __all__ = ["ImplicitPrior"]
 
 
 def _batched(apply, x: torch.Tensor, shape: tuple[int, ...]) -> torch.Tensor:
-    """``apply`` item by item over a leading batch axis, when ``x`` has one."""
+    """Apply ``apply`` item by item over a leading batch axis, when ``x`` has one."""
     if x.ndim == len(shape) + 1:
         return torch.stack([apply(item) for item in x])
     return apply(x)
@@ -27,29 +27,30 @@ class ImplicitPrior(nn.Module):
     image, and a complex image unchanged.  ``sigma`` is a
     :class:`torch.nn.Parameter`, frozen until ``requires_grad_()`` is called.
 
-    ``transform`` is the :math:`G` of a term :math:`g(G x)`, which a
-    regularizer built by BART also carries: the denoiser then acts on
-    :math:`G`'s codomain rather than on the image, and the alternating-direction
-    and primal-dual iterations split at :math:`G x` -- one auxiliary variable
-    and one dual per term, and :math:`G^H G` in the x-update.  A prior learned
-    in a domain the unknown is not in goes here: the contrast-weighted images a
-    subspace basis makes of coefficient maps, say.  Without it :math:`G` is the
-    identity and the denoiser sees the image.
+    ``transform`` is the linear operator :math:`G` of a term :math:`g(G x)`,
+    as a regularizer built by BART also carries.  The denoiser is then applied
+    on the codomain of :math:`G` rather than to the image, and the
+    alternating-direction and primal-dual iterations split the variable at
+    :math:`G x`, introducing one auxiliary variable and one dual variable per
+    term and adding :math:`G^H G` to the x-update.  This accommodates a prior
+    learned in a representation other than the optimization variable, such as
+    contrast-weighted images obtained from subspace coefficient maps.  Without
+    it :math:`G` is the identity and the denoiser is applied to the image.
 
     Parameters
     ----------
     denoiser : callable
         Called as ``denoiser(x)``, or as ``denoiser(x, sigma)`` when a
-        ``sigma`` is given, on ``(batch, *shape)`` where ``shape`` is the
-        image's, or ``transform``'s codomain when there is one.
-        :class:`bartorch.learning.Denoiser` is what puts a network that takes
-        real planes here.
+        ``sigma`` is given, on ``(batch, *shape)``, where ``shape`` is the
+        image's shape or, with a ``transform``, the codomain of :math:`G`.
+        :class:`bartorch.learning.Denoiser` adapts a network operating on real
+        planes to this interface.
     sigma : float, optional
         The noise level the denoiser is asked for, in the units its own
         convention states.
     transform : LinearOperator, optional
-        :math:`G`, mapping the image to what the denoiser acts on.  Only the
-        iterations that are given a term's transform use it; see
+        :math:`G`, mapping the image to the domain the denoiser is applied on.
+        Only the iterations given a term's transform use it; see
         :meth:`bartorch.priors.Regularizer.transform_is_identity`.
 
     Examples
@@ -111,7 +112,7 @@ class ImplicitPrior(nn.Module):
         return None
 
     def _check(self, image_shape) -> None:
-        """That the transform starts from the image the solve is over."""
+        """Check that the transform's domain is the image the solve is over."""
         if tuple(self.transform.ishape) != tuple(image_shape):
             raise ValueError(
                 f"{self!r}'s transform takes {tuple(self.transform.ishape)}, and the image is "

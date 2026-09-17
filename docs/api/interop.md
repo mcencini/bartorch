@@ -11,10 +11,11 @@ libraries.  The other direction needs no adapter: a denoiser goes in
 
 ## deepinv
 
-A `deepinv.physics.LinearPhysics`, for what deepinv does *with* a forward
-model: its samplers (`DiffPIR`, `DPS`, `DDRM`, `ULA`), and the losses that read
-one -- measurement consistency, k-space splitting, equivariant imaging, SURE.
-deepinv is the `bartorch[deepinv]` extra.
+A `deepinv.physics.LinearPhysics`, for the deepinv algorithms that evaluate a
+forward model: its samplers (`DiffPIR`, `DPS`, `DDRM`, `ULA`) and the losses
+defined in terms of the physics -- measurement consistency, measurement
+splitting, equivariant imaging, SURE.  deepinv is the `bartorch[deepinv]`
+extra.
 
 ```{eval-rst}
 .. autosummary::
@@ -24,25 +25,26 @@ deepinv is the `bartorch[deepinv]` extra.
    to_deepinv
 ```
 
-Nothing else about deepinv needs it, and nothing in this package uses it.
+No other use of deepinv requires the adapter, and nothing else in this package
+imports it.
 
-A denoiser is an `nn.Module` called as `net(x)` or `net(x, sigma)`, so it goes
-straight into {class}`bartorch.priors.ImplicitPrior`;
-{class}`bartorch.learning.Denoiser` is the layout between one and a complex
-image here, and imports neither deepinv nor anything else.
+A denoiser is an `nn.Module` called as `net(x)` or `net(x, sigma)` and is
+therefore accepted directly by {class}`bartorch.priors.ImplicitPrior`;
+{class}`bartorch.learning.Denoiser` adapts its input layout to the complex
+images of a reconstruction.
 
-A supervised loss or a metric sees a reconstructed tensor and does not know
-where it came from, so `torchmetrics`, `monai.losses` and `monai.metrics`
-serve, as does `deepinv.loss` -- `SupLoss`, `MSE`, `PSNR`, `SSIM` and the rest
-take `(x_net, x)` and no physics.
+Supervised losses and metrics take a reconstructed image and a reference, with
+no reference to the forward model, so `torchmetrics`, `monai.losses` and
+`monai.metrics` apply directly, as do `deepinv.loss.SupLoss`, `MSE`, `PSNR` and
+`SSIM`.
 
-A loss that does read the forward model is written over the operator, which is
-already a callable with an adjoint:
+A loss that does evaluate the forward model can be written over the operator
+itself:
 
 ```python
 consistency = (A(x_net) - y).abs().square().mean()
 ```
 
-Training loops, datasets, augmentation and patch sampling are `lightning`'s and
-`torchio`'s, and neither has a notion of a forward operator to adapt to.
-{doc}`learning` is what stands between a network and this package.
+Training loops, datasets, augmentation and patch sampling belong to `lightning`
+and `torchio`, neither of which represents a forward operator.  {doc}`learning`
+holds the conversions between a network and this package's data.

@@ -1,15 +1,18 @@
-"""What a network needs of this package, and nothing that a training library already has.
+"""Adapters between neural networks and this package's images and iterations.
 
-Training loops belong to ``lightning``, datasets and their augmentation to
-``torchio``, networks, losses and metrics to ``monai``, ``deepinv`` and
-``torchmetrics``.  What none of them knows is this package's data: images that
-are complex, that carry frames, contrasts or subspace coefficients in front of
-their spatial axes, and that a reconstruction is an iteration over.  So this
-subpackage is the two adapters between the two, and no more:
-:class:`Denoiser` puts a real-valued image network where a regularizer goes,
-and :class:`Unrolled` makes a network of one of :mod:`bartorch.optim`'s
-iterations.  :func:`as_real` and :func:`as_complex` are the layout a
-``torchio`` image and a convolution both want.
+:class:`Denoiser` applies a network trained on real-valued images to the
+complex, possibly multi-frame images a reconstruction carries, and satisfies
+the interface :class:`bartorch.priors.ImplicitPrior` requires of a denoiser.
+:class:`Unrolled` applies one of :mod:`bartorch.optim`'s iteration blocks a
+fixed number of times, together with the differentiation strategies a deep
+stack requires.  :func:`as_real` and :func:`as_complex` convert between complex
+tensors and the leading real channel axis used by convolutional networks and by
+``torchio`` images.
+
+Training loops, datasets, augmentation, patch sampling, networks, losses and
+metrics are not implemented here.  ``lightning``, ``torchio``, ``monai``,
+``deepinv`` and ``torchmetrics`` provide them, and this subpackage imports none
+of them.
 """
 
 from __future__ import annotations
