@@ -88,6 +88,7 @@ GALLERY_SECTIONS = [
     "examples/02-non-cartesian",
     "examples/03-applications",
     "examples/04-model-based",
+    "examples/05-deep-learning",
 ]
 
 #: Whether the examples are executed, which `./scripts/build_docs.sh --execute`

@@ -18,6 +18,10 @@ subspace-constrained :math:`T_1` mapping experiment.
 sensitivities, or estimates parameter maps directly from k-space through a
 signal model.
 
+**Deep learning** replaces a regularizer written down with one that is
+learned, by unrolling a BART iteration and training the proximal step
+through it.
+
 The concepts these examples use -- the encoding model, regularized
 least squares, non-uniform transforms, nonlinear inversion -- are introduced in
 :doc:`../explanation/index`.
@@ -26,3 +30,7 @@ Running them needs a built ``bartorch``, ``brainweb-dl``, which every example
 builds its phantom from, and ``matplotlib`` and ``cmap`` for the figures::
 
     pip install bartorch brainweb-dl matplotlib cmap
+
+The deep-learning section needs the libraries it is assembled from as well::
+
+    pip install lightning torchio monai deepinv

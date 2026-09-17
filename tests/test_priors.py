@@ -255,3 +255,92 @@ def test_a_frozen_term_is_still_the_term_bart_was_given():
     assert "W" == term.kind
     assert term.prox_shape(SHAPE) == priors.Wavelet(AXES, 0.01).prox_shape(SHAPE)
     assert "frozen(" in repr(term)
+
+
+# --- a denoiser in a domain the image is not in -------------------------------
+
+
+def _basis_transform(rank: int, frames: int, size: int):
+    """:math:`G`: subspace coefficients to the frames a basis makes of them."""
+    core = linop.MultiplySum(
+        _rand(rank, frames)[:, :, None, None],
+        (rank, 1, size, size),
+        (1, frames, size, size),
+    )
+    G = (
+        linop.Reshape((frames, size, size), (1, frames, size, size))
+        @ core
+        @ linop.Reshape((rank, 1, size, size), (rank, size, size))
+    )
+    return G
+
+
+class _Peek(torch.nn.Module):
+    """A denoiser that remembers the domain it was applied in."""
+
+    def __init__(self):
+        super().__init__()
+        self.seen = []
+
+    def forward(self, x):
+        self.seen.append(tuple(x.shape))
+        return 0.9 * x
+
+
+def test_a_denoisers_transform_is_the_g_of_the_term_it_stands_for():
+    shape = (2, 8, 8)
+    G = _basis_transform(2, 5, 8)
+    term = priors.ImplicitPrior(_Peek(), transform=G)
+
+    assert (5, 8, 8) == term.prox_shape(shape)
+    assert not term.transform_is_identity(shape)
+    assert priors.ImplicitPrior(_Peek()).transform_is_identity(shape)
+
+
+def test_the_transforms_forward_and_adjoint_are_each_others():
+    """The adjoint identity, over the operator the term was given."""
+    shape = (2, 8, 8)
+    term = priors.ImplicitPrior(_Peek(), transform=_basis_transform(2, 5, 8))
+    x, v = _rand(*shape), _rand(5, 8, 8)
+
+    forward = (term.apply_transform(x, shape, "forward").conj() * v).sum()
+    adjoint = (x.conj() * term.apply_transform(v, shape, "adjoint")).sum()
+
+    torch.testing.assert_close(forward, adjoint, rtol=1e-4, atol=1e-4)
+    torch.testing.assert_close(
+        term.apply_transform(x, shape, "normal"),
+        term.apply_transform(term.apply_transform(x, shape, "forward"), shape, "adjoint"),
+        rtol=1e-5,
+        atol=1e-5,
+    )
+
+
+def test_a_batch_goes_through_the_transform_item_by_item():
+    shape = (2, 8, 8)
+    term = priors.ImplicitPrior(_Peek(), transform=_basis_transform(2, 5, 8))
+    batch = _rand(3, *shape)
+
+    made = term.apply_transform(batch, shape, "forward")
+
+    assert (3, 5, 8, 8) == tuple(made.shape)
+    torch.testing.assert_close(made[1], term.apply_transform(batch[1], shape, "forward"))
+
+
+def test_the_alternating_direction_step_splits_where_the_denoiser_acts():
+    """ADMM's auxiliary variable lives in ``G``'s codomain, so that is what the
+    denoiser is handed -- which is what a prior learned in another domain needs."""
+    shape = (2, 8, 8)
+    denoiser = _Peek()
+    A = linop.FFT(shape, axes=(-1, -2))
+    y = A(_rand(*shape))
+
+    out = optim.admm(y, A, priors.ImplicitPrior(denoiser, transform=_basis_transform(2, 5, 8)))
+
+    assert tuple(out.shape) == shape
+    assert denoiser.seen and all((1, 5, 8, 8) == seen for seen in denoiser.seen)
+
+
+def test_a_transform_that_does_not_start_from_the_image_is_refused():
+    term = priors.ImplicitPrior(_Peek(), transform=_basis_transform(2, 5, 8))
+    with pytest.raises(ValueError, match="transform takes"):
+        term.prox_shape((3, 8, 8))
