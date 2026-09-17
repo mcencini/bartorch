@@ -13,6 +13,7 @@ arithmetic that agrees with it.
 
 from __future__ import annotations
 
+from bartorch.apps.mobafit import mobafit
 from bartorch.apps.pics import pics
 
-__all__ = ["pics"]
+__all__ = ["mobafit", "pics"]

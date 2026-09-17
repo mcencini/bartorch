@@ -174,3 +174,94 @@ def test_off_the_grid_the_app_is_the_tool_to_round_off():
         measured, maps, traj=traj, regularizers=term, solver="admm", maxiter=10
     ).squeeze()
     assert float((ours - tool).abs().max()) < 1e-5 * float(tool.abs().max())
+
+
+# --- mobafit ---------------------------------------------------------------
+#
+# The model the app fits is TorchSim's rather than BART's, so there is nothing
+# to be equal to; what a fit has to answer for is the relaxation time the data
+# was made from, and the decay and the recovery are written out here.
+
+FIT_SIZE = 12
+ECHO_TIMES = [12.5 * (echo + 1) for echo in range(8)]
+INVERSION_TIMES = [50.0, 150.0, 400.0, 900.0, 1500.0, 2500.0, 4000.0]
+
+
+def _two_halves(left: float, right: float, size: int = FIT_SIZE) -> torch.Tensor:
+    """A map of two constant halves, so one fit answers two relaxation times."""
+    values = torch.full((size, size), left)
+    values[:, size // 2 :] = right
+    return values
+
+
+def test_a_decay_is_fitted_to_the_time_it_was_made_from():
+    """``M0 exp(-TE / T2)``, written out here and recovered from the images."""
+    from bartorch import nlop
+
+    t2 = _two_halves(60.0, 110.0)
+    images = torch.exp(-torch.tensor(ECHO_TIMES)[:, None, None] / t2).to(torch.complex64)
+
+    model = nlop.MultiEcho(ECHO_TIMES, (FIT_SIZE, FIT_SIZE))
+    fitted = apps.mobafit(images, model, T2=80.0)["T2"]
+
+    assert torch.allclose(fitted, t2, rtol=1e-3)
+
+
+def test_a_recovery_is_fitted_to_the_time_it_was_made_from():
+    from bartorch import nlop
+
+    model = nlop.InversionRecovery(INVERSION_TIMES, (FIT_SIZE, FIT_SIZE))
+    left = model(model.initial(T1=800.0))
+    right = model(model.initial(T1=1400.0))
+    images = torch.cat([left[..., : FIT_SIZE // 2], right[..., FIT_SIZE // 2 :]], dim=-1)
+
+    fitted = apps.mobafit(images, model, T1=1000.0)["T1"]
+
+    assert torch.allclose(fitted, _two_halves(800.0, 1400.0), rtol=1e-3)
+
+
+def test_the_magnitude_is_fitted_where_the_phase_is_thrown_away():
+    """``mobafit -a``: a decay whose phase varies across the image, given to
+    the fit as a magnitude, is the same T2 as the decay itself."""
+    from bartorch import nlop
+
+    t2 = _two_halves(60.0, 110.0)
+    phase = torch.exp(1j * torch.linspace(-1.0, 1.0, FIT_SIZE))[None, :]
+    images = (torch.exp(-torch.tensor(ECHO_TIMES)[:, None, None] / t2) * phase).abs()
+
+    model = nlop.MultiEcho(ECHO_TIMES, (FIT_SIZE, FIT_SIZE))
+    fitted = apps.mobafit(images.to(torch.complex64), model, magnitude=True, T2=80.0)["T2"]
+
+    assert torch.allclose(fitted, t2, rtol=1e-3)
+
+
+def test_a_voxel_with_no_signal_keeps_the_value_it_started_from():
+    """``mobafit`` skips a patch whose data is zero; an unconstrained voxel
+    would otherwise walk wherever the bounds allow."""
+    from bartorch import nlop
+
+    t2 = _two_halves(60.0, 110.0)
+    images = torch.exp(-torch.tensor(ECHO_TIMES)[:, None, None] / t2).to(torch.complex64)
+    images[:, 0] = 0.0
+
+    model = nlop.MultiEcho(ECHO_TIMES, (FIT_SIZE, FIT_SIZE))
+    fitted = apps.mobafit(images, model, T2=80.0)["T2"]
+
+    assert torch.allclose(fitted[0], torch.full((FIT_SIZE,), 80.0), atol=1e-3)
+    assert torch.allclose(fitted[1:], t2[1:], rtol=1e-3)
+
+
+def test_the_fit_is_taken_from_where_it_is_started():
+    """The starting maps reach the loop: a fit stopped after one step is still
+    near where it began, and a different beginning is a different answer."""
+    from bartorch import nlop
+
+    t2 = _two_halves(60.0, 110.0)
+    images = torch.exp(-torch.tensor(ECHO_TIMES)[:, None, None] / t2).to(torch.complex64)
+    model = nlop.MultiEcho(ECHO_TIMES, (FIT_SIZE, FIT_SIZE))
+
+    one = apps.mobafit(images, model, iterations=1, T2=40.0)["T2"]
+    other = apps.mobafit(images, model, iterations=1, T2=200.0)["T2"]
+
+    assert float((one - other).abs().max()) > 1.0
+    assert float(one.median()) < float(other.median())

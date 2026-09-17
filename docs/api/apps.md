@@ -25,10 +25,19 @@ and `lowmem` want a BART operator constructor this package does not wrap yet,
 and `psf` cannot work here at all -- importing a point spread function reads
 the NUFFT operator's internals, and the substituted operator refuses.
 
+`apps.mobafit` is the one app that answers in different numbers from its
+command, and deliberately: the model it fits is TorchSim's rather than BART's,
+because what a fit needs is a forward it can differentiate, with bounds and a
+starting state. The method is the command's -- the same Gauss-Newton loop over
+the same linearized least-squares problem -- and what it returns is named maps
+in their own units rather than a stack of coefficients. `tests/test_apps.py`
+holds it against decays and recoveries written out in the test.
+
 ```{eval-rst}
 .. autosummary::
    :toctree: generated
    :nosignatures:
 
+   mobafit
    pics
 ```

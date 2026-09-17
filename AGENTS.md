@@ -844,6 +844,15 @@ which is what `nlop`'s `SignalModel` is over a TorchSim simulator.  The
 commands stay reachable through `_call.build` so a test can pin TorchSim's
 physics against BART's closed forms, which `tests/test_nlop_torchsim.py` does.
 
+`apps.mobafit` is where that decision shows on the surface: it is `mobafit`'s
+method -- the Gauss-Newton loop over the same linearized least-squares problem
+-- over a model that is TorchSim's, so it answers in named maps in their own
+units rather than in a stack of BART's coefficients, and it is the one app not
+held to its command's bits.  Its default of twenty Gauss-Newton steps is what a
+bounded parameterisation needs: the command affords five because `--scale`
+brings its coefficients to order one, and five over a bounded variable answer
+430 ms for a decay of 60 and one of 110 alike.
+
 So `priors/` computes nothing, and the iterations write out only their
 steps: the proximal steps, one block each in `optim/blocks.py`, and the
 Gauss-Newton step, `IRGNMBlock` in `nlop/irgnm.py`, whose operators -- the
