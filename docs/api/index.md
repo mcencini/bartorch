@@ -11,6 +11,10 @@
 | {doc}`io` | `bartorch.io`: CFL files |
 | {doc}`interop` | `bartorch.interop`: adapters to deepinv |
 
+The concepts these objects implement are introduced in
+{doc}`../explanation/index`, and complete workflows built from them are in the
+{doc}`examples <../auto_examples/index>`.
+
 ```{toctree}
 :hidden:
 

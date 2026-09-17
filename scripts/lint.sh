@@ -6,9 +6,10 @@
 #   ./scripts/lint.sh          check, and say what is wrong
 #   ./scripts/lint.sh --fix    format and apply what ruff can fix by itself
 #
-# Ruff sees `src/` and `tests/` only: the scripts beside this one and the
-# documentation extension are read by people rather than shipped, and are not
-# held to it.  codespell reads what to skip, and what is a word here rather
+# Ruff sees `src/`, `tests/` and the gallery examples under `docs/examples/`,
+# which are published as code a reader copies.  The scripts beside this one and
+# the documentation configuration are read by people rather than shipped, and
+# are not held to it.  codespell reads what to skip, and what is a word here rather
 # than a typo, from `[tool.codespell]` in pyproject.toml -- the same place the
 # workflow reads it, so the two cannot drift.
 #
@@ -19,7 +20,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PATHS=("${ROOT}/src" "${ROOT}/tests")
+PATHS=("${ROOT}/src" "${ROOT}/tests" "${ROOT}/docs/examples")
 RUFF=(ruff)
 command -v ruff >/dev/null 2>&1 || RUFF=("${PYTHON:-python3}" -m ruff)
 SPELL=(codespell)

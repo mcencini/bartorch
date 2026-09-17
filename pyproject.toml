@@ -136,6 +136,9 @@ exclude = ["src/bartorch/_abi.py", "src/bartorch/_catalogue.py"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["F401"]
+# A gallery example is written in cells, and an import belongs to the cell that
+# introduces what it imports rather than to the top of the file.
+"docs/examples/*" = ["E402"]
 # A help string BART wrote can be longer than any line length on its own.
 "src/bartorch/_catalogue.py" = ["E501"]
 
@@ -150,6 +153,7 @@ testpaths = ["tests"]
 # than typos -- BART writes `int ND` for a doubled dimension count, and CUDA
 # spells its own attribute `cudaDevAttrMaxSharedMemoryPerBlockOptin`.  `build`
 # and `docs/_build` are outputs a fresh checkout does not have and a local run
-# does.
-skip = "./attic,./external,./.git,./build,./docs/_build,*.ipynb,pyproject.toml"
-ignore-words-list = "ist,te,reconet,pyramide,nd,optin,lamda"
+# does.  `reson` is the journal abbreviation in a citation, as in
+# `Magn Reson Med`.
+skip = "./attic,./external,./.git,./build,./docs/_build,./docs/auto_examples,*.ipynb,pyproject.toml"
+ignore-words-list = "ist,te,reconet,pyramide,nd,optin,lamda,reson"

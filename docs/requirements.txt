@@ -10,4 +10,8 @@ deepinv>=0.2
 sphinx>=7.3,<9
 sphinx-book-theme>=1.1,<2
 sphinx-copybutton>=0.5,<1
+sphinx-gallery>=0.16,<1
 myst-parser>=3,<5
+# The gallery's figures.  Rendering the example pages needs it as well as
+# running them, because the scraper is loaded either way.
+matplotlib>=3.7

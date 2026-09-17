@@ -413,7 +413,7 @@ def build(name: str, module: str):
         flags = {
             name: value
             for name, value in given.items()
-            if name in options and value not in (None, False)
+            if name in options and value is not None and value is not False
         }
         flags.update(passed_through)
 

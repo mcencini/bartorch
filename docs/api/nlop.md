@@ -1,7 +1,8 @@
 # Nonlinear operators
 
 `bartorch.nlop`.  A nonlinear operator maps one or more inputs to one or more
-outputs and supplies its derivative and the derivative's adjoint.  Applying an
+outputs and supplies its derivative and the derivative's adjoint.
+{doc}`../explanation/nonlinear` states the problems they are built for.  Applying an
 operator to a tensor that requires a gradient records the application for
 autograd; the backward pass is the adjoint of the derivative at that point.
 

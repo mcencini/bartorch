@@ -1,0 +1,238 @@
+"""
+====================
+Nonlinear inversion
+====================
+
+Estimating the image and the coil sensitivities together, from undersampled
+data that has no calibration region to estimate them separately from.
+
+ESPIRiT reads the sensitivities off a fully sampled neighbourhood of the centre
+of k-space and hands them to a linear reconstruction. Where the acquisition
+provides no such neighbourhood, the sensitivities are unknowns like the image,
+and the forward model
+
+.. math::
+
+   y_c = P F (S_c \\cdot x)
+
+is bilinear rather than linear: it is a product of two unknowns. Nonlinear
+inversion (``nlinv``) solves it by iteratively regularized Gauss-Newton, and
+the smoothness of the sensitivities -- the one thing that makes the
+factorization identifiable -- enters as a weighting inside the model rather
+than as a penalty beside it.
+
+The phantom and the coil sensitivities are built as in
+:doc:`../01-basics/01-from-kspace-to-image`; the cell that does it is hidden on
+this page and present in the script this page can be downloaded as.
+
+Uecker M, Hohage T, Block KT, Frahm J. *Image reconstruction by regularized
+nonlinear inversion -- joint estimation of coil sensitivities and image
+content.* Magn Reson Med 60(3):674-682 (2008).
+"""
+
+# %%
+
+# sphinx_gallery_start_ignore
+import matplotlib.pyplot as plt
+
+plt.rcParams.update(
+    {
+        "figure.dpi": 110,
+        "savefig.dpi": 110,
+        "font.size": 11,
+        "axes.titlesize": 11,
+        "figure.constrained_layout.use": True,
+    }
+)
+
+PAGE_WIDTH = 8.0  # inches, the width of the documentation column
+
+
+def panels(rows, columns, height=1.0):
+    """A grid of square image panels filling the documentation column."""
+    side = PAGE_WIDTH / columns
+    figure, axes = plt.subplots(
+        rows, columns, squeeze=False, figsize=(PAGE_WIDTH, rows * side * height + 0.4)
+    )
+    for axis in axes.ravel():
+        axis.set_xticks([])
+        axis.set_yticks([])
+    return figure, axes
+
+
+def show(axis, values, title=None, vmax=None, cmap="gray"):
+    values = values.detach().abs().cpu().numpy() if hasattr(values, "detach") else values
+    handle = axis.imshow(values, cmap=cmap, vmin=0.0, vmax=vmax)
+    if title is not None:
+        axis.set_title(title)
+    return handle
+
+
+# sphinx_gallery_end_ignore
+import csv
+from pathlib import Path
+
+import brainweb_dl
+import numpy as np
+import torch
+from brainweb_dl import get_mri
+
+import bartorch
+import bartorch.tools as bt
+from bartorch import nlop
+
+SIZE = 128
+COILS = 8
+ACCELERATION = 3
+CALIBRATION = 6  # lines at the centre, far fewer than ESPIRiT needs
+SLICE = 90
+
+# sphinx_gallery_start_ignore
+table = Path(brainweb_dl.__file__).parent / "data" / "brainweb1_tissues.csv"
+proton_density = np.array(
+    [float(row["PD (ms)"]) for row in csv.DictReader(table.open())], dtype=np.float32
+)
+fractions = get_mri(sub_id=0, contrast="fuzzy")[:, :, SLICE]
+fractions = np.flip(fractions.transpose(1, 0, 2), 0).copy()
+magnitude = torch.nn.functional.interpolate(
+    torch.as_tensor(fractions @ proton_density)[None, None],
+    size=(SIZE, SIZE),
+    mode="bilinear",
+    align_corners=False,
+)[0, 0]
+magnitude = magnitude / magnitude.max()
+grid_y, grid_x = torch.meshgrid(
+    torch.linspace(-1.0, 1.0, SIZE), torch.linspace(-1.0, 1.0, SIZE), indexing="ij"
+)
+image = (magnitude * torch.exp(0.8j * (grid_x**2 - 0.5 * grid_y**2))).to(torch.complex64)
+
+sensitivities = bt.coils(t=bt.grid(D=(SIZE, SIZE, 1)), n=COILS)[:, 0]
+sensitivities = sensitivities / bartorch.rss(sensitivities, axes=(0,), keepdim=True)
+kspace = bt.noise(bartorch.fft(sensitivities * image, axes=(-2, -1), unitary=True), n=2e-5, s=42)
+
+encodes = torch.arange(SIZE) - SIZE // 2
+centre = (encodes.abs() < CALIBRATION // 2).to(torch.float32)
+drawn = torch.multinomial(
+    (1.0 + 2.0 * encodes.abs() / SIZE) ** -3.0 * (1.0 - centre),
+    SIZE // ACCELERATION - CALIBRATION,
+    replacement=False,
+    generator=torch.Generator().manual_seed(11),
+)
+lines = centre.clone()
+lines[drawn] = 1.0
+# sphinx_gallery_end_ignore
+
+pattern = lines.reshape(SIZE, 1).to(torch.complex64)
+measured = kspace[:, None] * pattern
+
+print(f"{float(lines.mean()):.0%} of the phase encodes, {CALIBRATION} of them at the centre")
+
+# %%
+#
+# Six central lines are enough to locate the centre of k-space and not enough
+# for a calibration matrix: :func:`bartorch.tools.ecalib` given a calibration
+# region this size returns sensitivities that are mostly noise, and a linear
+# reconstruction built on them is worse than no reconstruction.
+#
+# The application
+# ---------------
+#
+# :func:`bartorch.tools.nlinv` takes the k-space and returns the image and,
+# when asked, the sensitivities it estimated along the way. Its iteration count
+# is Gauss-Newton steps rather than linear iterations, and eight of them is
+# BART's default.
+
+reconstruction, estimated = bt.nlinv(measured, maxiter=8, return_sensitivities=True)
+
+print(f"NRMSE {bartorch.nrmse(image.abs(), reconstruction.abs(), scaled=True):.3f}")
+
+# %%
+
+# sphinx_gallery_start_ignore
+figure, axes = panels(1, 3)
+peak = float(image.abs().max())
+show(axes[0, 0], image, "phantom", vmax=peak)
+show(axes[0, 1], reconstruction, "nlinv", vmax=None)
+show(axes[0, 2], bartorch.rss(estimated[:, 0], axes=(0,)), "root sum of squares of the maps")
+
+figure, axes = panels(2, 4)
+# Each set on its own scale: the estimate is determined only up to the scale
+# the image takes the reciprocal of.
+tops = (float(sensitivities.abs().max()), float(estimated.abs().max()))
+for column in range(4):
+    show(axes[0, column], sensitivities[column], f"channel {column}", vmax=tops[0])
+    show(axes[1, column], estimated[column, 0], vmax=tops[1])
+axes[0, 0].set_ylabel("simulated")
+axes[1, 0].set_ylabel("estimated")
+plt.show()
+# sphinx_gallery_end_ignore
+
+# %%
+#
+# The estimated sensitivities are smooth by construction rather than by
+# agreement with the data: the coil unknown is
+# not the sensitivity map but its k-space representation
+# :math:`\hat{s}`, and the map follows as
+# :math:`S = \mathcal{F}^{-1}[(1 + a|k|^2)^{-b/2} \hat{s}]`. A step in the
+# unknown is therefore a smooth change in the map by construction, and the
+# joint problem needs no separate penalty on the coils. The pair is determined
+# only up to a scale, since multiplying the maps by a constant and dividing the
+# image by it changes nothing the data sees, which is why the two rows above
+# are drawn on their own scales and why a nonlinear inversion is reported after
+# normalizing by the root sum of squares of the maps. Outside the object
+# neither factor is determined at all -- their product is zero for any pair --
+# so what is drawn there follows from the initialization and the weighting.
+#
+# The model and the solver
+# ------------------------
+#
+# :class:`bartorch.nlop.NonlinearSense` is that forward model as a nonlinear
+# operator with two inputs, and :class:`bartorch.nlop.IRGNM` is the
+# Gauss-Newton loop over it. Each step linearizes the model at the current
+# point and solves
+#
+# .. math::
+#
+#    \min_u \, \| DF\, u - r \|^2 + \alpha \| u \|^2,
+#
+# with :math:`\alpha` halved after every step, so the first steps are heavily
+# regularized and the later ones are not.
+
+model = nlop.NonlinearSense(
+    (COILS, 1, SIZE, SIZE), pattern=lines.reshape(1, SIZE, 1).to(torch.complex64)
+)
+print(f"inputs {model.ishapes} -> output {model.oshapes}")
+
+# %%
+#
+# ``nlinv`` scales the data by ``100 / ||y||`` before it starts, which fixes
+# the meaning of :math:`\alpha`, and takes its conjugate gradients to a hundred
+# iterations or a tolerance of a tenth. Given the same three settings the loop
+# written here is the application.
+
+data = model.prepare(measured * (100.0 / float(torch.linalg.vector_norm(measured))))
+fitted, coefficients = nlop.IRGNM(iterations=8, cg_maxiter=100, cg_tol=0.1)(data, model)
+
+maps = model.coils(coefficients)
+combined = fitted.squeeze() * bartorch.rss(maps[:, 0], axes=(0,))
+
+difference = float((fitted.squeeze() - bt.nlinv(measured, maxiter=8, normalize=False)).abs().max())
+print(f"largest difference from nlinv: {difference / float(fitted.abs().max()):.1e}")
+print(f"NRMSE {bartorch.nrmse(image.abs(), combined.abs(), scaled=True):.3f}")
+
+# %%
+#
+# The two agree to single-precision round-off rather than to the last bit,
+# because the scaling above is computed here and inside the application by
+# different expressions.
+#
+# What the operator layer adds is everything around the step. The linearized
+# problem can go to a solver from :mod:`bartorch.optim` instead of the
+# conjugate gradients inside the library (``inner=optim.CG()`` is the same
+# method written out, and a regularized solver makes the step a regularized
+# one), the loop can be unrolled as :class:`bartorch.nlop.IRGNMBlock`, and the
+# whole thing differentiates: a Gauss-Newton step is differentiable by the
+# data, by the iterate, by the regularization centre and by :math:`\alpha`.
+#
+# Reconstructing parameter maps rather than an image, by putting a signal model
+# in front of the same encoding, is :doc:`02-quantitative-models`.

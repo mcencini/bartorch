@@ -1,6 +1,8 @@
 # Linear operators
 
 `bartorch.linop`.  A linear operator maps between two C-order shapes.
+{doc}`../explanation/encoding` states the model these operators implement.
+
 Composition and combination produce a single BART operator rather than a Python
 chain, so an iterative solver applies one operator per iteration without
 returning to Python.  Applying an operator to a tensor that requires a gradient

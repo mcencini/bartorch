@@ -111,6 +111,14 @@ def test_a_real_option_passed_through_by_name_is_not_refused():
     assert tuple(image.shape) == (8, 8)
 
 
+def test_a_derived_wrapper_takes_an_array_as_an_option():
+    """An option whose value is an array rather than a number, on a derived
+    wrapper: ``coils`` is evaluated on the grid ``grid`` writes."""
+    grid = bt.grid(D=(8, 8, 1))
+    sensitivities = bt.coils(t=grid, n=2)
+    assert tuple(sensitivities.shape) == (2, 1, 8, 8)
+
+
 # --- what the curated wrappers buy ------------------------------------------
 
 

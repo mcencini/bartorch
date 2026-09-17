@@ -1,8 +1,14 @@
 name: Docs
 
-# Builds the reference on every pull request, and publishes it to GitHub Pages
-# from `main`.  Both use the same `./scripts/build_docs.sh` a contributor runs,
-# so a page that renders here rendered for them too.
+# Builds the documentation on every pull request, and publishes it to GitHub
+# Pages from `main`.  Both use the same `./scripts/build_docs.sh` a contributor
+# runs, so a page that renders here rendered for them too.
+#
+# Two builds, because the documentation has two halves.  The reference renders
+# from the checkout with nothing compiled, which is what a contributor changing
+# a docstring sees and what fails fastest; the example gallery has to run, so
+# it needs the library built and the packages the examples import.  The site
+# that is published is the second one.
 #
 # One-time setup: Settings -> Pages -> Source: "GitHub Actions".  Nothing else;
 # the deploy job below carries its own permissions and environment.
@@ -60,6 +66,64 @@ jobs:
           path: docs/_build/html/
           retention-days: 7
 
+  # -------------------------------------------------------------------------
+  # Job 2: build the library and run the example gallery.  This is the site
+  # that is published: an example rendered without its figures is a page that
+  # says what was done and not what came of it.
+  # -------------------------------------------------------------------------
+  gallery:
+    name: Build and execute the gallery
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # libbartorch is a clang build: BART's nested functions become Blocks.
+      - name: Install the compiler, OpenMP and CMake
+        run: sudo apt-get install -y cmake clang libomp-dev
+
+      - name: Install torch (CPU) and the build backend
+        run: |
+          pip install scikit-build-core setuptools-scm numpy scipy
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install torchvision --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Build and install bartorch
+        env:
+          CC: clang
+          CXX: clang++
+        run: pip install -e . --no-build-isolation
+
+      - name: Install the documentation and example requirements
+        run: pip install -r docs/requirements.txt brainweb-dl
+
+      # The segmentation is fetched once and reused: the download is a form
+      # submission per tissue class against a server that is not ours.
+      - name: Cache the BrainWeb segmentation
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/brainweb
+          key: brainweb-subject0-fuzzy
+
+      - name: Build Sphinx HTML with the examples executed
+        run: ./scripts/build_docs.sh --execute
+
+      - name: Upload the executed documentation
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sphinx-html-executed
+          path: docs/_build/html/
+          retention-days: 7
+
       # The same HTML again, in the layout Pages deploys from.  Uploaded on
       # pull requests too, so that a change which breaks the packaging step
       # says so on the pull request rather than on main.
@@ -73,7 +137,7 @@ jobs:
   deploy:
     name: Publish to GitHub Pages
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: build-docs
+    needs: [build-docs, gallery]
     runs-on: ubuntu-latest
     permissions:
       pages: write
