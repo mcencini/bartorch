@@ -49,6 +49,10 @@ _NETWORK = "trains or applies BART's own networks, whose weights are files"
 _TORCH = "an array operation torch provides"
 _DEMO = "a demonstration or a diagnostic"
 _LATER = "not wrapped yet"
+_SIMULATED = (
+    "a signal simulation, which torchsim does differentiably and bartorch.nlop drives; "
+    "a curve from a command is a number, not a model a fit can be built on"
+)
 
 #: Commands without a public wrapper, and why.
 PRIVATE: dict[str, str] = {
@@ -98,6 +102,7 @@ PRIVATE: dict[str, str] = {
         ),
         _TORCH,
     ),
+    **dict.fromkeys(("bloch", "epg", "mobasig", "pulse", "seq", "sim", "signal"), _SIMULATED),
     **dict.fromkeys(("fftrot", "gmm"), _LATER),
     "ictv": "fails for every input in this BART (ictv.c:97 reshapes the wrong side)",
     "version": "bartorch.bart_version() reports it",
@@ -105,6 +110,10 @@ PRIVATE: dict[str, str] = {
     "crop": "bartorch.resize covers it",
     "delta": "an identity tensor, which torch.eye makes",
     "denoise": "an optim solver over an identity operator solves the same problem",
+    "nufftbase": (
+        "the Fourier transform of a gridding basis function, which is BART's own "
+        "gridder's to use and nothing here reaches"
+    ),
 }
 
 

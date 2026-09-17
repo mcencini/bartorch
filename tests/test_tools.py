@@ -21,6 +21,10 @@ from bartorch import _catalogue as catalogue
 from bartorch._dispatch import dispatch
 from bartorch._options import describe
 
+#: `signal` is private -- a curve from a command is a number, not a model -- so
+#: the guard on its `-C` sequence is reached the way a private command is.
+signal = _call.build("signal", __name__)
+
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -69,11 +73,11 @@ def test_every_curated_wrapper_is_documented_and_exported_from_its_module():
 def test_a_curated_wrapper_says_it_is_one():
     assert not bt.pics.is_derived
     assert not bartorch.fft.is_derived
-    assert bt.sim.is_derived
+    assert bt.noise.is_derived
 
 
 def test_no_tools_module_is_named_after_a_command():
-    """``bartorch.tools.sim`` would be the module and the ``sim`` command."""
+    """``bartorch.tools.recon`` would be the module and a ``recon`` command."""
     for path in (ROOT / "src" / "bartorch" / "tools").glob("*.py"):
         stem = path.stem
         if stem.startswith("_"):
@@ -91,7 +95,7 @@ def test_an_option_the_command_does_not_have_is_refused():
     with pytest.raises(ValueError, match="has no option called"):
         bt.phantom(8, ncoils=2)
     with pytest.raises(ValueError, match="has no option called"):
-        bt.sim(definitely_not_an_option=1)
+        bt.noise(torch.zeros(4, dtype=torch.complex64), definitely_not_an_option=1)
 
 
 def test_the_refusal_suggests_what_was_meant():
@@ -158,7 +162,6 @@ _NOT_DIMENSIONS = {
     ("phantom", "-x"): "a size",
     ("poisson", "-Y"): "a size",
     ("poisson", "-Z"): "a size",
-    ("seq", "-z"): "a count of partitions",
     ("pics", "-R"): "refused: pics takes the terms as its regularizers argument",
 }
 
@@ -211,11 +214,6 @@ def test_a_derived_wrapper_takes_axes_where_bart_takes_a_bitmask():
     assert torch.equal(ours, dispatch("pattern", [kspace], None, s=8))
     assert "Axes to squash." in bt.pattern.__doc__
     assert "bitmask" not in bt.pattern.__doc__
-
-
-def test_without_an_array_to_count_from_an_axis_is_negative():
-    with pytest.raises(ValueError, match="negative"):
-        bt.seq(raga_flags=1)
 
 
 def test_what_a_curated_wrapper_passes_through_takes_axes(monkeypatch):
@@ -289,33 +287,33 @@ _ONE_T1 = {"1": (1.0, 1.0, 1)}
 
 @pytest.mark.parametrize("n,m", [(6, 3), (9, 3), (8, 4), (100, 4)])
 def test_an_ir_mgre_signal_whose_echoes_divide_the_train_is_computed(n, m):
-    assert bt.signal(C=True, n=n, m=m, **_ONE_T1).shape[0] == n
+    assert signal(C=True, n=n, m=m, **_ONE_T1).shape[0] == n
 
 
 @pytest.mark.parametrize("n,m", [(4, 3), (5, 3), (7, 4), (10, 4)])
 def test_an_ir_mgre_signal_whose_echoes_do_not_divide_the_train_is_refused(n, m):
     with pytest.raises(ValueError, match="uninitialized memory"):
-        bt.signal(C=True, n=n, m=m, **_ONE_T1)
+        signal(C=True, n=n, m=m, **_ONE_T1)
 
 
 def test_an_ir_mgre_signal_without_echoes_is_refused():
     """BART leaves ``NE`` at -1, so the loop runs zero times and *none* of the
     signal is written."""
     with pytest.raises(ValueError, match="signal -C needs m="):
-        bt.signal(C=True, n=6, **_ONE_T1)
+        signal(C=True, n=6, **_ONE_T1)
 
 
 def test_averaged_spokes_count_towards_the_echo_train():
     """The model is given ``n * av_spokes`` entries to fill, not ``n``."""
-    assert bt.signal(C=True, n=5, m=3, av_spokes=3, **_ONE_T1).shape[0] == 5
+    assert signal(C=True, n=5, m=3, av_spokes=3, **_ONE_T1).shape[0] == 5
     with pytest.raises(ValueError, match="uninitialized memory"):
-        bt.signal(C=True, n=6, m=4, av_spokes=1, **_ONE_T1)
+        signal(C=True, n=6, m=4, av_spokes=1, **_ONE_T1)
 
 
 def test_the_guard_is_only_for_the_ir_mgre_sequence():
     """``-m`` reaches no other model, so nothing else is held to it."""
-    assert bt.signal(G=True, n=5, **_ONE_T1).shape[0] == 5
-    assert bt.signal(F=True, n=5, **_ONE_T1).shape[0] == 5
+    assert signal(G=True, n=5, **_ONE_T1).shape[0] == 5
+    assert signal(F=True, n=5, **_ONE_T1).shape[0] == 5
 
 
 def test_a_command_refuses_a_term_its_parser_does_not_know():
@@ -325,8 +323,8 @@ def test_a_command_refuses_a_term_its_parser_does_not_know():
 
 
 def test_a_derived_wrapper_is_shaped_like_the_command_line():
-    """``sim`` takes what ``bart sim`` takes, under BART's names."""
-    parameters = inspect.signature(bt.sim).parameters
+    """``coils`` takes what ``bart coils`` takes, under BART's names."""
+    parameters = inspect.signature(bt.coils).parameters
     assert "extra" in parameters
 
 

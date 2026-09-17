@@ -14,8 +14,13 @@ import pytest
 import torch
 
 import bartorch.tools as bt
-from bartorch import linop, nlop, optim
+from bartorch import _call, linop, nlop, optim
 from bartorch.nlop.base import _chain
+
+#: `signal` is private -- a curve from a command is a number, not a model a fit
+#: can be built on -- and these tests pin TorchSim's physics against it, which
+#: is what a private command is still reachable for.
+signal = _call.build("signal", __name__)
 
 torchsim = pytest.importorskip("torchsim")
 
@@ -84,7 +89,7 @@ def test_the_multi_echo_decay_is_what_bart_computes():
     # `signal -S` is BART's spin echo: exp(-n TE / T2), n = 0 .. measurements-1.
     # Two libraries, two implementations, one closed form.
     T2_ms, TE_ms, steps = 50.0, 10.0, 6
-    reference = bt.signal(
+    reference = signal(
         S=True, e=TE_ms * 1e-3, n=steps, **{"2": (T2_ms * 1e-3, T2_ms * 1e-3, 1)}
     ).reshape(-1)
     M = nlop.MultiEcho(tuple(TE_ms * k for k in range(steps)), ())
@@ -288,7 +293,7 @@ def _decay(**extra):
     has nowhere to put it -- its ``offset`` is an additive baseline, not a
     frequency -- so the comparison is made without one.
     """
-    return bt.signal(
+    return signal(
         G=True,
         n=_ECHOES,
         e=_TE_STEP_S,
