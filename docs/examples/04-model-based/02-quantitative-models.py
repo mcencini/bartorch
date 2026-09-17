@@ -38,13 +38,16 @@ methods for magnetic resonance imaging.* Phil Trans R Soc A 379:20200196
 # sphinx_gallery_start_ignore
 import matplotlib.pyplot as plt
 from cmap import Colormap
+from matplotlib.colors import ListedColormap
 
 # Fuderer et al. (Magn Reson Med 2025) recommend one perceptually uniform
 # colormap per relaxation parameter, so that a T1 map is never read as a T2 map.
 LIPARI = Colormap("crameri:lipari").to_matplotlib()
 NAVIA = Colormap("crameri:navia").to_matplotlib()
 # Phase is cyclic, so the colormap has to be: -pi and +pi are the same colour.
-PHASE = Colormap("colorcet:CET_C6").to_matplotlib()
+# mygbm, turned so that zero phase is yellow and +/-pi is blue.
+MYGBM = Colormap("colorcet:CET_C2").to_matplotlib().reversed()
+PHASE = ListedColormap(MYGBM([((step + 60) % 256) / 255 for step in range(256)]))
 
 # Colormap, window and unit per parameter.  Both relaxation windows stop short
 # of cerebrospinal fluid, so that white and grey matter -- 500 against 833 ms
