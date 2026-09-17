@@ -113,11 +113,14 @@ def _radial(size=32, coils=4, spokes=16):
 
 
 def test_off_the_grid_the_app_is_the_assembly_the_radial_example_writes():
-    """Not the bits, and the tool is not either: off the grid the scaling the
-    application estimates and :func:`bartorch.optim.data_scaling` are the same
-    number computed by different expressions, so both differ from the tool in
-    the last places.  Pinned here so that a change which is more than round-off
-    shows up."""
+    """Not the bits, and the tool is not either.
+
+    Where the difference is has been narrowed and not found: it is not the
+    scaling, since forcing the tool onto this one with ``-w`` leaves the two
+    4e-07 apart, and it is not the coil loop, since walking every coil at once
+    the way the application does changes nothing measurable.  What is left is
+    the non-uniform transform itself.  Pinned here at round-off so that a
+    change which is more than that shows up."""
     traj, maps, measured = _radial()
     term = _tv()
 
