@@ -9,8 +9,9 @@ from __future__ import annotations
 import torch
 
 from bartorch.optim.linear import ADMM, CG, FISTA, IST, NIHT, PRIDU
+from bartorch.optim.pocs import POCS
 
-__all__ = ["admm", "cg", "fista", "ist", "niht", "pridu"]
+__all__ = ["admm", "cg", "fista", "ist", "niht", "pocs", "pridu"]
 
 
 def ist(y: torch.Tensor, A, regularizers=None, *, x0=None, **settings):
@@ -203,3 +204,30 @@ def cg(y: torch.Tensor, A, lambda_: float = 0.0, *, x0=None, **settings):
     backward pass is a second solve with the same normal operator.
     """
     return CG(lambda_, **settings)(y, A, x0)
+
+
+def pocs(y: torch.Tensor, projections, *, x0=None, **settings):
+    """Sweep a list of projections, ``optim.POCS(projections)(y, x0=x0)``.
+
+    Unlike the solvers beside it this one has no encoding argument: what the
+    sets are, and what the data is, belong to the projections themselves.
+
+    Parameters
+    ----------
+    y : tensor
+        What the iterate looks like.  Without ``x0`` the sweep starts at zero
+        of its shape, where ``pocs_recon2`` starts.
+    projections : sequence
+        The sets to project onto, as :class:`~bartorch.optim.POCSBlock` takes
+        them: a callable on a tensor, or a :mod:`bartorch.priors` term.
+    x0 : tensor, optional
+        Where to start instead.
+    **settings
+        Settings of :class:`~bartorch.optim.POCS`, which is ``maxiter`` (50).
+
+    Returns
+    -------
+    torch.Tensor
+        The iterate the last sweep left.
+    """
+    return POCS(projections, **settings)(y, None, x0)

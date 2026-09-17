@@ -265,3 +265,126 @@ def test_the_fit_is_taken_from_where_it_is_started():
 
     assert float((one - other).abs().max()) > 1.0
     assert float(one.median()) < float(other.median())
+
+
+# --- pocsense --------------------------------------------------------------
+
+#: What the application is given, and what the app is given for the same run.
+_POCS_CONFIGURATIONS = [
+    ("plain", {}, {}),
+    ("l2", {"r": 0.1}, {"alpha": 0.1}),
+    ("wavelet", {"r": 0.01, "l": 1}, {"alpha": 0.01, "wavelet": True}),
+    ("robust", {"o": 0.05}, {"robust": 0.05}),
+    (
+        "robust wavelet",
+        {"o": 0.05, "r": 0.01, "l": 1},
+        {"robust": 0.05, "alpha": 0.01, "wavelet": True},
+    ),
+    ("one sweep", {"i": 1}, {"maxiter": 1}),
+]
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [(t, a) for _, t, a in _POCS_CONFIGURATIONS],
+    ids=[n for n, _, _ in _POCS_CONFIGURATIONS],
+)
+def test_the_pocsense_app_is_the_tool_to_the_last_bit(arguments):
+    flags, ours = arguments
+    kspace, maps = _cartesian()
+    tool = bt.pocsense(kspace, maps, **{"i": 10, **flags})
+    made = apps.pocsense(kspace, maps, **{"maxiter": 10, **ours})
+    assert torch.equal(made, tool), f"maximum difference {float((made - tool).abs().max()):.3e}"
+
+
+def test_an_odd_grid_is_the_tool_too():
+    """The modulation is a phase rather than a sign on an odd axis, so which
+    two of the three factors of the sparsity projection are multiplied first
+    is visible in the last bits."""
+    kspace = bt.phantom(25, coils=COILS, kspace=True)
+    maps = bt.ecalib(kspace, maps=1)
+    mask = torch.zeros(25, dtype=torch.complex64)
+    mask[::ACCEL] = 1
+    mask[25 // 2 - 2 : 25 // 2 + 2] = 1
+    kspace = kspace * mask.reshape(25, 1)
+
+    tool = bt.pocsense(kspace, maps, i=10, r=0.01, l=1)
+    ours = apps.pocsense(kspace, maps, maxiter=10, alpha=0.01, wavelet=True)
+    assert torch.equal(ours, tool)
+
+
+def test_a_volume_is_the_tool_too():
+    """Three transformed axes rather than two, which is what the app works
+    out from the sensitivities rather than assuming."""
+    size = 16
+    kspace = bt.phantom([size, size, size], coils=COILS, kspace=True)
+    maps = bt.ecalib(kspace, maps=1)
+    mask = torch.zeros(size, size, 1, dtype=torch.complex64)
+    mask[torch.randperm(size, generator=torch.Generator().manual_seed(3))[: size // 2]] = 1
+    mask[size // 2 - 1 : size // 2 + 1] = 1
+    kspace = kspace * mask
+
+    tool = bt.pocsense(kspace, maps, i=5, r=0.01, l=1)
+    ours = apps.pocsense(kspace, maps, maxiter=5, alpha=0.01, wavelet=True)
+    assert torch.equal(ours, tool)
+
+
+def test_the_sweep_is_the_projections_in_order():
+    """``pocs`` applies every projection in turn and keeps nothing else, so a
+    sweep is the composition and a run is that composition repeated."""
+    from bartorch import optim
+
+    first = torch.zeros(4, dtype=torch.complex64)
+    steps: list[str] = []
+
+    def one(x):
+        steps.append("one")
+        return x + 1.0
+
+    def half(x):
+        steps.append("half")
+        return x * 0.5
+
+    answer = optim.POCS([one, half], maxiter=3)(first)
+
+    assert steps == ["one", "half", "one", "half", "one", "half"]
+    # x -> (x + 1) / 2 from zero: 1/2, 3/4, 7/8.
+    assert torch.allclose(answer, torch.full((4,), 0.875, dtype=torch.complex64))
+
+
+def test_a_sweep_starts_where_it_is_told():
+    from bartorch import optim
+
+    block = optim.POCSBlock([lambda x: x * 2.0])
+    y = torch.ones(3, dtype=torch.complex64)
+
+    assert torch.equal(block.start(y).x, torch.zeros(3, dtype=torch.complex64))
+    assert torch.equal(block.start(y, None, y).x, y)
+    assert torch.equal(block.output(block(block.start(y, None, y))), 2.0 * y)
+
+
+def test_a_term_is_taken_as_its_projection():
+    """``pocs`` calls a projection with ``mu = 1``, so a term enters as its
+    proximal operator at that step size."""
+    from bartorch import optim, priors
+
+    x = torch.tensor([4.0, -2.0, 0.5], dtype=torch.complex64)
+    term = priors.L2(0.25)
+
+    swept = optim.POCS([term], maxiter=1)(x, None, x)
+
+    assert torch.allclose(swept, x / 1.25)
+
+
+def test_a_sweep_of_nothing_is_refused():
+    from bartorch import optim
+
+    with pytest.raises(ValueError, match="no projections"):
+        optim.POCS([], maxiter=1)(torch.zeros(2, dtype=torch.complex64))
+
+
+def test_a_projection_has_to_be_one():
+    from bartorch import optim
+
+    with pytest.raises(TypeError, match="callable on a tensor"):
+        optim.POCSBlock([3])

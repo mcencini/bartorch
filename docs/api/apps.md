@@ -33,6 +33,12 @@ the same linearized least-squares problem -- and what it returns is named maps
 in their own units rather than a stack of coefficients. `tests/test_apps.py`
 holds it against decays and recoveries written out in the test.
 
+`apps.pocsense` is the application's three projections -- the measured
+samples, the range of the coil sensitivities, and a threshold on the coil
+images -- swept by {class}`bartorch.optim.POCS`. It answers in coil k-space, as
+the application does, and `tests/test_apps.py` holds it to `torch.equal` across
+six configurations, an odd grid and a volume.
+
 ```{eval-rst}
 .. autosummary::
    :toctree: generated
@@ -40,4 +46,5 @@ holds it against decays and recoveries written out in the test.
 
    mobafit
    pics
+   pocsense
 ```

@@ -844,6 +844,19 @@ which is what `nlop`'s `SignalModel` is over a TorchSim simulator.  The
 commands stay reachable through `_call.build` so a test can pin TorchSim's
 physics against BART's closed forms, which `tests/test_nlop_torchsim.py` does.
 
+`optim.POCS` is the other iteration that is not a least-squares solve: one
+sweep of a list of projections, applied in turn and in place, which is the
+whole of `italgos.c`'s `pocs` -- it takes no step size, keeps no momentum and
+reads no residual, and `iter2_pocs` is handed an `xupdate_op` that `pocs`
+never calls.  What the sets are belongs to the projections, so `apps.pocsense`
+builds the application's three out of `linop.Sampling`, the range of a
+`linop.CartesianSense`, and a `priors` term conjugated by the transform
+between the samples and the coil images.  The three are bit-identical to
+`tools.pocsense` on a grid, in two dimensions and in three, on an even grid
+and on an odd one -- where the modulation is a phase rather than a sign, so
+the scaling has to ride in the same array BART puts it in rather than in a
+second multiply.
+
 `apps.mobafit` is where that decision shows on the surface: it is `mobafit`'s
 method -- the Gauss-Newton loop over the same linearized least-squares problem
 -- over a model that is TorchSim's, so it answers in named maps in their own
