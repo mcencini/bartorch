@@ -22,6 +22,22 @@ present in the script this page can be downloaded as.
 
 # sphinx_gallery_start_ignore
 import matplotlib.pyplot as plt
+from cmap import Colormap
+
+# Fuderer et al. (Magn Reson Med 2025) recommend one perceptually uniform
+# colormap per relaxation parameter, so that a T1 map is never read as a T2 map.
+LIPARI = Colormap("crameri:lipari").to_matplotlib()
+NAVIA = Colormap("crameri:navia").to_matplotlib()
+# Phase is cyclic, so the colormap has to be: -pi and +pi are the same colour.
+PHASE = Colormap("colorcet:CET_C6").to_matplotlib()
+
+# Colormap, window and unit per parameter.  Both relaxation windows stop short
+# of cerebrospinal fluid, so that white and grey matter -- 500 against 833 ms
+# in T1, 70 against 83 ms in T2 -- take up most of the scale and CSF saturates.
+STYLE = {
+    "T1": (LIPARI, (0.0, 1200.0), "$T_1$ [ms]"),
+    "T2": (NAVIA, (0.0, 120.0), "$T_2$ [ms]"),
+}
 
 plt.rcParams.update(
     {
@@ -48,12 +64,59 @@ def panels(rows, columns, height=1.0):
     return figure, axes
 
 
-def show(axis, values, title=None, vmax=None, cmap="gray"):
+def show(axis, values, title=None, vmax=None, cmap="gray", vmin=0.0):
+    """One panel, of a magnitude by default."""
     values = values.detach().abs().cpu().numpy() if hasattr(values, "detach") else values
-    handle = axis.imshow(values, cmap=cmap, vmin=0.0, vmax=vmax)
+    handle = axis.imshow(values, cmap=cmap, vmin=vmin, vmax=vmax)
     if title is not None:
         axis.set_title(title)
     return handle
+
+
+def parameter(axis, values, name, title=None):
+    """One relaxation map in the colormap and window its parameter is read in."""
+    cmap, limits, _ = STYLE[name]
+    return show(axis, values, title, vmax=limits[1], cmap=cmap, vmin=limits[0])
+
+
+def domain(axis, values, title=None):
+    """A complex map the way a coil sensitivity is read: phase in colour,
+    magnitude in brightness, so an unsupported corner reads as background
+    rather than as a phase."""
+    values = values.detach().cpu()
+    colours = PHASE((values.angle() / (2 * np.pi) + 0.5).numpy())[..., :3]
+    magnitude = values.abs().numpy()
+    magnitude = magnitude / max(float(magnitude.max()), 1e-12)
+    axis.imshow(colours * magnitude[..., None])
+    if title is not None:
+        axis.set_title(title)
+
+
+def scalebar(figure, axes, handle=None, label=None, name=None):
+    """One colorbar for a group of panels, so none gives up width to its own."""
+    if name is not None:
+        cmap, limits, label = STYLE[name]
+        handle = plt.cm.ScalarMappable(plt.Normalize(*limits), cmap)
+    bar = figure.colorbar(handle, ax=axes, fraction=0.046, label=label)
+    return bar
+
+
+def phase_bar(figure, axes):
+    """The colour-to-phase key for the panels beside it."""
+    bar = figure.colorbar(
+        plt.cm.ScalarMappable(plt.Normalize(-np.pi, np.pi), PHASE),
+        ax=axes,
+        fraction=0.046,
+        ticks=[-np.pi, 0.0, np.pi],
+    )
+    bar.ax.set_yticklabels(["$-\\pi$", "0", "$\\pi$"])
+    bar.set_label("phase [rad]")
+
+
+def scaled(estimate, reference):
+    """``estimate`` scaled to ``reference`` in the least-squares sense."""
+    a, b = estimate.abs().double(), reference.abs().double()
+    return (float((a * b).sum() / (a * a).sum()) * a).float()
 
 
 # sphinx_gallery_end_ignore
@@ -72,28 +135,73 @@ from bartorch.io import readcfl, writecfl
 
 SIZE = 128
 COILS = 8
-SLICE = 90
 
 # sphinx_gallery_start_ignore
+# The phantom, the relaxation maps behind it and the coil sensitivities, built
+# as :doc:`/auto_examples/01-basics/01-from-kspace-to-image` builds them.
+SLICE = 90  # axial, through the lateral ventricles
+TISSUES = (1, 2, 3, 4, 5, 6, 8)  # everything the table gives relaxation times
+MARGIN = 0.25  # what the field of view leaves around the head
+
 table = Path(brainweb_dl.__file__).parent / "data" / "brainweb1_tissues.csv"
-rows = list(csv.DictReader(table.open()))
-proton_density = np.array([float(row["PD (ms)"]) for row in rows], dtype=np.float32)
-labels = {row["Tissue"]: index for index, row in enumerate(rows)}
+entries = list(csv.DictReader(table.open()))
+tissue_t1 = np.array([float(row["T1 (ms)"]) for row in entries], dtype=np.float32)[list(TISSUES)]
+tissue_t2 = np.array([float(row["T2 (ms)"]) for row in entries], dtype=np.float32)[list(TISSUES)]
+tissue_pd = np.array([float(row["PD (ms)"]) for row in entries], dtype=np.float32)[list(TISSUES)]
 
-fractions = get_mri(sub_id=0, contrast="fuzzy")[:, :, SLICE]
-fractions = np.flip(fractions.transpose(1, 0, 2), 0).copy()
+# BrainWeb's volume is indexed (inferior-superior, posterior-anterior,
+# left-right), so its first axis selects an axial slice; an image is drawn from
+# its first row down, so flipping puts anterior at the top.
+fractions = np.flipud(get_mri(sub_id=0, contrast="fuzzy")[SLICE])[..., list(TISSUES)].copy()
 
+# A square field of view around the head, with a margin for the aliasing of an
+# undersampled acquisition to fold into.
+occupied = np.nonzero(fractions.sum(-1) > 0.5)
+middle = [int((axis.min() + axis.max()) / 2) for axis in occupied]
+half = int(round((1 + MARGIN) * max(axis.max() - axis.min() for axis in occupied) / 2))
+source = tuple(
+    slice(max(0, c - half), min(n, c + half)) for c, n in zip(middle, fractions.shape[:2])
+)
+box = np.zeros((2 * half, 2 * half, fractions.shape[-1]), dtype=np.float32)
+box[tuple(slice(s.start - (c - half), s.stop - (c - half)) for s, c in zip(source, middle))] = (
+    fractions[source]
+)
+memberships = torch.nn.functional.interpolate(
+    torch.as_tensor(box).permute(2, 0, 1)[None],
+    size=(SIZE, SIZE),
+    mode="bilinear",
+    align_corners=False,
+)[0]
 
-def resampled(values):
-    grid = torch.as_tensor(np.ascontiguousarray(values, dtype=np.float32))[None, None]
-    return torch.nn.functional.interpolate(
-        grid, size=(SIZE, SIZE), mode="bilinear", align_corners=False
-    )[0, 0]
+# Where each class sits in ``memberships``, by the name the table gives it.
+CLASS = {entries[label]["Tissue"]: index for index, label in enumerate(TISSUES)}
 
+weights = memberships * torch.as_tensor(tissue_pd)[:, None, None]
+share = weights.sum(0).clamp(min=1e-6)
+T1 = (weights * torch.as_tensor(tissue_t1)[:, None, None]).sum(0) / share
+T2 = (weights * torch.as_tensor(tissue_t2)[:, None, None]).sum(0) / share
+proton_density = weights.sum(0) / weights.sum(0).max()
 
-magnitude = resampled(fractions @ proton_density)
-image = (magnitude / magnitude.max()).to(torch.complex64)
+# A T1-weighted spin echo, at a repetition time of 600 ms and an echo time of
+# 12 ms.
+signal = (
+    proton_density
+    * (1 - torch.exp(-600.0 / T1.clamp(min=1e-3)))
+    * torch.exp(-12.0 / T2.clamp(min=1e-3))
+)
+signal = torch.where(T1 > 0, signal, torch.zeros(()))
+signal = signal / signal.max()
 
+# A smooth quadratic phase, so that nothing depends on the image being real.
+grid_y, grid_x = torch.meshgrid(
+    torch.linspace(-1.0, 1.0, SIZE), torch.linspace(-1.0, 1.0, SIZE), indexing="ij"
+)
+image = (signal * torch.exp(0.8j * (grid_x**2 - 0.5 * grid_y**2))).to(torch.complex64)
+# sphinx_gallery_end_ignore
+
+# sphinx_gallery_start_ignore
+# BART's analytical head coil on the image grid, normalized so that the
+# combination of the coil images is the image itself.
 sensitivities = bt.coils(t=bt.grid(D=(SIZE, SIZE, 1)), n=COILS)[:, 0]
 sensitivities = sensitivities / bartorch.rss(sensitivities, axes=(0,), keepdim=True)
 # sphinx_gallery_end_ignore
@@ -250,7 +358,7 @@ print(f"SSIM  {bartorch.ssim(image.abs(), common):.3f}")
 # :func:`bartorch.roi_stat` reports a statistic over a region rather than over
 # the whole image, which is how a phantom measurement is reported.
 
-region = (resampled(fractions[..., labels["WM"]]) > 0.8).to(torch.complex64)
+region = (memberships[CLASS["WM"]] > 0.8).to(torch.complex64)
 
 for name, values in (("phantom", image.abs()), ("reconstruction", common)):
     volume = values.to(torch.complex64)
