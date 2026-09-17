@@ -15,3 +15,6 @@ myst-parser>=3,<5
 # The gallery's figures.  Rendering the example pages needs it as well as
 # running them, because the scraper is loaded either way.
 matplotlib>=3.7
+# The perceptually uniform colormaps the relaxometry examples are drawn with:
+# lipari for T1 and navia for T2, as Fuderer et al. recommend.
+cmap>=0.6

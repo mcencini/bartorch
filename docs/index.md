@@ -14,16 +14,16 @@ guides/user/issues
 
 ```{toctree}
 :hidden:
-:caption: Examples
+:caption: Explanation
 
-auto_examples/index
+explanation/index
 ```
 
 ```{toctree}
 :hidden:
-:caption: Explanation
+:caption: Examples
 
-explanation/index
+auto_examples/index
 ```
 
 ```{toctree}

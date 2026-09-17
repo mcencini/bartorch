@@ -22,7 +22,7 @@ The concepts these examples use -- the encoding model, regularized
 least squares, non-uniform transforms, nonlinear inversion -- are introduced in
 :doc:`../explanation/index`.
 
-Running them needs a built ``bartorch``, ``matplotlib`` for the figures, and
-``brainweb-dl``, which every example builds its phantom from::
+Running them needs a built ``bartorch``, ``brainweb-dl``, which every example
+builds its phantom from, and ``matplotlib`` and ``cmap`` for the figures::
 
-    pip install bartorch matplotlib brainweb-dl
+    pip install bartorch brainweb-dl matplotlib cmap
