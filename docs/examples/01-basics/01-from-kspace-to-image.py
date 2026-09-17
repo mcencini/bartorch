@@ -129,7 +129,7 @@ image = (magnitude * torch.exp(1j * phase)).to(torch.complex64)
 # The sensitivities are BART's analytical head coil, evaluated on the image
 # grid that :func:`bartorch.tools.grid` describes. Dividing by the root sum of
 # squares over the channels makes the combination of the coil images the image
-# itself, which is what lets a reconstruction be compared against it.
+# itself, so a reconstruction can be compared against it directly.
 
 grid = bt.grid(D=(SIZE, SIZE, 1))
 sensitivities = bt.coils(t=grid, n=COILS)[:, 0]
@@ -196,7 +196,7 @@ compressed = bt.ccapply(measured, matrix, p=VIRTUAL)
 #
 # ESPIRiT estimates the sensitivities as the leading eigenvector, per voxel, of
 # an operator built from the calibration region. ``crop`` discards the voxels
-# whose eigenvalue falls below it, which is what keeps the maps from being
+# whose eigenvalue falls below it, and so keeps the maps from being
 # extrapolated into the background.
 
 maps = bt.ecalib(compressed, maps=1, calib_size=CALIBRATION, crop=0.8)

@@ -25,6 +25,10 @@ parameter fit matches against.
 The phantom and the coil sensitivities are built as in
 :doc:`../01-basics/01-from-kspace-to-image`; the cell that does it is hidden on
 this page and present in the script this page can be downloaded as.
+
+Tamir JI, Uecker M, Chen W, Lai P, Alley MT, Vasanawala SS, Lustig M. *T2
+shuffling: sharp, multicontrast, volumetric fast spin-echo imaging.* Magn Reson
+Med 77(1):180-195 (2017).
 """
 
 # %%
@@ -179,8 +183,8 @@ for index, label in enumerate(TISSUES):
 #
 # One golden-angle spoke per frame. The trajectory indexes frames as well as
 # samples, and the image the encoding operator maps from is the four
-# coefficient maps rather than the four hundred frames: ``basis`` is what makes
-# the two shapes fit each other.
+# coefficient maps rather than the four hundred frames, with ``basis``
+# contracting the one into the other.
 
 trajectory = bt.traj(readout=SIZE, spokes=FRAMES, radial=True, golden=True)
 trajectory = trajectory.reshape(FRAMES, 1, SIZE, 3)
@@ -201,8 +205,8 @@ print(A.plan)
 #
 # ``plan.contraction`` reports the subspace and its rank, and the normal
 # operator is a point spread function over the basis as well as the
-# trajectory, which is what keeps a subspace reconstruction as cheap per
-# iteration as a plain one.
+# trajectory, so a subspace reconstruction costs per iteration what a plain one
+# costs.
 
 data = measured / optim.data_scaling(measured[..., None], A=A)
 coefficients = optim.ADMM(priors.Wavelet(axes=(-1, -2), weight=0.002), maxiter=30)(data, A)
@@ -282,8 +286,13 @@ voxel = torch.nonzero(support & pure & (dominant == 2))
 voxel = voxel[len(voxel) // 2]
 axes[0, 2].remove()
 axis = figure.add_subplot(1, 3, 3)
-axis.plot(series[:, voxel[0], voxel[1]].real.cpu().numpy(), lw=1.2, label="phantom")
-axis.plot(recovered[:, voxel[0], voxel[1]].real.cpu().numpy(), lw=1.2, label="recovered")
+truth_curve = series[:, voxel[0], voxel[1]].real
+fitted_curve = recovered[:, voxel[0], voxel[1]].real
+# The reconstruction determines the curve up to a global scale, which is
+# divided out here so the two can be read against each other.
+fitted_curve = fitted_curve * float((truth_curve * fitted_curve).sum() / (fitted_curve**2).sum())
+axis.plot(truth_curve.cpu().numpy(), lw=1.2, label="phantom")
+axis.plot(fitted_curve.cpu().numpy(), lw=1.2, label="recovered")
 axis.set_xlabel("frame")
 axis.set_ylabel("signal [a.u.]")
 axis.legend(fontsize=9)
@@ -294,8 +303,13 @@ plt.show()
 #
 # The first two coefficient maps carry the magnetization and its recovery and
 # look like images; the third and fourth carry what the first two cannot
-# represent and look like nothing in particular, which is what a basis
-# estimated from a dictionary rather than from anatomy produces.
+# represent and look like nothing in particular, as a basis estimated from a
+# dictionary rather than from anatomy will.
+#
+# The recovered curve is the reconstruction's, which determines it only up to a
+# global scale -- the data was normalized before the solve -- so the panel
+# beside the maps compares the two after dividing that scale out. The fit is
+# invariant to it, being a normalized inner product.
 #
 # The fitted :math:`T_1` agrees with the table in the voxels one tissue
 # dominates. It is biased where two tissues meet, because the sum of two

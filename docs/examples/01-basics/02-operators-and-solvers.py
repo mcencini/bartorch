@@ -9,9 +9,9 @@ than as a call to a BART application.
 :func:`bartorch.tools.pics` assembles three things and hands them to BART's
 iteration: the encoding operator, the regularization terms, and the algorithm.
 :mod:`bartorch.linop` and :mod:`bartorch.optim` expose those three separately,
-which is what a reconstruction BART has no application for is written with --
-an encoding with an extra factor in it, a solver reached from an outer loop, or
-an operator defined in Python.
+for the reconstructions BART has no application for: an encoding with an extra
+factor in it, a solver reached from an outer loop, an operator defined in
+Python.
 
 This example builds the encoding of :doc:`01-from-kspace-to-image`, checks it
 against the definition of an adjoint, solves with it, and compares the result
@@ -157,7 +157,8 @@ print(f"fused: {A.plan.fused}")
 # Applying the adjoint is not the same as applying the transpose, and a
 # reconstruction built on the wrong one converges to the wrong image. The
 # definition :math:`\langle Ax, y\rangle = \langle x, A^H y\rangle` holds for
-# any pair of vectors, which is what makes it a usable check on an operator.
+# any pair of vectors, and holds for random vectors as readily as for real
+# data, so it is a usable check on an operator.
 
 generator = torch.Generator().manual_seed(0)
 probe = torch.randn(A.ishape, dtype=torch.complex64, generator=generator)
@@ -176,8 +177,8 @@ print(f"relative difference {abs(forward - adjoint) / abs(forward):.2e}")
 # the scanner wrote but what ``pics`` iterates on: the sampling pattern
 # applied, the modulation into the uncentred convention, and the data divided
 # by the scaling :func:`bartorch.optim.data_scaling` estimates from the adjoint
-# reconstruction -- which is what makes a regularization weight mean the same
-# thing from one dataset to the next.
+# reconstruction, which is the step that makes a regularization weight
+# transferable from one dataset to the next.
 
 measured = bartorch.fftmod(kspace * pattern, axes=(-1, -2, -3), inverse=True)
 scale = optim.data_scaling(measured)

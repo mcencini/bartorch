@@ -24,6 +24,10 @@ than as a penalty beside it.
 The phantom and the coil sensitivities are built as in
 :doc:`../01-basics/01-from-kspace-to-image`; the cell that does it is hidden on
 this page and present in the script this page can be downloaded as.
+
+Uecker M, Hohage T, Block KT, Frahm J. *Image reconstruction by regularized
+nonlinear inversion -- joint estimation of coil sensitivities and image
+content.* Magn Reson Med 60(3):674-682 (2008).
 """
 
 # %%
@@ -152,9 +156,12 @@ show(axes[0, 1], reconstruction, "nlinv", vmax=None)
 show(axes[0, 2], bartorch.rss(estimated[:, 0], axes=(0,)), "root sum of squares of the maps")
 
 figure, axes = panels(2, 4)
+# Each set on its own scale: the estimate is determined only up to the scale
+# the image takes the reciprocal of.
+tops = (float(sensitivities.abs().max()), float(estimated.abs().max()))
 for column in range(4):
-    show(axes[0, column], sensitivities[column], f"channel {column}", vmax=1.0)
-    show(axes[1, column], estimated[column, 0], vmax=1.0)
+    show(axes[0, column], sensitivities[column], f"channel {column}", vmax=tops[0])
+    show(axes[1, column], estimated[column, 0], vmax=tops[1])
 axes[0, 0].set_ylabel("simulated")
 axes[1, 0].set_ylabel("estimated")
 plt.show()
@@ -162,16 +169,19 @@ plt.show()
 
 # %%
 #
-# The estimated sensitivities are smooth where the object is and fall away
-# outside it, which is what the model's weighting produces: the coil unknown is
+# The estimated sensitivities are smooth by construction rather than by
+# agreement with the data: the coil unknown is
 # not the sensitivity map but its k-space representation
 # :math:`\hat{s}`, and the map follows as
 # :math:`S = \mathcal{F}^{-1}[(1 + a|k|^2)^{-b/2} \hat{s}]`. A step in the
 # unknown is therefore a smooth change in the map by construction, and the
-# joint problem needs no separate penalty on the coils. Outside the object the
-# image and the sensitivities are unidentifiable -- their product is zero for
-# any pair -- so what is drawn there is a property of the initialization and
-# the weighting, not of the data.
+# joint problem needs no separate penalty on the coils. The pair is determined
+# only up to a scale, since multiplying the maps by a constant and dividing the
+# image by it changes nothing the data sees, which is why the two rows above
+# are drawn on their own scales and why a nonlinear inversion is reported after
+# normalizing by the root sum of squares of the maps. Outside the object
+# neither factor is determined at all -- their product is zero for any pair --
+# so what is drawn there follows from the initialization and the weighting.
 #
 # The model and the solver
 # ------------------------
@@ -195,10 +205,10 @@ print(f"inputs {model.ishapes} -> output {model.oshapes}")
 
 # %%
 #
-# ``nlinv`` scales the data by ``100 / ||y||`` before it starts, which is what
-# fixes the meaning of :math:`\alpha`, and takes its conjugate gradients to a
-# hundred iterations or a tolerance of a tenth. Given the same three things the
-# loop written here is the application.
+# ``nlinv`` scales the data by ``100 / ||y||`` before it starts, which fixes
+# the meaning of :math:`\alpha`, and takes its conjugate gradients to a hundred
+# iterations or a tolerance of a tenth. Given the same three settings the loop
+# written here is the application.
 
 data = model.prepare(measured * (100.0 / float(torch.linalg.vector_norm(measured))))
 fitted, coefficients = nlop.IRGNM(iterations=8, cg_maxiter=100, cg_tol=0.1)(data, model)

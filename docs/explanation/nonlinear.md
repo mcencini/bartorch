@@ -56,16 +56,16 @@ The distinctive part is $\alpha_k$, which starts large and is divided by a
 constant — two, by default — after every step. The early steps are heavily
 regularized and move the iterate in the well-determined directions only; the
 later ones let the poorly-determined directions in. This decreasing
-regularization is what makes the method usable on a problem whose linearization
-is ill-conditioned everywhere, and it means the iteration count is a
+regularization carries the method through a problem whose linearization is
+ill-conditioned everywhere, and it means the iteration count is a
 regularization parameter rather than a convergence threshold: stopping early
 leaves a smoother answer, running longer eventually lets noise in.
 
 {class}`~bartorch.nlop.IRGNM` is that loop, and
 {class}`~bartorch.nlop.IRGNMBlock` is one step of it as a torch module. The
-inner problem can go to the conjugate gradients inside BART, which is what
-`nlinv` does, or to a solver from {mod}`bartorch.optim`, whose regularization
-terms then apply to the step.
+inner problem can go to the conjugate gradients inside BART, as in `nlinv`, or
+to a solver from {mod}`bartorch.optim`, whose regularization terms then apply
+to the step.
 
 ## Identifiability, and what makes the factorization unique
 
@@ -105,9 +105,9 @@ reconstruct the series of contrasts, then fit the model voxel by voxel. The
 two differ in what the reconstruction is allowed to use.
 
 In the two-step route each contrast is reconstructed on its own, from its own
-undersampled data, and nothing in that reconstruction knows the contrasts are
-related. The fit that follows sees whatever artefact the reconstruction left
-and has no way to distinguish it from signal.
+undersampled data, and nothing in that reconstruction uses the relation between
+the contrasts. The fit that follows is given whatever artefact the
+reconstruction left, with no way to distinguish it from signal.
 
 In the model-based route the unknowns are the parameter maps — three maps
 rather than eight images, for a multi-echo experiment — and every echo
@@ -145,9 +145,25 @@ model, and the Gauss-Newton step needs nothing else.
 
 Differentiation runs the other way too. A Gauss-Newton step is itself
 differentiable — by the data, by the iterate, by the regularization centre and
-by $\alpha$ — which is what an unrolled network trains through, and the same is
-true of the proximal steps in {mod}`bartorch.optim`. What is not differentiable
+by $\alpha$ — so an unrolled network trains through it, and the same holds of
+the proximal steps in {mod}`bartorch.optim`. What is not differentiable
 is a BART proximal operator, which has no implemented backward pass and raises
 rather than contributing a wrong gradient;
 {class}`~bartorch.priors.ImplicitPrior` substitutes a differentiable denoiser
 where one is needed.
+
+## References
+
+Uecker M, Hohage T, Block KT, Frahm J. Image reconstruction by regularized
+nonlinear inversion -- joint estimation of coil sensitivities and image
+content. *Magn Reson Med* 60(3):674-682 (2008).
+
+Bakushinsky AB, Kokurin MY. *Iterative methods for approximate solution of
+inverse problems.* Springer (2004).
+
+Block KT, Uecker M, Frahm J. Model-based iterative reconstruction for radial
+fast spin-echo MRI. *IEEE Trans Med Imaging* 28(11):1759-1769 (2009).
+
+Wang X, Tan Z, Scholand N, Roeloffs V, Uecker M. Physics-based reconstruction
+methods for magnetic resonance imaging. *Phil Trans R Soc A* 379:20200196
+(2021).

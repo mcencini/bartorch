@@ -23,23 +23,26 @@ Three properties of $A$ decide what can be done with it.
 **It is linear**, for a fixed set of coil sensitivities: the signal of a sum of
 objects is the sum of their signals. A linear operator is determined by its
 action, and never has to be formed as a matrix — for a $256^2$ image with
-eight channels the matrix would have $10^{10}$ entries, while applying the
-operator costs a few Fourier transforms.
+eight channels the matrix would have of order $10^{10}$ entries, while applying
+the operator costs a few Fourier transforms.
 
 **It has an adjoint.** The adjoint $A^H$ is defined by
 $\langle Ax, y\rangle = \langle x, A^H y\rangle$ for all $x$ and $y$; for a
 matrix it is the conjugate transpose. Every algorithm below is written in terms
-of $A$ and $A^H$ alone, which is what lets one solver serve every encoding.
+of $A$ and $A^H$ alone, so one solver serves every encoding.
 Applying the adjoint to the data, $A^H y$, is the cheapest thing that can be
 called a reconstruction, and for Cartesian sampling it is the zero-filled
 inverse Fourier transform followed by the coil combination.
 
-**It is not invertible.** An accelerated acquisition measures fewer samples
-than the image has voxels, so $A$ has a nontrivial null space: there are
-images $x_0 \neq 0$ with $A x_0 = 0$, and $x$ and $x + x_0$ explain the data
-equally well. Even where the count works out, $A$ is usually ill-conditioned,
-and inverting it amplifies the noise by the inverse of its smallest singular
-value.
+**It is ill-conditioned, and may not be invertible at all.** An accelerated
+acquisition measures fewer k-space positions than the image has voxels. Several
+receive channels measure each position, so the number of equations can still
+exceed the number of unknowns; whether the system determines the image depends
+on how differently the channels see the voxels that alias onto each other. Where
+the count does fall short, $A$ has a null space — there are images
+$x_0 \neq 0$ with $A x_0 = 0$, and $x$ and $x + x_0$ explain the data equally
+well — and where it does not, $A$ is merely ill-conditioned, and inverting it
+amplifies the noise by the inverse of its smallest singular value.
 
 ## Least squares and its failure
 
@@ -194,3 +197,24 @@ the same terms.
 The estimators on this page all assume $A$ is known and linear. When the coil
 sensitivities or a set of physical parameters are unknown too, it is not, and
 {doc}`nonlinear` takes that case up.
+
+## References
+
+Lustig M, Donoho D, Pauly JM. Sparse MRI: the application of compressed sensing
+for rapid MR imaging. *Magn Reson Med* 58(6):1182-1195 (2007).
+
+Rudin LI, Osher S, Fatemi E. Nonlinear total variation based noise removal
+algorithms. *Physica D* 60(1-4):259-268 (1992).
+
+Beck A, Teboulle M. A fast iterative shrinkage-thresholding algorithm for
+linear inverse problems. *SIAM J Imaging Sci* 2(1):183-202 (2009).
+
+Boyd S, Parikh N, Chu E, Peleato B, Eckstein J. Distributed optimization and
+statistical learning via the alternating direction method of multipliers.
+*Found Trends Mach Learn* 3(1):1-122 (2011).
+
+Chambolle A, Pock T. A first-order primal-dual algorithm for convex problems
+with applications to imaging. *J Math Imaging Vis* 40(1):120-145 (2011).
+
+Parikh N, Boyd S. Proximal algorithms. *Found Trends Optim* 1(3):127-239
+(2014).

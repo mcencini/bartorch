@@ -99,7 +99,6 @@ EXECUTE_EXAMPLES = os.environ.get("BARTORCH_DOCS_EXECUTE") == "1"
 sphinx_gallery_conf = {
     "doc_module": "bartorch",
     "backreferences_dir": "api/generated/backreferences",
-    "reference_url": {"bartorch": None},
     "examples_dirs": ["examples"],
     "gallery_dirs": ["auto_examples"],
     # Searched against each script's path; nothing matches the second.

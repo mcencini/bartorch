@@ -105,14 +105,14 @@ image = (magnitude / magnitude.max()).to(torch.complex64)
 # coordinates of every sample, in units of the k-space cell of the image it
 # encodes, so a readout of ``SIZE`` samples runs from :math:`-N/2` to
 # :math:`N/2`. The third component is :math:`k_z`, zero throughout for a
-# two-dimensional trajectory, and whether it is used is what decides whether
-# the transform is two- or three-dimensional.
+# two-dimensional trajectory, and whether it is used decides whether the
+# transform is two- or three-dimensional.
 #
 # Successive spokes are separated either by :math:`\pi` over their number,
 # which tiles k-space uniformly for one frame, or by the golden angle, which
-# tiles it approximately uniformly for *any* number of consecutive spokes. The
-# second is what makes a golden-angle acquisition re-binnable after the fact,
-# which :doc:`../03-applications/01-dynamic-golden-angle` depends on.
+# tiles it approximately uniformly for *any* number of consecutive spokes. Only
+# the second lets an acquisition be cut into frames after it was measured, as
+# :doc:`../03-applications/01-dynamic-golden-angle` does.
 
 SPOKES = 201  # pi/2 * SIZE, the number at which radial sampling is not undersampled
 
@@ -242,9 +242,9 @@ print(f"relative difference      {float((toeplitz - pair).abs().max() / pair.abs
 
 # %%
 #
-# The two agree to a small multiple of the transform's tolerance, which is what
-# says the point spread function is the right one rather than nearly so: the
-# difference closes as the tolerance is tightened.
+# The two agree to a small multiple of the transform's tolerance, and the
+# difference closes as the tolerance is tightened -- the evidence that the
+# point spread function is the right one rather than nearly so.
 #
 # :func:`bartorch.tools.psf` computes that function on its own. Its extent is
 # the aliasing the trajectory produces: for a fully sampled radial trajectory

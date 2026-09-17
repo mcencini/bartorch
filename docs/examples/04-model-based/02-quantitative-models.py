@@ -27,6 +27,10 @@ BART nonlinear operator; the solver is the Gauss-Newton loop of
 The phantom and the coil sensitivities are built as in
 :doc:`../01-basics/01-from-kspace-to-image`; the cell that does it is hidden on
 this page and present in the script this page can be downloaded as.
+
+Wang X, Tan Z, Scholand N, Roeloffs V, Uecker M. *Physics-based reconstruction
+methods for magnetic resonance imaging.* Phil Trans R Soc A 379:20200196
+(2021).
 """
 
 # %%
@@ -195,8 +199,7 @@ print(f"model inside the operator: {time.perf_counter() - start_time:5.1f} s")
 #
 # ``E @ M`` composes a linear operator with a nonlinear one; the derivative of
 # the composition at a point is the encoding applied to the derivative of the
-# model, which is what a Gauss-Newton step needs and what the composition
-# supplies.
+# model -- exactly what a Gauss-Newton step asks of the composition.
 
 estimates = {
     name: M.split(fit)["T2"]

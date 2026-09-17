@@ -3,9 +3,9 @@ Examples
 
 Reconstruction workflows written with bartorch, grouped by what they build.
 
-**Basics** covers the data layout, the preprocessing a reconstruction starts
-from, BART's applications as functions, and the same reconstruction assembled
-from an encoding operator and a solver.
+**Basics** covers the data layout, BART's applications as functions, the same
+reconstruction assembled from an encoding operator and a solver, and the array
+operations a reconstruction is surrounded by.
 
 **Non-Cartesian imaging** covers trajectories, the non-uniform Fourier
 transform and its point spread function, and a radial SENSE reconstruction.
@@ -22,7 +22,7 @@ The concepts these examples use -- the encoding model, regularized
 least squares, non-uniform transforms, nonlinear inversion -- are introduced in
 :doc:`../explanation/index`.
 
-Running them needs a built ``bartorch`` and, for the examples that use an
-anatomical phantom, ``brainweb-dl``::
+Running them needs a built ``bartorch``, ``matplotlib`` for the figures, and
+``brainweb-dl``, which every example builds its phantom from::
 
     pip install bartorch matplotlib brainweb-dl

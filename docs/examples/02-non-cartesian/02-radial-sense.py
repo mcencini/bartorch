@@ -12,8 +12,8 @@ least squares, with the non-Cartesian SENSE operator
 
 The sensitivities are estimated from the radial data itself, and the same
 reconstruction is run twice: once through :func:`bartorch.tools.pics` and once
-through the operator and a solver, which is what an encoding BART has no
-application for would be written with.
+through the operator and a solver, the route an encoding BART has no
+application for would take.
 
 The measured data here are simulated by the same transform the reconstruction
 inverts, so the experiment reports what undersampling and noise cost, not what

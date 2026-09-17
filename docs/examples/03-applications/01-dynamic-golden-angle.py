@@ -8,13 +8,12 @@ series, with a temporal regularizer in place of the temporal resolution the
 undersampling destroys.
 
 The acquisition is one uninterrupted train of spokes, each rotated from the
-last by the golden angle. Frames are cut out of it afterwards, which is what
-the golden angle buys: any block of consecutive spokes covers k-space
-approximately uniformly, so the frame duration is a reconstruction parameter
-rather than an acquisition parameter. Thirteen spokes across a 128 matrix is
-fifteenfold undersampled, and no frame is invertible on its own; what makes the
-series recoverable is that the frames are not independent, which a total
-variation penalty along time states.
+last by the golden angle. Frames are cut out of it afterwards: any block of
+consecutive spokes covers k-space approximately uniformly, so the frame
+duration is a reconstruction parameter rather than an acquisition parameter.
+Thirteen spokes across a 128 matrix is fifteenfold undersampled, and no frame
+is invertible on its own; the series is recoverable because the frames are not
+independent, which a total variation penalty along time states.
 
 This is the encoding of :doc:`../02-non-cartesian/02-radial-sense` with one
 axis added: the image is ``(frames, y, x)``, the trajectory indexes frames as
@@ -23,6 +22,11 @@ well as shots, and the sensitivities are shared across all of them.
 The phantom and the coil sensitivities are built as in
 :doc:`../01-basics/01-from-kspace-to-image`; the cell that does it is hidden on
 this page and present in the script this page can be downloaded as.
+
+Feng L, Grimm R, Block KT, Chandarana H, Kim S, Xu J, Axel L, Sodickson DK,
+Otazo R. *Golden-angle radial sparse parallel MRI: combination of compressed
+sensing, parallel imaging, and golden-angle radial sampling for fast and
+flexible dynamic volumetric MRI.* Magn Reson Med 72(3):707-717 (2014).
 """
 
 # %%
@@ -139,8 +143,8 @@ series = series.to(torch.complex64)
 # ``FRAMES * SPOKES`` spokes are generated as one golden-angle trajectory and
 # then reshaped, so that the first axis indexes frames and the second the shots
 # within a frame. A trajectory with an encoding axis is one transform over all
-# of its samples rather than one transform per frame, which is what lets a
-# single plan serve the whole series.
+# of its samples rather than one transform per frame, so a single plan serves
+# the whole series.
 
 trajectory = bt.traj(readout=SIZE, spokes=FRAMES * SPOKES, radial=True, golden=True)
 trajectory = trajectory.reshape(FRAMES, SPOKES, SIZE, 3)
@@ -247,5 +251,6 @@ plt.show()
 # radial acquisition are spread over the image rather than concentrated where
 # the signal is, but carries the frame-to-frame variation of the streak pattern
 # into it. The regularized reconstruction is smoother in time by construction,
-# which is a bias as much as it is a denoiser: a change confined to one frame
-# is what a total variation penalty along time is least likely to keep.
+# which is a bias as much as it is a denoiser: of everything in the series, a
+# change confined to one frame is the least likely to survive a temporal total
+# variation penalty.

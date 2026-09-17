@@ -57,7 +57,7 @@ distance from the centre of k-space, for radial sampling. The result is the
 **gridding reconstruction**, which is a reconstruction in the sense that it
 produces an image and not in the sense that it inverts anything: it leaves
 whatever the trajectory did not sample unrecovered, and at any real
-acceleration that is what dominates the result.
+acceleration that omission dominates the result.
 
 An operator carries its weights itself rather than leaving them to the caller,
 because the normal operator is built over them (see below) and a chain of
@@ -118,14 +118,15 @@ encodes, so a readout of $N$ samples runs from $-N/2$ to $N/2$. The convention
 matters because a transform has to know how many cells the trajectory spans;
 radians and cycles per metre are conversions of it.
 
-Radial trajectories come in two orderings. Spokes separated by $\pi/n$ tile
-k-space uniformly for a frame of $n$ spokes and for no other number.
+{func}`~bartorch.tools.traj` offers two orderings of a radial trajectory.
+Spokes separated by $\pi/n$ tile k-space uniformly for a frame of $n$ spokes
+and for no other number.
 **Golden-angle** ordering separates successive spokes by $\pi$ times the golden
 ratio conjugate, which tiles k-space approximately uniformly for *any* number
 of consecutive spokes. A continuously acquired golden-angle scan can therefore
 be cut into frames after the fact, at a frame duration chosen when the data is
-reconstructed rather than when it is acquired — which is what
-{doc}`../auto_examples/03-applications/01-dynamic-golden-angle` relies on.
+reconstructed rather than when it is acquired, as
+{doc}`../auto_examples/03-applications/01-dynamic-golden-angle` does.
 
 ## Devices
 
@@ -136,3 +137,26 @@ BART would have run on a card stays on BART's own operator rather than quietly
 moving to the host. The k-space and the image of one reconstruction can be in
 different places, since BART hands an operator memory on either side, so an
 operator holds one plan per place and builds each the first time it is needed.
+
+## References
+
+O'Sullivan JD. A fast sinc function gridding algorithm for Fourier inversion in
+computer tomography. *IEEE Trans Med Imaging* 4(4):200-207 (1985).
+
+Fessler JA, Sutton BP. Nonuniform fast Fourier transforms using min-max
+interpolation. *IEEE Trans Signal Process* 51(2):560-574 (2003).
+
+Beatty PJ, Nishimura DG, Pauly JM. Rapid gridding reconstruction with a minimal
+oversampling ratio. *IEEE Trans Med Imaging* 24(6):799-808 (2005).
+
+Barnett AH, Magland J, af Klinteberg L. A parallel nonuniform fast Fourier
+transform library based on an "exponential of semicircle" kernel. *SIAM J Sci
+Comput* 41(5):C479-C504 (2019).
+
+Fessler JA, Lee S, Olafsson VT, Shi HR, Noll DC. Toeplitz-based iterative image
+reconstruction for MRI with correction for magnetic field inhomogeneity. *IEEE
+Trans Signal Process* 53(9):3393-3402 (2005).
+
+Winkelmann S, Schaeffter T, Koehler T, Eggers H, Doessel O. An optimal radial
+profile order based on the golden ratio for time-resolved MRI. *IEEE Trans Med
+Imaging* 26(1):68-76 (2007).
