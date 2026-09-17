@@ -73,7 +73,9 @@ def pics(
     traj: torch.Tensor | None = None,
     pattern: torch.Tensor | None = None,
     basis: torch.Tensor | None = None,
+    initial: torch.Tensor | None = None,
     toeplitz: bool | None = None,
+    eigen_step: bool = False,
     scaling: float | None = None,
 ) -> torch.Tensor:
     """Parallel-imaging compressed-sensing reconstruction.
@@ -112,6 +114,17 @@ def pics(
         it is not given.
     basis : torch.Tensor, optional
         Subspace basis over frames and coefficients.
+    initial : torch.Tensor, optional
+        An image to start the iteration from, in the units the solve works in
+        -- that is, already divided by ``scaling``.  ``pics -W`` reads it the
+        same way: it rescales the warm start only under ``-S``, where the
+        answer is put back into the data's units at the end.
+    eigen_step : bool
+        Take the step size from the largest eigenvalue of the normal operator
+        rather than from ``step``, estimated by thirty power iterations as
+        ``pics -e`` estimates it.  The starting vector comes from BART's
+        process-global generator, so this is the one setting under which two
+        runs in a process do not agree to the bit.
     toeplitz : bool, optional
         ``False`` applies the encoding and its adjoint rather than the normal
         operator's convolution.
@@ -178,9 +191,14 @@ def pics(
         extra["cg_maxiter"] = cg_maxiter
     if solver == "pridu":
         extra["sigma_tau_ratio"] = scale
+    if eigen_step:
+        if solver == "cg":
+            raise ValueError("eigen_step scales a gradient step, which cg does not take")
+        extra["eigen"] = True
 
     iteration = _SOLVERS[solver]
     arguments = [] if solver == "cg" else [terms]
     if solver == "cg" and l2 is not None:
         arguments = [l2]
-    return iteration(*arguments, maxiter=_MAXITER if maxiter is None else maxiter, **extra)(data, A)
+    iterate = iteration(*arguments, maxiter=_MAXITER if maxiter is None else maxiter, **extra)
+    return iterate(data, A, initial)

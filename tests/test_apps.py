@@ -104,6 +104,50 @@ def test_an_unknown_solver_is_refused():
         apps.pics(kspace, maps, solver="newton")
 
 
+@pytest.mark.parametrize("solver", ["cg", "ist", "fista", "admm"])
+def test_a_warm_start_reaches_the_iteration(solver, _whole_coil_operator):
+    """And moves the answer, so the equality is not two cold starts agreeing.
+
+    ``pics -W`` rescales the warm start only under ``-S``, where the answer is
+    put back into the data's units at the end (pics.c:592).  Without it the
+    solve stays in the scaled units and so does the start, which is the way
+    the app takes one.
+    """
+    kspace, maps = _cartesian()
+    arguments = {} if solver == "cg" else {"regularizers": _wavelet(), "solver": solver}
+    warm = 0.5 * apps.pics(kspace, maps, maxiter=5)
+
+    tool = bt.pics(kspace, maps, maxiter=20, W=warm, **arguments).squeeze()
+    ours = apps.pics(kspace, maps, maxiter=20, initial=warm, **arguments).squeeze()
+    cold = bt.pics(kspace, maps, maxiter=20, **arguments).squeeze()
+
+    assert torch.equal(ours, tool)
+    assert not torch.equal(tool, cold), "the warm start changed nothing, so this proves nothing"
+
+
+def test_the_eigenvalue_step_is_the_tools():
+    """``pics -e`` is ``eigen ? 30 : 0`` power iterations (pics.c:667).
+
+    Held to round-off rather than to the bits: the starting vector comes from
+    BART's process-global generator, so the tool's call and the app's do not
+    start it from the same place.
+    """
+    kspace, maps = _cartesian()
+    arguments = {"regularizers": _wavelet(), "solver": "fista"}
+    tool = bt.pics(kspace, maps, maxiter=20, eigen_step=True, **arguments).squeeze()
+    ours = apps.pics(kspace, maps, maxiter=20, eigen_step=True, **arguments).squeeze()
+    plain = apps.pics(kspace, maps, maxiter=20, **arguments).squeeze()
+
+    assert float((ours - tool).abs().max()) < 1e-5 * float(tool.abs().max())
+    assert not torch.equal(ours, plain), "the eigenvalue step changed nothing"
+
+
+def test_conjugate_gradients_takes_no_eigenvalue_step():
+    kspace, maps = _cartesian()
+    with pytest.raises(ValueError, match="cg does not take"):
+        apps.pics(kspace, maps, eigen_step=True)
+
+
 def _radial(size=32, coils=4, spokes=32):
     sens = bt.coils(t=bt.grid(D=(size, size, 1)), n=coils)[:, 0]
     sens = sens / bartorch.rss(sens, axes=(0,), keepdim=True)
