@@ -64,22 +64,29 @@ class _Sparsity:
     in the convention the application modulates its k-space into.
 
     The two ride in one array, as ``pocs.c`` builds them --
-    ``fftmod(fftscale(ones))`` -- and are applied in one multiply, because an
-    odd axis carries a phase rather than a sign and rounding a product of
-    three factors depends on which two are multiplied first.
+    ``fftmod(fftscale(ones))`` -- and are applied by a diagonal operator, whose
+    adjoint is the conjugate multiply on the way in.  Both are then BART's own
+    ``md_zmul2`` and ``md_zmulc2``, which is what an odd axis needs: there the
+    modulation is a phase rather than a sign, and a complex product computed
+    with a fused multiply-add does not round where two multiplies and a sum
+    round.
     """
 
     def __init__(self, term, axes: tuple[int, ...], shape: Shape):
         self.term = term
         self.axes = axes
         voxels = math.prod(shape[axis] for axis in axes)
-        ones = torch.full((1, *shape[1:]), 1.0 / math.sqrt(voxels), dtype=torch.complex64)
-        self.modulation = bartorch.fftmod(ones, axes)
+        broadcast = (1, *shape[1:])
+        ones = torch.full(broadcast, 1.0 / math.sqrt(voxels), dtype=torch.complex64)
+        # `fftmod` is a command, and a command drops the leading axes that are
+        # one; the diagonal is broadcast along the coils, so it needs them.
+        modulation = bartorch.fftmod(ones, axes).reshape(broadcast)
+        self.modulation = basic.Diagonal(modulation, shape)
 
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
-        image = bartorch.ifft(x, self.axes, uncentred=True) * self.modulation.conj()
+        image = self.modulation.H(bartorch.ifft(x, self.axes, uncentred=True))
         image = _prox(self.term, image, 1.0, tuple(x.shape))
-        return bartorch.fft(image * self.modulation, self.axes, uncentred=True)
+        return bartorch.fft(self.modulation(image), self.axes, uncentred=True)
 
 
 def pocsense(

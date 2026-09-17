@@ -853,9 +853,14 @@ builds the application's three out of `linop.Sampling`, the range of a
 `linop.CartesianSense`, and a `priors` term conjugated by the transform
 between the samples and the coil images.  The three are bit-identical to
 `tools.pocsense` on a grid, in two dimensions and in three, on an even grid
-and on an odd one -- where the modulation is a phase rather than a sign, so
-the scaling has to ride in the same array BART puts it in rather than in a
-second multiply.
+and on an odd one.  The odd grid is what decides how that projection is
+written: there the modulation is a phase rather than a sign, so the scaling
+has to ride in the same array BART puts it in rather than in a second
+multiply, and the multiply itself has to be BART's `md_zmul2` and `md_zmulc2`
+-- a `linop.Diagonal` and its adjoint -- rather than torch's.  A complex
+product computed with a fused multiply-add does not round where two multiplies
+and a sum round, which is a difference an Apple Silicon runner shows and an
+x86 one does not.
 
 `apps.mobafit` is where that decision shows on the surface: it is `mobafit`'s
 method -- the Gauss-Newton loop over the same linearized least-squares problem
