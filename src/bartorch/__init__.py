@@ -11,6 +11,7 @@ from importlib.metadata import PackageNotFoundError, version
 from bartorch import (
     _settings,
     apps,
+    cli,
     fourier,
     interop,
     interp,
@@ -42,6 +43,7 @@ __all__ = [
     "BartError",
     "__version__",
     "apps",
+    "cli",
     "interop",
     "io",
     "learning",

@@ -43,7 +43,7 @@ would otherwise have been linked against.
 | `src/csrc/substitute/backend.[ch]`, `ref_blas.c`, `cblas_shim.c`, `lapacke_shim.c` | CBLAS and LAPACKE as BART calls them, forwarded to a table of Fortran-ABI routines with reference BLAS as the fallback. |
 | `src/csrc/substitute/finufft.c`, `nufft_finufft.c` | FINUFFT's and cuFINUFFT's entry points, and BART's NUFFT operator built out of a pair of their plans -- and the normal, which stores one of those in BART's operator through `noncart/nufft_priv.h` rather than letting it grid one. |
 | `src/csrc/substitute/psf.c` | The three `compute_psf*` entry points, so that the adjoint transform a point spread function is comes from the substitution. |
-| `src/bartorch/` | The package.  Public: the functions in `fourier.py`, `wavelet.py`, `thresh.py`, `util.py`, `interp.py` and `_settings.py`, re-exported flat as `bartorch.*`; `linop/` and `nlop/` (a class per operator); `optim/` (a class per BART iteration); `priors/` (BART's regularization terms, and its denoisers); `learning/` (adapters between neural networks and this package's images and iterations); `apps/` (BART's reconstruction pipelines, assembled from this package rather than run as commands); `tools/` (BART's applications, in five sections); `io.py` (CFL files); `interop.py` (the deepinv adapter).  Private: `_abi.py` (the ctypes signatures, generated from the header), `_lib.py` (finding and loading the library), `_marshal.py` (what an ABI argument looks like), `_backend.py` (which library serves BLAS and LAPACK), `_buffer.py` (a tensor over one of BART's buffers, host or device), `_dispatch.py` (running a command on tensors), `_operator.py` (what every operator shares), `_grid.py` (what the operations on a grid share, including BART's motion layout), `_finufft.py` and `_cuda.py` (the substitution's and the card's controls), `_catalogue.py` and `_options.py` (what BART declares, and what each option is called here), `_call.py` (the mark on a hand-written wrapper, and wrappers built from the catalogue), `_coverage.py` (where each command is exposed, or why not), `_macos_openmp.py` (pointing FINUFFT's OpenMP runtime at torch's, so one is loaded); inside `linop/`, `form.py` (the encoding form and the plan it reports) and `plan.py` (matching a composition against that form). |
+| `src/bartorch/` | The package.  Public: the functions in `fourier.py`, `wavelet.py`, `thresh.py`, `util.py`, `interp.py` and `_settings.py`, re-exported flat as `bartorch.*`; `linop/` and `nlop/` (a class per operator); `optim/` (a class per BART iteration); `priors/` (BART's regularization terms, and its denoisers); `learning/` (adapters between neural networks and this package's images and iterations); `apps/` (BART's reconstruction pipelines, assembled from this package rather than run as commands); `cli/` (BART's command line, served by this package); `tools/` (BART's applications, in five sections); `io.py` (CFL files); `interop.py` (the deepinv adapter).  Private: `_abi.py` (the ctypes signatures, generated from the header), `_lib.py` (finding and loading the library), `_marshal.py` (what an ABI argument looks like), `_backend.py` (which library serves BLAS and LAPACK), `_buffer.py` (a tensor over one of BART's buffers, host or device), `_dispatch.py` (running a command on tensors), `_operator.py` (what every operator shares), `_grid.py` (what the operations on a grid share, including BART's motion layout), `_finufft.py` and `_cuda.py` (the substitution's and the card's controls), `_catalogue.py` and `_options.py` (what BART declares, and what each option is called here), `_call.py` (the mark on a hand-written wrapper, and wrappers built from the catalogue), `_coverage.py` (where each command is exposed, or why not), `_macos_openmp.py` (pointing FINUFFT's OpenMP runtime at torch's, so one is loaded); inside `linop/`, `form.py` (the encoding form and the plan it reports) and `plan.py` (matching a composition against that form). |
 | `scripts/gen_abi.py` | Generates `_abi.py` from `src/csrc/include/bartorch.h`. Run after changing the header; `tests/test_abi.py` fails when the checked-in file is not what it writes. |
 | `scripts/gen_catalogue.py` | Generates `_catalogue.py` from the BART sources: every command, its arguments, and every option with both spellings. Run after a submodule bump. |
 | `scripts/run_tests.sh` | Builds whatever changed on the C side, then runs the suite against `src/`, without installing. |
@@ -826,6 +826,35 @@ contrast-weighted images obtained from subspace coefficient maps, denoised by a
 network trained on weighted MRI. Half-quadratic splitting cannot express it,
 since it carries a single quadratic penalty and no dual variable, whereas ADMM
 admits a sum of terms each with its own `G`.
+
+## The command line
+
+`bartorch` is a console entry point, and it takes the arguments `bart` takes:
+a script that calls `bart` runs against it with the name changed, and needs no
+BART installation of its own.  `cli/_argv.py` reads BART's own command line --
+the grammar is `misc/opts.c`'s and what each flag means is the catalogue's, so
+there is no second list of flags here -- and `cli/_apps.py` says which commands
+an app answers and what each of their flags means to it.  Everything else runs
+as the command, in this process, through the same `bartorch_command` the tools
+use.
+
+The two answer the same bits, so which one ran is a question about speed:
+`tests/test_cli.py` holds eight command lines through the app route against the
+same eight through the command route with `numpy.array_equal`.  `cli.route` is
+what says which it was.  An argument the reader does not express sends the
+whole command line to BART rather than being ignored, because the command
+declared it.
+
+An input file that is not there is the one thing the command line names itself.
+A BART command that fails while loading its arguments leaves the library unable
+to serve the next call in the same process -- `ecalib`, `nufft` and `pocsense`
+handed a name with no file behind it all spin the call after them, while `fft`
+does not -- so a caller who runs `main` twice would hang rather than see the
+second answer.  `cli._missing` checks the names against the filesystem before
+BART is asked.
+
+Help is the catalogue's, because BART answers its own by calling `exit`, which
+in this process ends the interpreter.
 
 ## Nothing here is an algorithm
 

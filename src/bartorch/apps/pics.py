@@ -12,7 +12,7 @@ from bartorch.linop import basic
 from bartorch.priors import Regularizer
 from bartorch.tools import sampling
 
-__all__ = ["pics"]
+__all__ = ["image_shape", "pics"]
 
 #: BART's own ``-i`` default (pics.c:82).
 _MAXITER = 30
@@ -57,6 +57,24 @@ def _chosen(terms: list[Regularizer]) -> str:
         else:
             algorithm = "fista" if position == 0 else "admm"
     return algorithm
+
+
+def image_shape(
+    kspace: torch.Tensor, sensitivities: torch.Tensor, traj: torch.Tensor | None = None
+) -> tuple[int, ...]:
+    """The shape :func:`pics` reconstructs on, for these arguments.
+
+    On a grid the image is sampled where the k-space is, so its shape is the
+    k-space's without the coils.  Off it the k-space is shots and samples,
+    which say nothing about the grid, so the image is the shape the
+    sensitivities are given on.
+    """
+    if traj is not None:
+        maps = sensitivities.squeeze(1) if sensitivities.ndim > 3 else sensitivities
+        return tuple(maps.shape[1:])
+    if kspace.ndim > 3 and kspace.shape[1] == 1:
+        return tuple(kspace.shape[2:])
+    return tuple(kspace.shape[1:])
 
 
 def pics(
@@ -148,31 +166,38 @@ def pics(
     if solver not in _SOLVERS:
         raise ValueError(f"solver must be one of {sorted(_SOLVERS)}, got {solver!r}")
 
+    # Conjugate gradients has no proximal step, so an l2 penalty on the image
+    # is its Tikhonov weight rather than a term of its own.  `opt_reg_configure`
+    # (grecon/optreg.c:386) makes the two the same thing from the other side:
+    # `-r` without a `-R` becomes exactly the `L2IMG` that `-R Q:` names.
+    tikhonov = [term for term in terms if term.kind == "Q"]
+    if solver == "cg" and tikhonov:
+        if len(tikhonov) > 1:
+            raise ValueError("cg takes one l2 penalty, not several")
+        if l2 is not None:
+            raise ValueError("the l2 weight is given once: as l2, or as an L2 term")
+        l2 = tikhonov[0].weight
+        terms = [term for term in terms if term.kind != "Q"]
+
     maps = sensitivities.squeeze(1) if sensitivities.ndim > 3 else sensitivities
 
+    shape = image_shape(kspace, sensitivities, traj)
+
     if traj is None:
-        # On a grid the image is sampled where the k-space is, so its shape is
-        # the k-space's without the coils.
-        image_shape = tuple(kspace.shape[1:])
-        if kspace.ndim > 3 and kspace.shape[1] == 1:
-            image_shape = tuple(kspace.shape[2:])
         if pattern is None:
             pattern = sampling.pattern(kspace)
         measured = bartorch.fftmod(kspace * pattern, axes=(-1, -2, -3), inverse=True)
-        encoding = linop.CartesianSense(maps, image_shape, coil_batch=0, modulated=True)
+        encoding = linop.CartesianSense(maps, shape, coil_batch=0, modulated=True)
         A = basic.Sampling(pattern.squeeze(), encoding.oshape) @ encoding
         scale = optim.data_scaling(measured) if scaling is None else scaling
         data = (measured * (1.0 / scale)).squeeze(1)
     else:
-        # Off it the k-space is shots and samples, which say nothing about the
-        # grid, so the image is the shape the sensitivities are given on.
-        image_shape = tuple(maps.shape[1:])
         # `toeplitz` defaults to the normal operator's convolution, which is
         # what the application uses; None means nobody asked.
         off_grid: dict[str, object] = {"traj": traj, "basis": basis}
         if toeplitz is not None:
             off_grid["toeplitz"] = toeplitz
-        A = linop.NoncartesianSense(maps, image_shape, **off_grid)
+        A = linop.NoncartesianSense(maps, shape, **off_grid)
         measured = kspace if pattern is None else kspace * pattern
         # Off the grid the scaling comes from the spread of the adjoint
         # reconstruction, so it is estimated over the samples in the layout

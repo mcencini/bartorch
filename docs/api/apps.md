@@ -25,6 +25,12 @@ and `lowmem` want a BART operator constructor this package does not wrap yet,
 and `psf` cannot work here at all -- importing a point spread function reads
 the NUFFT operator's internals, and the substituted operator refuses.
 
+An {class}`~bartorch.priors.L2` term and the `l2` argument are one weight, not
+two: `opt_reg_configure` (`grecon/optreg.c:386`) makes `-r` with no `-R` into
+exactly the `L2IMG` that `-R Q:` names, and conjugate gradients has no
+proximal step to apply it with, so it becomes the Tikhonov weight. Giving both
+is refused rather than resolved.
+
 `apps.mobafit` is the one app that answers in different numbers from its
 command, and deliberately: the model it fits is TorchSim's rather than BART's,
 because what a fit needs is a forward it can differentiate, with bounds and a

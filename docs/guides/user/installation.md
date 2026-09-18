@@ -93,4 +93,18 @@ same collision is
 **Windows is not a target.**  BART does not build on it; WSL2 is a Linux
 install like any other.
 
+## The `bartorch` command
+
+Installing the package puts a `bartorch` command on the path, and it takes the
+arguments `bart` takes:
+
+```sh
+bartorch pics -l1 -r0.01 -i30 kspace sensitivities image
+bartorch --list
+```
+
+A script that calls `bart` runs against it with the name changed, or with
+`alias bart=bartorch`, and needs no BART installation of its own.
+{doc}`../../api/cli` says what runs where.
+
 Next: {doc}`conventions`.
