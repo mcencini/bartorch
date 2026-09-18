@@ -56,6 +56,10 @@ def _tgv(weight=0.01):
 _CONFIGURATIONS = [
     ("plain", {}),
     ("tikhonov", {"l2": 0.1}),
+    # `-R Q:` and `-r` name the same `L2IMG` term (grecon/optreg.c:386), and
+    # conjugate gradients has no proximal step to apply it with, so the app
+    # has to read one as the other.
+    ("tikhonov as a term", {"regularizers": priors.L2(0.1)}),
     ("wavelet admm", {"regularizers": _wavelet(), "solver": "admm"}),
     ("wavelet fista", {"regularizers": _wavelet(), "solver": "fista"}),
     ("wavelet ist", {"regularizers": _wavelet(), "solver": "ist"}),
@@ -96,6 +100,14 @@ def test_the_iteration_is_the_one_the_terms_choose():
     assert _chosen([_wavelet(), _tv()]) == "admm"
     assert _chosen([_tv(), _wavelet()]) == "admm"
     assert _chosen([priors.ImageNIHT((-1, -2), 4)]) == "niht"
+
+
+def test_an_l2_term_is_the_weight_once(_whole_coil_operator):
+    kspace, maps = _cartesian()
+    with pytest.raises(ValueError, match="given once"):
+        apps.pics(kspace, maps, regularizers=priors.L2(0.1), l2=0.2)
+    with pytest.raises(ValueError, match="not several"):
+        apps.pics(kspace, maps, regularizers=[priors.L2(0.1), priors.L2(0.2)])
 
 
 def test_an_unknown_solver_is_refused():

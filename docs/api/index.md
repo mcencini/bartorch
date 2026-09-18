@@ -11,6 +11,7 @@
 | {doc}`apps` | `bartorch.apps`: BART's reconstruction pipelines, assembled from this package |
 | {doc}`tools` | `bartorch.tools`: simulation, sampling and trajectories, coil calibration, reconstruction, and the operations around one -- resampling, registration, measurement |
 | {doc}`io` | `bartorch.io`: CFL files |
+| {doc}`cli` | `bartorch.cli`: BART's command line, served by this package |
 | {doc}`interop` | `bartorch.interop`: an operator as a deepinv physics, for its samplers and its physics-based losses |
 
 The concepts these objects implement are introduced in
@@ -29,5 +30,6 @@ learning
 apps
 tools
 io
+cli
 interop
 ```

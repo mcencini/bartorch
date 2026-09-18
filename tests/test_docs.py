@@ -13,6 +13,7 @@ MODULES = {
     "bartorch": {
         "__version__",
         "apps",
+        "cli",
         "interop",
         "io",
         "learning",
@@ -29,6 +30,7 @@ MODULES = {
     "bartorch.priors": set(),
     "bartorch.tools": set(),
     "bartorch.apps": set(),
+    "bartorch.cli": set(),
     "bartorch.io": set(),
     "bartorch.interop": set(),
 }

@@ -59,6 +59,11 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
 ]
 
+# `bartorch` is `bart`'s command line, served in this process.  A script that
+# calls `bart` runs against it unchanged, which is what the name is for.
+[project.scripts]
+bartorch = "bartorch.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/mcencini/bartorch"
 Documentation = "https://mcencini.github.io/bartorch/"
@@ -156,4 +161,4 @@ testpaths = ["tests"]
 # does.  `reson` is the journal abbreviation in a citation, as in
 # `Magn Reson Med`.
 skip = "./attic,./external,./.git,./build,./docs/_build,./docs/auto_examples,*.ipynb,pyproject.toml"
-ignore-words-list = "ist,te,reconet,pyramide,nd,optin,lamda,reson"
+ignore-words-list = "ist,te,reconet,pyramide,nd,optin,lamda,reson,coo"
