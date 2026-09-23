@@ -42,3 +42,7 @@ docs/_build/
 # Attic / legacy demos
 attic/demos/.ipynb_checkpoints/
 **/.DS_Store
+
+# pytest-cov
+.coverage
+coverage.xml

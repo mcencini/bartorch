@@ -1,4 +1,6 @@
 [![Tests](https://github.com/mcencini/bartorch/actions/workflows/tests.yml/badge.svg)](https://github.com/mcencini/bartorch/actions/workflows/tests.yml)
+[![codecov](https://codecov.io/gh/mcencini/bartorch/branch/main/graph/badge.svg)](https://codecov.io/gh/mcencini/bartorch)
+[![CodeFactor](https://www.codefactor.io/repository/github/mcencini/bartorch/badge)](https://www.codefactor.io/repository/github/mcencini/bartorch)
 [![Docs](https://github.com/mcencini/bartorch/actions/workflows/docs.yml/badge.svg)](https://mcencini.github.io/bartorch/)
 [![Lint](https://github.com/mcencini/bartorch/actions/workflows/lint.yml/badge.svg)](https://github.com/mcencini/bartorch/actions/workflows/lint.yml)
 [![Typos](https://github.com/mcencini/bartorch/actions/workflows/typos.yml/badge.svg)](https://github.com/mcencini/bartorch/actions/workflows/typos.yml)
@@ -11,6 +13,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-2f6f9f.svg)](https://github.com/mcencini/bartorch/blob/main/LICENSE)
 [![Source](https://img.shields.io/badge/source-GitHub-181717?logo=github)](https://github.com/mcencini/bartorch)
 [![Stars](https://img.shields.io/github/stars/mcencini/bartorch?style=flat&logo=github&color=2f6f9f)](https://github.com/mcencini/bartorch/stargazers)
+[![FAIR checklist badge](https://fairsoftwarechecklist.net/badge.svg)](https://fairsoftwarechecklist.net/v0.2?f=31&a=32112&i=32322&r=133)
 
 <p align="center">
   <picture>
