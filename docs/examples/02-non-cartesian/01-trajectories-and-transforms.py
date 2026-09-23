@@ -8,17 +8,19 @@ The non-Cartesian interfaces: the trajectories
 one, the density compensation an adjoint reconstruction needs, and the point
 spread function the normal operator convolves with.
 
-Every non-Cartesian transform in bartorch is computed by FINUFFT, which
-evaluates
+Every non-Cartesian transform in bartorch is computed by FINUFFT [#finufft]_,
+which evaluates
 
 .. math::
 
-   y_j = \\frac{1}{\\sqrt{N}} \\sum_{r} x_r \\, e^{-2\\pi i\\, k_j \\cdot r}
+   y_j = \\frac{1}{\\sqrt{N}} \\sum_{m} x_m \\,
+   \\exp\\!\\Big(-2\\pi i \\sum_d \\frac{k_{j,d}\\, m_d}{n_d}\\Big)
 
-to a requested tolerance, with the sum over the :math:`N` voxels of the image.
-There is no gridding kernel to choose and no deapodization to match:
-:doc:`../../explanation/non-cartesian` states what the substitution covers and
-what it costs.
+to a requested tolerance, with the sum over the :math:`N` voxels :math:`m`
+of an image of :math:`n_d` voxels along dimension :math:`d`, and
+:math:`k_j` in grid units.  The spreading kernel and the deapodization are
+FINUFFT's, sized from the tolerance: :doc:`../../explanation/non-cartesian`
+states the conventions and the accuracy.
 
 The phantom is built as in :doc:`../01-basics/01-from-kspace-to-image`; the
 cell that does it is hidden on this page and present in the script this page can
@@ -222,7 +224,8 @@ image = (signal * torch.exp(0.8j * (grid_x**2 - 0.5 * grid_y**2))).to(torch.comp
 #
 # Successive spokes are separated either by :math:`\pi` over their number,
 # which tiles k-space uniformly for one frame, or by the golden angle, which
-# tiles it approximately uniformly for *any* number of consecutive spokes. Only
+# tiles it approximately uniformly for *any* number of consecutive spokes
+# [#winkelmann]_. Only
 # the second lets an acquisition be cut into frames after it was measured, as
 # :doc:`../03-applications/01-dynamic-golden-angle` does.
 
@@ -287,10 +290,10 @@ print(f"largest relative difference from the explicit sum: {difference:.1e}")
 #
 # The transform is planned to a tolerance rather than computed exactly, and the
 # difference above is within the tolerance it was planned with: a thousandth by
-# default, on a grid a quarter larger than the image. A reconstruction is limited by its data rather
-# than by its transform, so spending less on the transform is usually the right
-# trade; :class:`bartorch.linop.NUFFT` takes ``oversampling`` and ``width``
-# where it is not.
+# default, on a grid a quarter larger than the image. The default is chosen for
+# reconstruction, where the transform's error is intended to stay small beside
+# the effect of noise and undersampling; :class:`bartorch.linop.NUFFT` takes
+# ``oversampling`` and ``width`` where more accuracy is needed.
 #
 # Density compensation
 # --------------------
@@ -298,8 +301,8 @@ print(f"largest relative difference from the explicit sum: {difference:.1e}")
 # The adjoint is not the inverse. A radial trajectory samples the centre of
 # k-space once per spoke and its periphery once per spoke per ring, so summing
 # the samples onto the grid weights low frequencies by the number of spokes.
-# The weight that undoes it is the inverse sampling density, which for radial
-# sampling is the distance from the centre.
+# The weight that undoes it is the inverse sampling density [#pipe]_, which for
+# radial sampling is the distance from the centre.
 
 radius = torch.linalg.norm(golden.real[..., :2], dim=-1, keepdim=True)
 weights = radius.clamp(min=0.25).to(torch.complex64)
@@ -332,8 +335,8 @@ plt.show()
 # :class:`bartorch.linop.NUFFT` is the transform as an operator, and carries the
 # weights and a subspace basis where there are any, because its normal operator
 # :math:`A^H A` is built over both. That normal is a convolution with a point
-# spread function on a doubled grid rather than a transform each way, which is
-# what a solver applies once per iteration.
+# spread function on a doubled grid rather than a transform each way
+# [#fessler2005]_, which is what a solver applies once per iteration.
 
 A = linop.NUFFT(golden, image_shape=(SIZE, SIZE))
 
@@ -354,9 +357,9 @@ print(f"relative difference      {float((toeplitz - pair).abs().max() / pair.abs
 
 # %%
 #
-# The two agree to a small multiple of the transform's tolerance, and the
-# difference closes as the tolerance is tightened -- the evidence that the
-# point spread function is the right one rather than nearly so.
+# The two agree to a small multiple of the transform's tolerance.  The
+# difference decreases as the tolerance is tightened, which an incorrect point
+# spread function would not do.
 #
 # :func:`bartorch.tools.psf` computes that function on its own. Its extent is
 # the aliasing the trajectory produces: for a fully sampled radial trajectory
@@ -389,3 +392,27 @@ plt.show()
 # A reconstruction that uses all of this -- the transform, the weights, the
 # sensitivities and the normal operator -- is
 # :doc:`02-radial-sense`.
+
+# %%
+#
+# References
+# ----------
+#
+# .. [#finufft] Barnett AH, Magland J, af Klinteberg L. A parallel nonuniform fast
+#    Fourier transform library based on an "exponential of semicircle" kernel.
+#    *SIAM J Sci Comput* 41(5):C479-C504 (2019).
+#    https://doi.org/10.1137/18M120885X
+#
+# .. [#winkelmann] Winkelmann S, Schaeffter T, Koehler T, Eggers H, Doessel O. An optimal
+#    radial profile order based on the Golden Ratio for time-resolved MRI.
+#    *IEEE Trans Med Imaging* 26(1):68-76 (2007).
+#    https://doi.org/10.1109/TMI.2006.885337
+#
+# .. [#pipe] Pipe JG, Menon P. Sampling density compensation in MRI: rationale and an
+#    iterative numerical solution. *Magn Reson Med* 41(1):179-186 (1999).
+#    https://doi.org/10.1002/(SICI)1522-2594(199901)41:1%3C179::AID-MRM25%3E3.0.CO;2-V
+#
+# .. [#fessler2005] Fessler JA, Lee S, Olafsson VT, Shi HR, Noll DC. Toeplitz-based iterative
+#    image reconstruction for MRI with correction for magnetic field
+#    inhomogeneity. *IEEE Trans Signal Process* 53(9):3393-3402 (2005).
+#    https://doi.org/10.1109/TSP.2005.853152

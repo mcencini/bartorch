@@ -249,7 +249,8 @@ print(E.plan)
 # non-Cartesian data it needs the centre of k-space gridded first, and at this
 # undersampling the gridded centre is already aliased.
 # :func:`bartorch.tools.ncalib` instead estimates the sensitivities from the
-# samples as they were measured, by nonlinear inversion at low resolution.
+# samples as they were measured, by nonlinear inversion [#nlinv]_ at low
+# resolution.
 #
 # ``N=True`` divides the estimated maps by their own root sum of squares. What
 # a SENSE fit recovers is the image :math:`x` for which :math:`Sx` explains the
@@ -265,7 +266,7 @@ maps = bt.ncalib(measured[..., None], t=trajectory, N=True)
 # Gridding
 # --------
 #
-# The reconstruction to beat is the density-compensated adjoint: weight each
+# The reference reconstruction is the density-compensated adjoint: weight each
 # sample by its distance from the centre of k-space, map the samples onto the
 # grid, and combine the channels by the root sum of squares. It inverts
 # nothing, so the undersampling shows up in it as the streaks the point spread
@@ -282,9 +283,10 @@ gridded = bartorch.rss(channels[:, 0], axes=(0,))
 # Reconstruction
 # --------------
 #
-# Total variation is the regularizer a piecewise-smooth image and a streaking
-# artefact separate best under: the streaks are not piecewise constant, and the
-# anatomy largely is. ADMM is the algorithm ``pics`` selects for it.
+# Total variation [#rof]_ penalizes the streaks, which are not piecewise
+# constant, more than the anatomy, which largely is. The operator is the
+# non-Cartesian SENSE model [#pruessmann2001]_, and ADMM is the algorithm
+# ``pics`` selects for the penalty.
 
 term = priors.TotalVariation(axes=(-1, -2), weight=0.001)
 
@@ -331,9 +333,8 @@ print(f"relative difference {float((pair - assembled).abs().max() / assembled.ab
 
 # %%
 #
-# The two normal operators are the same convolution computed two ways, to the
-# tolerance the transform is planned to, and fifty iterations carry that
-# difference into the images. What separates them is the cost: the convolution
+# The difference printed above is that of the two normal operators carried
+# through fifty iterations. What separates them is the cost: the convolution
 # is one multiplication on a doubled grid, the pair is two transforms over
 # every sample of every channel.
 
@@ -369,3 +370,21 @@ for name, estimate in (("gridding", gridded), ("total variation", reconstruction
 # error at the tissue boundaries, where the piecewise-constant model the total
 # variation penalty prefers is least accurate. Neither recovers the frequencies
 # outside the disc the radial trajectory samples.
+
+# %%
+#
+# References
+# ----------
+#
+# .. [#nlinv] Uecker M, Hohage T, Block KT, Frahm J. Image reconstruction by regularized
+#    nonlinear inversion -- joint estimation of coil sensitivities and image
+#    content. *Magn Reson Med* 60(3):674-682 (2008).
+#    https://doi.org/10.1002/mrm.21691
+#
+# .. [#rof] Rudin LI, Osher S, Fatemi E. Nonlinear total variation based noise removal
+#    algorithms. *Physica D* 60(1-4):259-268 (1992).
+#    https://doi.org/10.1016/0167-2789(92)90242-F
+#
+# .. [#pruessmann2001] Pruessmann KP, Weiger M, Börnert P, Boesiger P. Advances in sensitivity
+#    encoding with arbitrary k-space trajectories. *Magn Reson Med*
+#    46(4):638-651 (2001). https://doi.org/10.1002/mrm.1241

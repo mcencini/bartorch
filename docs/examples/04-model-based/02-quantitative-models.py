@@ -17,8 +17,8 @@ related. The model-based route puts that relation in the forward operator,
    y_{c,e} = P_e F \\, (S_c \\cdot M_e(\\theta)),
 
 where :math:`M` is the signal model and :math:`\\theta` the parameter maps, and
-solves for :math:`\\theta` directly. The unknowns then number three maps rather
-than eight images, and every echo constrains all of them.
+solves for :math:`\\theta` directly [#sumpf]_ [#wang]_. The unknowns then number
+three maps rather than eight images, and every echo constrains all of them.
 
 The model here is :class:`bartorch.nlop.MultiEcho`, a TorchSim simulator as a
 BART nonlinear operator; the solver is the Gauss-Newton loop of
@@ -27,10 +27,6 @@ BART nonlinear operator; the solver is the Gauss-Newton loop of
 The phantom and the coil sensitivities are built as in
 :doc:`../01-basics/01-from-kspace-to-image`; the cell that does it is hidden on
 this page and present in the script this page can be downloaded as.
-
-Wang X, Tan Z, Scholand N, Roeloffs V, Uecker M. *Physics-based reconstruction
-methods for magnetic resonance imaging.* Phil Trans R Soc A 379:20200196
-(2021).
 """
 
 # %%
@@ -355,10 +351,28 @@ plt.show()
 # The echo images carry the aliasing each echo's own sampling leaves, and the
 # fit that follows has no way to tell that apart from decay: the two-step
 # :math:`T_2` map is the noisier of the two and biased upward on this data.
-# Fitting the k-space constrains the three maps with all eight echoes at once,
-# which is the whole of the difference -- the model, the solver and the number
-# of steps are the same.
+# Fitting the k-space constrains the three maps with all eight echoes at once;
+# the model, the solver and the number of steps are the same in both routes.
+# The maps are drawn with the navia colormap [#fuderer]_.
 #
 # What this route also makes available is regularization of the maps rather
 # than of the images, since the maps are what the solver holds; BART's own
 # ``moba`` is :func:`bartorch.tools.moba`, and applies its penalties there.
+
+# %%
+#
+# References
+# ----------
+#
+# .. [#sumpf] Sumpf TJ, Uecker M, Boretius S, Frahm J. Model-based nonlinear inverse
+#    reconstruction for T2 mapping using highly undersampled spin-echo MRI.
+#    *J Magn Reson Imaging* 34(2):420-428 (2011).
+#    https://doi.org/10.1002/jmri.22634
+#
+# .. [#wang] Wang X, Tan Z, Scholand N, Roeloffs V, Uecker M. Physics-based
+#    reconstruction methods for magnetic resonance imaging. *Phil Trans R Soc A*
+#    379(2200):20200196 (2021). https://doi.org/10.1098/rsta.2020.0196
+#
+# .. [#fuderer] Fuderer M, Wichtmann B, Crameri F, de Souza NM, Baeßler B, Gulani V,
+#    et al. Color-map recommendation for MR relaxometry maps. *Magn Reson Med*
+#    93(2):490-506 (2025). https://doi.org/10.1002/mrm.30290

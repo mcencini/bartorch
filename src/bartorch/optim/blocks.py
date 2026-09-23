@@ -218,6 +218,23 @@ def _terms(priors, name: str) -> list:
     return terms
 
 
+def _refuse_transform(term, image_shape, name: str) -> None:
+    """Refuse a term that penalizes a transform of the image rather than the image.
+
+    ``pics`` hands ``iter2_ist`` and ``iter2_fista`` the proximal operators and
+    no transforms, so a term ``g(G x)`` would be thresholded on ``x`` itself:
+    the Fourier L1 term's threshold applied to the image, the Laplace term's
+    to the image rather than its Laplacian.  Total variation's proximal
+    operator is not even of the image's shape, and BART asserts.
+    """
+    if not term.transform_is_identity(tuple(image_shape)):
+        raise ValueError(
+            f"{name} applies the proximal operator to the image, and {term!r} penalizes a "
+            "transform of it, which this iteration is not given; optim.ADMM and "
+            "optim.PRIDU apply the transform"
+        )
+
+
 def _refuse_preconditioner(precond, name: str) -> None:
     if precond is not None:
         raise ValueError(
@@ -286,6 +303,12 @@ class ISTBlock(nn.Module):
     :meth:`output` thresholds once more, as BART does after its loop.  With
     ``eigen`` the step is divided by the largest eigenvalue, estimated at
     :meth:`start`.
+
+    The term's proximal operator is applied to the image, so its transform
+    must be the identity: :meth:`start` refuses a term such as
+    :class:`~bartorch.priors.FourierL1`, :class:`~bartorch.priors.Laplace`
+    or :class:`~bartorch.priors.TotalVariation`, which :class:`ADMMBlock`
+    and :class:`PRIDUBlock` take.
     """
 
     @dataclasses.dataclass(frozen=True)
@@ -318,6 +341,7 @@ class ISTBlock(nn.Module):
         """The run's state: the start, and ``A^H y`` kept for every step."""
         from bartorch.optim.linear import maxeigen
 
+        _refuse_transform(self.prior, A.ishape, type(self).__name__)
         y, x = _begin(y, A, x0)
         self.prior.rewind(A.ishape)
         adjoint = _adjoint(A, y, _preconditioner(self.precond, A.ishape))

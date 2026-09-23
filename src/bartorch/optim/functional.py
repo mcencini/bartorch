@@ -27,9 +27,9 @@ def ist(y: torch.Tensor, A, regularizers=None, *, x0=None, **settings):
         Data of ``A.oshape``.
     A : LinearOperator
         The encoding operator.
-    regularizers : Regularizer or ImplicitPrior
+    regularizers : Regularizer or ImplicitPrior, default=None
         The single term ``g``.
-    x0 : tensor, optional
+    x0 : tensor, default=None
         Warm start of ``A.ishape``; without one the iteration starts at zero.
     **settings
         Settings of :class:`~bartorch.optim.IST`, among them ``maxiter``
@@ -56,10 +56,10 @@ def fista(y: torch.Tensor, A, regularizers=None, *, x0=None, **settings):
         Data of ``A.oshape``.
     A : LinearOperator
         The encoding operator.
-    regularizers : Regularizer or ImplicitPrior
+    regularizers : Regularizer or ImplicitPrior, default=None
         The single term ``g`` in
         :math:`\tfrac12 \| A x - y \|^2 + g(x)`.
-    x0 : tensor, optional
+    x0 : tensor, default=None
         Warm start of ``A.ishape``; without one the iteration starts at zero.
     **settings
         Settings of :class:`~bartorch.optim.FISTA`, among them ``maxiter``
@@ -89,9 +89,9 @@ def admm(y: torch.Tensor, A, regularizers=None, *, x0=None, **settings):
         Data of ``A.oshape``.
     A : LinearOperator
         The encoding operator.
-    regularizers : Regularizer or ImplicitPrior, or an iterable of them
+    regularizers : Regularizer or ImplicitPrior, or an iterable of them, default=None
         The terms :math:`g_j`.
-    x0 : tensor, optional
+    x0 : tensor, default=None
         Warm start of ``A.ishape``; without one the iteration starts at zero.
     **settings
         Settings of :class:`~bartorch.optim.ADMM`, among them ``maxiter``
@@ -120,9 +120,9 @@ def pridu(y: torch.Tensor, A, regularizers=None, *, x0=None, **settings):
         Data of ``A.oshape``.
     A : LinearOperator
         The encoding operator.
-    regularizers : Regularizer or ImplicitPrior, or an iterable of them
+    regularizers : Regularizer or ImplicitPrior, or an iterable of them, default=None
         The terms :math:`g_j`.
-    x0 : tensor, optional
+    x0 : tensor, default=None
         Warm start of ``A.ishape``; without one the iteration starts at zero.
     **settings
         Settings of :class:`~bartorch.optim.PRIDU`, among them ``maxiter``
@@ -157,7 +157,7 @@ def niht(y: torch.Tensor, A, regularizers, *, x0=None, **settings):
         The encoding operator.
     regularizers : WaveletNIHT or ImageNIHT, or an iterable of them
         The hard-thresholding terms.
-    x0 : tensor, optional
+    x0 : tensor, default=None
         Warm start of ``A.ishape``; without one the iteration starts at zero.
     **settings
         Settings of :class:`~bartorch.optim.NIHT`, among them ``maxiter``
@@ -185,9 +185,9 @@ def cg(y: torch.Tensor, A, lambda_: float = 0.0, *, x0=None, **settings):
         Data of ``A.oshape``.
     A : LinearOperator
         The encoding operator.
-    lambda_ : float
+    lambda_ : float, default=0.0
         Tikhonov weight on the image itself.
-    x0 : tensor, optional
+    x0 : tensor, default=None
         Warm start of ``A.ishape``; without one the iteration starts at zero.
     **settings
         Settings of :class:`~bartorch.optim.CG`, among them ``terms``,
@@ -220,7 +220,7 @@ def pocs(y: torch.Tensor, projections, *, x0=None, **settings):
     projections : sequence
         The sets to project onto, as :class:`~bartorch.optim.POCSBlock` takes
         them: a callable on a tensor, or a :mod:`bartorch.priors` term.
-    x0 : tensor, optional
+    x0 : tensor, default=None
         Where to start instead.
     **settings
         Settings of :class:`~bartorch.optim.POCS`, which is ``maxiter`` (50).

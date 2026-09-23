@@ -8,7 +8,7 @@ series, with a temporal regularizer in place of the temporal resolution the
 undersampling destroys.
 
 The acquisition is one uninterrupted train of spokes, each rotated from the
-last by the golden angle. Frames are cut out of it afterwards: any block of
+last by the golden angle [#winkelmann]_. Frames are cut out of it afterwards: any block of
 consecutive spokes covers k-space approximately uniformly, so the frame
 duration is a reconstruction parameter rather than an acquisition parameter.
 Thirteen spokes across a 128 matrix is fifteenfold undersampled, and no frame
@@ -22,11 +22,6 @@ well as shots, and the sensitivities are shared across all of them.
 The phantom and the coil sensitivities are built as in
 :doc:`../01-basics/01-from-kspace-to-image`; the cell that does it is hidden on
 this page and present in the script this page can be downloaded as.
-
-Feng L, Grimm R, Block KT, Chandarana H, Kim S, Xu J, Axel L, Sodickson DK,
-Otazo R. *Golden-angle radial sparse parallel MRI: combination of compressed
-sensing, parallel imaging, and golden-angle radial sampling for fast and
-flexible dynamic volumetric MRI.* Magn Reson Med 72(3):707-717 (2014).
 """
 
 # %%
@@ -281,7 +276,7 @@ print(A.plan)
 # samples, which is the gridding reconstruction of thirteen spokes per frame.
 # The second solves the whole series at once under a total variation penalty
 # along the frame axis, which states that the signal is constant in time except
-# at a few instants -- the reconstruction GRASP performs.
+# at a few instants -- the reconstruction GRASP performs [#feng]_.
 
 weights = torch.linalg.norm(trajectory.real[..., :2], dim=-1).clamp(min=0.25)
 gridded = A.H(measured * weights.to(torch.complex64))
@@ -354,3 +349,19 @@ plt.show()
 # which is a bias as much as it is a denoiser: of everything in the series, a
 # change confined to one frame is the least likely to survive a temporal total
 # variation penalty.
+
+# %%
+#
+# References
+# ----------
+#
+# .. [#winkelmann] Winkelmann S, Schaeffter T, Koehler T, Eggers H, Doessel O. An optimal
+#    radial profile order based on the Golden Ratio for time-resolved MRI.
+#    *IEEE Trans Med Imaging* 26(1):68-76 (2007).
+#    https://doi.org/10.1109/TMI.2006.885337
+#
+# .. [#feng] Feng L, Grimm R, Block KT, Chandarana H, Kim S, Xu J, Axel L, Sodickson DK,
+#    Otazo R. Golden-angle radial sparse parallel MRI: combination of
+#    compressed sensing, parallel imaging, and golden-angle radial sampling for
+#    fast and flexible dynamic volumetric MRI. *Magn Reson Med* 72(3):707-717
+#    (2014). https://doi.org/10.1002/mrm.24980

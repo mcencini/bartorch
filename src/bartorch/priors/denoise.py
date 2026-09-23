@@ -92,9 +92,9 @@ def tgv(
     ----------
     input : torch.Tensor
         At most 15 axes.
-    alpha : (float, float), optional
+    alpha : (float, float), default=None
         The pair ``(alpha1, alpha0)``; BART's default is ``(1, sqrt(3))``.
-    tvscales : tuple of float, optional
+    tvscales : tuple of float, default=None
         Nonzero weight on the derivative along each axis in ``axes``, in the same
         order, applied in both ``D`` and ``E``.
     """
@@ -130,14 +130,14 @@ def nlmeans(
 
     Parameters
     ----------
-    patch_length : int, optional
+    patch_length : int, default=None
         Odd patch length per axis; BART's default is 5.
-    patch_distance : int, optional
+    patch_distance : int, default=None
         Search radius per axis; BART's default is 5.  Zero returns ``input``.
-    h : float, optional
+    h : float, default=None
         Filter strength in the units of ``input``'s values; BART's default
         is 0.04.  A large ``h`` makes the filter a box mean.
-    a : float, optional
+    a : float, default=None
         Standard deviation of ``g``, in voxels; BART's default is
         ``(patch_length - 1) / 4``.
     """

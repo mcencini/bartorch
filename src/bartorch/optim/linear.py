@@ -26,6 +26,7 @@ from bartorch.optim.blocks import (
     _empty,
     _preconditioner,
     _refuse_preconditioner,
+    _refuse_transform,
 )
 from bartorch.priors.base import Regularizer, _as_terms
 from bartorch.priors.terms import L2
@@ -51,10 +52,10 @@ class Tikhonov:
     ----------
     weight : float
         The weight, not its square root.  Must not be negative.
-    operator : LinearOperator, optional
+    operator : LinearOperator, default=None
         What the penalty is on, mapping the image somewhere.  By default the
         image itself.
-    bias : tensor, optional
+    bias : tensor, default=None
         What the penalty pulls towards, of the operator's codomain shape.  By
         default zero, which is the ordinary penalty on size.
 
@@ -185,16 +186,16 @@ def maxeigen(
     A : LinearOperator
         The encoding.  Its normal is the operator, with ``cclambda`` on the
         diagonal, as ``lsqr`` builds it.
-    terms : Regularizer or iterable of Regularizer, optional
+    terms : Regularizer or iterable of Regularizer, default=None
         Terms whose transforms are added to the normal operator.  The
         primal-dual iteration estimates over these; the proximal iterations
         estimate over the encoding alone.
-    cclambda : float
+    cclambda : float, default=0.0
         Weight of an identity added to the normal operator.
-    precond : LinearOperator, optional
+    precond : LinearOperator, default=None
         Chained onto the normal before the terms are added, as ``lsqr2_create``
         chains it.
-    iterations : int
+    iterations : int, default=30
         Power iterations; BART takes thirty.
 
     Returns
@@ -528,7 +529,7 @@ class _Solver:
             The encoding.  A BART-backed operator is applied without leaving
             the library; a Python-defined one is called back once per
             application.
-        x0 : torch.Tensor, optional
+        x0 : torch.Tensor, default=None
             Warm start of ``A.ishape``; without one the iteration starts at
             zero.
 
@@ -595,18 +596,18 @@ class CG(_Solver):
 
     Parameters
     ----------
-    lambda_ : float
+    lambda_ : float, default=0.0
         Tikhonov weight on the image itself, added to the normal operator.
-    terms : Tikhonov or iterable of Tikhonov, optional
+    terms : Tikhonov or iterable of Tikhonov, default=None
         Quadratic penalties with an operator, a bias, or both.  See
         :class:`Tikhonov`.
-    maxiter : int
-    tol : float
+    maxiter : int, default=30
+    tol : float, default=0.0
         Stop once the residual of the normal equations is at most
         ``tol * ||A^H y||``.  Zero, BART's default, runs every iteration.
-    cclambda : float
+    cclambda : float, default=0.0
         Weight of an identity added to the normal operator.
-    precond : LinearOperator, optional
+    precond : LinearOperator, default=None
         Left preconditioner, ``lsqr2_create``'s ``precond_op``: chained onto
         the normal operator and onto the adjoint, so the iteration sees
         ``M(A^H A + lambda) x = M A^H y``.  Must be positive definite --
@@ -767,19 +768,19 @@ class IST(_Solver):
 
     Parameters
     ----------
-    regularizers : Regularizer or ImplicitPrior
+    regularizers : Regularizer or ImplicitPrior, default=None
         Exactly one term.
-    maxiter : int
-    step : float
-        Step size; the default is 0.95.
-    eigen : bool
+    maxiter : int, default=30
+    step : float, default=0.95
+        Step size.
+    eigen : bool, default=False
         Scale the step by the largest eigenvalue of the normal operator,
         estimated with 30 power iterations.
-    hogwild : bool
+    hogwild : bool, default=False
         BART's ``hogwild`` setting, which its IST rejects.
-    cclambda : float
+    cclambda : float, default=0.0
         Weight of an identity added to the normal operator.
-    precond : LinearOperator, optional
+    precond : LinearOperator, default=None
         Left preconditioner, ``lsqr2_create``'s ``precond_op``: chained onto
         the normal operator and onto the adjoint, so the iteration sees
         ``M(A^H A + lambda) x = M A^H y``.  Must be positive definite --
@@ -833,28 +834,32 @@ class IST(_Solver):
     def _declines(self, state) -> bool:
         return _empty(state.adjoint)
 
+    def _in_library(self, y: torch.Tensor, A, x0: torch.Tensor | None = None) -> torch.Tensor:
+        _refuse_transform(self.regularizers[0], A.ishape, type(self).__name__)
+        return super()._in_library(y, A, x0)
+
 
 class FISTA(IST):
     """Fast iterative soft thresholding, looping :class:`FISTABlock`.
 
     Parameters
     ----------
-    regularizers : Regularizer or ImplicitPrior
+    regularizers : Regularizer or ImplicitPrior, default=None
         Exactly one term.
-    maxiter : int
-    step : float
-        Step size; the default is 0.95.
-    eigen : bool
+    maxiter : int, default=30
+    step : float, default=0.95
+        Step size.
+    eigen : bool, default=False
         Scale the step by the largest eigenvalue of the normal operator,
         estimated with 30 power iterations.
-    hogwild : bool
+    hogwild : bool, default=False
         BART's ``hogwild`` setting.
-    pqr : tuple of float, optional
+    pqr : tuple of float, default=None
         Acceleration parameters ``(p, q, r)``; ``None``
         keeps BART's.
-    cclambda : float
+    cclambda : float, default=0.0
         Weight of an identity added to the normal operator.
-    precond : LinearOperator, optional
+    precond : LinearOperator, default=None
         Left preconditioner, ``lsqr2_create``'s ``precond_op``: chained onto
         the normal operator and onto the adjoint, so the iteration sees
         ``M(A^H A + lambda) x = M A^H y``.  Must be positive definite --
@@ -907,55 +912,55 @@ class ADMM(_Solver):
 
     Parameters
     ----------
-    regularizers : Regularizer or ImplicitPrior, or an iterable of them
+    regularizers : Regularizer or ImplicitPrior, or an iterable of them, default=None
         Terms with auxiliary variables -- total generalized
         variation and the two infimal convolutions -- walk the image and the
         fields behind it.
-    maxiter : int
+    maxiter : int, default=30
         A budget on conjugate-gradient iterations across the whole run, not a
         count of outer steps: ``admm`` breaks when ``nr_invokes > maxiter``.
         Thirty with ten inner iterations is about five outer steps.
-    rho : float
+    rho : float, default=0.5
         Penalty parameter; BART's default is 0.5.
-    cg_maxiter : int
+    cg_maxiter : int, default=10
         Conjugate-gradient iterations per step; BART's default is 10, and
         default.
-    hogwild : bool
+    hogwild : bool, default=False
         BART's ``hogwild`` setting, which doubles ``rho`` after
         ten steps, then twenty, then forty.  Not combinable with
         ``dynamic_rho``, which BART asserts against.
-    cclambda : float
+    cclambda : float, default=0.0
         Weight of an identity added to the normal operator.
-    biases : sequence of tensor, optional
+    biases : sequence of tensor, default=None
         The ``b_j`` of ``f_j(G_j x - b_j)``, one per term, each of its term's
         transformed shape.
-    dynamic_rho : bool
+    dynamic_rho : bool, default=False
         Move ``rho`` with the residuals: up by
         ``tau`` when the primal residual leads, down when the dual does.  The
         dual variables are rescaled to match, so the split stays where it was.
-    dynamic_tau : bool
+    dynamic_tau : bool, default=False
         Choose ``tau`` from the residuals too,
         as ``sqrt(r / s)`` clipped to ``[1 / tau_max, tau_max]``.  Together
         with ``dynamic_rho`` and ``relative_norm`` this is the residual
         balancing of Wohlberg (2017).
-    relative_norm : bool
+    relative_norm : bool, default=False
         Compare the residuals to their scalings rather than to each other.
-    fast : bool
+    fast : bool, default=False
         Skip the residuals entirely, and with them the stopping test.
-    alpha : float
+    alpha : float, default=1.6
         Over-relaxation; BART's default is 1.6.
-    mu : float
+    mu : float, default=3.0
         How far the residuals must part before ``dynamic_rho`` moves ``rho``.
-    tau_max : float
+    tau_max : float, default=20.0
         The clip on ``tau``.
-    abstol, reltol : float
+    abstol, reltol : float, default=0.0
         Boyd's absolute and relative tolerances, which stop the iteration when
         both residuals are inside them.  ``italgo_config`` sets both to zero,
         so only the iteration budget stops the run.
-    cg_maxiter_first : int, optional
+    cg_maxiter_first : int, default=None
         A separate budget for the first step's inner solve, where there is no
         warm start to build on; riesling's, not BART's.
-    precond : LinearOperator, optional
+    precond : LinearOperator, default=None
         Left preconditioner, ``lsqr2_create``'s ``precond_op``: chained onto
         the normal operator and onto the adjoint, so the iteration sees
         ``M(A^H A + lambda) x = M A^H y``.  Must be positive definite --
@@ -1078,28 +1083,28 @@ class PRIDU(_Solver):
 
     Parameters
     ----------
-    regularizers : Regularizer or ImplicitPrior, or an iterable of them
+    regularizers : Regularizer or ImplicitPrior, or an iterable of them, default=None
         Terms with auxiliary variables extend the optimization variable; the
         step spans the image and the auxiliary fields behind it, as in
         :class:`ADMM`.
-    maxiter : int
-    step : float
-        Step size; the default is 0.95.
-    sigma_tau_ratio : float
+    maxiter : int, default=30
+    step : float, default=0.95
+        Step size.
+    sigma_tau_ratio : float, default=1.0
         Ratio of the dual to the primal step: ``sigma = sqrt(step) * ratio``,
         ``tau = sqrt(step) / ratio``.  BART's own reconstructions set it to
         the factor the data was divided by, so pass :func:`data_scaling`'s
         value to match them.
-    adaptive_step : bool
+    adaptive_step : bool, default=False
         Adapt the steps during the iteration.
-    eigen : bool
+    eigen : bool, default=False
         Scale the step by the largest eigenvalue of the normal operator,
         estimated with 30 power iterations.
-    hogwild : bool
+    hogwild : bool, default=False
         Decay the steps by a factor of 0.95 per iteration.
-    cclambda : float
+    cclambda : float, default=0.0
         Weight of an identity added to the normal operator.
-    precond : LinearOperator, optional
+    precond : LinearOperator, default=None
         Left preconditioner, ``lsqr2_create``'s ``precond_op``: chained onto
         the normal operator and onto the adjoint, so the iteration sees
         ``M(A^H A + lambda) x = M A^H y``.  Must be positive definite --
@@ -1160,10 +1165,10 @@ class NIHT(_Solver):
     ----------
     regularizers : WaveletNIHT or ImageNIHT, or an iterable of them
         The hard-thresholding terms from :mod:`bartorch.priors`.
-    maxiter : int
-    cclambda : float
+    maxiter : int, default=30
+    cclambda : float, default=0.0
         Weight of an identity added to the normal operator.
-    precond : LinearOperator, optional
+    precond : LinearOperator, default=None
         Left preconditioner, ``lsqr2_create``'s ``precond_op``: chained onto
         the normal operator and onto the adjoint, so the iteration sees
         ``M(A^H A + lambda) x = M A^H y``.  Must be positive definite --

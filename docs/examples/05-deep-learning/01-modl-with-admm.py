@@ -7,7 +7,7 @@ An unrolled network for undersampled Cartesian SENSE: a convolutional denoiser
 in the proximal step of BART's alternating-direction iteration, trained end to
 end against fully sampled images.
 
-MoDL writes a reconstruction as an alternation between a learned denoiser and a
+MoDL [#modl]_ writes a reconstruction as an alternation between a learned denoiser and a
 data-consistency step, and trains the denoiser through it. As published the
 alternation is half-quadratic splitting, which is
 
@@ -17,8 +17,8 @@ alternation is half-quadratic splitting, which is
    x^{k+1} &= \arg\min_x \; \|A x - y\|_2^2 + \lambda \|x - z^{k}\|_2^2,
 
 the second line a conjugate-gradient solve of :math:`(A^H A + \lambda) x = A^H
-y + \lambda z^{k}`. The alternating direction method of multipliers is the
-same splitting with a dual variable :math:`u` carried along:
+y + \lambda z^{k}`. The alternating direction method of multipliers
+[#boyd]_ is the same splitting with a dual variable :math:`u` carried along:
 
 .. math::
 
@@ -38,12 +38,6 @@ repeatedly. The network supplies the proximal step, through
 :class:`bartorch.priors.ImplicitPrior`, and :math:`\rho`, which is a
 :class:`torch.nn.Parameter`.
 
-Aggarwal HK, Mani MP, Jacob M. *MoDL: model-based deep learning architecture
-for inverse problems.* IEEE Trans Med Imaging 38(2):394-405 (2019).
-
-Boyd S, Parikh N, Chu E, Peleato B, Eckstein J. *Distributed optimization and
-statistical learning via the alternating direction method of multipliers.*
-Found Trends Mach Learn 3(1):1-122 (2011).
 """
 
 # %%
@@ -290,7 +284,7 @@ valid_loader = DataLoader(
 #
 # Four objects:
 #
-# * ``deepinv``'s ``DnCNN``, a residual convolutional denoiser of the family
+# * ``deepinv``'s ``DnCNN`` [#dncnn]_, a residual convolutional denoiser of the family
 #   MoDL's own five-layer network belongs to. It is an ``nn.Module`` operating
 #   on real images.
 # * :class:`bartorch.learning.Denoiser`, which converts between that layout and
@@ -466,11 +460,7 @@ plt.show()
 #
 # Pretraining the denoiser in isolation, then greedy per-iteration training,
 # then end-to-end fine-tuning with checkpointing, is the staged schedule
-# reported for a fully three-dimensional unrolled reconstruction.
-#
-# Urman Y, Nishimura M, Abraham DR, Cao X, Setsompop K. *Fully 3D unrolled
-# magnetic resonance fingerprinting reconstruction via staged pretraining and
-# implicit gridding.* Magn Reson Med 96(5):2516-2529 (2026).
+# reported for a fully three-dimensional unrolled reconstruction [#urman]_.
 
 greedy, greedy_block = modl()
 greedy.detach = True
@@ -511,5 +501,32 @@ print(f"rho's gradient: {made[0]:.6g} recorded, {made[1]:.6g} recomputed")
 # A third alternative is not to unroll. :class:`bartorch.optim.FixedPoint`
 # drives the block to its fixed point and differentiates there by solving the
 # adjoint fixed-point equation, so that its memory is that of a single step
-# irrespective of the iteration count. This is a deep-equilibrium model, of
+# irrespective of the iteration count. This is a deep-equilibrium model [#deq]_, of
 # which the stack above is the truncated form.
+
+# %%
+#
+# References
+# ----------
+#
+# .. [#modl] Aggarwal HK, Mani MP, Jacob M. MoDL: model-based deep learning
+#    architecture for inverse problems. *IEEE Trans Med Imaging* 38(2):394-405
+#    (2019). https://doi.org/10.1109/TMI.2018.2865356
+#
+# .. [#boyd] Boyd S, Parikh N, Chu E, Peleato B, Eckstein J. Distributed optimization
+#    and statistical learning via the alternating direction method of
+#    multipliers. *Found Trends Mach Learn* 3(1):1-122 (2011).
+#    https://doi.org/10.1561/2200000016
+#
+# .. [#dncnn] Zhang K, Zuo W, Chen Y, Meng D, Zhang L. Beyond a Gaussian denoiser:
+#    residual learning of deep CNN for image denoising. *IEEE Trans Image
+#    Process* 26(7):3142-3155 (2017). https://doi.org/10.1109/TIP.2017.2662206
+#
+# .. [#urman] Urman Y, Nishimura M, Abraham DR, Cao X, Setsompop K. Fully 3D unrolled
+#    magnetic resonance fingerprinting reconstruction via staged pretraining and
+#    implicit gridding. *Magn Reson Med* 96(5):2516-2529 (2026).
+#    https://doi.org/10.1002/mrm.70500
+#
+# .. [#deq] Bai S, Kolter JZ, Koltun V. Deep equilibrium models. *Advances in Neural
+#    Information Processing Systems* 32:688-699 (2019).
+#    https://arxiv.org/abs/1909.01377

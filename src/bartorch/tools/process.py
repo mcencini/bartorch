@@ -60,7 +60,7 @@ def warp(
         The last ``len(axes)`` axes, in any order: BART interpolates along the
         first ``len(axes)`` BART dims whatever the flags
         (motion/displacement.c:117).
-    order : {0, 1, 3}
+    order : {0, 1, 3}, default=1
         Nearest neighbour, linear, or Keys cubic; see :func:`interpolate`.
 
     Returns
@@ -123,7 +123,7 @@ def affine_transform(
     axes : tuple of int
         The last two or three axes, in the order the matrix's rows and
         columns refer to them.
-    oshape : tuple of int, optional
+    oshape : tuple of int, default=None
         Output size of the last ``k`` axes, in C order; by default
         the input's.
 
@@ -207,10 +207,10 @@ def fovshift(
     shift : sequence of float
         Shift along the image axes in C order, ``(z, y, x)`` or ``(y, x)``
         or ``(x,)``; in fields of view, or in voxels with ``pixels``.
-    traj : torch.Tensor, optional
+    traj : torch.Tensor, default=None
         Trajectory ``(..., samples, 3)`` in grid units, ``kx, ky, kz``, as
         :func:`bartorch.tools.traj` produces.
-    pixels : bool
+    pixels : bool, default=False
         ``shift`` in voxels rather than fields of view; Cartesian
         only.
     """
@@ -245,10 +245,10 @@ def register_affine(
         Images of C shape ``(z, y, x)`` or ``(y, x)``; any further leading
         axis must have size one.  A ``reference`` without ``z``, or with
         ``z`` of size one, is registered in two dimensions.
-    transform : {"translation", "rigid", "affine"}
+    transform : {"translation", "rigid", "affine"}, default='rigid'
         Degrees of freedom: translation only, rotation and
         translation, or all.
-    reference_mask, moved_mask : torch.Tensor, optional
+    reference_mask, moved_mask : torch.Tensor, default=None
         Binary masks shaped like their image; both or neither.
 
     Returns
@@ -322,13 +322,13 @@ def register_nonrigid(
         Images of the same shape, at most eight axes.
     axes : int or tuple of int
         Axes to register along.
-    levels : int, optional
+    levels : int, default=None
         Gaussian pyramid levels, one to five; BART's default is three.
-    optical_flow : bool
+    optical_flow : bool, default=False
         TV-L1 optical flow instead of greedy SyN.
-    tv_weight : float, optional
+    tv_weight : float, default=None
         TV regularization of the optical flow; BART's default is 0.01.
-    max_flow : float, optional
+    max_flow : float, default=None
         Bound on the flow magnitude of the optical flow.
 
     Returns
@@ -391,7 +391,7 @@ def estimate_shift(
         Arrays of the same shape.
     axes : int or tuple of int
         Axes to estimate the shift along.
-    fov_units : bool
+    fov_units : bool, default=False
         Shift as a fraction of the axis length rather than in voxels.
 
     Returns
@@ -412,7 +412,7 @@ def nrmse(reference: torch.Tensor, input: torch.Tensor, *, scaled: bool = False)
 
     Parameters
     ----------
-    scaled : bool
+    scaled : bool, default=False
         First scale ``reference`` by the complex least-squares factor
         ``Σ conj(reference)·input / ‖reference‖²``.
     """
@@ -431,7 +431,7 @@ def mse(reference: torch.Tensor, input: torch.Tensor, *, magnitude: bool = False
 
     Parameters
     ----------
-    magnitude : bool
+    magnitude : bool, default=False
         Compare magnitudes, ``mean (|input| - |reference|)²``, taken as the
         root sum of squares over the coil axis ``-4`` of a C-order
         ``(..., coils, z, y, x)`` array .
@@ -491,12 +491,12 @@ def roi_stat(
         Weights, binary for the plain statistics.  Broadcasts against
         ``input``; an axis where ``roi`` has size one and ``input`` does not
         (or the reverse, several regions along it) is kept.
-    stat : {"count", "sum", "mean", "std", "energy", "variance"}
+    stat : {"count", "sum", "mean", "std", "energy", "variance"}, default='mean'
         ``count`` is the sum of the weights; ``sum`` of the weighted
         values; ``mean`` their ratio; ``energy`` the sum of
         squared deviations from the mean, not of squared values;
         ``variance`` energy over count; ``std`` its root.
-    bessel : bool
+    bessel : bool, default=False
         Divide by count minus one; ``std`` and ``variance`` only.
 
     Returns

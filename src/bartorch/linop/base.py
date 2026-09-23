@@ -346,7 +346,7 @@ class LinearOperator(Operator):
         ----------
         x : torch.Tensor
             Array of :attr:`ishape`.
-        out : torch.Tensor, optional
+        out : torch.Tensor, default=None
             Contiguous complex64 array of :attr:`oshape` to write into, so that
             repeated applications reuse one buffer.  Not allowed when ``x``
             requires a gradient.
@@ -425,7 +425,7 @@ class LinearOperator(Operator):
         ----------
         y : torch.Tensor
             Array of :attr:`oshape`.
-        damp : float
+        damp : float, default=0.0
             The Tikhonov weight, ``CG``'s ``lambda_``.
         **kwargs
             Passed to :class:`~bartorch.optim.CG`, with ``x0`` as the warm

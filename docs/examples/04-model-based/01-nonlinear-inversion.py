@@ -6,7 +6,7 @@ Nonlinear inversion
 Estimating the image and the coil sensitivities together, from undersampled
 data that has no calibration region to estimate them separately from.
 
-ESPIRiT reads the sensitivities off a fully sampled neighbourhood of the centre
+ESPIRiT [#espirit]_ reads the sensitivities off a fully sampled neighbourhood of the centre
 of k-space and hands them to a linear reconstruction. Where the acquisition
 provides no such neighbourhood, the sensitivities are unknowns like the image,
 and the forward model
@@ -16,7 +16,8 @@ and the forward model
    y_c = P F (S_c \\cdot x)
 
 is bilinear rather than linear: it is a product of two unknowns. Nonlinear
-inversion (``nlinv``) solves it by iteratively regularized Gauss-Newton, and
+inversion (``nlinv``) [#nlinv]_ solves it by iteratively regularized
+Gauss-Newton [#bakushinsky]_, and
 the smoothness of the sensitivities -- the one thing that makes the
 factorization identifiable -- enters as a weighting inside the model rather
 than as a penalty beside it.
@@ -24,10 +25,6 @@ than as a penalty beside it.
 The phantom and the coil sensitivities are built as in
 :doc:`../01-basics/01-from-kspace-to-image`; the cell that does it is hidden on
 this page and present in the script this page can be downloaded as.
-
-Uecker M, Hohage T, Block KT, Frahm J. *Image reconstruction by regularized
-nonlinear inversion -- joint estimation of coil sensitivities and image
-content.* Magn Reson Med 60(3):674-682 (2008).
 """
 
 # %%
@@ -315,14 +312,16 @@ plt.show()
 # :class:`bartorch.nlop.NonlinearSense` is that forward model as a nonlinear
 # operator with two inputs, and :class:`bartorch.nlop.IRGNM` is the
 # Gauss-Newton loop over it. Each step linearizes the model at the current
-# point and solves
+# point :math:`x_k` and solves
 #
 # .. math::
 #
-#    \min_u \, \| DF\, u - r \|^2 + \alpha \| u \|^2,
+#    \min_x \, \| DF_{x_k} (x - x_k) - (y - F(x_k)) \|^2
+#    + \alpha_k \| x - x_{\mathrm{ref}} \|^2,
 #
-# with :math:`\alpha` halved after every step, so the first steps are heavily
-# regularized and the later ones are not.
+# with :math:`x_{\mathrm{ref}}` zero unless one is given and :math:`\alpha_k`
+# halved after every step, so the first steps are heavily regularized and the
+# later ones are not.
 
 model = nlop.NonlinearSense(
     (COILS, 1, SIZE, SIZE), pattern=lines.reshape(1, SIZE, 1).to(torch.complex64)
@@ -364,3 +363,22 @@ print(f"NRMSE {bt.nrmse(image.abs(), combined.abs(), scaled=True):.3f}")
 #
 # Reconstructing parameter maps rather than an image, by putting a signal model
 # in front of the same encoding, is :doc:`02-quantitative-models`.
+
+# %%
+#
+# References
+# ----------
+#
+# .. [#espirit] Uecker M, Lai P, Murphy MJ, Virtue P, Elad M, Pauly JM, Vasanawala SS,
+#    Lustig M. ESPIRiT -- an eigenvalue approach to autocalibrating parallel
+#    MRI: where SENSE meets GRAPPA. *Magn Reson Med* 71(3):990-1001 (2014).
+#    https://doi.org/10.1002/mrm.24751
+#
+# .. [#nlinv] Uecker M, Hohage T, Block KT, Frahm J. Image reconstruction by regularized
+#    nonlinear inversion -- joint estimation of coil sensitivities and image
+#    content. *Magn Reson Med* 60(3):674-682 (2008).
+#    https://doi.org/10.1002/mrm.21691
+#
+# .. [#bakushinsky] Bakushinsky AB, Kokurin MY. *Iterative Methods for Approximate Solution of
+#    Inverse Problems.* Springer (2004).
+#    https://doi.org/10.1007/978-1-4020-3122-9

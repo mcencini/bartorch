@@ -41,7 +41,7 @@ def interpolate(
         must equal the input's.
     axes : int or tuple of int
         Axes interpolated over.
-    order : {0, 1, 3}
+    order : {0, 1, 3}, default=1
         Nearest neighbour (rounding half up), linear, or Keys cubic
         with ``a = -1/2``.
 

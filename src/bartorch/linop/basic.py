@@ -41,9 +41,9 @@ class FFT(LinearOperator):
     axes : int or tuple of int
         Which axes to transform, as indices into ``shape``; negative indices
         count from the end.
-    inverse : bool
+    inverse : bool, default=False
         Transform the other way.
-    centred : bool
+    centred : bool, default=True
         Put the zero frequency in the middle, which is BART's ``fftc``.
 
     Examples
@@ -296,7 +296,7 @@ class Zero(LinearOperator):
     ----------
     oshape : tuple of int
         Codomain, C order.
-    ishape : tuple of int, optional
+    ishape : tuple of int, default=None
         Domain, C order; the same as ``oshape`` when left out.
     """
 

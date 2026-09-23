@@ -61,11 +61,11 @@ class Wavelet(_Weighted):
     axes : int or tuple of int
         Axes to transform, as indices into the image's shape.
     weight : float
-    joint_axes : int or tuple of int, optional
+    joint_axes : int or tuple of int, default=()
         Axes along which a coefficient is kept or zeroed together.
-    family : {'haar', 'dau2', 'cdf44'}
+    family : {'haar', 'dau2', 'cdf44'}, default='dau2'
         Wavelet family.
-    randshift : bool
+    randshift : bool, default=True
         Cycle-spin the transform by a random shift between solves.
 
     Examples
@@ -103,13 +103,13 @@ class LocallyLowRank(_Weighted):
     axes : int or tuple of int
         Axes the blocks span, as indices into the image's shape.
     weight : float
-    joint_axes : int or tuple of int, optional
+    joint_axes : int or tuple of int, default=()
         Axes forming the columns of each block's matrix.
-    block : int
+    block : int, default=8
         Block edge length.
-    randshift : bool
+    randshift : bool, default=True
         Shift the block grid by a random offset between solves.
-    overlapping : bool
+    overlapping : bool, default=False
         Fully overlapping blocks instead of a shifted grid.
     """
 
@@ -185,7 +185,12 @@ class L2(Regularizer):
 
 
 class NonNegative(Regularizer):
-    """Projection onto non-negative images; it has no weight."""
+    """Projection onto images whose real and imaginary parts are non-negative.
+
+    Each part is clamped at zero separately, which is BART's ``S`` term: an
+    entry ``-1 + 2i`` is projected to ``2i``, not to zero.  The term has no
+    weight.
+    """
 
     kind = "S"
 
@@ -207,11 +212,11 @@ class WaveletNIHT(_Counted):
     axes : int or tuple of int
         Axes to transform, as indices into the image's shape.
     count : int
-    joint_axes : int or tuple of int, optional
+    joint_axes : int or tuple of int, default=()
         Axes along which a coefficient is kept or zeroed together.
-    family : {'haar', 'dau2', 'cdf44'}
+    family : {'haar', 'dau2', 'cdf44'}, default='dau2'
         Wavelet family.
-    randshift : bool
+    randshift : bool, default=True
         Cycle-spin the transform by a random shift between solves.
     """
 
@@ -297,8 +302,8 @@ class TotalGeneralizedVariation(_Weighted):
     axes : int or tuple of int
         Axes to differentiate, as indices into the image's shape.
     weight : float
-    joint_axes : int or tuple of int, optional
-    alpha : tuple of float
+    joint_axes : int or tuple of int, default=()
+    alpha : tuple of float, default=(1.0, sqrt(3))
         The pair :math:`(\alpha_1, \alpha_0)` in the objective above.
     """
 
@@ -342,8 +347,8 @@ class InfimalConvolutionTV(_Weighted):
     axes : int or tuple of int
         Axes to differentiate, as indices into the image's shape.
     weight : float
-    joint_axes : int or tuple of int, optional
-    gamma : tuple of float
+    joint_axes : int or tuple of int, default=()
+    gamma : tuple of float, default=(1.0, 1.0)
         The pair :math:`(\gamma_1, \gamma_2)` in the objective above.
     """
 
@@ -395,10 +400,10 @@ class InfimalConvolutionTGV(_Weighted):
     axes : int or tuple of int
         Axes to differentiate, as indices into the image's shape.
     weight : float
-    joint_axes : int or tuple of int, optional
-    alpha : tuple of float
+    joint_axes : int or tuple of int, default=()
+    alpha : tuple of float, default=(1.0, sqrt(3))
         The pair :math:`(\alpha_1, \alpha_0)` in the objective above.
-    gamma : tuple of float
+    gamma : tuple of float, default=(1.0, 1.0)
         The pair :math:`(\gamma_1, \gamma_2)` in the objective above.
     """
 

@@ -686,7 +686,7 @@ def install_once() -> None:
         use_in_tools(True)
     except (ImportError, RuntimeError) as exc:
         logging.getLogger("bartorch._finufft").warning(
-            "FINUFFT is installed but was not put in BART's place, so its transforms "
-            "will be BART's own gridder: %s",
+            "FINUFFT is installed but was not put in BART's place, so every non-uniform "
+            "transform will be refused: %s",
             exc,
         )

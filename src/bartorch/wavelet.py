@@ -76,7 +76,7 @@ def fwt(input: torch.Tensor, axes: int | tuple[int, ...], *, wavelet: str = "dau
         Every transformed axis needs at least 16 samples, the coarsest scale.
     axes : int or tuple of int
         Axes to transform, as indices into ``input.shape``.
-    wavelet : {"haar", "dau2", "cdf44", "cdf97"}
+    wavelet : {"haar", "dau2", "cdf44", "cdf97"}, default='dau2'
         ``"haar"``, ``"dau2"`` and ``"cdf44"`` are, along one axis,
         PyWavelets' ``wavedec`` with ``"haar"``, ``"db2"`` and ``"bior4.4"``
         in ``mode="symmetric"``, concatenated coarse first.  Each level keeps
@@ -138,7 +138,7 @@ def iwt(
         axes not in ``axes`` must match ``input``.
     axes : int or tuple of int
         Transformed axes, as indices into ``oshape``.
-    wavelet : {"haar", "dau2", "cdf44", "cdf97"}
+    wavelet : {"haar", "dau2", "cdf44", "cdf97"}, default='dau2'
         As for :func:`fwt`.
     """
     _check_wavelet(wavelet)

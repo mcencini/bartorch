@@ -111,42 +111,46 @@ def pics(
         ``(coils, *encoding, shots, samples)`` off it.
     sensitivities : torch.Tensor
         Coil sensitivities, as :func:`~bartorch.tools.ecalib` produces them.
-    regularizers : Regularizer or iterable of Regularizer, optional
+    regularizers : Regularizer or iterable of Regularizer, default=None
         :mod:`bartorch.priors` terms.  Their axes index the image's shape.
-    l2 : float, optional
+    l2 : float, default=None
         Plain Tikhonov weight.
-    solver : {'cg', 'ist', 'fista', 'admm', 'pridu', 'niht'}, optional
-        ``None`` chooses from the terms, as the application does.
-    maxiter : int, optional
+    solver : {'cg', 'ist', 'fista', 'admm', 'pridu', 'niht'}, default=None
+        ``None`` chooses from the terms, as the application does.  IST and
+        FISTA apply a term's proximal operator to the image, so a first term
+        over a transform -- :class:`~bartorch.priors.FourierL1`,
+        :class:`~bartorch.priors.Laplace` -- for which the application
+        chooses FISTA is refused here; ``'admm'`` and ``'pridu'`` take it.
+    maxiter : int, default=None
         Iterations; BART's default is thirty.
-    step : float, optional
+    step : float, default=None
         Step size for the gradient iterations.
-    admm_rho : float, optional
+    admm_rho : float, default=None
         ADMM penalty; setting it selects ADMM unless ``solver`` says otherwise.
-    cg_maxiter : int, optional
+    cg_maxiter : int, default=None
         Inner conjugate-gradient steps for ADMM.
-    traj : torch.Tensor, optional
+    traj : torch.Tensor, default=None
         Non-Cartesian trajectory, in grid units.
-    pattern : torch.Tensor, optional
+    pattern : torch.Tensor, default=None
         Sampling pattern or weights; on a grid it is read off ``kspace`` when
         it is not given.
-    basis : torch.Tensor, optional
+    basis : torch.Tensor, default=None
         Subspace basis over frames and coefficients.
-    initial : torch.Tensor, optional
+    initial : torch.Tensor, default=None
         An image to start the iteration from, in the units the solve works in
         -- that is, already divided by ``scaling``.  ``pics -W`` reads it the
         same way: it rescales the warm start only under ``-S``, where the
         answer is put back into the data's units at the end.
-    eigen_step : bool
+    eigen_step : bool, default=False
         Take the step size from the largest eigenvalue of the normal operator
         rather than from ``step``, estimated by thirty power iterations as
         ``pics -e`` estimates it.  The starting vector comes from BART's
         process-global generator, so this is the one setting under which two
         runs in a process do not agree to the bit.
-    toeplitz : bool, optional
+    toeplitz : bool, default=None
         ``False`` applies the encoding and its adjoint rather than the normal
         operator's convolution.
-    scaling : float, optional
+    scaling : float, default=None
         The data scaling to divide by; estimated when it is not given, which
         is what makes a regularization weight transferable.
 
@@ -221,6 +225,14 @@ def pics(
             raise ValueError("eigen_step scales a gradient step, which cg does not take")
         extra["eigen"] = True
 
+    if solver in ("ist", "fista") and terms and not terms[0].transform_is_identity(A.ishape):
+        # `pics` hands these two iterations no transforms (`trafos_cond` in
+        # pics.c), so the application thresholds the image itself for a term
+        # over a transform; the iteration refuses instead.
+        raise ValueError(
+            f"{solver} applies the proximal operator of {terms[0]!r} to the image, without "
+            "the transform the term penalizes; solver='admm' or solver='pridu' applies it"
+        )
     iteration = _SOLVERS[solver]
     arguments = [] if solver == "cg" else [terms]
     if solver == "cg" and l2 is not None:

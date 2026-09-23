@@ -352,7 +352,9 @@ def snr_map(replicas):
 
 for name, replicas in (("as measured", plain), ("prewhitened", prewhitened)):
     values = snr_map(replicas)[white_matter]
-    print(f"{name:>12}  white-matter SNR {float(values.mean()):6.1f} (median {float(values.median()):.1f})")
+    print(
+        f"{name:>12}  white-matter SNR {float(values.mean()):6.1f} (median {float(values.median()):.1f})"
+    )
 
 gain = snr_map(prewhitened) / snr_map(plain)
 print(f"SNR ratio, prewhitened over as measured: {float(gain[white_matter].median()):.2f} (median)")
@@ -362,15 +364,21 @@ print(f"SNR ratio, prewhitened over as measured: {float(gain[white_matter].media
 # sphinx_gallery_start_ignore
 support = (image.abs() > 0.05 * float(image.abs().max())).numpy()
 figure, axes = panels(1, 3)
-shared = max(float(snr_map(plain)[white_matter].max()), float(snr_map(prewhitened)[white_matter].max()))
+shared = max(
+    float(snr_map(plain)[white_matter].max()), float(snr_map(prewhitened)[white_matter].max())
+)
 for axis, values, title in (
     (axes[0, 0], snr_map(plain), "SNR, as measured"),
     (axes[0, 1], snr_map(prewhitened), "SNR, prewhitened"),
 ):
-    handle = axis.imshow(np.where(support, values.numpy(), np.nan), cmap="viridis", vmin=0.0, vmax=shared)
+    handle = axis.imshow(
+        np.where(support, values.numpy(), np.nan), cmap="viridis", vmin=0.0, vmax=shared
+    )
     axis.set_title(title)
 figure.colorbar(handle, ax=axes[0, :2], fraction=0.046, label="SNR")
-ratio = axes[0, 2].imshow(np.where(support, gain.numpy(), np.nan), cmap="RdBu_r", vmin=0.5, vmax=1.5)
+ratio = axes[0, 2].imshow(
+    np.where(support, gain.numpy(), np.nan), cmap="RdBu_r", vmin=0.5, vmax=1.5
+)
 axes[0, 2].set_title("SNR ratio")
 figure.colorbar(ratio, ax=axes[0, 2], fraction=0.046, label="prewhitened / as measured")
 plt.show()
@@ -379,10 +387,9 @@ plt.show()
 # %%
 #
 # With this covariance, prewhitening raises the white-matter SNR by the
-# ratio printed above, with the largest gains where the channels whose noise
-# was highest contribute most of the signal.  The size of the gain depends on
-# the array's noise correlation and on the spread of the channel noise
-# levels; it is measured here for one simulated covariance.
+# ratio printed above.  The size of the gain depends on the array's noise
+# correlation and on the spread of the channel noise levels; it is measured
+# here for one simulated covariance.
 #
 # References
 # ----------

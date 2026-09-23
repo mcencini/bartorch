@@ -98,7 +98,7 @@ def concatenate(ops: Sequence[LinearOperator], axis: int = 0) -> LinearOperator:
     ----------
     ops : sequence of LinearOperator
         At least one.  All must have the same domain.
-    axis : int
+    axis : int, default=0
         Which axis of the codomain grows, as an index into it.
 
     Examples
@@ -143,7 +143,7 @@ def stack(ops: Sequence[LinearOperator], axis: int = 0) -> LinearOperator:
     ----------
     ops : sequence of LinearOperator
         At least one.  All must have the same domain and the same codomain.
-    axis : int
+    axis : int, default=0
         Where the new axis goes in the result.
 
     Examples
@@ -195,7 +195,7 @@ def hstack(ops: Sequence[LinearOperator], axis: int = 0) -> LinearOperator:
     ----------
     ops : sequence of LinearOperator
         At least one.  All must have the same codomain.
-    axis : int
+    axis : int, default=0
         Which axis of the domain grows, as an index into it.
     """
     ops = _operators(ops, "hstack")
@@ -215,9 +215,9 @@ def block_diag(
     ----------
     ops : sequence of LinearOperator
         At least one.
-    axis : int
+    axis : int, default=0
         Which axis of the codomain grows.
-    domain_axis : int, optional
+    domain_axis : int, default=None
         Which axis of the domain grows; ``axis`` when left out.
     """
     ops = _operators(ops, "block_diag")
@@ -253,7 +253,7 @@ def block(rows: Sequence[Sequence[LinearOperator]], axis: int = 0) -> LinearOper
     ----------
     rows : sequence of sequence of LinearOperator
         The blocks, row by row.  Rows must be the same length.
-    axis : int
+    axis : int, default=0
         Which axis grows, in the domain within a row and in the codomain
         between rows.
     """

@@ -27,20 +27,20 @@ def phantom(
 
     Parameters
     ----------
-    shape : int or tuple of int, optional
+    shape : int or tuple of int, default=None
         The image's spatial size (``-x``).  BART's phantom is square or
         cubic, so a tuple must have one size repeated; three of them ask for
         the three-dimensional phantom.  Without one, BART's default size.
-    kspace : bool
+    kspace : bool, default=False
         Return the analytical k-space rather than the image (``-k``).
-    coils : int, optional
+    coils : int, default=None
         Simulate this many coil sensitivities (``-s``).
-    traj : tensor, optional
+    traj : tensor, default=None
         Sample the k-space along this trajectory (``-t``) rather than on a
         grid, which implies ``kspace``.
-    geometry : {'circle', 'brain', 'nist', 'sonar', 'tubes', 'bart'}, optional
+    geometry : {'circle', 'brain', 'nist', 'sonar', 'tubes', 'bart'}, default=None
         Which phantom to make; BART spells each as its own flag.
-    rotation_angle, rotation_steps : float, int, optional
+    rotation_angle, rotation_steps : float, int, default=None
         Rotate the phantom (``--rotation-angle``, ``--rotation-steps``).
     **extra
         Further BART ``phantom`` flags, by name.

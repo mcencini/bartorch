@@ -59,11 +59,11 @@ class SignalModel(_Callback):
     ----------
     model : torchsim.recon.ModelOperator
         The signal model, with its unknowns, bounds and scales already set.
-    shape : tuple of int
+    shape : tuple of int, default=()
         The voxel shape, C order -- ``(y, x)``, ``(z, y, x)``, whatever the
         maps are.  The operator's domain is ``(channels, *shape)`` and its
         codomain ``(contrasts, *shape)``.
-    contrasts : int, optional
+    contrasts : int, default=None
         How many images the model returns.  Measured from the model when it
         is not given.
 
@@ -224,20 +224,20 @@ def InversionRecovery(  # noqa: N802  (it is a constructor)
     ----------
     TI : sequence of float
         Inversion times, in milliseconds.
-    shape : tuple of int
+    shape : tuple of int, default=()
         The voxel shape, C order.
-    TR : float, optional
+    TR : float, default=None
         Repetition time in milliseconds; without one the magnetization is
         fully relaxed when each inversion arrives.
-    bounds : dict, optional
+    bounds : dict, default=None
         ``{name: (low, high)}``; ``T1`` defaults to ``(10, 5000)`` ms, which
         keeps a Gauss-Newton iterate physical.
-    unknown : sequence of str
+    unknown : sequence of str, default=('T1',)
         What to solve for.  ``inv_efficiency`` and ``offset`` are the other
         things the model exposes.
-    amplitude : bool
+    amplitude : bool, default=True
         Carry a complex amplitude multiplying the recovery.
-    subspace : torchsim.Subspace, optional
+    subspace : torchsim.Subspace, default=None
         Solve in a temporal basis rather than in the contrasts.
     **scale
         The size of a step in a parameter left unbounded.
@@ -277,15 +277,15 @@ def MultiEcho(  # noqa: N802  (it is a constructor)
     ----------
     TE : sequence of float
         Echo times, in milliseconds.
-    shape : tuple of int
+    shape : tuple of int, default=()
         The voxel shape, C order.
-    bounds : dict, optional
+    bounds : dict, default=None
         ``{name: (low, high)}``; ``T2`` defaults to ``(1, 1000)`` ms.
-    unknown : sequence of str
+    unknown : sequence of str, default=('T2',)
         What to solve for.  ``offset`` is the other thing the model exposes.
-    amplitude : bool
+    amplitude : bool, default=True
         Carry a complex amplitude multiplying the decay.
-    subspace : torchsim.Subspace, optional
+    subspace : torchsim.Subspace, default=None
         Solve in a temporal basis rather than in the contrasts.
     **scale
         The size of a step in a parameter left unbounded.
@@ -331,17 +331,17 @@ def Bloch(  # noqa: N802  (it is a constructor)
         value per voxel and rides along.
     *unknown : str
         The properties being solved for, in the order their channels appear.
-    shape : tuple of int
+    shape : tuple of int, default=()
         The voxel shape, C order.
-    bounds : dict, optional
+    bounds : dict, default=None
         ``{name: (low, high)}``, either end ``None`` for unbounded.  A bound
         is kept by solving for a transformed variable, so no iterate leaves
         it.
-    amplitude : bool
+    amplitude : bool, default=True
         Carry a complex amplitude multiplying the simulated signal.
-    subspace : torchsim.Subspace, optional
+    subspace : torchsim.Subspace, default=None
         Solve in a temporal basis rather than in the contrasts.
-    contrasts : int, optional
+    contrasts : int, default=None
         How many images the sequence records; measured when not given.
     **scale
         The size of a step in a parameter left unbounded.

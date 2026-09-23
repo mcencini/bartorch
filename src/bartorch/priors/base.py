@@ -143,15 +143,15 @@ class Regularizer(abc.ABC):
         ----------
         x : tensor
             Of :meth:`prox_shape`, which for most terms is the image's.
-        gamma : float
+        gamma : float, default=1.0
             The step the proximal operator is taken at.  The term's own weight
             is already in the operator, so this is only the step.
-        image_shape : tuple of int, optional
+        image_shape : tuple of int, default=None
             The image the term was configured for, when that is not what ``x``
             is shaped like -- which is the case for total variation, whose
             proximal operator works on the components of a gradient.  By
             default ``x``'s own shape, which is right for every other term.
-        item : int
+        item : int, default=0
             Which item of a batch ``x`` is; a term that draws random shifts
             keeps a generator per item.
 
@@ -220,10 +220,10 @@ class Regularizer(abc.ABC):
         x : tensor
             The image for ``"forward"``, the proximal operator's domain for
             ``"adjoint"``, the image for ``"normal"``.
-        image_shape : tuple of int, optional
+        image_shape : tuple of int, default=None
             What the term was configured for; by default ``x``'s own shape,
             which is right whenever the transform starts from the image.
-        mode : {"forward", "adjoint", "normal"}
+        mode : {"forward", "adjoint", "normal"}, default='forward'
 
         Returns
         -------

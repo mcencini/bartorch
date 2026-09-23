@@ -130,7 +130,7 @@ class SmoothAbs(_Elementwise):
     ----------
     shape : tuple of int
         The shape it maps, C order.
-    eps : float
+    eps : float, default=1e-12
         What keeps the derivative finite at zero.
     """
 

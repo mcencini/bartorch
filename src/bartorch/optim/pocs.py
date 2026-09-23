@@ -109,7 +109,7 @@ class POCS:
     ----------
     projections : sequence
         The sets to project onto, as :class:`POCSBlock` takes them.
-    maxiter : int
+    maxiter : int, default=50
         Sweeps; ``pocsense``'s default is fifty.
 
     Examples

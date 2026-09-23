@@ -53,6 +53,8 @@ would otherwise have been linked against.
 | `scripts/benchmark_newton.py` | The Gauss-Newton timings `docs/design/nonlinear-fusion.md` records, with the encoding applied as its normal and as a pair. |
 | `scripts/macos_openmp.py` | `bartorch._macos_openmp` by hand: `diagnose` reads, `patch` rewrites and re-signs, `verify` proves it. The substitution does it for itself on first use, so this is for seeing what it found and for an environment where it could not. |
 | `scripts/build_docs.sh` | Builds the reference the way the workflow does. |
+| `scripts/build_docs_pdf.sh` | Builds the documentation as one PDF, `bartorch-docs.pdf`. |
+| `scripts/make_artwork.py` | Draws the logo, the mark and the explanation figures under `docs/_static/`. |
 | `scripts/check_device.py` | Everything a card can answer that a host cannot, in dependency order. |
 | `cmake/embed.cmake` | Writes a file's bytes into a C array, for the LTO-IR the CUDA build links. |
 | `attic/prototype/` | An earlier pybind11 extension, kept for reference and not built. |
@@ -60,7 +62,7 @@ would otherwise have been linked against.
 Every BART command is wrapped by hand, derived from the catalogue into a `tools` section, or
 private with a reason in `_coverage.py`; `tests/test_tools.py` holds the partition, so a command
 a BART update adds has to be placed.  `tests/test_docs.py` holds every public name to a place in
-`docs/api/`.
+`docs/api/`, and `tests/test_docstrings.py` holds each documented default to the signature.
 
 ## Design rules
 
@@ -513,9 +515,9 @@ and `pics` over the same data, agreeing with BART's own reconstruction to
 | FINUFFT | 1.06 s | 2.33 s |
 
 **cuFINUFFT is the same table.** `src/csrc/substitute/finufft.c` holds two of them, filled
-from the `finufft` and `cufinufft` wheels; without the `cufinufft` wheel a
-transform BART would run on a card stays with BART's own operator rather than
-quietly running on the host.
+from the `finufft` and `cufinufft` wheels; without the `cufinufft` wheel on a
+machine with a card the substitution is not installed, and a transform is
+refused rather than quietly running on the host or on BART's own operator.
 
 Which table serves a transform is decided by where its arguments are, not by
 where the trajectory is, because BART hands one operator memory on either
@@ -1164,24 +1166,45 @@ When auditing or refactoring documentation, explicitly check for conversational 
 
 After substantial documentation work, build the documentation, run relevant documentation tests/examples, and inspect the rendered output.
 
-The documentation is in four parts, and a page belongs to whichever it is:
-`docs/api/` is the reference, extracted from the docstrings; `docs/examples/`
-is the example gallery, executable scripts rendered by sphinx-gallery;
-`docs/explanation/` is the conceptual material; `docs/guides/` is the user and
-developer guides.
+The documentation is in six sections, each with a landing page whose table
+lists its pages, and a page belongs to whichever it is:
+
+| Section | Directory | What is in it |
+| --- | --- | --- |
+| User guide | `docs/guides/user/` | Prerequisites, installation, data conventions, issues, security |
+| Explanation | `docs/explanation/` | The concepts: execution model, inverse problems, encoding, non-Cartesian sampling, nonlinear models, differentiation |
+| Examples | `docs/examples/` | The gallery: executable scripts rendered by sphinx-gallery |
+| API reference | `docs/api/` | One page per public module, listing its objects in tables |
+| Developer guide | `docs/guides/developer/` | Building, layout, workflow, style, terminology, documentation, pull requests |
+| Misc | `docs/misc/` | License, related projects, citation |
+
+The API pages carry human-written tables whose first column is an `{obj}`
+role and no `autosummary`.  `docs/api_objects.py` collects those tables into
+`docs/api_objects.rst`, an `:orphan:` page outside the navigation, and its
+autosummary writes the per-object pages under `docs/generated/`; both are
+build products and untracked.  The class template documents a class's own
+members and those it inherits from private bases, and links the first public
+base for the rest.  `tests/test_docs.py` holds every public name to a table
+row and every table row to a public name; `tests/test_docstrings.py` holds each
+documented default to the signature.
 
 An example is a Python script under `docs/examples/<section>/`, named
 `NN-title.py`, whose module docstring becomes the page and whose numeric prefix
 orders it within its section. A section is a directory with a `README.rst`
 holding its heading and a paragraph; `docs/conf.py` lists the sections in the
-order a reader meets them. Code that is not about this library -- figure
+order a reader meets them, and `docs/examples/index.md` is the landing page
+that links them. Code that is not about this library -- figure
 layout, colormaps, the phantom's arithmetic -- goes between
 `# sphinx_gallery_start_ignore` and `# sphinx_gallery_end_ignore`, which keeps
 it off the page and in the downloadable script and notebook. Anything a reader
-would type themselves stays visible.
+would type themselves stays visible.  Literature is cited with numbered
+footnotes and listed in a *References* section at the bottom of the page.
 
 `./scripts/build_docs.sh` renders the example pages without running them, which
 needs no compiled library; `--execute` runs them, which needs one and the
 packages `docs/examples/README.rst` names. The docs workflow does both, and
-publishes the executed build.
+publishes the executed build.  `./scripts/build_docs_pdf.sh` renders the same
+sources as one PDF, which the release workflow attaches to a release as
+`bartorch-docs.pdf`.  `scripts/make_artwork.py` draws the logo, the mark and
+the explanation figures under `docs/_static/`.
 

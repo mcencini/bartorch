@@ -10,7 +10,7 @@ reconstructed into the coefficients of a signal subspace and fitted for
 A single spoke does not determine a frame. What makes the series recoverable is
 that the frames are not arbitrary: every voxel follows an inversion-recovery
 curve, and the curves of every plausible :math:`T_1` span a subspace of
-dimension four or so. Writing the unknown series as :math:`x_t = \\sum_a
+dimension four or so [#tamir]_. Writing the unknown series as :math:`x_t = \\sum_a
 \\Phi_{at} c_a` turns four hundred images into four coefficient maps, and the
 basis :math:`\\Phi` enters the encoding on the k-space side, after the
 transform and before the samples:
@@ -25,10 +25,6 @@ parameter fit matches against.
 The phantom and the coil sensitivities are built as in
 :doc:`../01-basics/01-from-kspace-to-image`; the cell that does it is hidden on
 this page and present in the script this page can be downloaded as.
-
-Tamir JI, Uecker M, Chen W, Lai P, Alley MT, Vasanawala SS, Lustig M. *T2
-shuffling: sharp, multicontrast, volumetric fast spin-echo imaging.* Magn Reson
-Med 77(1):180-195 (2017).
 """
 
 # %%
@@ -322,8 +318,8 @@ print(A.plan)
 # trajectory, so a subspace reconstruction costs per iteration what a plain one
 # costs.
 #
-# The penalty is locally low rank: the coefficient maps are stacked into a
-# matrix per block of voxels, and its nuclear norm is penalized.
+# The penalty is locally low rank [#llr]_: the coefficient maps are stacked
+# into a matrix per block of voxels, and its nuclear norm is penalized.
 # ``joint_axes`` is what makes the coefficients the columns of that matrix,
 # which is what states the thing a subspace reconstruction knows and a
 # wavelet penalty does not -- that neighbouring voxels follow the *same* few
@@ -425,10 +421,28 @@ plt.show()
 # beside the maps compares the two after dividing that scale out. The fit is
 # invariant to it, being a normalized inner product.
 #
-# The fitted :math:`T_1` agrees with the table in the voxels one tissue
+# The :math:`T_1` maps are drawn with the lipari colormap [#fuderer]_. The
+# fitted :math:`T_1` agrees with the table in the voxels one tissue
 # dominates. It is biased where two tissues meet, because the sum of two
 # recovery curves is not a recovery curve, and it is bounded by the range the
 # dictionary covers -- a fit cannot return a value it was never offered.
 #
 # Estimating the parameters directly from k-space, without an intermediate
 # series or a subspace, is :doc:`../04-model-based/02-quantitative-models`.
+
+# %%
+#
+# References
+# ----------
+#
+# .. [#tamir] Tamir JI, Uecker M, Chen W, Lai P, Alley MT, Vasanawala SS, Lustig M. T2
+#    shuffling: sharp, multicontrast, volumetric fast spin-echo imaging.
+#    *Magn Reson Med* 77(1):180-195 (2017). https://doi.org/10.1002/mrm.26102
+#
+# .. [#llr] Zhang T, Pauly JM, Levesque IR. Accelerating parameter mapping with a
+#    locally low rank constraint. *Magn Reson Med* 73(2):655-661 (2015).
+#    https://doi.org/10.1002/mrm.25161
+#
+# .. [#fuderer] Fuderer M, Wichtmann B, Crameri F, de Souza NM, Baeßler B, Gulani V,
+#    et al. Color-map recommendation for MR relaxometry maps. *Magn Reson Med*
+#    93(2):490-506 (2025). https://doi.org/10.1002/mrm.30290

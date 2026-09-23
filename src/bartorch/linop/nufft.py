@@ -40,20 +40,20 @@ class NUFFT(LinearOperator):
         a two-dimensional trajectory and three for a three-dimensional one.
         The batches -- coils, slices, anything transformed alike -- are
         whatever leads the encoding axes, and each is transformed on its own.
-    kspace_shape : tuple of int, optional
+    kspace_shape : tuple of int, default=None
         Sample shape; by default ``(*batches, *encoding, shots, samples)``.
-    weights : tensor, optional
+    weights : tensor, default=None
         Diagonal in k-space, broadcast over ``(*encoding, shots, samples)``,
         applied on the forward pass and conjugated on the adjoint.
-    basis : tensor, optional
+    basis : tensor, default=None
         Temporal subspace basis ``(coeffs, frames)`` over the last encoding
         axis, which is ``coeffs`` long in the image and ``frames`` long in
         k-space.  The weights and the basis belong to the operator because its
         Toeplitz normal is built over both.
-    toeplitz : bool
+    toeplitz : bool, default=True
         Apply the normal in closed form rather than as the forward and
         adjoint applications: a convolution with a point spread function.
-    oversampling, width : float
+    oversampling, width : float, default=0.0
         Grid oversampling and kernel width; zero keeps the defaults.
 
     Examples

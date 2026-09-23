@@ -31,22 +31,22 @@ def ecalib(
     ----------
     kspace : torch.Tensor
         Fully sampled calibration data, or k-space with a sampled centre.
-    maps : int, optional
+    maps : int, default=None
         How many sets of sensitivities to produce (``-m``).
-    calib_size : int or tuple of int, optional
+    calib_size : int or tuple of int, default=None
         The calibration region's size (``-r``), the same on every axis or one
         per axis.
-    threshold : float, optional
+    threshold : float, default=None
         The singular-value threshold for the calibration matrix (``-t``).
-    crop : float, optional
+    crop : float, default=None
         The eigenvalue below which a sensitivity is set to zero (``-c``).
-    kernel_size : int, optional
+    kernel_size : int, default=None
         The calibration kernel's size (``-k``).
-    softsense : bool
+    softsense : bool, default=False
         Return the maps without the eigenvalue crop, for soft-SENSE (``-S``).
-    intensity_correction : bool
+    intensity_correction : bool, default=False
         Correct for intensity rather than normalising (``-I``).
-    return_eigenvalues : bool
+    return_eigenvalues : bool, default=False
         Also return the eigenvalue map, which BART writes as a second array
         only when asked.
     **extra
