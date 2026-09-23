@@ -1,5 +1,11 @@
 [
   {
+    "name": "v0.0.3 (stable)",
+    "version": "v0.0.3",
+    "url": "https://mcencini.github.io/bartorch/stable/",
+    "preferred": true
+  },
+  {
     "name": "latest",
     "version": "latest",
     "url": "https://mcencini.github.io/bartorch/latest/"

@@ -1,0 +1,797 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Noise prewhitening &#8212; bartorch</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../_static/styles/sphinx-book-theme.css?v=4418a689" />
+    <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery.css?v=c83e6b79" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../../_static/custom.css?v=0739d252" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../_static/scripts/fontawesome.js?digest=90905a2f556bf617f1a9"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9" />
+
+    <script src="../../_static/documentation_options.js?v=3fdb872c"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../_static/copybutton.js?v=a5fa425f"></script>
+    <script src="../../_static/sg-tags.js?v=d80f6fa4"></script>
+    <script src="../../_static/scripts/sphinx-book-theme.js?v=fab101a9"></script>
+    <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'auto_examples/01-basics/03-noise-prewhitening';</script>
+    <script>
+        DOCUMENTATION_OPTIONS.theme_version = '0.20.0';
+        DOCUMENTATION_OPTIONS.theme_switcher_json_url = 'https://mcencini.github.io/bartorch/versions.json';
+        DOCUMENTATION_OPTIONS.theme_switcher_version_match = 'v0.0.3';
+        DOCUMENTATION_OPTIONS.show_version_warning_banner =
+            true;
+        </script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="canonical" href="https://mcencini.github.io/bartorch/stable/auto_examples/01-basics/03-noise-prewhitening.html" />
+    <link rel="icon" href="../../_static/bartorch-mark.svg"/>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Non-Cartesian imaging" href="../02-non-cartesian/index.html" />
+    <link rel="prev" title="Operators and solvers" href="02-operators-and-solvers.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="v0.0.3" />
+  
+    
+    <script src="../../_static/searchtools.js"></script>
+    <script src="../../_static/language_data.js"></script>
+    <script src="../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search..."
+         aria-label="Search..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/bartorch-mark.svg" class="logo__image only-light" alt="bartorch"/>
+    <img src="../../_static/bartorch-mark-dark.svg" class="logo__image only-dark pst-js-only" alt="bartorch"/>
+  
+  
+</a></div>
+        <div class="sidebar-primary-item">
+<div class="version-switcher__container dropdown pst-js-only">
+  <button id="pst-version-switcher-button-2"
+    type="button"
+    class="version-switcher__button btn btn-sm dropdown-toggle"
+    data-bs-toggle="dropdown"
+    aria-haspopup="listbox"
+    aria-controls="pst-version-switcher-list-2"
+    aria-label="Version switcher list"
+  >
+    Choose version  <!-- this text may get changed later by javascript -->
+    <span class="caret"></span>
+  </button>
+  <div id="pst-version-switcher-list-2"
+    class="version-switcher__menu dropdown-menu list-group-flush py-0"
+    role="listbox" aria-labelledby="pst-version-switcher-button-2">
+    <!-- dropdown will be populated by javascript on page load -->
+  </div>
+</div></div>
+        <div class="sidebar-primary-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
+    <div class="bd-toc-item navbar-nav active">
+        
+        <ul class="nav bd-sidenav bd-sidenav__home-link">
+            <li class="toctree-l1">
+                <a class="reference internal" href="../../index.html">
+                    Homepage
+                </a>
+            </li>
+        </ul>
+        <ul class="current nav bd-sidenav">
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../guides/user/index.html">User guide</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/user/prerequisites.html">Prerequisites and supported platforms</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/user/installation.html">Installation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/user/conventions.html">Data layout and conventions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/user/issues.html">Reporting issues</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/user/discussions.html">Questions and proposals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/user/security.html">Security</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../guides/developer/index.html">Developer guide</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/developer/prerequisites.html">Development prerequisites</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/developer/installation.html">Editable and source installation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/developer/layout.html">Repository layout</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/developer/workflow.html">Development workflow</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/developer/pre-commit.html">Pre-commit hooks</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/developer/style.html">Coding style</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/developer/documentation.html">Documentation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/developer/terminology.html">Terminology and conventions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/developer/pull-requests.html">Pull requests</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/developer/code-of-conduct.html">Code of conduct</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../explanation/index.html">Explanation</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/execution-model.html">Interfaces and execution</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/inverse-problems.html">Inverse problems and their solvers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/encoding.html">The MRI encoding operator</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/non-cartesian.html">Non-Cartesian sampling</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/nonlinear.html">Nonlinear forward models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/differentiation.html">Differentiation through reconstruction</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="../../examples/index.html">Examples</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2 current active"><a class="reference internal" href="index.html">Basics</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../02-non-cartesian/index.html">Non-Cartesian imaging</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../03-applications/index.html">Applications</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../04-model-based/index.html">Model-based reconstruction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../05-deep-learning/index.html">Deep learning</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../api/index.html">API reference</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../api/functions.html">Array functions and settings</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/tools.html">BART commands as functions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/linop.html">Linear operators</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/nlop.html">Nonlinear operators</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/optim.html">Optimization</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/priors.html">Regularization and denoising</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/apps.html">Reconstruction pipelines</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/learning.html">Learning</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/interop.html">Interoperability</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/io.html">File I/O</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/cli.html">Command line</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../misc/index.html">Miscellaneous</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../misc/license.html">License and third-party notices</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../misc/related_projects.html">Related projects</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../misc/contributors.html">Contributors and citation</a></li>
+</ul>
+</details></li>
+</ul>
+
+    </div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+
+<div class="sbt-scroll-pixel-helper"></div>
+
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item"><button class="sidebar-toggle primary-toggle btn btn-sm" title="Toggle primary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <span class="fa-solid fa-bars"></span>
+</button></div>
+      
+    </div>
+  
+  
+    <div class="header-article-items__end">
+      
+        <div class="header-article-item">
+
+<div class="article-header-buttons">
+
+
+
+
+
+<div class="dropdown dropdown-source-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Source repositories">
+    <i class="fab fa-github"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="https://github.com/mcencini/bartorch" target="_blank"
+   class="btn btn-sm btn-source-repository-button dropdown-item"
+   title="Source repository"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fab fa-github"></i>
+  </span>
+<span class="btn__text-container">Repository</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li><a href="https://github.com/mcencini/bartorch/edit/main/docs/auto_examples/01-basics/03-noise-prewhitening.rst" target="_blank"
+   class="btn btn-sm btn-source-edit-button dropdown-item"
+   title="Suggest edit"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-pencil-alt"></i>
+  </span>
+<span class="btn__text-container">Suggest edit</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li><a href="https://github.com/mcencini/bartorch/issues/new?title=Issue%20on%20page%20%2Fauto_examples/01-basics/03-noise-prewhitening.html&body=Your%20issue%20content%20here." target="_blank"
+   class="btn btn-sm btn-source-issues-button dropdown-item"
+   title="Open an issue"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-lightbulb"></i>
+  </span>
+<span class="btn__text-container">Open issue</span>
+</a>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+
+
+<div class="dropdown dropdown-download-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Download this page">
+    <i class="fas fa-download"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="../../_sources/auto_examples/01-basics/03-noise-prewhitening.rst" target="_blank"
+   class="btn btn-sm btn-download-source-button dropdown-item"
+   title="Download source file"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file"></i>
+  </span>
+<span class="btn__text-container">.rst</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li>
+<button onclick="window.print()"
+  class="btn btn-sm btn-download-pdf-button dropdown-item"
+  title="Print to PDF"
+  data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file-pdf"></i>
+  </span>
+<span class="btn__text-container">.pdf</span>
+</button>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+<button onclick="toggleFullScreen()"
+  class="btn btn-sm btn-fullscreen-button pst-navbar-icon"
+  title="Fullscreen mode"
+  data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-expand"></i>
+  </span>
+
+</button>
+
+
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div>
+
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+<button class="sidebar-toggle secondary-toggle btn btn-sm pst-navbar-icon" title="Toggle secondary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="fa-solid fa-list"></span>
+</button>
+</div></div>
+      
+    </div>
+  
+</div>
+</div>
+              
+              
+
+<div id="jb-print-docs-body" class="onlyprint">
+    <h1>Noise prewhitening</h1>
+    <!-- Table of contents -->
+    <div id="print-main-content">
+        <div id="jb-print-toc">
+            
+            <div>
+                <h2> Contents </h2>
+            </div>
+            <nav aria-label="Page">
+                <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#correlated-channel-noise">Correlated channel noise</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#acquisition-and-calibration">Acquisition and calibration</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#pseudo-replicas">Pseudo-replicas</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#references">References</a></li>
+</ul>
+            </nav>
+        </div>
+    </div>
+</div>
+
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <div class="sphx-glr-download-link-note admonition note">
+<p class="admonition-title">Note</p>
+<p><a class="reference internal" href="#sphx-glr-download-auto-examples-01-basics-03-noise-prewhitening-py"><span class="std std-ref">Go to the end</span></a>
+to download the full example code.</p>
+</div>
+<section class="sphx-glr-example-title" id="noise-prewhitening">
+<span id="sphx-glr-auto-examples-01-basics-03-noise-prewhitening-py"></span><h1>Noise prewhitening<a class="headerlink" href="#noise-prewhitening" title="Link to this heading">#</a></h1>
+<a class="reference external image-reference" href="https://colab.research.google.com/github/mcencini/bartorch/blob/gh-pages/v0.0.3/_colab/01-basics/03-noise-prewhitening.ipynb"><img alt="Open in Colab" class="colab-badge" src="https://colab.research.google.com/assets/colab-badge.svg" />
+</a>
+<p>The effect of channel-noise correlation on a SENSE reconstruction, and its
+removal by prewhitening with a noise measurement.</p>
+<p>The thermal noise of a receive array is correlated between channels and
+differs in level from one channel to another.  Least squares is the
+maximum-likelihood estimator only for white noise, so the data are first
+transformed by a whitening matrix <span class="math notranslate nohighlight">\(W\)</span> with <span class="math notranslate nohighlight">\(W \Psi W^H = I\)</span>,
+<span class="math notranslate nohighlight">\(\Psi\)</span> being the channel noise covariance estimated from a
+noise-only acquisition <a class="footnote-reference brackets" href="#roemer" id="id1" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a> <a class="footnote-reference brackets" href="#pruessmann" id="id2" role="doc-noteref"><span class="fn-bracket">[</span>2<span class="fn-bracket">]</span></a>.  ESPIRiT then calibrates
+the sensitivities of the whitened channels, and the reconstruction proceeds
+unchanged.</p>
+<p>The signal-to-noise ratio of the two reconstructions is measured by the
+pseudo-replica method <a class="footnote-reference brackets" href="#robson" id="id3" role="doc-noteref"><span class="fn-bracket">[</span>3<span class="fn-bracket">]</span></a>: the same reconstruction is repeated on
+independent noise realizations added to one noise-free acquisition, and the
+standard deviation across repetitions is the noise of each voxel.</p>
+<p>The phantom and the coil sensitivities are built as in
+<a class="reference internal" href="01-from-kspace-to-image.html"><span class="doc">From k-space to image</span></a>; the cell that does it is hidden on this page
+and present in the script this page can be downloaded as.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span class="kn">import</span><span class="w"> </span><span class="nn">csv</span><span class="w">
+</span><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span><span class="w">
+</span><span class="w">
+</span><span class="kn">import</span><span class="w"> </span><span class="nn">brainweb_dl</span><span class="w">
+</span><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span><span class="w">
+</span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span><span class="w">
+</span><span class="kn">from</span><span class="w"> </span><span class="nn">brainweb_dl</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_mri</span><span class="w">
+</span><span class="w">
+</span><span class="kn">import</span><span class="w"> </span><span class="nn">bartorch</span><span class="w">
+</span><span class="kn">import</span><span class="w"> </span><span class="nn">bartorch</span><span class="nn">.</span><span class="nn">tools</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">bt</span><span class="w">
+</span><span class="w">
+</span><span class="n">SIZE</span> <span class="o">=</span> <span class="mi">128</span><span class="w">
+</span><span class="n">COILS</span> <span class="o">=</span> <span class="mi">8</span><span class="w">
+</span></pre></div></div>
+<section id="correlated-channel-noise">
+<h2>Correlated channel noise<a class="headerlink" href="#correlated-channel-noise" title="Link to this heading">#</a></h2>
+<p>The noise covariance used for the simulation couples neighbouring channels
+by a factor falling as <span class="math notranslate nohighlight">\(0.5^{|i-j|}\)</span> and gives the channels standard
+deviations between 0.8 and 1.25 of a common level.  A noise scan – an
+acquisition with the RF transmitter off – measures the same channels
+without signal; its covariance is the estimate of <span class="math notranslate nohighlight">\(\Psi\)</span> that
+<a class="reference internal" href="../../generated/bartorch.tools.whiten.html#bartorch.tools.whiten" title="bartorch.tools.whiten"><code class="xref py py-func docutils literal notranslate"><span class="pre">bartorch.tools.whiten()</span></code></a> inverts.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span class="n">SIGMA</span> <span class="o">=</span> <span class="mf">0.01</span>  <span class="c1"># noise level, relative to the image's peak</span><span class="w">
+</span><span class="w">
+</span><span class="n">channels</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">COILS</span><span class="p">)</span><span class="w">
+</span><span class="n">levels</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mf">0.8</span><span class="p">,</span> <span class="mf">1.25</span><span class="p">,</span> <span class="n">COILS</span><span class="p">)</span><span class="w">
+</span><span class="n">correlation</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span><span class="o">*</span> <span class="p">(</span><span class="n">channels</span><span class="p">[</span><span class="p">:</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span> <span class="o">-</span> <span class="n">channels</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="p">:</span><span class="p">]</span><span class="p">)</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">(</span><span class="p">)</span><span class="w">
+</span><span class="n">covariance</span> <span class="o">=</span> <span class="n">levels</span><span class="p">[</span><span class="p">:</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span> <span class="o">*</span> <span class="n">correlation</span> <span class="o">*</span> <span class="n">levels</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="p">:</span><span class="p">]</span><span class="w">
+</span><span class="n">mixing</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">cholesky</span><span class="p">(</span><span class="n">covariance</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">complex64</span><span class="p">)</span><span class="w">
+</span><span class="n">generator</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">Generator</span><span class="p">(</span><span class="p">)</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="w">
+</span><span class="w">
+</span><span class="w">
+</span><span class="k">def</span><span class="w"> </span><span class="nf">channel_noise</span><span class="p">(</span><span class="n">shape</span><span class="p">)</span><span class="p">:</span><span class="w">
+</span><span class="w">    </span><span class="sd">&quot;&quot;&quot;Complex Gaussian noise with the channel covariance above.&quot;&quot;&quot;</span><span class="w">
+</span>    <span class="n">white</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">COILS</span><span class="p">,</span> <span class="o">*</span><span class="n">shape</span><span class="p">,</span> <span class="n">generator</span><span class="o">=</span><span class="n">generator</span><span class="p">)</span><span class="w">
+</span>    <span class="n">white</span> <span class="o">=</span> <span class="p">(</span><span class="n">white</span> <span class="o">+</span> <span class="mi">1</span><span class="n">j</span> <span class="o">*</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">COILS</span><span class="p">,</span> <span class="o">*</span><span class="n">shape</span><span class="p">,</span> <span class="n">generator</span><span class="o">=</span><span class="n">generator</span><span class="p">)</span><span class="p">)</span> <span class="o">/</span> <span class="mi">2</span><span class="o">*</span><span class="o">*</span><span class="mf">0.5</span><span class="w">
+</span>    <span class="k">return</span> <span class="n">SIGMA</span> <span class="o">*</span> <span class="n">torch</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s2">&quot;</span><span class="s2">ij,j...-&gt;i...</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">mixing</span><span class="p">,</span> <span class="n">white</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">complex64</span><span class="p">)</span><span class="p">)</span><span class="w">
+</span><span class="w">
+</span><span class="w">
+</span><span class="n">noise_scan</span> <span class="o">=</span> <span class="n">channel_noise</span><span class="p">(</span><span class="p">(</span><span class="n">SIZE</span><span class="p">,</span> <span class="n">SIZE</span><span class="p">)</span><span class="p">)</span><span class="p">[</span><span class="p">:</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span><span class="w">
+</span></pre></div></div>
+<p>The whitening matrix maps the measured covariance to the identity.  The
+measure below is the mean magnitude of the off-diagonal covariance entries,
+relative to the mean diagonal entry: zero for uncorrelated channels.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span class="k">def</span><span class="w"> </span><span class="nf">channel_covariance</span><span class="p">(</span><span class="n">samples</span><span class="p">)</span><span class="p">:</span><span class="w">
+</span><span class="w">    </span><span class="sd">&quot;&quot;&quot;Sample covariance of the channels, over every other axis.&quot;&quot;&quot;</span><span class="w">
+</span>    <span class="n">flat</span> <span class="o">=</span> <span class="n">samples</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">COILS</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="w">
+</span>    <span class="k">return</span> <span class="p">(</span><span class="n">flat</span> <span class="o">&#64;</span> <span class="n">flat</span><span class="o">.</span><span class="n">conj</span><span class="p">(</span><span class="p">)</span><span class="o">.</span><span class="n">T</span><span class="p">)</span> <span class="o">/</span> <span class="n">flat</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="w">
+</span><span class="w">
+</span><span class="w">
+</span><span class="k">def</span><span class="w"> </span><span class="nf">off_diagonal</span><span class="p">(</span><span class="n">matrix</span><span class="p">)</span><span class="p">:</span><span class="w">
+</span>    <span class="n">diagonal</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">diagonal</span><span class="p">(</span><span class="n">matrix</span><span class="p">)</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="p">)</span><span class="w">
+</span>    <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="p">(</span><span class="n">matrix</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="p">)</span> <span class="o">-</span> <span class="n">diagonal</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="p">)</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">COILS</span> <span class="o">*</span> <span class="p">(</span><span class="n">COILS</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span><span class="p">)</span> <span class="o">/</span> <span class="n">diagonal</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="p">)</span><span class="p">)</span><span class="w">
+</span><span class="w">
+</span><span class="w">
+</span><span class="n">measured</span> <span class="o">=</span> <span class="n">channel_covariance</span><span class="p">(</span><span class="n">noise_scan</span><span class="p">)</span><span class="w">
+</span><span class="n">whitened</span> <span class="o">=</span> <span class="n">channel_covariance</span><span class="p">(</span><a class="sphx-glr-backref-module-bartorch-tools sphx-glr-backref-type-py-function reference internal" href="../../generated/bartorch.tools.whiten.html#bartorch.tools.whiten" title="bartorch.tools.whiten"><span class="n">bt</span><span class="o">.</span><span class="n">whiten</span></a><span class="p">(</span><span class="n">noise_scan</span><span class="p">,</span> <span class="n">noise_scan</span><span class="p">)</span><span class="p">)</span><span class="w">
+</span><span class="w">
+</span><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="s2">off-diagonal covariance: </span><span class="si">{</span><span class="n">off_diagonal</span><span class="p">(</span><span class="n">measured</span><span class="p">)</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2"> measured</span><span class="s2">&quot;</span><span class="p">)</span><span class="w">
+</span><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="s2">                         </span><span class="si">{</span><span class="n">off_diagonal</span><span class="p">(</span><span class="n">whitened</span><span class="p">)</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2"> after whitening</span><span class="s2">&quot;</span><span class="p">)</span><span class="w">
+</span></pre></div></div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>off-diagonal covariance: 0.209 measured
+                         0.000 after whitening
+</pre></div>
+</div>
+<img src="../../_images/sphx_glr_03-noise-prewhitening_001.png" srcset="../../_images/sphx_glr_03-noise-prewhitening_001.png" alt="measured, after whitening" class = "sphx-glr-single-img"/></section>
+<section id="acquisition-and-calibration">
+<h2>Acquisition and calibration<a class="headerlink" href="#acquisition-and-calibration" title="Link to this heading">#</a></h2>
+<p>Every second phase encode is acquired, with 24 central lines kept for
+calibration.  Each pseudo-replica adds a new noise realization to the same
+noise-free k-space.  The sensitivities are calibrated once per pipeline,
+from the first replica: from the channels as measured, and from the
+whitened channels.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span class="n">CALIBRATION</span> <span class="o">=</span> <span class="mi">24</span><span class="w">
+</span><span class="n">REPLICAS</span> <span class="o">=</span> <span class="mi">32</span><span class="w">
+</span><span class="w">
+</span><span class="n">lines</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">SIZE</span><span class="p">)</span><span class="w">
+</span><span class="n">lines</span><span class="p">[</span><span class="p">:</span><span class="p">:</span><span class="mi">2</span><span class="p">]</span> <span class="o">=</span> <span class="mf">1.0</span><span class="w">
+</span><span class="n">lines</span><span class="p">[</span><span class="n">SIZE</span> <span class="o">/</span><span class="o">/</span> <span class="mi">2</span> <span class="o">-</span> <span class="n">CALIBRATION</span> <span class="o">/</span><span class="o">/</span> <span class="mi">2</span> <span class="p">:</span> <span class="n">SIZE</span> <span class="o">/</span><span class="o">/</span> <span class="mi">2</span> <span class="o">+</span> <span class="n">CALIBRATION</span> <span class="o">/</span><span class="o">/</span> <span class="mi">2</span><span class="p">]</span> <span class="o">=</span> <span class="mf">1.0</span><span class="w">
+</span><span class="n">pattern</span> <span class="o">=</span> <span class="n">lines</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">SIZE</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">complex64</span><span class="p">)</span><span class="w">
+</span><span class="w">
+</span><span class="n">noiseless</span> <span class="o">=</span> <a class="sphx-glr-backref-module-bartorch sphx-glr-backref-type-py-function reference internal" href="../../generated/bartorch.fft.html#bartorch.fft" title="bartorch.fft"><span class="n">bartorch</span><span class="o">.</span><span class="n">fft</span></a><span class="p">(</span><span class="n">sensitivities</span> <span class="o">*</span> <span class="n">image</span><span class="p">,</span> <span class="n">axes</span><span class="o">=</span><span class="p">(</span><span class="o">-</span><span class="mi">2</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="p">,</span> <span class="n">unitary</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="w">
+</span><span class="w">
+</span><span class="w">
+</span><span class="k">def</span><span class="w"> </span><span class="nf">acquire</span><span class="p">(</span><span class="p">)</span><span class="p">:</span><span class="w">
+</span><span class="w">    </span><span class="sd">&quot;&quot;&quot;One replica: the noise-free k-space plus new noise, sampled.&quot;&quot;&quot;</span><span class="w">
+</span>    <span class="k">return</span> <span class="p">(</span><span class="p">(</span><span class="n">noiseless</span> <span class="o">+</span> <span class="n">channel_noise</span><span class="p">(</span><span class="p">(</span><span class="n">SIZE</span><span class="p">,</span> <span class="n">SIZE</span><span class="p">)</span><span class="p">)</span><span class="p">)</span> <span class="o">*</span> <span class="n">pattern</span><span class="p">)</span><span class="p">[</span><span class="p">:</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span><span class="w">
+</span><span class="w">
+</span><span class="w">
+</span><span class="n">first</span> <span class="o">=</span> <span class="n">acquire</span><span class="p">(</span><span class="p">)</span><span class="w">
+</span><span class="n">maps_measured</span> <span class="o">=</span> <a class="sphx-glr-backref-module-bartorch-tools sphx-glr-backref-type-py-function reference internal" href="../../generated/bartorch.tools.ecalib.html#bartorch.tools.ecalib" title="bartorch.tools.ecalib"><span class="n">bt</span><span class="o">.</span><span class="n">ecalib</span></a><span class="p">(</span><span class="n">first</span><span class="p">,</span> <span class="n">maps</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">calib_size</span><span class="o">=</span><span class="n">CALIBRATION</span><span class="p">,</span> <span class="n">crop</span><span class="o">=</span><span class="mf">0.8</span><span class="p">)</span><span class="w">
+</span><span class="n">maps_whitened</span> <span class="o">=</span> <a class="sphx-glr-backref-module-bartorch-tools sphx-glr-backref-type-py-function reference internal" href="../../generated/bartorch.tools.ecalib.html#bartorch.tools.ecalib" title="bartorch.tools.ecalib"><span class="n">bt</span><span class="o">.</span><span class="n">ecalib</span></a><span class="p">(</span><a class="sphx-glr-backref-module-bartorch-tools sphx-glr-backref-type-py-function reference internal" href="../../generated/bartorch.tools.whiten.html#bartorch.tools.whiten" title="bartorch.tools.whiten"><span class="n">bt</span><span class="o">.</span><span class="n">whiten</span></a><span class="p">(</span><span class="n">first</span><span class="p">,</span> <span class="n">noise_scan</span><span class="p">)</span><span class="p">,</span> <span class="n">maps</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">calib_size</span><span class="o">=</span><span class="n">CALIBRATION</span><span class="p">,</span> <span class="n">crop</span><span class="o">=</span><span class="mf">0.8</span><span class="p">)</span><span class="w">
+</span></pre></div></div>
+</section>
+<section id="pseudo-replicas">
+<h2>Pseudo-replicas<a class="headerlink" href="#pseudo-replicas" title="Link to this heading">#</a></h2>
+<p>Both pipelines use the same reconstruction, conjugate-gradient SENSE with a
+small Tikhonov weight and a fixed number of iterations; they differ only in
+whether the data are whitened first.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span class="n">plain</span><span class="p">,</span> <span class="n">prewhitened</span> <span class="o">=</span> <span class="p">[</span><span class="p">]</span><span class="p">,</span> <span class="p">[</span><span class="p">]</span><span class="w">
+</span><span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">REPLICAS</span><span class="p">)</span><span class="p">:</span><span class="w">
+</span>    <span class="n">data</span> <span class="o">=</span> <span class="n">acquire</span><span class="p">(</span><span class="p">)</span><span class="w">
+</span>    <span class="n">plain</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><a class="sphx-glr-backref-module-bartorch-tools sphx-glr-backref-type-py-function reference internal" href="../../generated/bartorch.tools.pics.html#bartorch.tools.pics" title="bartorch.tools.pics"><span class="n">bt</span><span class="o">.</span><span class="n">pics</span></a><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">maps_measured</span><span class="p">,</span> <span class="n">l2</span><span class="o">=</span><span class="mf">1e-3</span><span class="p">,</span> <span class="n">maxiter</span><span class="o">=</span><span class="mi">30</span><span class="p">)</span><span class="p">)</span><span class="w">
+</span>    <span class="n">prewhitened</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><a class="sphx-glr-backref-module-bartorch-tools sphx-glr-backref-type-py-function reference internal" href="../../generated/bartorch.tools.pics.html#bartorch.tools.pics" title="bartorch.tools.pics"><span class="n">bt</span><span class="o">.</span><span class="n">pics</span></a><span class="p">(</span><a class="sphx-glr-backref-module-bartorch-tools sphx-glr-backref-type-py-function reference internal" href="../../generated/bartorch.tools.whiten.html#bartorch.tools.whiten" title="bartorch.tools.whiten"><span class="n">bt</span><span class="o">.</span><span class="n">whiten</span></a><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">noise_scan</span><span class="p">)</span><span class="p">,</span> <span class="n">maps_whitened</span><span class="p">,</span> <span class="n">l2</span><span class="o">=</span><span class="mf">1e-3</span><span class="p">,</span> <span class="n">maxiter</span><span class="o">=</span><span class="mi">30</span><span class="p">)</span><span class="p">)</span><span class="w">
+</span><span class="w">
+</span><span class="n">plain</span><span class="p">,</span> <span class="n">prewhitened</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span><span class="n">plain</span><span class="p">)</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span><span class="n">prewhitened</span><span class="p">)</span><span class="w">
+</span></pre></div></div>
+<p>The signal-to-noise ratio of a voxel is the magnitude of the mean
+reconstruction over its standard deviation across replicas.  Both are
+reported over the white matter, where the phantom is homogeneous.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span class="n">white_matter</span> <span class="o">=</span> <span class="n">memberships</span><span class="p">[</span><span class="n">CLASS</span><span class="p">[</span><span class="s2">&quot;</span><span class="s2">WM</span><span class="s2">&quot;</span><span class="p">]</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mf">0.8</span><span class="w">
+</span><span class="w">
+</span><span class="w">
+</span><span class="k">def</span><span class="w"> </span><span class="nf">snr_map</span><span class="p">(</span><span class="n">replicas</span><span class="p">)</span><span class="p">:</span><span class="w">
+</span>    <span class="k">return</span> <span class="n">replicas</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="p">)</span> <span class="o">/</span> <span class="n">replicas</span><span class="o">.</span><span class="n">std</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="w">
+</span><span class="w">
+</span><span class="w">
+</span><span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">replicas</span> <span class="ow">in</span> <span class="p">(</span><span class="p">(</span><span class="s2">&quot;</span><span class="s2">as measured</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">plain</span><span class="p">)</span><span class="p">,</span> <span class="p">(</span><span class="s2">&quot;</span><span class="s2">prewhitened</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">prewhitened</span><span class="p">)</span><span class="p">)</span><span class="p">:</span><span class="w">
+</span>    <span class="n">values</span> <span class="o">=</span> <span class="n">snr_map</span><span class="p">(</span><span class="n">replicas</span><span class="p">)</span><span class="p">[</span><span class="n">white_matter</span><span class="p">]</span><span class="w">
+</span>    <span class="n">mean</span><span class="p">,</span> <span class="n">median</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">values</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="p">)</span><span class="p">)</span><span class="p">,</span> <span class="nb">float</span><span class="p">(</span><span class="n">values</span><span class="o">.</span><span class="n">median</span><span class="p">(</span><span class="p">)</span><span class="p">)</span><span class="w">
+</span>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">name</span><span class="si">:</span><span class="s2">&gt;12</span><span class="si">}</span><span class="s2">  white-matter SNR </span><span class="si">{</span><span class="n">mean</span><span class="si">:</span><span class="s2">6.1f</span><span class="si">}</span><span class="s2"> (median </span><span class="si">{</span><span class="n">median</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">)</span><span class="s2">&quot;</span><span class="p">)</span><span class="w">
+</span><span class="w">
+</span><span class="n">gain</span> <span class="o">=</span> <span class="n">snr_map</span><span class="p">(</span><span class="n">prewhitened</span><span class="p">)</span> <span class="o">/</span> <span class="n">snr_map</span><span class="p">(</span><span class="n">plain</span><span class="p">)</span><span class="w">
+</span><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="s2">SNR ratio, prewhitened over as measured: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><span class="n">gain</span><span class="p">[</span><span class="n">white_matter</span><span class="p">]</span><span class="o">.</span><span class="n">median</span><span class="p">(</span><span class="p">)</span><span class="p">)</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> (median)</span><span class="s2">&quot;</span><span class="p">)</span><span class="w">
+</span></pre></div></div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span> as measured  white-matter SNR   41.9 (median 41.5)
+ prewhitened  white-matter SNR   53.8 (median 53.7)
+SNR ratio, prewhitened over as measured: 1.28 (median)
+</pre></div>
+</div>
+<img src="../../_images/sphx_glr_03-noise-prewhitening_002.png" srcset="../../_images/sphx_glr_03-noise-prewhitening_002.png" alt="SNR, as measured, SNR, prewhitened, SNR ratio" class = "sphx-glr-single-img"/><p>With this covariance, prewhitening raises the white-matter SNR by the
+ratio printed above.  The size of the gain depends on the array’s noise
+correlation and on the spread of the channel noise levels; it is measured
+here for one simulated covariance.</p>
+</section>
+<section id="references">
+<h2>References<a class="headerlink" href="#references" title="Link to this heading">#</a></h2>
+<aside class="footnote-list brackets">
+<aside class="footnote brackets" id="roemer" role="doc-footnote">
+<span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id1">1</a><span class="fn-bracket">]</span></span>
+<p>Roemer PB, Edelstein WA, Hayes CE, Souza SP, Mueller OM. The NMR
+phased array. <em>Magn Reson Med</em> 16(2):192-225 (1990).
+<a class="reference external" href="https://doi.org/10.1002/mrm.1910160203">https://doi.org/10.1002/mrm.1910160203</a></p>
+</aside>
+<aside class="footnote brackets" id="pruessmann" role="doc-footnote">
+<span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id2">2</a><span class="fn-bracket">]</span></span>
+<p>Pruessmann KP, Weiger M, Börnert P, Boesiger P. Advances in
+sensitivity encoding with arbitrary k-space trajectories. <em>Magn Reson Med</em>
+46(4):638-651 (2001). <a class="reference external" href="https://doi.org/10.1002/mrm.1241">https://doi.org/10.1002/mrm.1241</a></p>
+</aside>
+<aside class="footnote brackets" id="robson" role="doc-footnote">
+<span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id3">3</a><span class="fn-bracket">]</span></span>
+<p>Robson PM, Grant AK, Madhuranthakam AJ, Lattanzi R, Sodickson DK,
+McKenzie CA. Comprehensive quantification of signal-to-noise ratio and
+g-factor for image-based and k-space-based parallel imaging
+reconstructions. <em>Magn Reson Med</em> 60(4):895-907 (2008).
+<a class="reference external" href="https://doi.org/10.1002/mrm.21728">https://doi.org/10.1002/mrm.21728</a></p>
+</aside>
+</aside>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 9.063 seconds)</p>
+<div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-auto-examples-01-basics-03-noise-prewhitening-py">
+<div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
+<p><a class="reference download internal" download="" href="../../_downloads/fd584574dabde3d4959f6db8598a1a54/03-noise-prewhitening.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">03-noise-prewhitening.ipynb</span></code></a></p>
+</div>
+<div class="sphx-glr-download sphx-glr-download-python docutils container">
+<p><a class="reference download internal" download="" href="../../_downloads/9616fea674d869706266730019b8e7b5/03-noise-prewhitening.py"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Python</span> <span class="pre">source</span> <span class="pre">code:</span> <span class="pre">03-noise-prewhitening.py</span></code></a></p>
+</div>
+<div class="sphx-glr-download sphx-glr-download-zip docutils container">
+<p><a class="reference download internal" download="" href="../../_downloads/912f75f75263213b9b1632d3d9220d94/03-noise-prewhitening.zip"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">zipped:</span> <span class="pre">03-noise-prewhitening.zip</span></code></a></p>
+</div>
+</div>
+<p class="sphx-glr-signature"><a class="reference external" href="https://sphinx-gallery.github.io">Gallery generated by Sphinx-Gallery</a></p>
+</section>
+</section>
+
+
+                </article>
+              
+
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="02-operators-and-solvers.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Operators and solvers</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="../02-non-cartesian/index.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Non-Cartesian imaging</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item"><div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> Contents
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#correlated-channel-noise">Correlated channel noise</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#acquisition-and-calibration">Acquisition and calibration</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#pseudo-replicas">Pseudo-replicas</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#references">References</a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+<div class="bd-footer-content__inner container">
+  
+  <div class="footer-item">
+    
+<p class="component-author">
+By bartorch contributors
+</p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+
+  <p class="copyright">
+    
+      © Copyright 2024–2026, bartorch contributors.
+      <br/>
+    
+  </p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+</div>
+          </footer>
+        
+
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9"></script>
+
+  <footer class="bd-footer">
+  </footer>
+  </body>
+</html>

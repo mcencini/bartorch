@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-label="The encoding form" viewBox="-2 -2 872 96" font-family="DejaVu Sans, Verdana, Helvetica, Arial, sans-serif" font-size="14">
+  <title>The encoding form</title>
+  <rect x="0" y="0" width="128" height="92" rx="8" fill="#16222d" stroke="#7fb3dc" stroke-width="1.5"/>
+  <text x="64.0" y="29" text-anchor="middle" font-weight="bold" fill="#e4e7eb">x[a]</text>
+  <text x="64.0" y="51" text-anchor="middle" font-weight="normal" fill="#9aa5b1">image or</text>
+  <text x="64.0" y="73" text-anchor="middle" font-weight="normal" fill="#9aa5b1">coefficients</text>
+  <rect x="148" y="0" width="128" height="92" rx="8" fill="#16222d" stroke="#7fb3dc" stroke-width="1.5"/>
+  <text x="212.0" y="29" text-anchor="middle" font-weight="bold" fill="#e4e7eb">× I[c, a, t]</text>
+  <text x="212.0" y="51" text-anchor="middle" font-weight="normal" fill="#9aa5b1">sensitivities,</text>
+  <text x="212.0" y="73" text-anchor="middle" font-weight="normal" fill="#9aa5b1">spatial weights</text>
+  <line x1="128" y1="46.0" x2="141" y2="46.0" stroke="#7fb3dc" stroke-width="2"/><path d="M139 40.0 L148 46.0 L139 52.0 Z" fill="#7fb3dc"/>
+  <rect x="296" y="0" width="128" height="92" rx="8" fill="#16222d" stroke="#7fb3dc" stroke-width="1.5"/>
+  <text x="360.0" y="29" text-anchor="middle" font-weight="bold" fill="#e4e7eb">Tₜ</text>
+  <text x="360.0" y="51" text-anchor="middle" font-weight="normal" fill="#9aa5b1">FFT, NUFFT</text>
+  <text x="360.0" y="73" text-anchor="middle" font-weight="normal" fill="#9aa5b1">or wave</text>
+  <line x1="276" y1="46.0" x2="289" y2="46.0" stroke="#7fb3dc" stroke-width="2"/><path d="M287 40.0 L296 46.0 L287 52.0 Z" fill="#7fb3dc"/>
+  <rect x="444" y="0" width="128" height="92" rx="8" fill="#16222d" stroke="#7fb3dc" stroke-width="1.5"/>
+  <text x="508.0" y="29" text-anchor="middle" font-weight="bold" fill="#e4e7eb">× O[a, t]</text>
+  <text x="508.0" y="51" text-anchor="middle" font-weight="normal" fill="#9aa5b1">pattern, basis,</text>
+  <text x="508.0" y="73" text-anchor="middle" font-weight="normal" fill="#9aa5b1">density weights</text>
+  <line x1="424" y1="46.0" x2="437" y2="46.0" stroke="#7fb3dc" stroke-width="2"/><path d="M435 40.0 L444 46.0 L435 52.0 Z" fill="#7fb3dc"/>
+  <rect x="592" y="0" width="128" height="92" rx="8" fill="#16222d" stroke="#7fb3dc" stroke-width="1.5"/>
+  <text x="656.0" y="29" text-anchor="middle" font-weight="bold" fill="#e4e7eb">∑ₐ</text>
+  <text x="656.0" y="51" text-anchor="middle" font-weight="normal" fill="#9aa5b1">contraction</text>
+  <text x="656.0" y="73" text-anchor="middle" font-weight="normal" fill="#9aa5b1">over terms</text>
+  <line x1="572" y1="46.0" x2="585" y2="46.0" stroke="#7fb3dc" stroke-width="2"/><path d="M583 40.0 L592 46.0 L583 52.0 Z" fill="#7fb3dc"/>
+  <rect x="740" y="0" width="128" height="92" rx="8" fill="#16222d" stroke="#7fb3dc" stroke-width="1.5"/>
+  <text x="804.0" y="40" text-anchor="middle" font-weight="bold" fill="#e4e7eb">y[c, t]</text>
+  <text x="804.0" y="62" text-anchor="middle" font-weight="normal" fill="#9aa5b1">samples</text>
+  <line x1="720" y1="46.0" x2="733" y2="46.0" stroke="#7fb3dc" stroke-width="2"/><path d="M731 40.0 L740 46.0 L731 52.0 Z" fill="#7fb3dc"/>
+</svg>

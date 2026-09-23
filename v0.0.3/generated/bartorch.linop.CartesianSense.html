@@ -1,0 +1,669 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>linop.CartesianSense &#8212; bartorch</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../_static/styles/theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+<link href="../_static/styles/pydata-sphinx-theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/sphinx-book-theme.css?v=4418a689" />
+    <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery.css?v=c83e6b79" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=0739d252" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../_static/scripts/fontawesome.js?digest=90905a2f556bf617f1a9"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9" />
+<link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9" />
+
+    <script src="../_static/documentation_options.js?v=3fdb872c"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../_static/copybutton.js?v=a5fa425f"></script>
+    <script src="../_static/sg-tags.js?v=d80f6fa4"></script>
+    <script src="../_static/scripts/sphinx-book-theme.js?v=fab101a9"></script>
+    <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'generated/bartorch.linop.CartesianSense';</script>
+    <script>
+        DOCUMENTATION_OPTIONS.theme_version = '0.20.0';
+        DOCUMENTATION_OPTIONS.theme_switcher_json_url = 'https://mcencini.github.io/bartorch/versions.json';
+        DOCUMENTATION_OPTIONS.theme_switcher_version_match = 'v0.0.3';
+        DOCUMENTATION_OPTIONS.show_version_warning_banner =
+            true;
+        </script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="canonical" href="https://mcencini.github.io/bartorch/stable/generated/bartorch.linop.CartesianSense.html" />
+    <link rel="icon" href="../_static/bartorch-mark.svg"/>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="v0.0.3" />
+  
+    
+    <script src="../_static/searchtools.js"></script>
+    <script src="../_static/language_data.js"></script>
+    <script src="../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search..."
+         aria-label="Search..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/bartorch-mark.svg" class="logo__image only-light" alt="bartorch"/>
+    <img src="../_static/bartorch-mark-dark.svg" class="logo__image only-dark pst-js-only" alt="bartorch"/>
+  
+  
+</a></div>
+        <div class="sidebar-primary-item">
+<div class="version-switcher__container dropdown pst-js-only">
+  <button id="pst-version-switcher-button-2"
+    type="button"
+    class="version-switcher__button btn btn-sm dropdown-toggle"
+    data-bs-toggle="dropdown"
+    aria-haspopup="listbox"
+    aria-controls="pst-version-switcher-list-2"
+    aria-label="Version switcher list"
+  >
+    Choose version  <!-- this text may get changed later by javascript -->
+    <span class="caret"></span>
+  </button>
+  <div id="pst-version-switcher-list-2"
+    class="version-switcher__menu dropdown-menu list-group-flush py-0"
+    role="listbox" aria-labelledby="pst-version-switcher-button-2">
+    <!-- dropdown will be populated by javascript on page load -->
+  </div>
+</div></div>
+        <div class="sidebar-primary-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
+    <div class="bd-toc-item navbar-nav active">
+        
+        <ul class="nav bd-sidenav bd-sidenav__home-link">
+            <li class="toctree-l1">
+                <a class="reference internal" href="../index.html">
+                    Homepage
+                </a>
+            </li>
+        </ul>
+        <ul class="nav bd-sidenav">
+<li class="toctree-l1 has-children"><a class="reference internal" href="../guides/user/index.html">User guide</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../guides/user/prerequisites.html">Prerequisites and supported platforms</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/user/installation.html">Installation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/user/conventions.html">Data layout and conventions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/user/issues.html">Reporting issues</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/user/discussions.html">Questions and proposals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/user/security.html">Security</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../guides/developer/index.html">Developer guide</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../guides/developer/prerequisites.html">Development prerequisites</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/developer/installation.html">Editable and source installation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/developer/layout.html">Repository layout</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/developer/workflow.html">Development workflow</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/developer/pre-commit.html">Pre-commit hooks</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/developer/style.html">Coding style</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/developer/documentation.html">Documentation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/developer/terminology.html">Terminology and conventions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/developer/pull-requests.html">Pull requests</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/developer/code-of-conduct.html">Code of conduct</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../explanation/index.html">Explanation</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../explanation/execution-model.html">Interfaces and execution</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../explanation/inverse-problems.html">Inverse problems and their solvers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../explanation/encoding.html">The MRI encoding operator</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../explanation/non-cartesian.html">Non-Cartesian sampling</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../explanation/nonlinear.html">Nonlinear forward models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../explanation/differentiation.html">Differentiation through reconstruction</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../examples/index.html">Examples</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../auto_examples/01-basics/index.html">Basics</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../auto_examples/02-non-cartesian/index.html">Non-Cartesian imaging</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../auto_examples/03-applications/index.html">Applications</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../auto_examples/04-model-based/index.html">Model-based reconstruction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../auto_examples/05-deep-learning/index.html">Deep learning</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../api/index.html">API reference</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../api/functions.html">Array functions and settings</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/tools.html">BART commands as functions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/linop.html">Linear operators</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/nlop.html">Nonlinear operators</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/optim.html">Optimization</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/priors.html">Regularization and denoising</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/apps.html">Reconstruction pipelines</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/learning.html">Learning</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/interop.html">Interoperability</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/io.html">File I/O</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/cli.html">Command line</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../misc/index.html">Miscellaneous</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../misc/license.html">License and third-party notices</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../misc/related_projects.html">Related projects</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../misc/contributors.html">Contributors and citation</a></li>
+</ul>
+</details></li>
+</ul>
+
+    </div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+
+<div class="sbt-scroll-pixel-helper"></div>
+
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item"><button class="sidebar-toggle primary-toggle btn btn-sm" title="Toggle primary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <span class="fa-solid fa-bars"></span>
+</button></div>
+      
+    </div>
+  
+  
+    <div class="header-article-items__end">
+      
+        <div class="header-article-item">
+
+<div class="article-header-buttons">
+
+
+
+
+
+<div class="dropdown dropdown-source-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Source repositories">
+    <i class="fab fa-github"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="https://github.com/mcencini/bartorch" target="_blank"
+   class="btn btn-sm btn-source-repository-button dropdown-item"
+   title="Source repository"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fab fa-github"></i>
+  </span>
+<span class="btn__text-container">Repository</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li><a href="https://github.com/mcencini/bartorch/edit/main/docs/generated/bartorch.linop.CartesianSense.rst" target="_blank"
+   class="btn btn-sm btn-source-edit-button dropdown-item"
+   title="Suggest edit"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-pencil-alt"></i>
+  </span>
+<span class="btn__text-container">Suggest edit</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li><a href="https://github.com/mcencini/bartorch/issues/new?title=Issue%20on%20page%20%2Fgenerated/bartorch.linop.CartesianSense.html&body=Your%20issue%20content%20here." target="_blank"
+   class="btn btn-sm btn-source-issues-button dropdown-item"
+   title="Open an issue"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-lightbulb"></i>
+  </span>
+<span class="btn__text-container">Open issue</span>
+</a>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+
+
+<div class="dropdown dropdown-download-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Download this page">
+    <i class="fas fa-download"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="../_sources/generated/bartorch.linop.CartesianSense.rst" target="_blank"
+   class="btn btn-sm btn-download-source-button dropdown-item"
+   title="Download source file"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file"></i>
+  </span>
+<span class="btn__text-container">.rst</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li>
+<button onclick="window.print()"
+  class="btn btn-sm btn-download-pdf-button dropdown-item"
+  title="Print to PDF"
+  data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file-pdf"></i>
+  </span>
+<span class="btn__text-container">.pdf</span>
+</button>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+<button onclick="toggleFullScreen()"
+  class="btn btn-sm btn-fullscreen-button pst-navbar-icon"
+  title="Fullscreen mode"
+  data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-expand"></i>
+  </span>
+
+</button>
+
+
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div>
+
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+<button class="sidebar-toggle secondary-toggle btn btn-sm pst-navbar-icon" title="Toggle secondary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="fa-solid fa-list"></span>
+</button>
+</div></div>
+      
+    </div>
+  
+</div>
+</div>
+              
+              
+
+<div id="jb-print-docs-body" class="onlyprint">
+    <h1>linop.CartesianSense</h1>
+    <!-- Table of contents -->
+    <div id="print-main-content">
+        <div id="jb-print-toc">
+            
+            <div>
+                <h2> Contents </h2>
+            </div>
+            <nav aria-label="Page">
+                <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#bartorch.linop.CartesianSense"><code class="docutils literal notranslate"><span class="pre">CartesianSense()</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#examples-using-cartesiansense">Examples using <code class="docutils literal notranslate"><span class="pre">CartesianSense</span></code></a></li>
+</ul>
+            </nav>
+        </div>
+    </div>
+</div>
+
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="linop-cartesiansense">
+<h1>linop.CartesianSense<a class="headerlink" href="#linop-cartesiansense" title="Link to this heading">#</a></h1>
+<dl class="py function">
+<dt class="sig sig-object py" id="bartorch.linop.CartesianSense">
+<span class="sig-prename descclassname"><span class="pre">bartorch.linop.</span></span><span class="sig-name descname"><span class="pre">CartesianSense</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#bartorch.linop.CartesianSense" title="Link to this definition">#</a></dt>
+<dd><p>Cartesian SENSE encoding operator.</p>
+<p>The forward model is</p>
+<div class="math notranslate nohighlight">
+\[A = P F S\]</div>
+<p>with <span class="math notranslate nohighlight">\(S\)</span> multiplication by the coil sensitivities, <span class="math notranslate nohighlight">\(F\)</span> the
+centred unitary Fourier transform over the spatial axes, and <span class="math notranslate nohighlight">\(P\)</span> the
+diagonal sampling operator given by <code class="docutils literal notranslate"><span class="pre">pattern</span></code>.  This is the encoding
+BART uses for Cartesian data.</p>
+<p>With a temporal basis <span class="math notranslate nohighlight">\(\Phi\)</span> of shape <code class="docutils literal notranslate"><span class="pre">(coeffs,</span> <span class="pre">frames)</span></code> the
+optimization variable holds subspace coefficients, and the basis maps them
+to the acquired frames after the Fourier transform and before sampling:</p>
+<div class="math notranslate nohighlight">
+\[y[c, t] = P[t] \odot \sum_a \Phi[a, t] \, F(S[c] \odot x[a])\]</div>
+<p>so the domain carries coefficients where the codomain carries frames.  This
+is the subspace model used for T2 shuffling.</p>
+<p>Given neither a pattern nor a basis the operator reduces to sensitivity
+encoding followed by the Fourier transform, and
+<a class="reference internal" href="bartorch.linop.NoncartesianSense.html#bartorch.linop.NoncartesianSense" title="bartorch.linop.NoncartesianSense"><code class="xref py py-class docutils literal notranslate"><span class="pre">NoncartesianSense</span></code></a> builds it directly.  Given
+either, the pattern and the basis are applied inside the coil-slab loop
+together with the transform, so the samples are not revisited afterwards.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>sensitivities</strong> (<em>tensor</em>) – Coil sensitivities <code class="docutils literal notranslate"><span class="pre">([batch,</span> <span class="pre">sets,]</span> <span class="pre">coils,</span> <span class="pre">[z,]</span> <span class="pre">y,</span> <span class="pre">x)</span></code>, or their
+k-space kernels with <code class="docutils literal notranslate"><span class="pre">kernels=True</span></code>.</p></li>
+<li><p><strong>image_shape</strong> (<em>tuple</em><em> of </em><em>int</em>) – The image, <code class="docutils literal notranslate"><span class="pre">(*batches,</span> <span class="pre">[batch,]</span> <span class="pre">[sets,]</span> <span class="pre">[coeffs,]</span> <span class="pre">[z,]</span> <span class="pre">y,</span> <span class="pre">x)</span></code>.  The
+samples are <code class="docutils literal notranslate"><span class="pre">(*batches,</span> <span class="pre">coils,</span> <span class="pre">[frames,]</span> <span class="pre">[z,]</span> <span class="pre">y,</span> <span class="pre">x)</span></code>.</p></li>
+<li><p><strong>pattern</strong> (<em>tensor</em><em>, </em><em>default=None</em>) – Binary sampling mask, one at acquired positions and zero elsewhere,
+broadcast over one coil’s samples <code class="docutils literal notranslate"><span class="pre">([frames,]</span> <span class="pre">[z,]</span> <span class="pre">y,</span> <span class="pre">x)</span></code> – so
+<code class="docutils literal notranslate"><span class="pre">(y,</span> <span class="pre">1)</span></code> undersamples a phase encode for every coil and batch item.</p></li>
+<li><p><strong>positions</strong> (<em>tensor</em><em>, </em><em>default=None</em>) – Instead of a pattern, the acquired phase encodes as integer indices
+<code class="docutils literal notranslate"><span class="pre">([frames,]</span> <span class="pre">shots,</span> <span class="pre">d)</span></code>: <code class="docutils literal notranslate"><span class="pre">(y,)</span></code> in 2D, <code class="docutils literal notranslate"><span class="pre">(z,</span> <span class="pre">y)</span></code> in 3D,
+<code class="docutils literal notranslate"><span class="pre">-1</span></code> for padding where frames sample different numbers.  The samples
+are then <code class="docutils literal notranslate"><span class="pre">(*batches,</span> <span class="pre">coils,</span> <span class="pre">[frames,]</span> <span class="pre">shots,</span> <span class="pre">readout)</span></code>, the whole
+readout along each phase encode, and nothing the size of the
+phase-encode plane is held for them.</p></li>
+<li><p><strong>readout</strong> (<em>{&quot;kspace&quot;</em><em>, </em><em>&quot;image&quot;}</em><em>, </em><em>default='kspace'</em>) – With positions, whether the samples are in k-space along the readout
+or already transformed back along it (hybrid space).  Either way the
+volume is not transformed along the readout: the samples are.</p></li>
+<li><p><strong>basis</strong> (<em>tensor</em><em>, </em><em>default=None</em>) – Temporal subspace basis <code class="docutils literal notranslate"><span class="pre">(coeffs,</span> <span class="pre">frames)</span></code>.</p></li>
+<li><p><strong>toeplitz</strong> (<em>bool</em><em>, </em><em>default=True</em>) – Apply the normal in closed form rather than as the forward and
+adjoint applications; see the notes.</p></li>
+<li><p><strong>kernels</strong> (<em>bool</em><em>, </em><em>default=False</em>) – Read <code class="docutils literal notranslate"><span class="pre">sensitivities</span></code> as k-space kernels rather than maps.</p></li>
+<li><p><strong>coil_batch</strong> (<em>int</em><em>, </em><em>default=1</em>) – Coils applied at once; 0 applies every coil together.</p></li>
+<li><p><strong>modulated</strong> (<em>bool</em><em>, </em><em>default=False</em>) – Answer in BART’s uncentred sample convention rather than the centred
+one.  The two differ by an <code class="docutils literal notranslate"><span class="pre">fftmod</span></code> on the sample axes; the centred
+convention is the default and is the one <a class="reference internal" href="bartorch.fft.html#bartorch.fft" title="bartorch.fft"><code class="xref py py-func docutils literal notranslate"><span class="pre">bartorch.fft()</span></code></a> produces.</p></li>
+<li><p><strong>device</strong> (<em>device</em><em>, </em><em>default=None</em>) – Where the operator is built and does its arithmetic.</p></li>
+<li><p><strong>ndim</strong> (<em>int</em><em>, </em><em>default=None</em>) – Number of spatial axes, where the sensitivities and the image do not
+determine it.</p></li>
+<li><p><strong>kspace_shape</strong> (<em>tuple</em><em> of </em><em>int</em><em>, </em><em>default=None</em>) – Sample shape, where it is not the default above.</p></li>
+<li><p><strong>fold_maps</strong> (<em>bool</em><em>, </em><em>default=True</em>) – Apply the sensitivities inside the normal’s transform where the
+arrangement allows it.</p></li>
+</ul>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<p>With a pattern or a basis, <code class="docutils literal notranslate"><span class="pre">toeplitz</span></code> gives the normal as:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="p">(</span><span class="n">A</span><span class="o">^</span><span class="n">H</span> <span class="n">A</span> <span class="n">x</span><span class="p">)[</span><span class="n">k</span><span class="s1">'] = sum_k ( sum_t |P[t]|^2 conj(B[k'</span><span class="p">,</span><span class="n">t</span><span class="p">])</span> <span class="n">B</span><span class="p">[</span><span class="n">k</span><span class="p">,</span><span class="n">t</span><span class="p">]</span> <span class="p">)</span> <span class="n">x</span><span class="p">[</span><span class="n">k</span><span class="p">]</span>
+</pre></div>
+</div>
+<p>between transforms along only the axes the pattern varies on.  The sum
+over the frames is done once, when the operator is built, so an iteration
+never makes the frames, and a pattern flat along the readout never
+transforms it.  In BART’s modulated convention the samples differ from the
+centred ones by a phase of modulus one, which leaves this normal as it is.</p>
+<p class="rubric">Examples</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">A</span> <span class="o">=</span> <span class="n">CartesianSense</span><span class="p">(</span><span class="n">maps</span><span class="p">,</span> <span class="p">(</span><span class="n">y</span><span class="p">,</span> <span class="n">x</span><span class="p">),</span> <span class="n">pattern</span><span class="o">=</span><span class="n">mask</span><span class="p">)</span>          <span class="c1"># mask (y, 1)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">x</span> <span class="o">=</span> <span class="n">bartorch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">CG</span><span class="p">(</span><span class="n">maxiter</span><span class="o">=</span><span class="mi">30</span><span class="p">)(</span><span class="n">kspace</span><span class="p">,</span> <span class="n">A</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">A</span> <span class="o">=</span> <span class="n">CartesianSense</span><span class="p">(</span><span class="n">maps</span><span class="p">,</span> <span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">x</span><span class="p">),</span> <span class="n">pattern</span><span class="o">=</span><span class="n">mask</span><span class="p">,</span> <span class="n">basis</span><span class="o">=</span><span class="n">phi</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">A</span><span class="o">.</span><span class="n">ishape</span><span class="p">,</span> <span class="n">A</span><span class="o">.</span><span class="n">oshape</span>                                       <span class="c1"># phi (4, 64)</span>
+<span class="go">((4, y, x), (coils, 64, y, x))</span>
+</pre></div>
+</div>
+</dd></dl>
+
+<section id="examples-using-cartesiansense">
+<h2>Examples using <code class="docutils literal notranslate"><span class="pre">CartesianSense</span></code><a class="headerlink" href="#examples-using-cartesiansense" title="Link to this heading">#</a></h2>
+<div class="sphx-glr-thumbnails"><div class="sphx-glr-thumbcontainer" tooltip="The same reconstruction written as an encoding operator and a solver rather than as a call to a BART application."><img alt="" src="../_images/sphx_glr_02-operators-and-solvers_thumb.png" />
+<p><a class="reference internal" href="../auto_examples/01-basics/02-operators-and-solvers.html"><span class="doc">Operators and solvers</span></a></p>
+  <div class="sphx-glr-thumbnail-title">Operators and solvers</div>
+</div><div class="sphx-glr-thumbcontainer" tooltip="A multi-echo spin-echo acquisition fitted for T_2 in two ways: by reconstructing the echo images and fitting them afterwards, and by putting the signal model inside the forward operator and fitting the k-space directly."><img alt="" src="../_images/sphx_glr_02-quantitative-models_thumb.png" />
+<p><a class="reference internal" href="../auto_examples/04-model-based/02-quantitative-models.html"><span class="doc">Parameter maps straight from k-space</span></a></p>
+  <div class="sphx-glr-thumbnail-title">Parameter maps straight from k-space</div>
+</div><div class="sphx-glr-thumbcontainer" tooltip="An unrolled network for undersampled Cartesian SENSE: a convolutional denoiser in the proximal step of BART&#x27;s alternating-direction iteration, trained end to end against fully sampled images."><img alt="" src="../_images/sphx_glr_01-modl-with-admm_thumb.png" />
+<p><a class="reference internal" href="../auto_examples/05-deep-learning/01-modl-with-admm.html"><span class="doc">MoDL, on BART’s ADMM</span></a></p>
+  <div class="sphx-glr-thumbnail-title">MoDL, on BART's ADMM</div>
+</div></div></section>
+</section>
+
+
+                </article>
+              
+
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item"><div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> Contents
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#bartorch.linop.CartesianSense"><code class="docutils literal notranslate"><span class="pre">CartesianSense()</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#examples-using-cartesiansense">Examples using <code class="docutils literal notranslate"><span class="pre">CartesianSense</span></code></a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+<div class="bd-footer-content__inner container">
+  
+  <div class="footer-item">
+    
+<p class="component-author">
+By bartorch contributors
+</p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+
+  <p class="copyright">
+    
+      © Copyright 2024–2026, bartorch contributors.
+      <br/>
+    
+  </p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+</div>
+          </footer>
+        
+
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9"></script>
+<script defer src="../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9"></script>
+
+  <footer class="bd-footer">
+  </footer>
+  </body>
+</html>
