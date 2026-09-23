@@ -1,0 +1,813 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Trajectories and transforms &#8212; bartorch</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../_static/styles/sphinx-book-theme.css?v=4418a689" />
+    <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery.css?v=c83e6b79" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../../_static/custom.css?v=0739d252" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../_static/scripts/fontawesome.js?digest=90905a2f556bf617f1a9"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9" />
+
+    <script src="../../_static/documentation_options.js?v=b1def801"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../_static/copybutton.js?v=a5fa425f"></script>
+    <script src="../../_static/sg-tags.js?v=d80f6fa4"></script>
+    <script src="../../_static/scripts/sphinx-book-theme.js?v=fab101a9"></script>
+    <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'auto_examples/02-non-cartesian/01-trajectories-and-transforms';</script>
+    <script>
+        DOCUMENTATION_OPTIONS.theme_version = '0.20.0';
+        DOCUMENTATION_OPTIONS.theme_switcher_json_url = 'https://mcencini.github.io/bartorch/versions.json';
+        DOCUMENTATION_OPTIONS.theme_switcher_version_match = 'latest';
+        DOCUMENTATION_OPTIONS.show_version_warning_banner =
+            true;
+        </script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="canonical" href="https://mcencini.github.io/bartorch/latest/auto_examples/02-non-cartesian/01-trajectories-and-transforms.html" />
+    <link rel="icon" href="../../_static/bartorch-mark.svg"/>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Radial SENSE reconstruction" href="02-radial-sense.html" />
+    <link rel="prev" title="Non-Cartesian imaging" href="index.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="latest" />
+  
+    
+    <script src="../../_static/searchtools.js"></script>
+    <script src="../../_static/language_data.js"></script>
+    <script src="../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search..."
+         aria-label="Search..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/bartorch-mark.svg" class="logo__image only-light" alt="bartorch"/>
+    <img src="../../_static/bartorch-mark-dark.svg" class="logo__image only-dark pst-js-only" alt="bartorch"/>
+  
+  
+</a></div>
+        <div class="sidebar-primary-item">
+<div class="version-switcher__container dropdown pst-js-only">
+  <button id="pst-version-switcher-button-2"
+    type="button"
+    class="version-switcher__button btn btn-sm dropdown-toggle"
+    data-bs-toggle="dropdown"
+    aria-haspopup="listbox"
+    aria-controls="pst-version-switcher-list-2"
+    aria-label="Version switcher list"
+  >
+    Choose version  <!-- this text may get changed later by javascript -->
+    <span class="caret"></span>
+  </button>
+  <div id="pst-version-switcher-list-2"
+    class="version-switcher__menu dropdown-menu list-group-flush py-0"
+    role="listbox" aria-labelledby="pst-version-switcher-button-2">
+    <!-- dropdown will be populated by javascript on page load -->
+  </div>
+</div></div>
+        <div class="sidebar-primary-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
+    <div class="bd-toc-item navbar-nav active">
+        
+        <ul class="nav bd-sidenav bd-sidenav__home-link">
+            <li class="toctree-l1">
+                <a class="reference internal" href="../../index.html">
+                    Homepage
+                </a>
+            </li>
+        </ul>
+        <ul class="current nav bd-sidenav">
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../guides/user/index.html">User guide</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/user/prerequisites.html">Prerequisites and supported platforms</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/user/installation.html">Installation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/user/conventions.html">Data layout and conventions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/user/issues.html">Reporting issues</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/user/discussions.html">Questions and proposals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/user/security.html">Security</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../guides/developer/index.html">Developer guide</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/developer/prerequisites.html">Development prerequisites</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/developer/installation.html">Editable and source installation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/developer/layout.html">Repository layout</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/developer/workflow.html">Development workflow</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/developer/pre-commit.html">Pre-commit hooks</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/developer/style.html">Coding style</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/developer/documentation.html">Documentation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/developer/terminology.html">Terminology and conventions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/developer/pull-requests.html">Pull requests</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/developer/code-of-conduct.html">Code of conduct</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../explanation/index.html">Explanation</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/execution-model.html">Interfaces and execution</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/inverse-problems.html">Inverse problems and their solvers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/encoding.html">The MRI encoding operator</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/non-cartesian.html">Non-Cartesian sampling</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/nonlinear.html">Nonlinear forward models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/differentiation.html">Differentiation through reconstruction</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="../../examples/index.html">Examples</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="../01-basics/index.html">Basics</a></li>
+<li class="toctree-l2 current active"><a class="reference internal" href="index.html">Non-Cartesian imaging</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../03-applications/index.html">Applications</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../04-model-based/index.html">Model-based reconstruction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../05-deep-learning/index.html">Deep learning</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../api/index.html">API reference</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../api/functions.html">Array functions and settings</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/tools.html">BART commands as functions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/linop.html">Linear operators</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/nlop.html">Nonlinear operators</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/optim.html">Optimization</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/priors.html">Regularization and denoising</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/apps.html">Reconstruction pipelines</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/learning.html">Learning</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/interop.html">Interoperability</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/io.html">File I/O</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/cli.html">Command line</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../misc/index.html">Miscellaneous</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../misc/license.html">License and third-party notices</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../misc/related_projects.html">Related projects</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../misc/contributors.html">Contributors and citation</a></li>
+</ul>
+</details></li>
+</ul>
+
+    </div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+
+<div class="sbt-scroll-pixel-helper"></div>
+
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item"><button class="sidebar-toggle primary-toggle btn btn-sm" title="Toggle primary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <span class="fa-solid fa-bars"></span>
+</button></div>
+      
+    </div>
+  
+  
+    <div class="header-article-items__end">
+      
+        <div class="header-article-item">
+
+<div class="article-header-buttons">
+
+
+
+
+
+<div class="dropdown dropdown-source-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Source repositories">
+    <i class="fab fa-github"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="https://github.com/mcencini/bartorch" target="_blank"
+   class="btn btn-sm btn-source-repository-button dropdown-item"
+   title="Source repository"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fab fa-github"></i>
+  </span>
+<span class="btn__text-container">Repository</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li><a href="https://github.com/mcencini/bartorch/edit/main/docs/auto_examples/02-non-cartesian/01-trajectories-and-transforms.rst" target="_blank"
+   class="btn btn-sm btn-source-edit-button dropdown-item"
+   title="Suggest edit"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-pencil-alt"></i>
+  </span>
+<span class="btn__text-container">Suggest edit</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li><a href="https://github.com/mcencini/bartorch/issues/new?title=Issue%20on%20page%20%2Fauto_examples/02-non-cartesian/01-trajectories-and-transforms.html&body=Your%20issue%20content%20here." target="_blank"
+   class="btn btn-sm btn-source-issues-button dropdown-item"
+   title="Open an issue"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-lightbulb"></i>
+  </span>
+<span class="btn__text-container">Open issue</span>
+</a>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+
+
+<div class="dropdown dropdown-download-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Download this page">
+    <i class="fas fa-download"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="../../_sources/auto_examples/02-non-cartesian/01-trajectories-and-transforms.rst" target="_blank"
+   class="btn btn-sm btn-download-source-button dropdown-item"
+   title="Download source file"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file"></i>
+  </span>
+<span class="btn__text-container">.rst</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li>
+<button onclick="window.print()"
+  class="btn btn-sm btn-download-pdf-button dropdown-item"
+  title="Print to PDF"
+  data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file-pdf"></i>
+  </span>
+<span class="btn__text-container">.pdf</span>
+</button>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+<button onclick="toggleFullScreen()"
+  class="btn btn-sm btn-fullscreen-button pst-navbar-icon"
+  title="Fullscreen mode"
+  data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-expand"></i>
+  </span>
+
+</button>
+
+
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div>
+
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+<button class="sidebar-toggle secondary-toggle btn btn-sm pst-navbar-icon" title="Toggle secondary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="fa-solid fa-list"></span>
+</button>
+</div></div>
+      
+    </div>
+  
+</div>
+</div>
+              
+              
+
+<div id="jb-print-docs-body" class="onlyprint">
+    <h1>Trajectories and transforms</h1>
+    <!-- Table of contents -->
+    <div id="print-main-content">
+        <div id="jb-print-toc">
+            
+            <div>
+                <h2> Contents </h2>
+            </div>
+            <nav aria-label="Page">
+                <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#trajectories">Trajectories</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-transform">The transform</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#density-compensation">Density compensation</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-normal-operator">The normal operator</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#references">References</a></li>
+</ul>
+            </nav>
+        </div>
+    </div>
+</div>
+
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <div class="sphx-glr-download-link-note admonition note">
+<p class="admonition-title">Note</p>
+<p><a class="reference internal" href="#sphx-glr-download-auto-examples-02-non-cartesian-01-trajectories-and-transforms-py"><span class="std std-ref">Go to the end</span></a>
+to download the full example code.</p>
+</div>
+<section class="sphx-glr-example-title" id="trajectories-and-transforms">
+<span id="sphx-glr-auto-examples-02-non-cartesian-01-trajectories-and-transforms-py"></span><h1>Trajectories and transforms<a class="headerlink" href="#trajectories-and-transforms" title="Link to this heading">#</a></h1>
+<a class="reference external image-reference" href="https://colab.research.google.com/github/mcencini/bartorch/blob/gh-pages/latest/_colab/02-non-cartesian/01-trajectories-and-transforms.ipynb"><img alt="Open in Colab" class="colab-badge" src="https://colab.research.google.com/assets/colab-badge.svg" />
+</a>
+<p>The non-Cartesian interfaces: the trajectories
+<a class="reference internal" href="../../generated/bartorch.tools.traj.html#bartorch.tools.traj" title="bartorch.tools.traj"><code class="xref py py-func docutils literal notranslate"><span class="pre">bartorch.tools.traj()</span></code></a> generates, the non-uniform Fourier transform along
+one, the density compensation an adjoint reconstruction needs, and the point
+spread function the normal operator convolves with.</p>
+<p>Every non-Cartesian transform in bartorch is computed by FINUFFT <a class="footnote-reference brackets" href="#finufft" id="id1" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a>,
+which evaluates</p>
+<div class="math notranslate nohighlight">
+\[y_j = \frac{1}{\sqrt{N}} \sum_{m} x_m \,
+\exp\!\Big(-2\pi i \sum_d \frac{k_{j,d}\, m_d}{n_d}\Big)\]</div>
+<p>to a requested tolerance, with the sum over the <span class="math notranslate nohighlight">\(N\)</span> voxels <span class="math notranslate nohighlight">\(m\)</span>
+of an image of <span class="math notranslate nohighlight">\(n_d\)</span> voxels along dimension <span class="math notranslate nohighlight">\(d\)</span>, and
+<span class="math notranslate nohighlight">\(k_j\)</span> in grid units.  The spreading kernel and the deapodization are
+FINUFFT’s, sized from the tolerance: <a class="reference internal" href="../../explanation/non-cartesian.html"><span class="doc">Non-Cartesian sampling</span></a>
+states the conventions and the accuracy.</p>
+<p>The phantom is built as in <a class="reference internal" href="../01-basics/01-from-kspace-to-image.html"><span class="doc">From k-space to image</span></a>; the
+cell that does it is hidden on this page and present in the script this page can
+be downloaded as.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span class="kn">import</span><span class="w"> </span><span class="nn">csv</span><span class="w">
+</span><span class="kn">import</span><span class="w"> </span><span class="nn">time</span><span class="w">
+</span><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span><span class="w">
+</span><span class="w">
+</span><span class="kn">import</span><span class="w"> </span><span class="nn">brainweb_dl</span><span class="w">
+</span><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span><span class="w">
+</span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span><span class="w">
+</span><span class="kn">from</span><span class="w"> </span><span class="nn">brainweb_dl</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_mri</span><span class="w">
+</span><span class="w">
+</span><span class="kn">import</span><span class="w"> </span><span class="nn">bartorch</span><span class="w">
+</span><span class="kn">import</span><span class="w"> </span><span class="nn">bartorch</span><span class="nn">.</span><span class="nn">tools</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">bt</span><span class="w">
+</span><span class="kn">from</span><span class="w"> </span><span class="nn">bartorch</span><span class="w"> </span><span class="kn">import</span> <span class="n">linop</span><span class="w">
+</span><span class="w">
+</span><span class="n">SIZE</span> <span class="o">=</span> <span class="mi">128</span><span class="w">
+</span></pre></div></div>
+<section id="trajectories">
+<h2>Trajectories<a class="headerlink" href="#trajectories" title="Link to this heading">#</a></h2>
+<p>A trajectory is <code class="docutils literal notranslate"><span class="pre">(*encoding,</span> <span class="pre">shots,</span> <span class="pre">samples,</span> <span class="pre">3)</span></code> in grid units: the
+coordinates of every sample, in units of the k-space cell of the image it
+encodes, so a readout of <code class="docutils literal notranslate"><span class="pre">SIZE</span></code> samples runs from <span class="math notranslate nohighlight">\(-n/2\)</span> to
+<span class="math notranslate nohighlight">\(n/2\)</span> for an image of <span class="math notranslate nohighlight">\(n\)</span> voxels along the readout. The third
+component is <span class="math notranslate nohighlight">\(k_z\)</span>, zero throughout for a two-dimensional trajectory,
+and whether it is used determines whether the transform is two- or
+three-dimensional.</p>
+<p>Successive spokes are separated either by <span class="math notranslate nohighlight">\(\pi\)</span> over their number,
+which tiles k-space uniformly for one frame, or by the golden angle, which
+tiles it approximately uniformly for <em>any</em> number of consecutive spokes
+<a class="footnote-reference brackets" href="#winkelmann" id="id2" role="doc-noteref"><span class="fn-bracket">[</span>2<span class="fn-bracket">]</span></a>. Only
+the second lets an acquisition be cut into frames after it was measured, as
+<a class="reference internal" href="../03-applications/01-dynamic-golden-angle.html"><span class="doc">Dynamic golden-angle radial MRI</span></a> does.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span class="n">SPOKES</span> <span class="o">=</span> <span class="mi">201</span>  <span class="c1"># pi/2 * SIZE, the number at which radial sampling is not undersampled</span><span class="w">
+</span><span class="w">
+</span><span class="n">uniform</span> <span class="o">=</span> <a class="sphx-glr-backref-module-bartorch-tools sphx-glr-backref-type-py-function reference internal" href="../../generated/bartorch.tools.traj.html#bartorch.tools.traj" title="bartorch.tools.traj"><span class="n">bt</span><span class="o">.</span><span class="n">traj</span></a><span class="p">(</span><span class="n">readout</span><span class="o">=</span><span class="n">SIZE</span><span class="p">,</span> <span class="n">spokes</span><span class="o">=</span><span class="n">SPOKES</span><span class="p">,</span> <span class="n">radial</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="w">
+</span><span class="n">golden</span> <span class="o">=</span> <a class="sphx-glr-backref-module-bartorch-tools sphx-glr-backref-type-py-function reference internal" href="../../generated/bartorch.tools.traj.html#bartorch.tools.traj" title="bartorch.tools.traj"><span class="n">bt</span><span class="o">.</span><span class="n">traj</span></a><span class="p">(</span><span class="n">readout</span><span class="o">=</span><span class="n">SIZE</span><span class="p">,</span> <span class="n">spokes</span><span class="o">=</span><span class="n">SPOKES</span><span class="p">,</span> <span class="n">radial</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">golden</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="w">
+</span><span class="w">
+</span><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">golden</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">SPOKES</span><span class="si">}</span><span class="s2"> shots of </span><span class="si">{</span><span class="n">SIZE</span><span class="si">}</span><span class="s2"> samples</span><span class="s2">&quot;</span><span class="p">)</span><span class="w">
+</span></pre></div></div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>(201, 128, 3): 201 shots of 128 samples
+</pre></div>
+</div>
+<img src="../../_images/sphx_glr_01-trajectories-and-transforms_001.png" srcset="../../_images/sphx_glr_01-trajectories-and-transforms_001.png" alt="uniform, first 24 spokes, golden angle, first 24 spokes" class = "sphx-glr-single-img"/></section>
+<section id="the-transform">
+<h2>The transform<a class="headerlink" href="#the-transform" title="Link to this heading">#</a></h2>
+<p><a class="reference internal" href="../../generated/bartorch.nufft.html#bartorch.nufft" title="bartorch.nufft"><code class="xref py py-func docutils literal notranslate"><span class="pre">bartorch.nufft()</span></code></a> samples an image along a trajectory and
+<a class="reference internal" href="../../generated/bartorch.nufft_adjoint.html#bartorch.nufft_adjoint" title="bartorch.nufft_adjoint"><code class="xref py py-func docutils literal notranslate"><span class="pre">bartorch.nufft_adjoint()</span></code></a> maps samples back onto a grid. The samples an
+acquisition would measure are the transform of the image; below they are
+checked against the sum that defines them, evaluated in double precision over
+one spoke, which is a reference outside BART and outside FINUFFT.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span class="n">samples</span> <span class="o">=</span> <a class="sphx-glr-backref-module-bartorch sphx-glr-backref-type-py-function reference internal" href="../../generated/bartorch.nufft.html#bartorch.nufft" title="bartorch.nufft"><span class="n">bartorch</span><span class="o">.</span><span class="n">nufft</span></a><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">golden</span><span class="p">)</span><span class="w">
+</span><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="s2">samples </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">samples</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span><span class="w">
+</span><span class="w">
+</span><span class="n">spoke</span> <span class="o">=</span> <span class="n">golden</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">real</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span><span class="w">
+</span><span class="n">axis_y</span><span class="p">,</span> <span class="n">axis_x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">meshgrid</span><span class="p">(</span><span class="w">
+</span>    <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">SIZE</span><span class="p">)</span> <span class="o">-</span> <span class="n">SIZE</span> <span class="o">/</span><span class="o">/</span> <span class="mi">2</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">SIZE</span><span class="p">)</span> <span class="o">-</span> <span class="n">SIZE</span> <span class="o">/</span><span class="o">/</span> <span class="mi">2</span><span class="p">,</span> <span class="n">indexing</span><span class="o">=</span><span class="s2">&quot;</span><span class="s2">ij</span><span class="s2">&quot;</span><span class="w">
+</span><span class="p">)</span><span class="w">
+</span><span class="n">phase</span> <span class="o">=</span> <span class="p">(</span><span class="w">
+</span>    <span class="o">-</span><span class="mi">2</span><span class="n">j</span><span class="w">
+</span>    <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">pi</span><span class="w">
+</span>    <span class="o">/</span> <span class="n">SIZE</span><span class="w">
+</span>    <span class="o">*</span> <span class="p">(</span><span class="w">
+</span>        <span class="n">spoke</span><span class="p">[</span><span class="p">:</span><span class="p">,</span> <span class="mi">0</span><span class="p">:</span><span class="mi">1</span><span class="p">]</span> <span class="o">*</span> <span class="n">axis_x</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span><span class="w">
+</span>        <span class="o">+</span> <span class="n">spoke</span><span class="p">[</span><span class="p">:</span><span class="p">,</span> <span class="mi">1</span><span class="p">:</span><span class="mi">2</span><span class="p">]</span> <span class="o">*</span> <span class="n">axis_y</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span><span class="w">
+</span>    <span class="p">)</span><span class="w">
+</span><span class="p">)</span><span class="w">
+</span><span class="n">explicit</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">phase</span><span class="p">)</span> <span class="o">&#64;</span> <span class="n">image</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">complex128</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="n">SIZE</span><span class="w">
+</span><span class="w">
+</span><span class="n">difference</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="p">(</span><span class="n">explicit</span> <span class="o">-</span> <span class="n">samples</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="p">)</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="p">)</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="p">)</span> <span class="o">/</span> <span class="n">explicit</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="p">)</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="p">)</span><span class="p">)</span><span class="w">
+</span><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="s2">largest relative difference from the explicit sum: </span><span class="si">{</span><span class="n">difference</span><span class="si">:</span><span class="s2">.1e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span><span class="w">
+</span></pre></div></div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>samples (201, 128, 1)
+largest relative difference from the explicit sum: 1.9e-04
+</pre></div>
+</div>
+<p>The transform is planned to a tolerance rather than computed exactly, and the
+difference above is within the tolerance it was planned with: a thousandth by
+default, on a grid a quarter larger than the image. The default is chosen for
+reconstruction, where the transform’s error is intended to stay small beside
+the effect of noise and undersampling; <a class="reference internal" href="../../generated/bartorch.linop.NUFFT.html#bartorch.linop.NUFFT" title="bartorch.linop.NUFFT"><code class="xref py py-class docutils literal notranslate"><span class="pre">bartorch.linop.NUFFT</span></code></a> takes
+<code class="docutils literal notranslate"><span class="pre">oversampling</span></code> and <code class="docutils literal notranslate"><span class="pre">width</span></code> where more accuracy is needed.</p>
+</section>
+<section id="density-compensation">
+<h2>Density compensation<a class="headerlink" href="#density-compensation" title="Link to this heading">#</a></h2>
+<p>The adjoint is not the inverse. Every spoke passes through the centre of
+k-space, so the radial sampling density falls as <span class="math notranslate nohighlight">\(1/\lvert k \rvert\)</span>
+and the adjoint overweights low frequencies. The weight that compensates for
+it is the inverse sampling density <a class="footnote-reference brackets" href="#pipe" id="id3" role="doc-noteref"><span class="fn-bracket">[</span>3<span class="fn-bracket">]</span></a>, which for radial sampling is
+proportional to the distance from the centre.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span class="n">radius</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">golden</span><span class="o">.</span><span class="n">real</span><span class="p">[</span><span class="o">.</span><span class="o">.</span><span class="o">.</span><span class="p">,</span> <span class="p">:</span><span class="mi">2</span><span class="p">]</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="w">
+</span><span class="n">weights</span> <span class="o">=</span> <span class="n">radius</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mf">0.25</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">complex64</span><span class="p">)</span><span class="w">
+</span><span class="w">
+</span><span class="n">plain</span> <span class="o">=</span> <a class="sphx-glr-backref-module-bartorch sphx-glr-backref-type-py-function reference internal" href="../../generated/bartorch.nufft_adjoint.html#bartorch.nufft_adjoint" title="bartorch.nufft_adjoint"><span class="n">bartorch</span><span class="o">.</span><span class="n">nufft_adjoint</span></a><span class="p">(</span><span class="n">samples</span><span class="p">,</span> <span class="n">golden</span><span class="p">,</span> <span class="n">image_shape</span><span class="o">=</span><span class="p">(</span><span class="n">SIZE</span><span class="p">,</span> <span class="n">SIZE</span><span class="p">)</span><span class="p">)</span><span class="w">
+</span><span class="n">compensated</span> <span class="o">=</span> <a class="sphx-glr-backref-module-bartorch sphx-glr-backref-type-py-function reference internal" href="../../generated/bartorch.nufft_adjoint.html#bartorch.nufft_adjoint" title="bartorch.nufft_adjoint"><span class="n">bartorch</span><span class="o">.</span><span class="n">nufft_adjoint</span></a><span class="p">(</span><span class="n">samples</span> <span class="o">*</span> <span class="n">weights</span><span class="p">,</span> <span class="n">golden</span><span class="p">,</span> <span class="n">image_shape</span><span class="o">=</span><span class="p">(</span><span class="n">SIZE</span><span class="p">,</span> <span class="n">SIZE</span><span class="p">)</span><span class="p">)</span><span class="w">
+</span></pre></div></div>
+<img src="../../_images/sphx_glr_01-trajectories-and-transforms_002.png" srcset="../../_images/sphx_glr_01-trajectories-and-transforms_002.png" alt="image, adjoint, density compensated" class = "sphx-glr-single-img"/><p>The uncompensated adjoint is the image convolved with the point spread
+function, the inverse Fourier transform of the sampling density; the density
+is concentrated at the centre of k-space, so the result is blurred. The
+compensated adjoint resolves the tissue boundaries. Neither recovers the
+k-space the trajectory does not reach: a radial acquisition samples a disc,
+so the frequencies in the corners of the Cartesian grid are missing whatever
+the weights are.</p>
+</section>
+<section id="the-normal-operator">
+<h2>The normal operator<a class="headerlink" href="#the-normal-operator" title="Link to this heading">#</a></h2>
+<p><a class="reference internal" href="../../generated/bartorch.linop.NUFFT.html#bartorch.linop.NUFFT" title="bartorch.linop.NUFFT"><code class="xref py py-class docutils literal notranslate"><span class="pre">bartorch.linop.NUFFT</span></code></a> is the transform as an operator, and carries the
+weights and a subspace basis where there are any, because its normal operator
+<span class="math notranslate nohighlight">\(A^H A\)</span> is built over both. That normal is a convolution with a point
+spread function on a doubled grid rather than a transform each way
+<a class="footnote-reference brackets" href="#fessler2005" id="id4" role="doc-noteref"><span class="fn-bracket">[</span>4<span class="fn-bracket">]</span></a>, which is what a solver applies once per iteration.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><a class="sphx-glr-backref-module-bartorch-linop sphx-glr-backref-type-py-class sphx-glr-backref-instance reference internal" href="../../generated/bartorch.linop.NUFFT.html#bartorch.linop.NUFFT" title="bartorch.linop.NUFFT"><span class="n">A</span></a> <span class="o">=</span> <a class="sphx-glr-backref-module-bartorch-linop sphx-glr-backref-type-py-class reference internal" href="../../generated/bartorch.linop.NUFFT.html#bartorch.linop.NUFFT" title="bartorch.linop.NUFFT"><span class="n">linop</span><span class="o">.</span><span class="n">NUFFT</span></a><span class="p">(</span><span class="n">golden</span><span class="p">,</span> <span class="n">image_shape</span><span class="o">=</span><span class="p">(</span><span class="n">SIZE</span><span class="p">,</span> <span class="n">SIZE</span><span class="p">)</span><span class="p">)</span><span class="w">
+</span><span class="w">
+</span><span class="n">repeats</span> <span class="o">=</span> <span class="mi">5</span><span class="w">
+</span><span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">(</span><span class="p">)</span><span class="w">
+</span><span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">repeats</span><span class="p">)</span><span class="p">:</span><span class="w">
+</span>    <span class="n">toeplitz</span> <span class="o">=</span> <a class="sphx-glr-backref-module-bartorch-linop sphx-glr-backref-type-py-method reference internal" href="../../generated/bartorch.linop.LinearOperator.html#bartorch.linop.LinearOperator.gram" title="bartorch.linop.LinearOperator.gram"><span class="n">A</span><span class="o">.</span><span class="n">gram</span></a><span class="p">(</span><span class="p">)</span><span class="p">(</span><span class="n">image</span><span class="p">)</span><span class="w">
+</span><span class="n">convolution</span> <span class="o">=</span> <span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">(</span><span class="p">)</span> <span class="o">-</span> <span class="n">start</span><span class="p">)</span> <span class="o">/</span> <span class="n">repeats</span><span class="w">
+</span><span class="w">
+</span><span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">(</span><span class="p">)</span><span class="w">
+</span><span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">repeats</span><span class="p">)</span><span class="p">:</span><span class="w">
+</span>    <span class="n">pair</span> <span class="o">=</span> <a class="sphx-glr-backref-module-bartorch-linop sphx-glr-backref-type-py-property reference internal" href="../../generated/bartorch.linop.LinearOperator.html#bartorch.linop.LinearOperator.H" title="bartorch.linop.LinearOperator.H"><span class="n">A</span><span class="o">.</span><span class="n">H</span></a><span class="p">(</span><a class="sphx-glr-backref-module-bartorch-linop sphx-glr-backref-type-py-class sphx-glr-backref-instance reference internal" href="../../generated/bartorch.linop.NUFFT.html#bartorch.linop.NUFFT" title="bartorch.linop.NUFFT"><span class="n">A</span></a><span class="p">(</span><span class="n">image</span><span class="p">)</span><span class="p">)</span><span class="w">
+</span><span class="n">transforms</span> <span class="o">=</span> <span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">(</span><span class="p">)</span> <span class="o">-</span> <span class="n">start</span><span class="p">)</span> <span class="o">/</span> <span class="n">repeats</span><span class="w">
+</span><span class="w">
+</span><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="s2">A^H A as a convolution   </span><span class="si">{</span><span class="mf">1e3</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">convolution</span><span class="si">:</span><span class="s2">6.1f</span><span class="si">}</span><span class="s2"> ms</span><span class="s2">&quot;</span><span class="p">)</span><span class="w">
+</span><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="s2">A^H A as two transforms  </span><span class="si">{</span><span class="mf">1e3</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">transforms</span><span class="si">:</span><span class="s2">6.1f</span><span class="si">}</span><span class="s2"> ms</span><span class="s2">&quot;</span><span class="p">)</span><span class="w">
+</span><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="s2">relative difference      </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><span class="p">(</span><span class="n">toeplitz</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">pair</span><span class="p">)</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="p">)</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="p">)</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">pair</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="p">)</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="p">)</span><span class="p">)</span><span class="si">:</span><span class="s2">.1e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span><span class="w">
+</span></pre></div></div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>A^H A as a convolution      1.7 ms
+A^H A as two transforms     5.3 ms
+relative difference      2.7e-03
+</pre></div>
+</div>
+<p>The two agree to a small multiple of the transform’s tolerance.</p>
+<p><a class="reference internal" href="../../generated/bartorch.tools.psf.html#bartorch.tools.psf" title="bartorch.tools.psf"><code class="xref py py-func docutils literal notranslate"><span class="pre">bartorch.tools.psf()</span></code></a> computes that function on its own. Its extent is
+the aliasing the trajectory produces: for a fully sampled radial trajectory
+it is a central peak with a low, broad skirt, and undersampling raises the
+skirt into the streaks a radial reconstruction is known for.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span class="n">fully_sampled</span> <span class="o">=</span> <a class="sphx-glr-backref-module-bartorch-tools sphx-glr-backref-type-py-function reference internal" href="../../generated/bartorch.tools.psf.html#bartorch.tools.psf" title="bartorch.tools.psf"><span class="n">bt</span><span class="o">.</span><span class="n">psf</span></a><span class="p">(</span><a class="sphx-glr-backref-module-bartorch-tools sphx-glr-backref-type-py-function reference internal" href="../../generated/bartorch.tools.traj.html#bartorch.tools.traj" title="bartorch.tools.traj"><span class="n">bt</span><span class="o">.</span><span class="n">traj</span></a><span class="p">(</span><span class="n">readout</span><span class="o">=</span><span class="n">SIZE</span><span class="p">,</span> <span class="n">spokes</span><span class="o">=</span><span class="n">SPOKES</span><span class="p">,</span> <span class="n">radial</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">golden</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="p">)</span><span class="w">
+</span><span class="n">undersampled</span> <span class="o">=</span> <a class="sphx-glr-backref-module-bartorch-tools sphx-glr-backref-type-py-function reference internal" href="../../generated/bartorch.tools.psf.html#bartorch.tools.psf" title="bartorch.tools.psf"><span class="n">bt</span><span class="o">.</span><span class="n">psf</span></a><span class="p">(</span><a class="sphx-glr-backref-module-bartorch-tools sphx-glr-backref-type-py-function reference internal" href="../../generated/bartorch.tools.traj.html#bartorch.tools.traj" title="bartorch.tools.traj"><span class="n">bt</span><span class="o">.</span><span class="n">traj</span></a><span class="p">(</span><span class="n">readout</span><span class="o">=</span><span class="n">SIZE</span><span class="p">,</span> <span class="n">spokes</span><span class="o">=</span><span class="n">SPOKES</span> <span class="o">/</span><span class="o">/</span> <span class="mi">8</span><span class="p">,</span> <span class="n">radial</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">golden</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="p">)</span><span class="w">
+</span></pre></div></div>
+<img src="../../_images/sphx_glr_01-trajectories-and-transforms_003.png" srcset="../../_images/sphx_glr_01-trajectories-and-transforms_003.png" alt="point spread function, normalized, 201 spokes, 25 spokes" class = "sphx-glr-single-img"/><p>A reconstruction that uses all of this – the transform, the weights, the
+sensitivities and the normal operator – is
+<a class="reference internal" href="02-radial-sense.html"><span class="doc">Radial SENSE reconstruction</span></a>.</p>
+</section>
+<section id="references">
+<h2>References<a class="headerlink" href="#references" title="Link to this heading">#</a></h2>
+<aside class="footnote-list brackets">
+<aside class="footnote brackets" id="finufft" role="doc-footnote">
+<span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id1">1</a><span class="fn-bracket">]</span></span>
+<p>Barnett AH, Magland J, af Klinteberg L. A parallel nonuniform fast
+Fourier transform library based on an “exponential of semicircle” kernel.
+<em>SIAM J Sci Comput</em> 41(5):C479-C504 (2019).
+<a class="reference external" href="https://doi.org/10.1137/18M120885X">https://doi.org/10.1137/18M120885X</a></p>
+</aside>
+<aside class="footnote brackets" id="winkelmann" role="doc-footnote">
+<span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id2">2</a><span class="fn-bracket">]</span></span>
+<p>Winkelmann S, Schaeffter T, Koehler T, Eggers H, Doessel O. An optimal
+radial profile order based on the Golden Ratio for time-resolved MRI.
+<em>IEEE Trans Med Imaging</em> 26(1):68-76 (2007).
+<a class="reference external" href="https://doi.org/10.1109/TMI.2006.885337">https://doi.org/10.1109/TMI.2006.885337</a></p>
+</aside>
+<aside class="footnote brackets" id="pipe" role="doc-footnote">
+<span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id3">3</a><span class="fn-bracket">]</span></span>
+<p>Pipe JG, Menon P. Sampling density compensation in MRI: rationale and an
+iterative numerical solution. <em>Magn Reson Med</em> 41(1):179-186 (1999).
+<a class="reference external" href="https://doi.org/10.1002/(SICI)1522-2594(199901)41:1%3C179::AID-MRM25%3E3.0.CO;2-V">https://doi.org/10.1002/(SICI)1522-2594(199901)41:1%3C179::AID-MRM25%3E3.0.CO;2-V</a></p>
+</aside>
+<aside class="footnote brackets" id="fessler2005" role="doc-footnote">
+<span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id4">4</a><span class="fn-bracket">]</span></span>
+<p>Fessler JA, Lee S, Olafsson VT, Shi HR, Noll DC. Toeplitz-based iterative
+image reconstruction for MRI with correction for magnetic field
+inhomogeneity. <em>IEEE Trans Signal Process</em> 53(9):3393-3402 (2005).
+<a class="reference external" href="https://doi.org/10.1109/TSP.2005.853152">https://doi.org/10.1109/TSP.2005.853152</a></p>
+</aside>
+</aside>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 1.180 seconds)</p>
+<div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-auto-examples-02-non-cartesian-01-trajectories-and-transforms-py">
+<div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
+<p><a class="reference download internal" download="" href="../../_downloads/0d4b6ba90d4bc1e82b547bf20b8ca175/01-trajectories-and-transforms.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">01-trajectories-and-transforms.ipynb</span></code></a></p>
+</div>
+<div class="sphx-glr-download sphx-glr-download-python docutils container">
+<p><a class="reference download internal" download="" href="../../_downloads/72fb30f69be22512f66665da0719a346/01-trajectories-and-transforms.py"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Python</span> <span class="pre">source</span> <span class="pre">code:</span> <span class="pre">01-trajectories-and-transforms.py</span></code></a></p>
+</div>
+<div class="sphx-glr-download sphx-glr-download-zip docutils container">
+<p><a class="reference download internal" download="" href="../../_downloads/c094baeaeef5e43512f84bd7f9ca5b0b/01-trajectories-and-transforms.zip"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">zipped:</span> <span class="pre">01-trajectories-and-transforms.zip</span></code></a></p>
+</div>
+</div>
+<p class="sphx-glr-signature"><a class="reference external" href="https://sphinx-gallery.github.io">Gallery generated by Sphinx-Gallery</a></p>
+</section>
+</section>
+
+
+                </article>
+              
+
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="index.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Non-Cartesian imaging</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="02-radial-sense.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Radial SENSE reconstruction</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item"><div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> Contents
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#trajectories">Trajectories</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-transform">The transform</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#density-compensation">Density compensation</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-normal-operator">The normal operator</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#references">References</a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+<div class="bd-footer-content__inner container">
+  
+  <div class="footer-item">
+    
+<p class="component-author">
+By bartorch contributors
+</p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+
+  <p class="copyright">
+    
+      © Copyright 2024–2026, bartorch contributors.
+      <br/>
+    
+  </p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+</div>
+          </footer>
+        
+
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9"></script>
+
+  <footer class="bd-footer">
+  </footer>
+  </body>
+</html>

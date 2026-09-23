@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-label="bartorch architecture" viewBox="-2 -2 764 442" font-family="DejaVu Sans, Verdana, Helvetica, Arial, sans-serif" font-size="15">
+  <title>bartorch architecture</title>
+  <rect x="0" y="0" width="760" height="44" rx="8" fill="#16222d" stroke="#7fb3dc" stroke-width="1.5"/>
+  <text x="380.0" y="27" text-anchor="middle" font-weight="bold" fill="#e4e7eb">PyTorch tensors, on the CPU or a CUDA device</text>
+  <rect x="0" y="66" width="370.0" height="108" rx="8" fill="#16222d" stroke="#7fb3dc" stroke-width="1.5"/>
+  <text x="185.0" y="92" text-anchor="middle" font-weight="bold" fill="#e4e7eb">Command-style interface</text>
+  <text x="185.0" y="114" text-anchor="middle" font-weight="normal" fill="#9aa5b1">bartorch.tools: BART commands</text>
+  <text x="185.0" y="136" text-anchor="middle" font-weight="normal" fill="#9aa5b1">bartorch.fft, fwt, ...: array functions</text>
+  <text x="185.0" y="158" text-anchor="middle" font-weight="normal" fill="#9aa5b1">bartorch CLI: the bart command line</text>
+  <rect x="390.0" y="66" width="370.0" height="108" rx="8" fill="#16222d" stroke="#7fb3dc" stroke-width="1.5"/>
+  <text x="575.0" y="92" text-anchor="middle" font-weight="bold" fill="#e4e7eb">Composable interface</text>
+  <text x="575.0" y="114" text-anchor="middle" font-weight="normal" fill="#9aa5b1">linop, nlop: linear and nonlinear operators</text>
+  <text x="575.0" y="136" text-anchor="middle" font-weight="normal" fill="#9aa5b1">optim, priors: solvers, regularizers</text>
+  <text x="575.0" y="158" text-anchor="middle" font-weight="normal" fill="#9aa5b1">apps, learning, interop: pipelines, adapters</text>
+  <rect x="0" y="196" width="760" height="44" rx="8" fill="#16222d" stroke="#7fb3dc" stroke-width="1.5"/>
+  <text x="380.0" y="223" text-anchor="middle" font-weight="bold" fill="#e4e7eb">ctypes  →  bartorch C ABI (libbartorch)</text>
+  <rect x="0" y="262" width="760" height="66" rx="8" fill="#16222d" stroke="#7fb3dc" stroke-width="1.5"/>
+  <text x="380.0" y="289" text-anchor="middle" font-weight="bold" fill="#e4e7eb">Embedded BART</text>
+  <text x="380.0" y="311" text-anchor="middle" font-weight="normal" fill="#9aa5b1">commands, linear and nonlinear operators, iterative algorithms</text>
+  <rect x="0" y="350" width="760" height="88" rx="8" fill="#16222d" stroke="#7fb3dc" stroke-width="1.5"/>
+  <text x="380.0" y="377" text-anchor="middle" font-weight="bold" fill="#e4e7eb">Substituted backends</text>
+  <text x="380.0" y="399" text-anchor="middle" font-weight="normal" fill="#9aa5b1">FINUFFT, cuFINUFFT: non-uniform Fourier transforms</text>
+  <text x="380.0" y="421" text-anchor="middle" font-weight="normal" fill="#9aa5b1">BLAS, LAPACK: MKL, PyTorch or SciPy  ·  FFT: MKL or pocketfft</text>
+  <line x1="185.0" y1="44" x2="185.0" y2="59" stroke="#7fb3dc" stroke-width="2"/><path d="M179.0 57 L185.0 66 L191.0 57 Z" fill="#7fb3dc"/>
+  <line x1="575.0" y1="44" x2="575.0" y2="59" stroke="#7fb3dc" stroke-width="2"/><path d="M569.0 57 L575.0 66 L581.0 57 Z" fill="#7fb3dc"/>
+  <line x1="185.0" y1="174" x2="185.0" y2="189" stroke="#7fb3dc" stroke-width="2"/><path d="M179.0 187 L185.0 196 L191.0 187 Z" fill="#7fb3dc"/>
+  <line x1="575.0" y1="174" x2="575.0" y2="189" stroke="#7fb3dc" stroke-width="2"/><path d="M569.0 187 L575.0 196 L581.0 187 Z" fill="#7fb3dc"/>
+  <line x1="380.0" y1="240" x2="380.0" y2="255" stroke="#7fb3dc" stroke-width="2"/><path d="M374.0 253 L380.0 262 L386.0 253 Z" fill="#7fb3dc"/>
+  <line x1="380.0" y1="328" x2="380.0" y2="343" stroke="#7fb3dc" stroke-width="2"/><path d="M374.0 341 L380.0 350 L386.0 341 Z" fill="#7fb3dc"/>
+</svg>

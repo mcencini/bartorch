@@ -1,0 +1,970 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Inverse problems and their solvers &#8212; bartorch</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../_static/styles/theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+<link href="../_static/styles/pydata-sphinx-theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/sphinx-book-theme.css?v=4418a689" />
+    <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery.css?v=c83e6b79" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=0739d252" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../_static/scripts/fontawesome.js?digest=90905a2f556bf617f1a9"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9" />
+<link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9" />
+
+    <script src="../_static/documentation_options.js?v=b1def801"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../_static/copybutton.js?v=a5fa425f"></script>
+    <script src="../_static/sg-tags.js?v=d80f6fa4"></script>
+    <script src="../_static/scripts/sphinx-book-theme.js?v=fab101a9"></script>
+    <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'explanation/inverse-problems';</script>
+    <script>
+        DOCUMENTATION_OPTIONS.theme_version = '0.20.0';
+        DOCUMENTATION_OPTIONS.theme_switcher_json_url = 'https://mcencini.github.io/bartorch/versions.json';
+        DOCUMENTATION_OPTIONS.theme_switcher_version_match = 'latest';
+        DOCUMENTATION_OPTIONS.show_version_warning_banner =
+            true;
+        </script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="canonical" href="https://mcencini.github.io/bartorch/latest/explanation/inverse-problems.html" />
+    <link rel="icon" href="../_static/bartorch-mark.svg"/>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="The MRI encoding operator" href="encoding.html" />
+    <link rel="prev" title="Interfaces and execution" href="execution-model.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="latest" />
+  
+    
+    <script src="../_static/searchtools.js"></script>
+    <script src="../_static/language_data.js"></script>
+    <script src="../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search..."
+         aria-label="Search..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/bartorch-mark.svg" class="logo__image only-light" alt="bartorch"/>
+    <img src="../_static/bartorch-mark-dark.svg" class="logo__image only-dark pst-js-only" alt="bartorch"/>
+  
+  
+</a></div>
+        <div class="sidebar-primary-item">
+<div class="version-switcher__container dropdown pst-js-only">
+  <button id="pst-version-switcher-button-2"
+    type="button"
+    class="version-switcher__button btn btn-sm dropdown-toggle"
+    data-bs-toggle="dropdown"
+    aria-haspopup="listbox"
+    aria-controls="pst-version-switcher-list-2"
+    aria-label="Version switcher list"
+  >
+    Choose version  <!-- this text may get changed later by javascript -->
+    <span class="caret"></span>
+  </button>
+  <div id="pst-version-switcher-list-2"
+    class="version-switcher__menu dropdown-menu list-group-flush py-0"
+    role="listbox" aria-labelledby="pst-version-switcher-button-2">
+    <!-- dropdown will be populated by javascript on page load -->
+  </div>
+</div></div>
+        <div class="sidebar-primary-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
+    <div class="bd-toc-item navbar-nav active">
+        
+        <ul class="nav bd-sidenav bd-sidenav__home-link">
+            <li class="toctree-l1">
+                <a class="reference internal" href="../index.html">
+                    Homepage
+                </a>
+            </li>
+        </ul>
+        <ul class="current nav bd-sidenav">
+<li class="toctree-l1 has-children"><a class="reference internal" href="../guides/user/index.html">User guide</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../guides/user/prerequisites.html">Prerequisites and supported platforms</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/user/installation.html">Installation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/user/conventions.html">Data layout and conventions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/user/issues.html">Reporting issues</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/user/discussions.html">Questions and proposals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/user/security.html">Security</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../guides/developer/index.html">Developer guide</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../guides/developer/prerequisites.html">Development prerequisites</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/developer/installation.html">Editable and source installation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/developer/layout.html">Repository layout</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/developer/workflow.html">Development workflow</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/developer/pre-commit.html">Pre-commit hooks</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/developer/style.html">Coding style</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/developer/documentation.html">Documentation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/developer/terminology.html">Terminology and conventions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/developer/pull-requests.html">Pull requests</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/developer/code-of-conduct.html">Code of conduct</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">Explanation</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="execution-model.html">Interfaces and execution</a></li>
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">Inverse problems and their solvers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="encoding.html">The MRI encoding operator</a></li>
+<li class="toctree-l2"><a class="reference internal" href="non-cartesian.html">Non-Cartesian sampling</a></li>
+<li class="toctree-l2"><a class="reference internal" href="nonlinear.html">Nonlinear forward models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="differentiation.html">Differentiation through reconstruction</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../examples/index.html">Examples</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../auto_examples/01-basics/index.html">Basics</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../auto_examples/02-non-cartesian/index.html">Non-Cartesian imaging</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../auto_examples/03-applications/index.html">Applications</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../auto_examples/04-model-based/index.html">Model-based reconstruction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../auto_examples/05-deep-learning/index.html">Deep learning</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../api/index.html">API reference</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../api/functions.html">Array functions and settings</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/tools.html">BART commands as functions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/linop.html">Linear operators</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/nlop.html">Nonlinear operators</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/optim.html">Optimization</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/priors.html">Regularization and denoising</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/apps.html">Reconstruction pipelines</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/learning.html">Learning</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/interop.html">Interoperability</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/io.html">File I/O</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/cli.html">Command line</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../misc/index.html">Miscellaneous</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../misc/license.html">License and third-party notices</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../misc/related_projects.html">Related projects</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../misc/contributors.html">Contributors and citation</a></li>
+</ul>
+</details></li>
+</ul>
+
+    </div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+
+<div class="sbt-scroll-pixel-helper"></div>
+
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item"><button class="sidebar-toggle primary-toggle btn btn-sm" title="Toggle primary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <span class="fa-solid fa-bars"></span>
+</button></div>
+      
+    </div>
+  
+  
+    <div class="header-article-items__end">
+      
+        <div class="header-article-item">
+
+<div class="article-header-buttons">
+
+
+
+
+
+<div class="dropdown dropdown-source-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Source repositories">
+    <i class="fab fa-github"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="https://github.com/mcencini/bartorch" target="_blank"
+   class="btn btn-sm btn-source-repository-button dropdown-item"
+   title="Source repository"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fab fa-github"></i>
+  </span>
+<span class="btn__text-container">Repository</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li><a href="https://github.com/mcencini/bartorch/edit/main/docs/explanation/inverse-problems.md" target="_blank"
+   class="btn btn-sm btn-source-edit-button dropdown-item"
+   title="Suggest edit"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-pencil-alt"></i>
+  </span>
+<span class="btn__text-container">Suggest edit</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li><a href="https://github.com/mcencini/bartorch/issues/new?title=Issue%20on%20page%20%2Fexplanation/inverse-problems.html&body=Your%20issue%20content%20here." target="_blank"
+   class="btn btn-sm btn-source-issues-button dropdown-item"
+   title="Open an issue"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-lightbulb"></i>
+  </span>
+<span class="btn__text-container">Open issue</span>
+</a>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+
+
+<div class="dropdown dropdown-download-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Download this page">
+    <i class="fas fa-download"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="../_sources/explanation/inverse-problems.md" target="_blank"
+   class="btn btn-sm btn-download-source-button dropdown-item"
+   title="Download source file"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file"></i>
+  </span>
+<span class="btn__text-container">.md</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li>
+<button onclick="window.print()"
+  class="btn btn-sm btn-download-pdf-button dropdown-item"
+  title="Print to PDF"
+  data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file-pdf"></i>
+  </span>
+<span class="btn__text-container">.pdf</span>
+</button>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+<button onclick="toggleFullScreen()"
+  class="btn btn-sm btn-fullscreen-button pst-navbar-icon"
+  title="Fullscreen mode"
+  data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-expand"></i>
+  </span>
+
+</button>
+
+
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div>
+
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+<button class="sidebar-toggle secondary-toggle btn btn-sm pst-navbar-icon" title="Toggle secondary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="fa-solid fa-list"></span>
+</button>
+</div></div>
+      
+    </div>
+  
+</div>
+</div>
+              
+              
+
+<div id="jb-print-docs-body" class="onlyprint">
+    <h1>Inverse problems and their solvers</h1>
+    <!-- Table of contents -->
+    <div id="print-main-content">
+        <div id="jb-print-toc">
+            
+            <div>
+                <h2> Contents </h2>
+            </div>
+            <nav aria-label="Page">
+                <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-measurement-model">The measurement model</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#least-squares">Least squares</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#conjugate-gradients-and-early-stopping">Conjugate gradients and early stopping</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#regularized-estimation">Regularized estimation</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#differentiable-and-proximable-terms">Differentiable and proximable terms</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#algorithms">Algorithms</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#data-scaling-and-the-regularization-weight">Data scaling and the regularization weight</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#representation-in-bartorch">Representation in bartorch</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#references">References</a></li>
+</ul>
+            </nav>
+        </div>
+    </div>
+</div>
+
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section class="tex2jax_ignore mathjax_ignore" id="inverse-problems-and-their-solvers">
+<h1>Inverse problems and their solvers<a class="headerlink" href="#inverse-problems-and-their-solvers" title="Link to this heading">#</a></h1>
+<div class="tldr admonition">
+<p class="admonition-title">TL;DR</p>
+<ul class="simple">
+<li><p>The data are <span class="math notranslate nohighlight">\(y = Ax + \varepsilon\)</span>; every algorithm here needs only applications of <span class="math notranslate nohighlight">\(A\)</span> and <span class="math notranslate nohighlight">\(A^H\)</span>, or of <span class="math notranslate nohighlight">\(A^H A\)</span>.</p></li>
+<li><p>Undersampled parallel imaging is ill-conditioned or rank deficient: least squares amplifies noise, and the iteration count of conjugate gradients acts as a regularization parameter.</p></li>
+<li><p>A regularized estimate adds <span class="math notranslate nohighlight">\(\lambda R(x)\)</span>; a term <span class="math notranslate nohighlight">\(g(Gx)\)</span> is applied through the proximal operator of <span class="math notranslate nohighlight">\(g\)</span> and the transform <span class="math notranslate nohighlight">\(G\)</span>.</p></li>
+<li><p>IST and FISTA take one term with <span class="math notranslate nohighlight">\(G = I\)</span>; ADMM and the primal-dual method take several terms with any <span class="math notranslate nohighlight">\(G\)</span>; CG takes quadratic terms.</p></li>
+<li><p>The weight <span class="math notranslate nohighlight">\(\lambda\)</span> is chosen for data divided by <a class="reference internal" href="../generated/bartorch.optim.data_scaling.html#bartorch.optim.data_scaling" title="bartorch.optim.data_scaling"><code class="xref py py-func docutils literal notranslate"><span class="pre">data_scaling()</span></code></a>, as in BART’s reconstructions.</p></li>
+</ul>
+</div>
+<p>An MRI reconstruction estimates an image from measurements that determine it
+incompletely or unstably.  This page states the estimation problem, the
+properties of the forward operator that make it difficult, the regularized
+formulations used in its place, and the algorithms that solve them.  The
+organization follows the operator–functional–algorithm structure of the Pyxu
+documentation,<a class="footnote-reference brackets" href="#pyxu" id="id1" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a> specialized to MRI.</p>
+<section id="the-measurement-model">
+<h2>The measurement model<a class="headerlink" href="#the-measurement-model" title="Link to this heading">#</a></h2>
+<p>The measured data <span class="math notranslate nohighlight">\(y \in \mathbb{C}^M\)</span> and the unknown image
+<span class="math notranslate nohighlight">\(x \in \mathbb{C}^N\)</span> are related by</p>
+<div class="math notranslate nohighlight">
+\[
+y = A x + \varepsilon ,
+\]</div>
+<p>with <span class="math notranslate nohighlight">\(A : \mathbb{C}^N \to \mathbb{C}^M\)</span> the <strong>forward operator</strong> — in MRI the
+<strong>encoding operator</strong>, the subject of <a class="reference internal" href="encoding.html"><span class="doc">The MRI encoding operator</span></a> — and <span class="math notranslate nohighlight">\(\varepsilon\)</span> the
+noise.  After prewhitening, the noise of MRI data is modelled as complex
+Gaussian with independent, identically distributed entries.  For fixed coil
+sensitivities <span class="math notranslate nohighlight">\(A\)</span> is linear, and it is applied without being formed as a
+matrix: for a <span class="math notranslate nohighlight">\(256^2\)</span> image and eight coils the matrix would have about
+<span class="math notranslate nohighlight">\(3.4\times 10^{10}\)</span> entries for eight fully sampled coils, while an
+application costs eight FFTs.</p>
+<p>The <strong>adjoint</strong> <span class="math notranslate nohighlight">\(A^H\)</span> is defined by
+<span class="math notranslate nohighlight">\(\langle Ax, y\rangle = \langle x, A^H y\rangle\)</span> for all <span class="math notranslate nohighlight">\(x\)</span> and <span class="math notranslate nohighlight">\(y\)</span>; for a
+matrix it is the conjugate transpose.  The <strong>normal operator</strong> <span class="math notranslate nohighlight">\(A^H A\)</span> maps the
+image space to itself and is self-adjoint and positive semidefinite.  Every
+algorithm on this page needs only applications of <span class="math notranslate nohighlight">\(A\)</span> and <span class="math notranslate nohighlight">\(A^H\)</span>, or of
+<span class="math notranslate nohighlight">\(A^H A\)</span>, so one solver serves every encoding.  <span class="math notranslate nohighlight">\(A^H y\)</span> is the simplest
+estimate; for Cartesian SENSE it is the coil combination of the zero-filled
+inverse FFTs, and it retains the aliasing of the undersampling.</p>
+</section>
+<section id="least-squares">
+<h2>Least squares<a class="headerlink" href="#least-squares" title="Link to this heading">#</a></h2>
+<p>The least-squares estimate minimizes the data misfit,</p>
+<div class="math notranslate nohighlight">
+\[
+\hat{x} \in \arg\min_x \; \tfrac12 \lVert Ax - y \rVert_2^2 ,
+\]</div>
+<p>whose minimizers are the solutions of the <strong>normal equations</strong>
+<span class="math notranslate nohighlight">\(A^H A \hat{x} = A^H y\)</span>.  With the singular value decomposition
+<span class="math notranslate nohighlight">\(A = \sum_i \sigma_i u_i v_i^H\)</span>, the minimizer of least norm is</p>
+<div class="math notranslate nohighlight">
+\[
+x^\dagger = \sum_{\sigma_i &gt; 0} \frac{u_i^H y}{\sigma_i} \, v_i .
+\]</div>
+<p>Two properties of <span class="math notranslate nohighlight">\(A\)</span> determine whether <span class="math notranslate nohighlight">\(x^\dagger\)</span> is unique and stable against
+noise.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Property</p></th>
+<th class="head"><p>Condition</p></th>
+<th class="head"><p>Consequence</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Rank deficiency</p></td>
+<td><p><span class="math notranslate nohighlight">\(A\)</span> has a nontrivial null space: some <span class="math notranslate nohighlight">\(x_0 \ne 0\)</span> satisfy <span class="math notranslate nohighlight">\(Ax_0 = 0\)</span></p></td>
+<td><p>The minimizer is not unique: <span class="math notranslate nohighlight">\(x^\dagger + x_0\)</span> fits the data equally well, and the data carry no information about <span class="math notranslate nohighlight">\(x_0\)</span></p></td>
+</tr>
+<tr class="row-odd"><td><p>Ill-conditioning</p></td>
+<td><p><span class="math notranslate nohighlight">\(A\)</span> has full column rank, but its smallest singular values are small</p></td>
+<td><p>The minimizer is unique, but the noise component along <span class="math notranslate nohighlight">\(v_i\)</span> is amplified by <span class="math notranslate nohighlight">\(1/\sigma_i\)</span></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>In parallel imaging, an undersampled acquisition measures fewer k-space
+positions than the image has voxels, but each position is measured by several
+coils.  If the coils’ sensitivities separate the voxels that alias onto one
+another, <span class="math notranslate nohighlight">\(A\)</span> has full column rank and the problem is ill-conditioned rather
+than underdetermined; the spatially resolved noise amplification is the
+g-factor of SENSE.<a class="footnote-reference brackets" href="#pruessmann1999" id="id2" role="doc-noteref"><span class="fn-bracket">[</span>2<span class="fn-bracket">]</span></a>  At accelerations beyond what the coil
+geometry supports, and outside the region the coils cover, <span class="math notranslate nohighlight">\(A\)</span> becomes rank
+deficient.</p>
+<p>The ratio <span class="math notranslate nohighlight">\(\kappa(A) = \sigma_{\max}/\sigma_{\min}\)</span> of the largest to the
+smallest nonzero singular value is the spectral condition number.  The
+eigenvalues of <span class="math notranslate nohighlight">\(A^H A\)</span> are the <span class="math notranslate nohighlight">\(\sigma_i^2\)</span>, so
+<span class="math notranslate nohighlight">\(\kappa(A^H A) = \kappa(A)^2\)</span> for any <span class="math notranslate nohighlight">\(A\)</span>, with <span class="math notranslate nohighlight">\(\sigma_{\min}\)</span> the smallest
+nonzero singular value when <span class="math notranslate nohighlight">\(A\)</span> is rank deficient.</p>
+</section>
+<section id="conjugate-gradients-and-early-stopping">
+<h2>Conjugate gradients and early stopping<a class="headerlink" href="#conjugate-gradients-and-early-stopping" title="Link to this heading">#</a></h2>
+<p><strong>Conjugate gradients</strong> applied to the normal equations
+(<a class="reference internal" href="../generated/bartorch.optim.CG.html#bartorch.optim.CG" title="bartorch.optim.CG"><code class="xref py py-class docutils literal notranslate"><span class="pre">CG</span></code></a>) needs only <span class="math notranslate nohighlight">\(A^H A\)</span>.  In exact arithmetic its
+iterates started from <span class="math notranslate nohighlight">\(x_0 = 0\)</span> remain in the range of <span class="math notranslate nohighlight">\(A^H\)</span>, the orthogonal
+complement of the null space, so they converge to the minimum-norm solution
+<span class="math notranslate nohighlight">\(x^\dagger\)</span>; a nonzero <span class="math notranslate nohighlight">\(x_0\)</span> keeps its null-space component unchanged.  The
+error decreases at a rate governed by <span class="math notranslate nohighlight">\(\kappa(A^H A)\)</span>.</p>
+<p>On noisy data the iteration shows semi-convergence: the early iterates
+recover the components with large <span class="math notranslate nohighlight">\(\sigma_i\)</span>, and the later ones increasingly
+fit the noise amplified along the components with small <span class="math notranslate nohighlight">\(\sigma_i\)</span>.  The
+iteration count therefore acts as a regularization parameter,<a class="footnote-reference brackets" href="#hansen" id="id3" role="doc-noteref"><span class="fn-bracket">[</span>3<span class="fn-bracket">]</span></a> as in
+iterative SENSE,<a class="footnote-reference brackets" href="#pruessmann2001" id="id4" role="doc-noteref"><span class="fn-bracket">[</span>4<span class="fn-bracket">]</span></a> but its best value depends on the data and
+the noise level, and no reconstruction property is attached to a particular
+count.</p>
+</section>
+<section id="regularized-estimation">
+<h2>Regularized estimation<a class="headerlink" href="#regularized-estimation" title="Link to this heading">#</a></h2>
+<p>Regularization adds a functional expressing prior knowledge of the image,</p>
+<div class="math notranslate nohighlight">
+\[
+\hat{x} = \arg\min_x \; \tfrac12 \lVert Ax - y \rVert_2^2 + \lambda R(x),
+\qquad \lambda &gt; 0 .
+\]</div>
+<p>A <strong>functional</strong> maps an image to a real number.  <span class="math notranslate nohighlight">\(R\)</span> is the <strong>regularization
+functional</strong> and <span class="math notranslate nohighlight">\(\lambda\)</span> the <strong>regularization weight</strong>.  In a Bayesian
+reading, the data term is the negative log-likelihood of white Gaussian noise
+and <span class="math notranslate nohighlight">\(\lambda R\)</span> the negative logarithm of a prior density, so <span class="math notranslate nohighlight">\(\hat{x}\)</span> is a
+maximum a posteriori estimate.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Regularization</p></th>
+<th class="head"><p><span class="math notranslate nohighlight">\(R(x)\)</span></p></th>
+<th class="head"><p>Effect</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Tikhonov</p></td>
+<td><p><span class="math notranslate nohighlight">\(\tfrac12 \lVert x \rVert_2^2\)</span></p></td>
+<td><p>Solution <span class="math notranslate nohighlight">\((A^H A + \lambda I)^{-1} A^H y\)</span>: the component along <span class="math notranslate nohighlight">\(v_i\)</span> is weighted by <span class="math notranslate nohighlight">\(\sigma_i^2 / (\sigma_i^2 + \lambda)\)</span>, so poorly determined components are shrunk toward zero.  It is not a spatial smoothness prior.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Generalized Tikhonov</p></td>
+<td><p><span class="math notranslate nohighlight">\(\tfrac12 \lVert Gx - b \rVert_2^2\)</span></p></td>
+<td><p>Shrinkage toward a reference <span class="math notranslate nohighlight">\(b\)</span>, or with <span class="math notranslate nohighlight">\(G\)</span> a finite-difference operator, a quadratic smoothness prior</p></td>
+</tr>
+<tr class="row-even"><td><p>Sparsity in a transform</p></td>
+<td><p><span class="math notranslate nohighlight">\(\lVert \Psi x \rVert_1\)</span></p></td>
+<td><p>Few significant coefficients, for example of a wavelet transform <span class="math notranslate nohighlight">\(\Psi\)</span>; the prior of compressed sensing<a class="footnote-reference brackets" href="#lustig" id="id5" role="doc-noteref"><span class="fn-bracket">[</span>5<span class="fn-bracket">]</span></a></p></td>
+</tr>
+<tr class="row-odd"><td><p>Total variation</p></td>
+<td><p><span class="math notranslate nohighlight">\(\sum_r \lVert (\nabla x)_r \rVert_2\)</span></p></td>
+<td><p>Piecewise-constant images<a class="footnote-reference brackets" href="#rof" id="id6" role="doc-noteref"><span class="fn-bracket">[</span>6<span class="fn-bracket">]</span></a></p></td>
+</tr>
+<tr class="row-even"><td><p>Locally low rank</p></td>
+<td><p><span class="math notranslate nohighlight">\(\sum_b \lVert B_b x \rVert_*\)</span></p></td>
+<td><p>Image blocks, arranged as matrices over a contrast or coefficient axis, of low rank</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The quadratic functionals keep the problem a linear least-squares problem.
+The others are not differentiable, and require the methods below.</p>
+</section>
+<section id="differentiable-and-proximable-terms">
+<h2>Differentiable and proximable terms<a class="headerlink" href="#differentiable-and-proximable-terms" title="Link to this heading">#</a></h2>
+<p>The data term <span class="math notranslate nohighlight">\(f(x) = \tfrac12\lVert Ax - y\rVert_2^2\)</span> is differentiable, with
+gradient <span class="math notranslate nohighlight">\(\nabla f(x) = A^H(Ax - y)\)</span>.  Its gradient is Lipschitz continuous
+with constant <span class="math notranslate nohighlight">\(L = \lVert A \rVert^2 = \lambda_{\max}(A^H A)\)</span>, which bounds
+the step size of a gradient method.</p>
+<p>A nonsmooth functional <span class="math notranslate nohighlight">\(g\)</span> is used through its <strong>proximal operator</strong></p>
+<div class="math notranslate nohighlight">
+\[
+\operatorname{prox}_{\tau g}(v) = \arg\min_u \; \tfrac12 \lVert u - v \rVert_2^2 + \tau g(u),
+\]</div>
+<p>which is defined for any proper, closed, convex <span class="math notranslate nohighlight">\(g\)</span> and <span class="math notranslate nohighlight">\(\tau &gt; 0\)</span>.  For the
+<span class="math notranslate nohighlight">\(\ell_1\)</span> norm of a complex array it is soft thresholding of the modulus, which
+preserves the phase:</p>
+<div class="math notranslate nohighlight">
+\[
+\operatorname{prox}_{\tau \lVert\cdot\rVert_1}(v)_i =
+\frac{v_i}{\lvert v_i \rvert} \max\!\left(\lvert v_i \rvert - \tau,\, 0\right),
+\]</div>
+<p>with value zero where <span class="math notranslate nohighlight">\(v_i = 0\)</span>.  Thresholding groups of entries jointly — the
+directions of a gradient in isotropic total variation, or the axes a term’s
+<code class="docutils literal notranslate"><span class="pre">joint_axes</span></code> name — replaces <span class="math notranslate nohighlight">\(\lvert v_i \rvert\)</span> by the <span class="math notranslate nohighlight">\(\ell_2\)</span> norm of the
+group.  The proximal operator of the indicator function of a convex set is the
+projection onto the set.</p>
+<p>A regularization term of <code class="xref py py-mod docutils literal notranslate"><span class="pre">bartorch.priors</span></code> represents <span class="math notranslate nohighlight">\(g(Gx)\)</span>: the
+proximal operator of <span class="math notranslate nohighlight">\(g\)</span>, built by BART, and a linear transform <span class="math notranslate nohighlight">\(G\)</span>.  When <span class="math notranslate nohighlight">\(G\)</span>
+is unitary, <span class="math notranslate nohighlight">\(\operatorname{prox}_{\tau g \circ G}(v) = G^H \operatorname{prox}_{\tau g}(Gv)\)</span>,
+and the transform can be placed inside the proximal operator.  BART’s wavelet
+and locally low-rank terms apply their transforms inside the proximal operator
+in this way and have <span class="math notranslate nohighlight">\(G = I\)</span>.  The relation is exact for an orthogonal wavelet
+(Haar, Daubechies) and for non-overlapping blocks; with the biorthogonal
+CDF 4/4 wavelet, with overlapping blocks, and with the random shifts between
+iterations that both terms apply by default, the step is an approximation of
+that proximal operator.  For a general <span class="math notranslate nohighlight">\(G\)</span>, such as the finite differences of
+total variation, <span class="math notranslate nohighlight">\(\operatorname{prox}_{\tau g\circ G}\)</span> has no closed form, and
+the algorithm has to treat <span class="math notranslate nohighlight">\(G\)</span> separately.</p>
+</section>
+<section id="algorithms">
+<h2>Algorithms<a class="headerlink" href="#algorithms" title="Link to this heading">#</a></h2>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Algorithm</p></th>
+<th class="head"><p>Problem and splitting</p></th>
+<th class="head"><p>Transform <span class="math notranslate nohighlight">\(G\)</span></p></th>
+<th class="head"><p>Per iteration</p></th>
+<th class="head"><p>Convergence conditions</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>CG</p></td>
+<td><p>Quadratic: <span class="math notranslate nohighlight">\(\min \tfrac12\lVert Ax - y\rVert^2 + \tfrac{\lambda}{2}\lVert x\rVert^2 + \sum_i \tfrac{w_i}{2}\lVert G_i x - b_i\rVert^2\)</span></p></td>
+<td><p>Any, inside the quadratic terms</p></td>
+<td><p>One application of the normal operator</p></td>
+<td><p>Positive semidefinite normal operator</p></td>
+</tr>
+<tr class="row-odd"><td><p>IST (proximal gradient)</p></td>
+<td><p><span class="math notranslate nohighlight">\(f + g\)</span>: <span class="math notranslate nohighlight">\(x \leftarrow \operatorname{prox}_{\tau\lambda g}\!\left(x - \tau \nabla f(x)\right)\)</span></p></td>
+<td><p><span class="math notranslate nohighlight">\(I\)</span> only</p></td>
+<td><p>One normal operator, one proximal operator</p></td>
+<td><p>Convex <span class="math notranslate nohighlight">\(f\)</span> and <span class="math notranslate nohighlight">\(g\)</span>, <span class="math notranslate nohighlight">\(0 &lt; \tau \le 1/L\)</span>; objective error <span class="math notranslate nohighlight">\(O(1/k)\)</span></p></td>
+</tr>
+<tr class="row-even"><td><p>FISTA</p></td>
+<td><p>As IST, with Nesterov momentum</p></td>
+<td><p><span class="math notranslate nohighlight">\(I\)</span> only</p></td>
+<td><p>As IST</p></td>
+<td><p>As IST; objective error <span class="math notranslate nohighlight">\(O(1/k^2)\)</span><a class="footnote-reference brackets" href="#beck" id="id7" role="doc-noteref"><span class="fn-bracket">[</span>7<span class="fn-bracket">]</span></a></p></td>
+</tr>
+<tr class="row-odd"><td><p>ADMM</p></td>
+<td><p><span class="math notranslate nohighlight">\(f(x) + \sum_j g_j(z_j)\)</span> subject to <span class="math notranslate nohighlight">\(z_j = G_j x\)</span></p></td>
+<td><p>Any</p></td>
+<td><p>A CG solve with <span class="math notranslate nohighlight">\(A^H A + \rho \sum_j G_j^H G_j\)</span>, one proximal operator per term, a dual update</p></td>
+<td><p>Convex terms, any <span class="math notranslate nohighlight">\(\rho &gt; 0\)</span><a class="footnote-reference brackets" href="#boyd" id="id8" role="doc-noteref"><span class="fn-bracket">[</span>8<span class="fn-bracket">]</span></a></p></td>
+</tr>
+<tr class="row-even"><td><p>Primal-dual (Chambolle–Pock)</p></td>
+<td><p>Saddle-point form with a dual variable for each <span class="math notranslate nohighlight">\(g_j(G_j x)\)</span></p></td>
+<td><p>Any</p></td>
+<td><p>Applications of <span class="math notranslate nohighlight">\(A\)</span>, <span class="math notranslate nohighlight">\(G_j\)</span> and their adjoints, proximal operators; no inner solve</p></td>
+<td><p>Convex terms, <span class="math notranslate nohighlight">\(\sigma\tau\lVert K\rVert^2 &lt; 1\)</span> for the stacked operator <span class="math notranslate nohighlight">\(K\)</span><a class="footnote-reference brackets" href="#chambolle" id="id9" role="doc-noteref"><span class="fn-bracket">[</span>9<span class="fn-bracket">]</span></a></p></td>
+</tr>
+<tr class="row-odd"><td><p>POCS</p></td>
+<td><p>Feasibility: repeated projection onto convex sets</p></td>
+<td><p>Inside the projections</p></td>
+<td><p>One projection per set</p></td>
+<td><p>Closed convex sets with nonempty intersection</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Proximal gradient and FISTA.</strong>  Each iteration takes a gradient step on the
+data term and a proximal step on the regularization.  The step size must not
+exceed <span class="math notranslate nohighlight">\(1/L\)</span>.  BART’s default step size, used by <a class="reference internal" href="../generated/bartorch.optim.IST.html#bartorch.optim.IST" title="bartorch.optim.IST"><code class="xref py py-class docutils literal notranslate"><span class="pre">IST</span></code></a>,
+<a class="reference internal" href="../generated/bartorch.optim.FISTA.html#bartorch.optim.FISTA" title="bartorch.optim.FISTA"><code class="xref py py-class docutils literal notranslate"><span class="pre">FISTA</span></code></a> and <a class="reference internal" href="../generated/bartorch.optim.PRIDU.html#bartorch.optim.PRIDU" title="bartorch.optim.PRIDU"><code class="xref py py-class docutils literal notranslate"><span class="pre">PRIDU</span></code></a>, is <span class="math notranslate nohighlight">\(0.95\)</span>,
+not scaled by <span class="math notranslate nohighlight">\(1/L\)</span>.  This satisfies the bound for Cartesian SENSE with a unitary
+FFT, a binary sampling pattern and sensitivities normalized to unit root sum
+of squares over the coils, where <span class="math notranslate nohighlight">\(\lVert A \rVert \le 1\)</span>.  For other encodings,
+non-Cartesian ones in particular, <code class="docutils literal notranslate"><span class="pre">eigen=True</span></code> divides the step by
+<span class="math notranslate nohighlight">\(\lambda_{\max}(A^H A)\)</span>, estimated by 30 power iterations as
+<a class="reference internal" href="../generated/bartorch.optim.maxeigen.html#bartorch.optim.maxeigen" title="bartorch.optim.maxeigen"><code class="xref py py-func docutils literal notranslate"><span class="pre">maxeigen()</span></code></a> does.  BART’s IST and FISTA apply a single
+proximal operator to the image, so these solvers accept one term with
+<span class="math notranslate nohighlight">\(G = I\)</span> and raise an error for any other.</p>
+<p><strong>ADMM</strong> introduces <span class="math notranslate nohighlight">\(z_j = G_j x\)</span> and alternates a linear least-squares
+update of <span class="math notranslate nohighlight">\(x\)</span>, solved by conjugate gradients, a proximal step for each <span class="math notranslate nohighlight">\(z_j\)</span>,
+and an update of the scaled dual variables.  It accepts several terms and any
+<span class="math notranslate nohighlight">\(G_j\)</span>, at the cost of an inner solve per iteration and a penalty parameter
+<span class="math notranslate nohighlight">\(\rho\)</span>.</p>
+<p><strong>The primal-dual method</strong> alternates proximal steps on the primal and the
+dual variables and applies <span class="math notranslate nohighlight">\(G_j\)</span> and <span class="math notranslate nohighlight">\(G_j^H\)</span> directly, with no inner solve; it
+needs no inner solve; the iteration count to a given accuracy depends on the
+problem and on <span class="math notranslate nohighlight">\(\sigma\)</span> and <span class="math notranslate nohighlight">\(\tau\)</span>.</p>
+</section>
+<section id="data-scaling-and-the-regularization-weight">
+<h2>Data scaling and the regularization weight<a class="headerlink" href="#data-scaling-and-the-regularization-weight" title="Link to this heading">#</a></h2>
+<p><span class="math notranslate nohighlight">\(\lambda\)</span> has units.  Multiplying the data by <span class="math notranslate nohighlight">\(c\)</span> multiplies the data term by
+<span class="math notranslate nohighlight">\(c^2\)</span>: for a term homogeneous of degree one, such as an <span class="math notranslate nohighlight">\(\ell_1\)</span> norm or total
+variation, the minimizer then scales by <span class="math notranslate nohighlight">\(c\)</span> only if <span class="math notranslate nohighlight">\(\lambda\)</span> scales by <span class="math notranslate nohighlight">\(c\)</span> as
+well.  BART’s reconstructions therefore divide the data by an estimate of its
+scale before iterating, and a weight is chosen for normalized data.
+<a class="reference internal" href="../generated/bartorch.optim.data_scaling.html#bartorch.optim.data_scaling" title="bartorch.optim.data_scaling"><code class="xref py py-func docutils literal notranslate"><span class="pre">bartorch.optim.data_scaling()</span></code></a> is that estimate: an order statistic of the
+magnitudes of a low-resolution image from the central region of k-space, or of
+<span class="math notranslate nohighlight">\(\lvert A^H y \rvert\)</span> for a non-Cartesian acquisition; its documentation states
+the rule.  <code class="docutils literal notranslate"><span class="pre">pics</span></code> returns the reconstruction of the scaled data without scaling
+it back.</p>
+</section>
+<section id="representation-in-bartorch">
+<h2>Representation in bartorch<a class="headerlink" href="#representation-in-bartorch" title="Link to this heading">#</a></h2>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Object</p></th>
+<th class="head"><p>bartorch</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><span class="math notranslate nohighlight">\(A\)</span>, <span class="math notranslate nohighlight">\(A^H\)</span>, <span class="math notranslate nohighlight">\(A^H A\)</span></p></td>
+<td><p><a class="reference internal" href="../generated/bartorch.linop.LinearOperator.html#bartorch.linop.LinearOperator" title="bartorch.linop.LinearOperator"><code class="xref py py-class docutils literal notranslate"><span class="pre">LinearOperator</span></code></a>: <code class="docutils literal notranslate"><span class="pre">A(x)</span></code>, <code class="docutils literal notranslate"><span class="pre">A.H(y)</span></code>, <code class="docutils literal notranslate"><span class="pre">A.normal(x)</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><span class="math notranslate nohighlight">\(\lambda R\)</span>, <span class="math notranslate nohighlight">\(g(Gx)\)</span></p></td>
+<td><p>A <code class="xref py py-mod docutils literal notranslate"><span class="pre">bartorch.priors</span></code> term, or an <a class="reference internal" href="../generated/bartorch.priors.ImplicitPrior.html#bartorch.priors.ImplicitPrior" title="bartorch.priors.ImplicitPrior"><code class="xref py py-class docutils literal notranslate"><span class="pre">ImplicitPrior</span></code></a></p></td>
+</tr>
+<tr class="row-even"><td><p>Quadratic terms</p></td>
+<td><p><a class="reference internal" href="../generated/bartorch.optim.Tikhonov.html#bartorch.optim.Tikhonov" title="bartorch.optim.Tikhonov"><code class="xref py py-class docutils literal notranslate"><span class="pre">Tikhonov</span></code></a> for <a class="reference internal" href="../generated/bartorch.optim.CG.html#bartorch.optim.CG" title="bartorch.optim.CG"><code class="xref py py-class docutils literal notranslate"><span class="pre">CG</span></code></a></p></td>
+</tr>
+<tr class="row-odd"><td><p>Algorithm</p></td>
+<td><p>A solver of <code class="xref py py-mod docutils literal notranslate"><span class="pre">bartorch.optim</span></code>, called as <code class="docutils literal notranslate"><span class="pre">solver(y,</span> <span class="pre">A)</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p>One iteration</p></td>
+<td><p>An iteration block: <code class="docutils literal notranslate"><span class="pre">start</span></code>, <code class="docutils literal notranslate"><span class="pre">forward</span></code>, <code class="docutils literal notranslate"><span class="pre">output</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><span class="math notranslate nohighlight">\(L\)</span></p></td>
+<td><p><a class="reference internal" href="../generated/bartorch.optim.maxeigen.html#bartorch.optim.maxeigen" title="bartorch.optim.maxeigen"><code class="xref py py-func docutils literal notranslate"><span class="pre">maxeigen()</span></code></a></p></td>
+</tr>
+<tr class="row-even"><td><p>Data scale</p></td>
+<td><p><a class="reference internal" href="../generated/bartorch.optim.data_scaling.html#bartorch.optim.data_scaling" title="bartorch.optim.data_scaling"><code class="xref py py-func docutils literal notranslate"><span class="pre">data_scaling()</span></code></a></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><a class="reference internal" href="../generated/bartorch.tools.pics.html#bartorch.tools.pics" title="bartorch.tools.pics"><code class="xref py py-func docutils literal notranslate"><span class="pre">bartorch.tools.pics()</span></code></a> performs these steps inside BART: it estimates the
+data scale, builds the encoding from the sensitivities and the sampling,
+builds the terms from its <code class="docutils literal notranslate"><span class="pre">regularizers</span></code> argument, and runs the chosen
+iteration.  <a class="reference internal" href="../auto_examples/01-basics/02-operators-and-solvers.html"><span class="doc">Operators and solvers</span></a>
+assembles the same reconstruction from an operator, a term and a solver and
+obtains the same result.  The estimators on this page assume a known, linear
+<span class="math notranslate nohighlight">\(A\)</span>; <a class="reference internal" href="nonlinear.html"><span class="doc">Nonlinear forward models</span></a> treats forward operators that depend nonlinearly on the
+unknowns.</p>
+</section>
+<section id="references">
+<h2>References<a class="headerlink" href="#references" title="Link to this heading">#</a></h2>
+<p>Further reading: Parikh N, Boyd S. Proximal algorithms. <em>Found Trends Optim</em> 1(3):127–239 (2014). <a class="reference external" href="https://doi.org/10.1561/2400000003">doi:10.1561/2400000003</a></p>
+</section>
+</section>
+<aside class="footnote-list brackets">
+<aside class="footnote brackets" id="pyxu" role="doc-footnote">
+<span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id1">1</a><span class="fn-bracket">]</span></span>
+<p>Pyxu developers. Pyxu documentation, <a class="reference external" href="https://pyxu-org.github.io/">https://pyxu-org.github.io/</a>: the guides on forward operators, functionals, operator algebra, optimization algorithms and Lipschitz constants.</p>
+</aside>
+<aside class="footnote brackets" id="pruessmann1999" role="doc-footnote">
+<span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id2">2</a><span class="fn-bracket">]</span></span>
+<p>Pruessmann KP, Weiger M, Scheidegger MB, Boesiger P. SENSE: sensitivity encoding for fast MRI. <em>Magn Reson Med</em> 42(5):952–962 (1999). <a class="reference external" href="https://doi.org/10.1002/(SICI)1522-2594(199911)42:5%3C952::AID-MRM16%3E3.0.CO;2-S">doi:10.1002/(SICI)1522-2594(199911)42:5&lt;952::AID-MRM16&gt;3.0.CO;2-S</a></p>
+</aside>
+<aside class="footnote brackets" id="hansen" role="doc-footnote">
+<span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id3">3</a><span class="fn-bracket">]</span></span>
+<p>Hansen PC. <em>Rank-Deficient and Discrete Ill-Posed Problems: Numerical Aspects of Linear Inversion.</em> SIAM (1998). <a class="reference external" href="https://doi.org/10.1137/1.9780898719697">doi:10.1137/1.9780898719697</a></p>
+</aside>
+<aside class="footnote brackets" id="pruessmann2001" role="doc-footnote">
+<span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id4">4</a><span class="fn-bracket">]</span></span>
+<p>Pruessmann KP, Weiger M, Börnert P, Boesiger P. Advances in sensitivity encoding with arbitrary k-space trajectories. <em>Magn Reson Med</em> 46(4):638–651 (2001). <a class="reference external" href="https://doi.org/10.1002/mrm.1241">doi:10.1002/mrm.1241</a></p>
+</aside>
+<aside class="footnote brackets" id="lustig" role="doc-footnote">
+<span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id5">5</a><span class="fn-bracket">]</span></span>
+<p>Lustig M, Donoho D, Pauly JM. Sparse MRI: the application of compressed sensing for rapid MR imaging. <em>Magn Reson Med</em> 58(6):1182–1195 (2007). <a class="reference external" href="https://doi.org/10.1002/mrm.21391">doi:10.1002/mrm.21391</a></p>
+</aside>
+<aside class="footnote brackets" id="rof" role="doc-footnote">
+<span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id6">6</a><span class="fn-bracket">]</span></span>
+<p>Rudin LI, Osher S, Fatemi E. Nonlinear total variation based noise removal algorithms. <em>Physica D</em> 60(1–4):259–268 (1992). <a class="reference external" href="https://doi.org/10.1016/0167-2789(92)90242-F">doi:10.1016/0167-2789(92)90242-F</a></p>
+</aside>
+<aside class="footnote brackets" id="beck" role="doc-footnote">
+<span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id7">7</a><span class="fn-bracket">]</span></span>
+<p>Beck A, Teboulle M. A fast iterative shrinkage-thresholding algorithm for linear inverse problems. <em>SIAM J Imaging Sci</em> 2(1):183–202 (2009). <a class="reference external" href="https://doi.org/10.1137/080716542">doi:10.1137/080716542</a></p>
+</aside>
+<aside class="footnote brackets" id="boyd" role="doc-footnote">
+<span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id8">8</a><span class="fn-bracket">]</span></span>
+<p>Boyd S, Parikh N, Chu E, Peleato B, Eckstein J. Distributed optimization and statistical learning via the alternating direction method of multipliers. <em>Found Trends Mach Learn</em> 3(1):1–122 (2011). <a class="reference external" href="https://doi.org/10.1561/2200000016">doi:10.1561/2200000016</a></p>
+</aside>
+<aside class="footnote brackets" id="chambolle" role="doc-footnote">
+<span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id9">9</a><span class="fn-bracket">]</span></span>
+<p>Chambolle A, Pock T. A first-order primal-dual algorithm for convex problems with applications to imaging. <em>J Math Imaging Vis</em> 40(1):120–145 (2011). <a class="reference external" href="https://doi.org/10.1007/s10851-010-0251-1">doi:10.1007/s10851-010-0251-1</a></p>
+</aside>
+</aside>
+
+
+                </article>
+              
+
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="execution-model.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Interfaces and execution</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="encoding.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">The MRI encoding operator</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item"><div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> Contents
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-measurement-model">The measurement model</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#least-squares">Least squares</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#conjugate-gradients-and-early-stopping">Conjugate gradients and early stopping</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#regularized-estimation">Regularized estimation</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#differentiable-and-proximable-terms">Differentiable and proximable terms</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#algorithms">Algorithms</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#data-scaling-and-the-regularization-weight">Data scaling and the regularization weight</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#representation-in-bartorch">Representation in bartorch</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#references">References</a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+<div class="bd-footer-content__inner container">
+  
+  <div class="footer-item">
+    
+<p class="component-author">
+By bartorch contributors
+</p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+
+  <p class="copyright">
+    
+      © Copyright 2024–2026, bartorch contributors.
+      <br/>
+    
+  </p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+</div>
+          </footer>
+        
+
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9"></script>
+<script defer src="../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9"></script>
+
+  <footer class="bd-footer">
+  </footer>
+  </body>
+</html>

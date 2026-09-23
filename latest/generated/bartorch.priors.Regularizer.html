@@ -1,0 +1,812 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>priors.Regularizer &#8212; bartorch</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../_static/styles/theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+<link href="../_static/styles/pydata-sphinx-theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/sphinx-book-theme.css?v=4418a689" />
+    <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery.css?v=c83e6b79" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=0739d252" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../_static/scripts/fontawesome.js?digest=90905a2f556bf617f1a9"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9" />
+<link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9" />
+
+    <script src="../_static/documentation_options.js?v=b1def801"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../_static/copybutton.js?v=a5fa425f"></script>
+    <script src="../_static/sg-tags.js?v=d80f6fa4"></script>
+    <script src="../_static/scripts/sphinx-book-theme.js?v=fab101a9"></script>
+    <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'generated/bartorch.priors.Regularizer';</script>
+    <script>
+        DOCUMENTATION_OPTIONS.theme_version = '0.20.0';
+        DOCUMENTATION_OPTIONS.theme_switcher_json_url = 'https://mcencini.github.io/bartorch/versions.json';
+        DOCUMENTATION_OPTIONS.theme_switcher_version_match = 'latest';
+        DOCUMENTATION_OPTIONS.show_version_warning_banner =
+            true;
+        </script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="canonical" href="https://mcencini.github.io/bartorch/latest/generated/bartorch.priors.Regularizer.html" />
+    <link rel="icon" href="../_static/bartorch-mark.svg"/>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="latest" />
+  
+    
+    <script src="../_static/searchtools.js"></script>
+    <script src="../_static/language_data.js"></script>
+    <script src="../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search..."
+         aria-label="Search..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/bartorch-mark.svg" class="logo__image only-light" alt="bartorch"/>
+    <img src="../_static/bartorch-mark-dark.svg" class="logo__image only-dark pst-js-only" alt="bartorch"/>
+  
+  
+</a></div>
+        <div class="sidebar-primary-item">
+<div class="version-switcher__container dropdown pst-js-only">
+  <button id="pst-version-switcher-button-2"
+    type="button"
+    class="version-switcher__button btn btn-sm dropdown-toggle"
+    data-bs-toggle="dropdown"
+    aria-haspopup="listbox"
+    aria-controls="pst-version-switcher-list-2"
+    aria-label="Version switcher list"
+  >
+    Choose version  <!-- this text may get changed later by javascript -->
+    <span class="caret"></span>
+  </button>
+  <div id="pst-version-switcher-list-2"
+    class="version-switcher__menu dropdown-menu list-group-flush py-0"
+    role="listbox" aria-labelledby="pst-version-switcher-button-2">
+    <!-- dropdown will be populated by javascript on page load -->
+  </div>
+</div></div>
+        <div class="sidebar-primary-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
+    <div class="bd-toc-item navbar-nav active">
+        
+        <ul class="nav bd-sidenav bd-sidenav__home-link">
+            <li class="toctree-l1">
+                <a class="reference internal" href="../index.html">
+                    Homepage
+                </a>
+            </li>
+        </ul>
+        <ul class="nav bd-sidenav">
+<li class="toctree-l1 has-children"><a class="reference internal" href="../guides/user/index.html">User guide</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../guides/user/prerequisites.html">Prerequisites and supported platforms</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/user/installation.html">Installation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/user/conventions.html">Data layout and conventions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/user/issues.html">Reporting issues</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/user/discussions.html">Questions and proposals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/user/security.html">Security</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../guides/developer/index.html">Developer guide</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../guides/developer/prerequisites.html">Development prerequisites</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/developer/installation.html">Editable and source installation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/developer/layout.html">Repository layout</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/developer/workflow.html">Development workflow</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/developer/pre-commit.html">Pre-commit hooks</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/developer/style.html">Coding style</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/developer/documentation.html">Documentation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/developer/terminology.html">Terminology and conventions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/developer/pull-requests.html">Pull requests</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../guides/developer/code-of-conduct.html">Code of conduct</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../explanation/index.html">Explanation</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../explanation/execution-model.html">Interfaces and execution</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../explanation/inverse-problems.html">Inverse problems and their solvers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../explanation/encoding.html">The MRI encoding operator</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../explanation/non-cartesian.html">Non-Cartesian sampling</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../explanation/nonlinear.html">Nonlinear forward models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../explanation/differentiation.html">Differentiation through reconstruction</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../examples/index.html">Examples</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../auto_examples/01-basics/index.html">Basics</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../auto_examples/02-non-cartesian/index.html">Non-Cartesian imaging</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../auto_examples/03-applications/index.html">Applications</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../auto_examples/04-model-based/index.html">Model-based reconstruction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../auto_examples/05-deep-learning/index.html">Deep learning</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../api/index.html">API reference</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../api/functions.html">Array functions and settings</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/tools.html">BART commands as functions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/linop.html">Linear operators</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/nlop.html">Nonlinear operators</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/optim.html">Optimization</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/priors.html">Regularization and denoising</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/apps.html">Reconstruction pipelines</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/learning.html">Learning</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/interop.html">Interoperability</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/io.html">File I/O</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/cli.html">Command line</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../misc/index.html">Miscellaneous</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../misc/license.html">License and third-party notices</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../misc/related_projects.html">Related projects</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../misc/contributors.html">Contributors and citation</a></li>
+</ul>
+</details></li>
+</ul>
+
+    </div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+
+<div class="sbt-scroll-pixel-helper"></div>
+
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item"><button class="sidebar-toggle primary-toggle btn btn-sm" title="Toggle primary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <span class="fa-solid fa-bars"></span>
+</button></div>
+      
+    </div>
+  
+  
+    <div class="header-article-items__end">
+      
+        <div class="header-article-item">
+
+<div class="article-header-buttons">
+
+
+
+
+
+<div class="dropdown dropdown-source-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Source repositories">
+    <i class="fab fa-github"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="https://github.com/mcencini/bartorch" target="_blank"
+   class="btn btn-sm btn-source-repository-button dropdown-item"
+   title="Source repository"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fab fa-github"></i>
+  </span>
+<span class="btn__text-container">Repository</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li><a href="https://github.com/mcencini/bartorch/edit/main/docs/generated/bartorch.priors.Regularizer.rst" target="_blank"
+   class="btn btn-sm btn-source-edit-button dropdown-item"
+   title="Suggest edit"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-pencil-alt"></i>
+  </span>
+<span class="btn__text-container">Suggest edit</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li><a href="https://github.com/mcencini/bartorch/issues/new?title=Issue%20on%20page%20%2Fgenerated/bartorch.priors.Regularizer.html&body=Your%20issue%20content%20here." target="_blank"
+   class="btn btn-sm btn-source-issues-button dropdown-item"
+   title="Open an issue"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-lightbulb"></i>
+  </span>
+<span class="btn__text-container">Open issue</span>
+</a>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+
+
+<div class="dropdown dropdown-download-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Download this page">
+    <i class="fas fa-download"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="../_sources/generated/bartorch.priors.Regularizer.rst" target="_blank"
+   class="btn btn-sm btn-download-source-button dropdown-item"
+   title="Download source file"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file"></i>
+  </span>
+<span class="btn__text-container">.rst</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li>
+<button onclick="window.print()"
+  class="btn btn-sm btn-download-pdf-button dropdown-item"
+  title="Print to PDF"
+  data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file-pdf"></i>
+  </span>
+<span class="btn__text-container">.pdf</span>
+</button>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+<button onclick="toggleFullScreen()"
+  class="btn btn-sm btn-fullscreen-button pst-navbar-icon"
+  title="Fullscreen mode"
+  data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-expand"></i>
+  </span>
+
+</button>
+
+
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div>
+
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+<button class="sidebar-toggle secondary-toggle btn btn-sm pst-navbar-icon" title="Toggle secondary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="fa-solid fa-list"></span>
+</button>
+</div></div>
+      
+    </div>
+  
+</div>
+</div>
+              
+              
+
+<div id="jb-print-docs-body" class="onlyprint">
+    <h1>priors.Regularizer</h1>
+    <!-- Table of contents -->
+    <div id="print-main-content">
+        <div id="jb-print-toc">
+            
+            <div>
+                <h2> Contents </h2>
+            </div>
+            <nav aria-label="Page">
+                <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#bartorch.priors.Regularizer"><code class="docutils literal notranslate"><span class="pre">Regularizer</span></code></a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#bartorch.priors.Regularizer.kind"><code class="docutils literal notranslate"><span class="pre">Regularizer.kind</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#bartorch.priors.Regularizer.axes"><code class="docutils literal notranslate"><span class="pre">Regularizer.axes</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#bartorch.priors.Regularizer.joint_axes"><code class="docutils literal notranslate"><span class="pre">Regularizer.joint_axes</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#bartorch.priors.Regularizer.count"><code class="docutils literal notranslate"><span class="pre">Regularizer.count</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#bartorch.priors.Regularizer.build"><code class="docutils literal notranslate"><span class="pre">Regularizer.build()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#bartorch.priors.Regularizer.prox_shape"><code class="docutils literal notranslate"><span class="pre">Regularizer.prox_shape()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#bartorch.priors.Regularizer.prox"><code class="docutils literal notranslate"><span class="pre">Regularizer.prox()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#bartorch.priors.Regularizer.apply_transform"><code class="docutils literal notranslate"><span class="pre">Regularizer.apply_transform()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#bartorch.priors.Regularizer.transform"><code class="docutils literal notranslate"><span class="pre">Regularizer.transform()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#bartorch.priors.Regularizer.rewind"><code class="docutils literal notranslate"><span class="pre">Regularizer.rewind()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#bartorch.priors.Regularizer.transform_is_identity"><code class="docutils literal notranslate"><span class="pre">Regularizer.transform_is_identity()</span></code></a></li>
+</ul>
+</li>
+</ul>
+            </nav>
+        </div>
+    </div>
+</div>
+
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="priors-regularizer">
+<h1>priors.Regularizer<a class="headerlink" href="#priors-regularizer" title="Link to this heading">#</a></h1>
+<dl class="py class">
+<dt class="sig sig-object py" id="bartorch.priors.Regularizer">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">bartorch.priors.</span></span><span class="sig-name descname"><span class="pre">Regularizer</span></span><a class="headerlink" href="#bartorch.priors.Regularizer" title="Link to this definition">#</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">ABC</span></code></p>
+<p>Regularization functional with a proximal operator built by BART.</p>
+<p>A regularizer represents <span class="math notranslate nohighlight">\(g(G x)\)</span>: a linear transform <span class="math notranslate nohighlight">\(G\)</span> and
+the proximal operator of a functional <span class="math notranslate nohighlight">\(g\)</span> acting on its codomain.
+<span class="math notranslate nohighlight">\(G\)</span> is the identity for terms that penalize the image directly, and
+for terms carrying their own transform inside the proximal operator, such
+as <a class="reference internal" href="bartorch.priors.Wavelet.html#bartorch.priors.Wavelet" title="bartorch.priors.Wavelet"><code class="xref py py-class docutils literal notranslate"><span class="pre">Wavelet</span></code></a>; it is a genuine operator for terms
+such as <a class="reference internal" href="bartorch.priors.TotalVariation.html#bartorch.priors.TotalVariation" title="bartorch.priors.TotalVariation"><code class="xref py py-class docutils literal notranslate"><span class="pre">TotalVariation</span></code></a>, whose functional acts on
+finite differences.  Both come from BART’s <code class="docutils literal notranslate"><span class="pre">opt_reg_configure</span></code>.</p>
+<p>Only the alternating-direction and primal-dual iterations are given
+<span class="math notranslate nohighlight">\(G\)</span>; see <a class="reference internal" href="#bartorch.priors.Regularizer.transform_is_identity" title="bartorch.priors.Regularizer.transform_is_identity"><code class="xref py py-meth docutils literal notranslate"><span class="pre">transform_is_identity()</span></code></a>.</p>
+<p>Both are built per image shape and cached, and handed to a solver as they
+are, so solving twice with the same term builds nothing the second time.</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="bartorch.priors.Regularizer.kind">
+<span class="sig-name descname"><span class="pre">kind</span></span><a class="headerlink" href="#bartorch.priors.Regularizer.kind" title="Link to this definition">#</a></dt>
+<dd><p>BART’s identifier for the regularizer, the letter <code class="docutils literal notranslate"><span class="pre">opt_reg_configure</span></code>
+selects it by.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="bartorch.priors.Regularizer.axes">
+<span class="sig-name descname"><span class="pre">axes</span></span><a class="headerlink" href="#bartorch.priors.Regularizer.axes" title="Link to this definition">#</a></dt>
+<dd><p>Axes the term works over, as indices into the image’s shape.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>tuple of int</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="bartorch.priors.Regularizer.joint_axes">
+<span class="sig-name descname"><span class="pre">joint_axes</span></span><a class="headerlink" href="#bartorch.priors.Regularizer.joint_axes" title="Link to this definition">#</a></dt>
+<dd><p>Axes along which the term acts jointly.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>tuple of int</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="bartorch.priors.Regularizer.count">
+<span class="sig-name descname"><span class="pre">count</span></span><a class="headerlink" href="#bartorch.priors.Regularizer.count" title="Link to this definition">#</a></dt>
+<dd><p>Entries an NIHT term keeps; zero for every other term.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>int</p>
+</dd>
+</dl>
+</dd></dl>
+
+<p class="rubric">Examples</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">term</span> <span class="o">=</span> <span class="n">priors</span><span class="o">.</span><span class="n">Wavelet</span><span class="p">((</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">2</span><span class="p">),</span> <span class="mf">0.01</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">z</span> <span class="o">=</span> <span class="n">term</span><span class="o">.</span><span class="n">prox</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">)</span>                    <span class="c1"># BART's proximal operator, step 0.5</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">term</span><span class="o">.</span><span class="n">transform_is_identity</span><span class="p">((</span><span class="mi">64</span><span class="p">,</span> <span class="mi">64</span><span class="p">))</span>     <span class="c1"># G = I: every proximal solver takes it</span>
+<span class="go">True</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">priors</span><span class="o">.</span><span class="n">TotalVariation</span><span class="p">((</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">2</span><span class="p">),</span> <span class="mf">0.01</span><span class="p">)</span><span class="o">.</span><span class="n">transform_is_identity</span><span class="p">((</span><span class="mi">64</span><span class="p">,</span> <span class="mi">64</span><span class="p">))</span>
+<span class="go">False</span>
+</pre></div>
+</div>
+<dl class="py method">
+<dt class="sig sig-object py" id="bartorch.priors.Regularizer.build">
+<span class="sig-name descname"><span class="pre">build</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#bartorch.priors.Regularizer.build" title="Link to this definition">#</a></dt>
+<dd><p>The BART operator for this term over an image of C-order <code class="docutils literal notranslate"><span class="pre">shape</span></code>.</p>
+<p>Built on first use for each shape.  A term that draws random shifts
+is built once per <code class="docutils literal notranslate"><span class="pre">item</span></code> of a batch, so that each item draws the
+sequence it would draw alone.  The returned handle is owned by this
+term and freed with it.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="bartorch.priors.Regularizer.prox_shape">
+<span class="sig-name descname"><span class="pre">prox_shape</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#bartorch.priors.Regularizer.prox_shape" title="Link to this definition">#</a></dt>
+<dd><p>The C-order shape this term’s proximal operator works on.</p>
+<p>The image’s, for a term that carries its own transform inside the
+proximal operator, a wavelet term included.  A term
+whose transform is in front instead answers with the transform’s
+codomain: total variation thresholds the components of a gradient, and
+those are an axis of their own.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="bartorch.priors.Regularizer.prox">
+<span class="sig-name descname"><span class="pre">prox</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#bartorch.priors.Regularizer.prox" title="Link to this definition">#</a></dt>
+<dd><p><code class="docutils literal notranslate"><span class="pre">prox_{gamma</span> <span class="pre">g}(x)</span></code>, the operator BART’s solvers apply.</p>
+<p>Exposed directly so that an iteration written outside the library
+applies the same proximal operator the library would have.</p>
+<p>Raises a <code class="xref py py-class docutils literal notranslate"><span class="pre">ValueError</span></code> for a tensor that requires a gradient: no
+backward pass is implemented for BART’s proximal operators, and
+treating one as the identity would zero the gradient path through the
+regularizer.  Use <a class="reference internal" href="bartorch.priors.ImplicitPrior.html#bartorch.priors.ImplicitPrior" title="bartorch.priors.ImplicitPrior"><code class="xref py py-class docutils literal notranslate"><span class="pre">ImplicitPrior</span></code></a> for a
+differentiable proximal step, or <a class="reference internal" href="bartorch.priors.frozen.html#bartorch.priors.frozen" title="bartorch.priors.frozen"><code class="xref py py-func docutils literal notranslate"><span class="pre">frozen()</span></code></a> to hold this one fixed.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>x</strong> (<em>tensor</em>) – Of <a class="reference internal" href="#bartorch.priors.Regularizer.prox_shape" title="bartorch.priors.Regularizer.prox_shape"><code class="xref py py-meth docutils literal notranslate"><span class="pre">prox_shape()</span></code></a>, which for most terms is the image’s.</p></li>
+<li><p><strong>gamma</strong> (<em>float</em><em>, </em><em>default=1.0</em>) – The step the proximal operator is taken at.  The term’s own weight
+is already in the operator, so this is only the step.</p></li>
+<li><p><strong>image_shape</strong> (<em>tuple</em><em> of </em><em>int</em><em>, </em><em>default=None</em>) – The image the term was configured for, when that is not what <code class="docutils literal notranslate"><span class="pre">x</span></code>
+is shaped like – which is the case for total variation, whose
+proximal operator works on the components of a gradient.  By
+default <code class="docutils literal notranslate"><span class="pre">x</span></code>’s own shape, which is right for every other term.</p></li>
+<li><p><strong>item</strong> (<em>int</em><em>, </em><em>default=0</em>) – Which item of a batch <code class="docutils literal notranslate"><span class="pre">x</span></code> is; a term that draws random shifts
+keeps a generator per item.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>torch.Tensor</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<p>This is the proximal operator alone.  A term may also carry a linear
+transform in front of it – see <a class="reference internal" href="#bartorch.priors.Regularizer.transform" title="bartorch.priors.Regularizer.transform"><code class="xref py py-meth docutils literal notranslate"><span class="pre">transform()</span></code></a> – in which case a
+solver computes <code class="docutils literal notranslate"><span class="pre">prox(transform(x))</span></code>.  BART’s <code class="docutils literal notranslate"><span class="pre">iter2_ist</span></code> applies
+the proximal operator to the image and ignores the transform entirely,
+so IST and FISTA admit only terms whose transform is the identity; a
+total-variation term is excluded, its proximal operator not being
+shaped like an image.</p>
+<p class="rubric">Examples</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">priors</span><span class="o">.</span><span class="n">Wavelet</span><span class="p">((</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">2</span><span class="p">),</span> <span class="mf">0.01</span><span class="p">)</span><span class="o">.</span><span class="n">prox</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">gamma</span><span class="o">=</span><span class="mf">0.95</span><span class="p">)</span>
+</pre></div>
+</div>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="bartorch.priors.Regularizer.apply_transform">
+<span class="sig-name descname"><span class="pre">apply_transform</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#bartorch.priors.Regularizer.apply_transform" title="Link to this definition">#</a></dt>
+<dd><p>This term’s transform applied to <code class="docutils literal notranslate"><span class="pre">x</span></code>, without making an operator of it.</p>
+<p><a class="reference internal" href="#bartorch.priors.Regularizer.transform" title="bartorch.priors.Regularizer.transform"><code class="xref py py-meth docutils literal notranslate"><span class="pre">transform()</span></code></a> cannot answer for the gradient family – their
+components live on an axis past BART’s sixteen – and those are exactly
+the terms an alternating-direction solver is for.  This applies the
+transform over the shapes <a class="reference internal" href="#bartorch.priors.Regularizer.prox_shape" title="bartorch.priors.Regularizer.prox_shape"><code class="xref py py-meth docutils literal notranslate"><span class="pre">prox_shape()</span></code></a> reports instead, which a
+tensor can hold at any rank.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>x</strong> (<em>tensor</em>) – The image for <code class="docutils literal notranslate"><span class="pre">&quot;forward&quot;</span></code>, the proximal operator’s domain for
+<code class="docutils literal notranslate"><span class="pre">&quot;adjoint&quot;</span></code>, the image for <code class="docutils literal notranslate"><span class="pre">&quot;normal&quot;</span></code>.</p></li>
+<li><p><strong>image_shape</strong> (<em>tuple</em><em> of </em><em>int</em><em>, </em><em>default=None</em>) – What the term was configured for; by default <code class="docutils literal notranslate"><span class="pre">x</span></code>’s own shape,
+which is right whenever the transform starts from the image.</p></li>
+<li><p><strong>mode</strong> (<em>{&quot;forward&quot;</em><em>, </em><em>&quot;adjoint&quot;</em><em>, </em><em>&quot;normal&quot;}</em><em>, </em><em>default='forward'</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>torch.Tensor</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<p>Recorded for autograd when <code class="docutils literal notranslate"><span class="pre">x</span></code> carries a gradient: the backward pass
+is the transpose, which is the other of <code class="docutils literal notranslate"><span class="pre">forward</span></code> and <code class="docutils literal notranslate"><span class="pre">adjoint</span></code>,
+and <code class="docutils literal notranslate"><span class="pre">normal</span></code> itself.  An unrolled network differentiates through the
+transform this way; the proximal operator behind it is BART’s and has
+no implemented backward pass, which is why
+<a class="reference internal" href="bartorch.priors.ImplicitPrior.html#bartorch.priors.ImplicitPrior" title="bartorch.priors.ImplicitPrior"><code class="xref py py-class docutils literal notranslate"><span class="pre">ImplicitPrior</span></code></a> exists.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="bartorch.priors.Regularizer.transform">
+<span class="sig-name descname"><span class="pre">transform</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#bartorch.priors.Regularizer.transform" title="Link to this definition">#</a></dt>
+<dd><p>The operator BART puts in front of this term’s proximal operator.</p>
+<p>The identity for a term that carries its transform inside the proximal
+operator instead.  The shapes do not say which arrangement a term is:
+the Laplace term’s transform is a real convolution whose codomain is
+shaped like the image, so a caller inferring the arrangement from the
+shape would omit it without noticing.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="bartorch.linop.LinearOperator.html#bartorch.linop.LinearOperator" title="bartorch.linop.LinearOperator">LinearOperator</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="bartorch.priors.Regularizer.rewind">
+<span class="sig-name descname"><span class="pre">rewind</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#bartorch.priors.Regularizer.rewind" title="Link to this definition">#</a></dt>
+<dd><p>Put this term’s own random generator back to where it started.</p>
+<p>A wavelet threshold spins its transform by a shift drawn from a
+generator of its own, seeded at one when BART makes the operator.  The
+tool builds a fresh operator per run; a term here is kept, so a solve
+rewinds it and a reused term answers as the tool does.  Every solver
+does this before it iterates, whether the loop is BART’s or written
+out here; a term with no such generator is left alone.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="bartorch.priors.Regularizer.transform_is_identity">
+<span class="sig-name descname"><span class="pre">transform_is_identity</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#bartorch.priors.Regularizer.transform_is_identity" title="Link to this definition">#</a></dt>
+<dd><p>Whether the term’s linear transform is the identity, as BART decides it.</p>
+<p>Decided by <code class="docutils literal notranslate"><span class="pre">linop_is_identity</span></code> on the operator, not by comparing
+shapes: the Laplace term’s transform is a convolution on the image’s
+own shape, and total variation’s has a rank BART cannot hand over at
+all.  <code class="docutils literal notranslate"><span class="pre">iter2_chambolle_pock</span></code> asks this of the first term before
+treating it as the primal proximal step rather than a dual one.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>bool</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+</section>
+
+
+                </article>
+              
+
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item"><div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> Contents
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#bartorch.priors.Regularizer"><code class="docutils literal notranslate"><span class="pre">Regularizer</span></code></a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#bartorch.priors.Regularizer.kind"><code class="docutils literal notranslate"><span class="pre">Regularizer.kind</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#bartorch.priors.Regularizer.axes"><code class="docutils literal notranslate"><span class="pre">Regularizer.axes</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#bartorch.priors.Regularizer.joint_axes"><code class="docutils literal notranslate"><span class="pre">Regularizer.joint_axes</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#bartorch.priors.Regularizer.count"><code class="docutils literal notranslate"><span class="pre">Regularizer.count</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#bartorch.priors.Regularizer.build"><code class="docutils literal notranslate"><span class="pre">Regularizer.build()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#bartorch.priors.Regularizer.prox_shape"><code class="docutils literal notranslate"><span class="pre">Regularizer.prox_shape()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#bartorch.priors.Regularizer.prox"><code class="docutils literal notranslate"><span class="pre">Regularizer.prox()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#bartorch.priors.Regularizer.apply_transform"><code class="docutils literal notranslate"><span class="pre">Regularizer.apply_transform()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#bartorch.priors.Regularizer.transform"><code class="docutils literal notranslate"><span class="pre">Regularizer.transform()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#bartorch.priors.Regularizer.rewind"><code class="docutils literal notranslate"><span class="pre">Regularizer.rewind()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#bartorch.priors.Regularizer.transform_is_identity"><code class="docutils literal notranslate"><span class="pre">Regularizer.transform_is_identity()</span></code></a></li>
+</ul>
+</li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+<div class="bd-footer-content__inner container">
+  
+  <div class="footer-item">
+    
+<p class="component-author">
+By bartorch contributors
+</p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+
+  <p class="copyright">
+    
+      © Copyright 2024–2026, bartorch contributors.
+      <br/>
+    
+  </p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+</div>
+          </footer>
+        
+
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9"></script>
+<script defer src="../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9"></script>
+
+  <footer class="bd-footer">
+  </footer>
+  </body>
+</html>

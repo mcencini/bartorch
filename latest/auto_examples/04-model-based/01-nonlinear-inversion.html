@@ -1,0 +1,785 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Nonlinear inversion &#8212; bartorch</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../_static/styles/sphinx-book-theme.css?v=4418a689" />
+    <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery.css?v=c83e6b79" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../../_static/custom.css?v=0739d252" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../_static/scripts/fontawesome.js?digest=90905a2f556bf617f1a9"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9" />
+
+    <script src="../../_static/documentation_options.js?v=b1def801"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../_static/copybutton.js?v=a5fa425f"></script>
+    <script src="../../_static/sg-tags.js?v=d80f6fa4"></script>
+    <script src="../../_static/scripts/sphinx-book-theme.js?v=fab101a9"></script>
+    <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'auto_examples/04-model-based/01-nonlinear-inversion';</script>
+    <script>
+        DOCUMENTATION_OPTIONS.theme_version = '0.20.0';
+        DOCUMENTATION_OPTIONS.theme_switcher_json_url = 'https://mcencini.github.io/bartorch/versions.json';
+        DOCUMENTATION_OPTIONS.theme_switcher_version_match = 'latest';
+        DOCUMENTATION_OPTIONS.show_version_warning_banner =
+            true;
+        </script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="canonical" href="https://mcencini.github.io/bartorch/latest/auto_examples/04-model-based/01-nonlinear-inversion.html" />
+    <link rel="icon" href="../../_static/bartorch-mark.svg"/>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Parameter maps straight from k-space" href="02-quantitative-models.html" />
+    <link rel="prev" title="Model-based reconstruction" href="index.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="latest" />
+  
+    
+    <script src="../../_static/searchtools.js"></script>
+    <script src="../../_static/language_data.js"></script>
+    <script src="../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search..."
+         aria-label="Search..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/bartorch-mark.svg" class="logo__image only-light" alt="bartorch"/>
+    <img src="../../_static/bartorch-mark-dark.svg" class="logo__image only-dark pst-js-only" alt="bartorch"/>
+  
+  
+</a></div>
+        <div class="sidebar-primary-item">
+<div class="version-switcher__container dropdown pst-js-only">
+  <button id="pst-version-switcher-button-2"
+    type="button"
+    class="version-switcher__button btn btn-sm dropdown-toggle"
+    data-bs-toggle="dropdown"
+    aria-haspopup="listbox"
+    aria-controls="pst-version-switcher-list-2"
+    aria-label="Version switcher list"
+  >
+    Choose version  <!-- this text may get changed later by javascript -->
+    <span class="caret"></span>
+  </button>
+  <div id="pst-version-switcher-list-2"
+    class="version-switcher__menu dropdown-menu list-group-flush py-0"
+    role="listbox" aria-labelledby="pst-version-switcher-button-2">
+    <!-- dropdown will be populated by javascript on page load -->
+  </div>
+</div></div>
+        <div class="sidebar-primary-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
+    <div class="bd-toc-item navbar-nav active">
+        
+        <ul class="nav bd-sidenav bd-sidenav__home-link">
+            <li class="toctree-l1">
+                <a class="reference internal" href="../../index.html">
+                    Homepage
+                </a>
+            </li>
+        </ul>
+        <ul class="current nav bd-sidenav">
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../guides/user/index.html">User guide</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/user/prerequisites.html">Prerequisites and supported platforms</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/user/installation.html">Installation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/user/conventions.html">Data layout and conventions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/user/issues.html">Reporting issues</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/user/discussions.html">Questions and proposals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/user/security.html">Security</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../guides/developer/index.html">Developer guide</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/developer/prerequisites.html">Development prerequisites</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/developer/installation.html">Editable and source installation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/developer/layout.html">Repository layout</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/developer/workflow.html">Development workflow</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/developer/pre-commit.html">Pre-commit hooks</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/developer/style.html">Coding style</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/developer/documentation.html">Documentation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/developer/terminology.html">Terminology and conventions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/developer/pull-requests.html">Pull requests</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../guides/developer/code-of-conduct.html">Code of conduct</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../explanation/index.html">Explanation</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/execution-model.html">Interfaces and execution</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/inverse-problems.html">Inverse problems and their solvers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/encoding.html">The MRI encoding operator</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/non-cartesian.html">Non-Cartesian sampling</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/nonlinear.html">Nonlinear forward models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/differentiation.html">Differentiation through reconstruction</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="../../examples/index.html">Examples</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="../01-basics/index.html">Basics</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../02-non-cartesian/index.html">Non-Cartesian imaging</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../03-applications/index.html">Applications</a></li>
+<li class="toctree-l2 current active"><a class="reference internal" href="index.html">Model-based reconstruction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../05-deep-learning/index.html">Deep learning</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../api/index.html">API reference</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../api/functions.html">Array functions and settings</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/tools.html">BART commands as functions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/linop.html">Linear operators</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/nlop.html">Nonlinear operators</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/optim.html">Optimization</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/priors.html">Regularization and denoising</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/apps.html">Reconstruction pipelines</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/learning.html">Learning</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/interop.html">Interoperability</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/io.html">File I/O</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../api/cli.html">Command line</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../misc/index.html">Miscellaneous</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../misc/license.html">License and third-party notices</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../misc/related_projects.html">Related projects</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../misc/contributors.html">Contributors and citation</a></li>
+</ul>
+</details></li>
+</ul>
+
+    </div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+
+<div class="sbt-scroll-pixel-helper"></div>
+
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item"><button class="sidebar-toggle primary-toggle btn btn-sm" title="Toggle primary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <span class="fa-solid fa-bars"></span>
+</button></div>
+      
+    </div>
+  
+  
+    <div class="header-article-items__end">
+      
+        <div class="header-article-item">
+
+<div class="article-header-buttons">
+
+
+
+
+
+<div class="dropdown dropdown-source-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Source repositories">
+    <i class="fab fa-github"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="https://github.com/mcencini/bartorch" target="_blank"
+   class="btn btn-sm btn-source-repository-button dropdown-item"
+   title="Source repository"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fab fa-github"></i>
+  </span>
+<span class="btn__text-container">Repository</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li><a href="https://github.com/mcencini/bartorch/edit/main/docs/auto_examples/04-model-based/01-nonlinear-inversion.rst" target="_blank"
+   class="btn btn-sm btn-source-edit-button dropdown-item"
+   title="Suggest edit"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-pencil-alt"></i>
+  </span>
+<span class="btn__text-container">Suggest edit</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li><a href="https://github.com/mcencini/bartorch/issues/new?title=Issue%20on%20page%20%2Fauto_examples/04-model-based/01-nonlinear-inversion.html&body=Your%20issue%20content%20here." target="_blank"
+   class="btn btn-sm btn-source-issues-button dropdown-item"
+   title="Open an issue"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-lightbulb"></i>
+  </span>
+<span class="btn__text-container">Open issue</span>
+</a>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+
+
+<div class="dropdown dropdown-download-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Download this page">
+    <i class="fas fa-download"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="../../_sources/auto_examples/04-model-based/01-nonlinear-inversion.rst" target="_blank"
+   class="btn btn-sm btn-download-source-button dropdown-item"
+   title="Download source file"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file"></i>
+  </span>
+<span class="btn__text-container">.rst</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li>
+<button onclick="window.print()"
+  class="btn btn-sm btn-download-pdf-button dropdown-item"
+  title="Print to PDF"
+  data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file-pdf"></i>
+  </span>
+<span class="btn__text-container">.pdf</span>
+</button>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+<button onclick="toggleFullScreen()"
+  class="btn btn-sm btn-fullscreen-button pst-navbar-icon"
+  title="Fullscreen mode"
+  data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-expand"></i>
+  </span>
+
+</button>
+
+
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div>
+
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+<button class="sidebar-toggle secondary-toggle btn btn-sm pst-navbar-icon" title="Toggle secondary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="fa-solid fa-list"></span>
+</button>
+</div></div>
+      
+    </div>
+  
+</div>
+</div>
+              
+              
+
+<div id="jb-print-docs-body" class="onlyprint">
+    <h1>Nonlinear inversion</h1>
+    <!-- Table of contents -->
+    <div id="print-main-content">
+        <div id="jb-print-toc">
+            
+            <div>
+                <h2> Contents </h2>
+            </div>
+            <nav aria-label="Page">
+                <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-application">The application</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-model-and-the-solver">The model and the solver</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#references">References</a></li>
+</ul>
+            </nav>
+        </div>
+    </div>
+</div>
+
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <div class="sphx-glr-download-link-note admonition note">
+<p class="admonition-title">Note</p>
+<p><a class="reference internal" href="#sphx-glr-download-auto-examples-04-model-based-01-nonlinear-inversion-py"><span class="std std-ref">Go to the end</span></a>
+to download the full example code.</p>
+</div>
+<section class="sphx-glr-example-title" id="nonlinear-inversion">
+<span id="sphx-glr-auto-examples-04-model-based-01-nonlinear-inversion-py"></span><h1>Nonlinear inversion<a class="headerlink" href="#nonlinear-inversion" title="Link to this heading">#</a></h1>
+<a class="reference external image-reference" href="https://colab.research.google.com/github/mcencini/bartorch/blob/gh-pages/latest/_colab/04-model-based/01-nonlinear-inversion.ipynb"><img alt="Open in Colab" class="colab-badge" src="https://colab.research.google.com/assets/colab-badge.svg" />
+</a>
+<p>Estimating the image and the coil sensitivities together, from undersampled
+data whose fully sampled central region is too small for a separate
+calibration.</p>
+<p>ESPIRiT <a class="footnote-reference brackets" href="#espirit" id="id1" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a> estimates the sensitivities from a fully sampled region at
+the centre of k-space, and a linear reconstruction then uses them as known.
+Where the acquisition provides no such region, the sensitivities are unknowns
+like the image,
+and the forward model</p>
+<div class="math notranslate nohighlight">
+\[y_c = P F (S_c \cdot x)\]</div>
+<p>is bilinear rather than linear: it is a product of two unknowns. Nonlinear
+inversion (<code class="docutils literal notranslate"><span class="pre">nlinv</span></code>) <a class="footnote-reference brackets" href="#nlinv" id="id2" role="doc-noteref"><span class="fn-bracket">[</span>2<span class="fn-bracket">]</span></a> solves it by iteratively regularized
+Gauss-Newton <a class="footnote-reference brackets" href="#bakushinsky" id="id3" role="doc-noteref"><span class="fn-bracket">[</span>3<span class="fn-bracket">]</span></a>, and
+the smoothness of the sensitivities, which constrains the factorization,
+enters as a weighting inside the model rather than as a penalty beside it.</p>
+<p>The phantom and the coil sensitivities are built as in
+<a class="reference internal" href="../01-basics/01-from-kspace-to-image.html"><span class="doc">From k-space to image</span></a>; the cell that does it is hidden on
+this page and present in the script this page can be downloaded as.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span class="kn">import</span><span class="w"> </span><span class="nn">csv</span><span class="w">
+</span><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span><span class="w">
+</span><span class="w">
+</span><span class="kn">import</span><span class="w"> </span><span class="nn">brainweb_dl</span><span class="w">
+</span><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span><span class="w">
+</span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span><span class="w">
+</span><span class="kn">from</span><span class="w"> </span><span class="nn">brainweb_dl</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_mri</span><span class="w">
+</span><span class="w">
+</span><span class="kn">import</span><span class="w"> </span><span class="nn">bartorch</span><span class="w">
+</span><span class="kn">import</span><span class="w"> </span><span class="nn">bartorch</span><span class="nn">.</span><span class="nn">tools</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">bt</span><span class="w">
+</span><span class="kn">from</span><span class="w"> </span><span class="nn">bartorch</span><span class="w"> </span><span class="kn">import</span> <span class="n">nlop</span><span class="w">
+</span><span class="w">
+</span><span class="n">SIZE</span> <span class="o">=</span> <span class="mi">128</span><span class="w">
+</span><span class="n">COILS</span> <span class="o">=</span> <span class="mi">8</span><span class="w">
+</span><span class="n">ACCELERATION</span> <span class="o">=</span> <span class="mi">3</span><span class="w">
+</span><span class="n">CALIBRATION</span> <span class="o">=</span> <span class="mi">6</span>  <span class="c1"># lines at the centre, far fewer than ESPIRiT needs</span><span class="w">
+</span><span class="w">
+</span><span class="w">
+</span><span class="w">
+</span><span class="w">
+</span><span class="n">pattern</span> <span class="o">=</span> <span class="n">lines</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">SIZE</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">complex64</span><span class="p">)</span><span class="w">
+</span><span class="n">measured</span> <span class="o">=</span> <span class="n">kspace</span><span class="p">[</span><span class="p">:</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span> <span class="o">*</span> <span class="n">pattern</span><span class="w">
+</span><span class="w">
+</span><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><span class="n">lines</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="p">)</span><span class="p">)</span><span class="si">:</span><span class="s2">.0%</span><span class="si">}</span><span class="s2"> of the phase encodes, </span><span class="si">{</span><span class="n">CALIBRATION</span><span class="si">}</span><span class="s2"> of them at the centre</span><span class="s2">&quot;</span><span class="p">)</span><span class="w">
+</span></pre></div></div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>32% of the phase encodes, 6 of them at the centre
+</pre></div>
+</div>
+<p>Six central lines locate the centre of k-space. With ESPIRiT’s default
+kernel of six points, a calibration region of six lines leaves a single
+kernel position along the phase-encoding axis, too few rows for the
+calibration matrix of <a class="reference internal" href="../../generated/bartorch.tools.ecalib.html#bartorch.tools.ecalib" title="bartorch.tools.ecalib"><code class="xref py py-func docutils literal notranslate"><span class="pre">bartorch.tools.ecalib()</span></code></a>.</p>
+<section id="the-application">
+<h2>The application<a class="headerlink" href="#the-application" title="Link to this heading">#</a></h2>
+<p><a class="reference internal" href="../../generated/bartorch.tools.nlinv.html#bartorch.tools.nlinv" title="bartorch.tools.nlinv"><code class="xref py py-func docutils literal notranslate"><span class="pre">bartorch.tools.nlinv()</span></code></a> takes the k-space and returns the image and,
+when asked, the sensitivities it estimated along the way. Its iteration count
+is Gauss-Newton steps rather than linear iterations, and it is a
+regularization parameter rather than a convergence threshold: the
+regularization weight is halved after every step, so stopping early leaves a
+smoother image and running longer eventually lets the noise in. Eight steps
+is BART’s default; twelve are used here.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span class="n">STEPS</span> <span class="o">=</span> <span class="mi">12</span><span class="w">
+</span><span class="w">
+</span><span class="n">reconstruction</span><span class="p">,</span> <span class="n">estimated</span> <span class="o">=</span> <a class="sphx-glr-backref-module-bartorch-tools sphx-glr-backref-type-py-function reference internal" href="../../generated/bartorch.tools.nlinv.html#bartorch.tools.nlinv" title="bartorch.tools.nlinv"><span class="n">bt</span><span class="o">.</span><span class="n">nlinv</span></a><span class="p">(</span><span class="n">measured</span><span class="p">,</span> <span class="n">maxiter</span><span class="o">=</span><span class="n">STEPS</span><span class="p">,</span> <span class="n">return_sensitivities</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="w">
+</span><span class="w">
+</span><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="s2">NRMSE </span><span class="si">{</span><a class="sphx-glr-backref-module-bartorch-tools sphx-glr-backref-type-py-function reference internal" href="../../generated/bartorch.tools.nrmse.html#bartorch.tools.nrmse" title="bartorch.tools.nrmse"><span class="n">bt</span><span class="o">.</span><span class="n">nrmse</span></a><span class="p">(</span><span class="n">image</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="p">)</span><span class="p">,</span><span class="w"> </span><span class="n">reconstruction</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="p">)</span><span class="p">,</span><span class="w"> </span><span class="n">scaled</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span><span class="w">
+</span></pre></div></div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>NRMSE 0.078
+</pre></div>
+</div>
+<ul class="sphx-glr-horizontal">
+<li><img src="../../_images/sphx_glr_01-nonlinear-inversion_001.png" srcset="../../_images/sphx_glr_01-nonlinear-inversion_001.png" alt="phantom, nlinv, root sum of squares of the maps" class = "sphx-glr-multi-img"/></li>
+<li><img src="../../_images/sphx_glr_01-nonlinear-inversion_002.png" srcset="../../_images/sphx_glr_01-nonlinear-inversion_002.png" alt="channel 0, channel 1, channel 2, channel 3" class = "sphx-glr-multi-img"/></li>
+</ul>
+<p>The estimated sensitivities are smooth by construction rather than by
+agreement with the data: the coil unknown is
+not the sensitivity map but its k-space representation
+<span class="math notranslate nohighlight">\(\hat{s}\)</span>, and the map follows as
+<span class="math notranslate nohighlight">\(S = \mathcal{F}^{-1}[(1 + a|k|^2)^{-b/2} \hat{s}]\)</span>. A step in the
+unknown is therefore a smooth change in the map by construction, and the
+joint problem needs no separate penalty on the coils. The pair is determined
+only up to a common factor: multiplying every map by a nonzero function
+<span class="math notranslate nohighlight">\(\gamma(r)\)</span> and dividing the image by it leaves the data unchanged
+(<a class="reference internal" href="../../explanation/nonlinear.html"><span class="doc">Nonlinear forward models</span></a>). The smoothness weighting restricts
+<span class="math notranslate nohighlight">\(\gamma\)</span> to smooth functions, which is why the two rows above are drawn
+on their own scales and why a nonlinear inversion is reported after
+normalizing by the root sum of squares of the maps. Outside the object
+neither factor is determined at all – their product is zero for any pair –
+so what is drawn there follows from the initialization and the weighting.</p>
+</section>
+<section id="the-model-and-the-solver">
+<h2>The model and the solver<a class="headerlink" href="#the-model-and-the-solver" title="Link to this heading">#</a></h2>
+<p><a class="reference internal" href="../../generated/bartorch.nlop.NonlinearSense.html#bartorch.nlop.NonlinearSense" title="bartorch.nlop.NonlinearSense"><code class="xref py py-class docutils literal notranslate"><span class="pre">bartorch.nlop.NonlinearSense</span></code></a> is that forward model as a nonlinear
+operator with two inputs, and <a class="reference internal" href="../../generated/bartorch.nlop.IRGNM.html#bartorch.nlop.IRGNM" title="bartorch.nlop.IRGNM"><code class="xref py py-class docutils literal notranslate"><span class="pre">bartorch.nlop.IRGNM</span></code></a> is the
+Gauss-Newton loop over it. Each step linearizes the model at the current
+point <span class="math notranslate nohighlight">\(x_k\)</span> and solves</p>
+<div class="math notranslate nohighlight">
+\[\min_x \, \| DF_{x_k} (x - x_k) - (y - F(x_k)) \|^2
++ \alpha_k \| x - x_{\mathrm{ref}} \|^2,\]</div>
+<p>with <span class="math notranslate nohighlight">\(x_{\mathrm{ref}}\)</span> zero unless one is given and <span class="math notranslate nohighlight">\(\alpha_k\)</span>
+halved after every step, so the first steps are heavily regularized and the
+later ones are not.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><a class="sphx-glr-backref-module-bartorch-nlop sphx-glr-backref-type-py-class sphx-glr-backref-instance reference internal" href="../../generated/bartorch.nlop.NonlinearSense.html#bartorch.nlop.NonlinearSense" title="bartorch.nlop.NonlinearSense"><span class="n">model</span></a> <span class="o">=</span> <a class="sphx-glr-backref-module-bartorch-nlop sphx-glr-backref-type-py-class reference internal" href="../../generated/bartorch.nlop.NonlinearSense.html#bartorch.nlop.NonlinearSense" title="bartorch.nlop.NonlinearSense"><span class="n">nlop</span><span class="o">.</span><span class="n">NonlinearSense</span></a><span class="p">(</span><span class="w">
+</span>    <span class="p">(</span><span class="n">COILS</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">SIZE</span><span class="p">,</span> <span class="n">SIZE</span><span class="p">)</span><span class="p">,</span> <span class="n">pattern</span><span class="o">=</span><span class="n">lines</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">SIZE</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">complex64</span><span class="p">)</span><span class="w">
+</span><span class="p">)</span><span class="w">
+</span><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="s2">inputs </span><span class="si">{</span><a class="sphx-glr-backref-module-bartorch-nlop sphx-glr-backref-type-py-class sphx-glr-backref-instance reference internal" href="../../generated/bartorch.nlop.NonlinearSense.html#bartorch.nlop.NonlinearSense" title="bartorch.nlop.NonlinearSense"><span class="n">model</span></a><span class="o">.</span><span class="n">ishapes</span><span class="si">}</span><span class="s2"> -&gt; output </span><span class="si">{</span><a class="sphx-glr-backref-module-bartorch-nlop sphx-glr-backref-type-py-class sphx-glr-backref-instance reference internal" href="../../generated/bartorch.nlop.NonlinearSense.html#bartorch.nlop.NonlinearSense" title="bartorch.nlop.NonlinearSense"><span class="n">model</span></a><span class="o">.</span><span class="n">oshapes</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span><span class="w">
+</span></pre></div></div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>inputs ((1, 1, 128, 128), (8, 1, 128, 128)) -&gt; output ((8, 1, 128, 128),)
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">nlinv</span></code> scales the data by <code class="docutils literal notranslate"><span class="pre">100</span> <span class="pre">/</span> <span class="pre">||y||</span></code> before it starts, which fixes
+the meaning of <span class="math notranslate nohighlight">\(\alpha\)</span>, and takes its conjugate gradients to a hundred
+iterations or a tolerance of a tenth. Given the same three settings the loop
+written here is the application.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span class="n">data</span> <span class="o">=</span> <a class="sphx-glr-backref-module-bartorch-nlop sphx-glr-backref-type-py-method reference internal" href="../../generated/bartorch.nlop.NonlinearSense.html#bartorch.nlop.NonlinearSense.prepare" title="bartorch.nlop.NonlinearSense.prepare"><span class="n">model</span><span class="o">.</span><span class="n">prepare</span></a><span class="p">(</span><span class="n">measured</span> <span class="o">*</span> <span class="p">(</span><span class="mf">100.0</span> <span class="o">/</span> <span class="nb">float</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">vector_norm</span><span class="p">(</span><span class="n">measured</span><span class="p">)</span><span class="p">)</span><span class="p">)</span><span class="p">)</span><span class="w">
+</span><span class="n">fitted</span><span class="p">,</span> <span class="n">coefficients</span> <span class="o">=</span> <a class="sphx-glr-backref-module-bartorch-nlop sphx-glr-backref-type-py-class reference internal" href="../../generated/bartorch.nlop.IRGNM.html#bartorch.nlop.IRGNM" title="bartorch.nlop.IRGNM"><span class="n">nlop</span><span class="o">.</span><span class="n">IRGNM</span></a><span class="p">(</span><span class="n">iterations</span><span class="o">=</span><span class="n">STEPS</span><span class="p">,</span> <span class="n">cg_maxiter</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span> <span class="n">cg_tol</span><span class="o">=</span><span class="mf">0.1</span><span class="p">)</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <a class="sphx-glr-backref-module-bartorch-nlop sphx-glr-backref-type-py-class sphx-glr-backref-instance reference internal" href="../../generated/bartorch.nlop.NonlinearSense.html#bartorch.nlop.NonlinearSense" title="bartorch.nlop.NonlinearSense"><span class="n">model</span></a><span class="p">)</span><span class="w">
+</span><span class="w">
+</span><span class="n">maps</span> <span class="o">=</span> <a class="sphx-glr-backref-module-bartorch-nlop sphx-glr-backref-type-py-property reference internal" href="../../generated/bartorch.nlop.NonlinearSense.html#bartorch.nlop.NonlinearSense.coils" title="bartorch.nlop.NonlinearSense.coils"><span class="n">model</span><span class="o">.</span><span class="n">coils</span></a><span class="p">(</span><span class="n">coefficients</span><span class="p">)</span><span class="w">
+</span><span class="n">combined</span> <span class="o">=</span> <span class="n">fitted</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="p">)</span> <span class="o">*</span> <a class="sphx-glr-backref-module-bartorch sphx-glr-backref-type-py-function reference internal" href="../../generated/bartorch.rss.html#bartorch.rss" title="bartorch.rss"><span class="n">bartorch</span><span class="o">.</span><span class="n">rss</span></a><span class="p">(</span><span class="n">maps</span><span class="p">[</span><span class="p">:</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span><span class="p">,</span> <span class="n">axes</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="p">)</span><span class="p">)</span><span class="w">
+</span><span class="w">
+</span><span class="n">difference</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="w">
+</span>    <span class="p">(</span><span class="n">fitted</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="p">)</span> <span class="o">-</span> <a class="sphx-glr-backref-module-bartorch-tools sphx-glr-backref-type-py-function reference internal" href="../../generated/bartorch.tools.nlinv.html#bartorch.tools.nlinv" title="bartorch.tools.nlinv"><span class="n">bt</span><span class="o">.</span><span class="n">nlinv</span></a><span class="p">(</span><span class="n">measured</span><span class="p">,</span> <span class="n">maxiter</span><span class="o">=</span><span class="n">STEPS</span><span class="p">,</span> <span class="n">normalize</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span><span class="p">)</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="p">)</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="p">)</span><span class="w">
+</span><span class="p">)</span><span class="w">
+</span><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="s2">largest difference from nlinv: </span><span class="si">{</span><span class="n">difference</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="nb">float</span><span class="p">(</span><span class="n">fitted</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="p">)</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="p">)</span><span class="p">)</span><span class="si">:</span><span class="s2">.1e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span><span class="w">
+</span><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="s2">NRMSE </span><span class="si">{</span><a class="sphx-glr-backref-module-bartorch-tools sphx-glr-backref-type-py-function reference internal" href="../../generated/bartorch.tools.nrmse.html#bartorch.tools.nrmse" title="bartorch.tools.nrmse"><span class="n">bt</span><span class="o">.</span><span class="n">nrmse</span></a><span class="p">(</span><span class="n">image</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="p">)</span><span class="p">,</span><span class="w"> </span><span class="n">combined</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="p">)</span><span class="p">,</span><span class="w"> </span><span class="n">scaled</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span><span class="w">
+</span></pre></div></div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>largest difference from nlinv: 1.0e-03
+NRMSE 0.078
+</pre></div>
+</div>
+<p>The two agree to single-precision round-off rather than to the last bit,
+because the scaling above is computed here and inside the application by
+different expressions.</p>
+<p>What the operator layer adds is everything around the step. The linearized
+problem can go to a solver from <code class="xref py py-mod docutils literal notranslate"><span class="pre">bartorch.optim</span></code> instead of the
+conjugate gradients inside the library (<code class="docutils literal notranslate"><span class="pre">inner=optim.CG()</span></code> is the same
+method written out, and a regularized solver makes the step a regularized
+one), the loop can be unrolled as <a class="reference internal" href="../../generated/bartorch.nlop.IRGNMBlock.html#bartorch.nlop.IRGNMBlock" title="bartorch.nlop.IRGNMBlock"><code class="xref py py-class docutils literal notranslate"><span class="pre">bartorch.nlop.IRGNMBlock</span></code></a>, and a
+Gauss-Newton step is differentiable with respect to the data, the iterate,
+the regularization centre and <span class="math notranslate nohighlight">\(\alpha\)</span>
+(<a class="reference internal" href="../../explanation/differentiation.html"><span class="doc">Differentiation through reconstruction</span></a>).</p>
+<p>Reconstructing parameter maps rather than an image, by putting a signal model
+in front of the same encoding, is <a class="reference internal" href="02-quantitative-models.html"><span class="doc">Parameter maps straight from k-space</span></a>.</p>
+</section>
+<section id="references">
+<h2>References<a class="headerlink" href="#references" title="Link to this heading">#</a></h2>
+<aside class="footnote-list brackets">
+<aside class="footnote brackets" id="espirit" role="doc-footnote">
+<span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id1">1</a><span class="fn-bracket">]</span></span>
+<p>Uecker M, Lai P, Murphy MJ, Virtue P, Elad M, Pauly JM, Vasanawala SS,
+Lustig M. ESPIRiT – an eigenvalue approach to autocalibrating parallel
+MRI: where SENSE meets GRAPPA. <em>Magn Reson Med</em> 71(3):990-1001 (2014).
+<a class="reference external" href="https://doi.org/10.1002/mrm.24751">https://doi.org/10.1002/mrm.24751</a></p>
+</aside>
+<aside class="footnote brackets" id="nlinv" role="doc-footnote">
+<span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id2">2</a><span class="fn-bracket">]</span></span>
+<p>Uecker M, Hohage T, Block KT, Frahm J. Image reconstruction by regularized
+nonlinear inversion – joint estimation of coil sensitivities and image
+content. <em>Magn Reson Med</em> 60(3):674-682 (2008).
+<a class="reference external" href="https://doi.org/10.1002/mrm.21691">https://doi.org/10.1002/mrm.21691</a></p>
+</aside>
+<aside class="footnote brackets" id="bakushinsky" role="doc-footnote">
+<span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id3">3</a><span class="fn-bracket">]</span></span>
+<p>Bakushinsky AB, Kokurin MY. <em>Iterative Methods for Approximate Solution of
+Inverse Problems.</em> Springer (2004).
+<a class="reference external" href="https://doi.org/10.1007/978-1-4020-3122-9">https://doi.org/10.1007/978-1-4020-3122-9</a></p>
+</aside>
+</aside>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 4.560 seconds)</p>
+<div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-auto-examples-04-model-based-01-nonlinear-inversion-py">
+<div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
+<p><a class="reference download internal" download="" href="../../_downloads/4c207fcbe895326c9c79d049c2646209/01-nonlinear-inversion.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">01-nonlinear-inversion.ipynb</span></code></a></p>
+</div>
+<div class="sphx-glr-download sphx-glr-download-python docutils container">
+<p><a class="reference download internal" download="" href="../../_downloads/9c1e69538225aa6d4de4f28bccf789b9/01-nonlinear-inversion.py"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Python</span> <span class="pre">source</span> <span class="pre">code:</span> <span class="pre">01-nonlinear-inversion.py</span></code></a></p>
+</div>
+<div class="sphx-glr-download sphx-glr-download-zip docutils container">
+<p><a class="reference download internal" download="" href="../../_downloads/09220827aa01f88450b7af93eee087fd/01-nonlinear-inversion.zip"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">zipped:</span> <span class="pre">01-nonlinear-inversion.zip</span></code></a></p>
+</div>
+</div>
+<p class="sphx-glr-signature"><a class="reference external" href="https://sphinx-gallery.github.io">Gallery generated by Sphinx-Gallery</a></p>
+</section>
+</section>
+
+
+                </article>
+              
+
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="index.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Model-based reconstruction</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="02-quantitative-models.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Parameter maps straight from k-space</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item"><div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> Contents
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-application">The application</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-model-and-the-solver">The model and the solver</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#references">References</a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+<div class="bd-footer-content__inner container">
+  
+  <div class="footer-item">
+    
+<p class="component-author">
+By bartorch contributors
+</p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+
+  <p class="copyright">
+    
+      © Copyright 2024–2026, bartorch contributors.
+      <br/>
+    
+  </p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+</div>
+          </footer>
+        
+
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9"></script>
+
+  <footer class="bd-footer">
+  </footer>
+  </body>
+</html>
