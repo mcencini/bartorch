@@ -8,10 +8,10 @@
 
 index
 guides/user/index
+guides/developer/index
 explanation/index
 examples/index
 api/index
-guides/developer/index
 misc/index
 api_objects
 ```

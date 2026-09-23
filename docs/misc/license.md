@@ -34,11 +34,16 @@ dynamically and does not contain them.
 
 ## Logo
 
-The bartorch logo and mark combine the BART mark, drawn from the outline in
-BART's `src/geom/logo.c` (BSD-3-Clause), with the word `torch` drawn from the glyph
-outlines of DejaVu Sans Bold (Bitstream Vera license; DejaVu's changes are in
-the public domain).
-`scripts/make_artwork.py` generates them.  bartorch is an independent project
-and is not affiliated with or endorsed by the BART developers or the PyTorch
-Foundation.  PyTorch, the PyTorch logo and any related marks are trademarks of The
-Linux Foundation.
+The bartorch logo and mark combine three elements, which
+`scripts/make_artwork.py` draws:
+
+| Element | Source | Terms |
+| --- | --- | --- |
+| The BART mark: the letters and the corner brackets | The outline in BART's `src/geom/logo.c` | BSD-3-Clause, BART's license above |
+| The flame | The PyTorch logo, `assets/images/logo-icon.svg` of [pytorch/pytorch.github.io](https://github.com/pytorch/pytorch.github.io), reproduced unaltered in shape and colour and only scaled | A trademark of The Linux Foundation |
+| The word `torch` | Glyph outlines of DejaVu Sans Bold | Bitstream Vera license; DejaVu's changes are in the public domain |
+
+PyTorch, the PyTorch logo and any related marks are trademarks of The Linux
+Foundation.  bartorch is an independent project and is not affiliated with or
+endorsed by the BART developers, the PyTorch Foundation or The Linux
+Foundation.

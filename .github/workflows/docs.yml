@@ -1,8 +1,9 @@
 name: Docs
 
 # Builds the documentation on every pull request, and publishes it to GitHub
-# Pages from `main`.  Both use the same `./scripts/build_docs.sh` a contributor
-# runs, so a page that renders here rendered for them too.
+# Pages from `main` and from a version tag.  Both use the same
+# `./scripts/build_docs.sh` a contributor runs, so a page that renders here
+# rendered for them too.
 #
 # Two builds, because the documentation has two halves.  The reference renders
 # from the checkout with nothing compiled, which is what a contributor changing
@@ -10,15 +11,21 @@ name: Docs
 # it needs the library built and the packages the examples import.  The site
 # that is published is the second one.
 #
-# One-time setup: Settings -> Pages -> Source: "GitHub Actions".  Nothing else;
-# the deploy job below carries its own permissions and environment.
+# Pages serves the gh-pages branch, which holds one directory per version:
+# `main` publishes `latest`, a release tag publishes `vX.Y.Z` and copies it to
+# `stable`, and the root redirects to whichever of the two a reader should
+# see.  The branch is the site's archive: a Pages deployment from an artifact
+# replaces the whole site, so publishing one version would drop the others.
+#
+# One-time setup: Settings -> Pages -> Source: "Deploy from a branch",
+# branch gh-pages, folder / (root).  The first publish creates the branch.
 
 on:
   push:
     branches: [main]
-    # A version tag builds the PDF manual and attaches it to the release.
-    # GitHub does not evaluate path filters for a tag push.
-    tags: ["v*"]
+    # A version tag publishes its documentation and attaches the PDF manual
+    # to the release.  GitHub does not evaluate path filters for a tag push.
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
     paths:
       - "docs/**"
       - "src/**"
@@ -29,6 +36,17 @@ on:
     paths:
       - "docs/**"
       - "src/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Every publish commits to the same branch, so main, the tags and a manual run
+# share one group and wait for each other rather than racing to push.  A pull
+# request publishes nothing and gets a group of its own.
+concurrency:
+  group: docs-${{ github.event.pull_request.number || 'publish' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -116,8 +134,35 @@ jobs:
           path: ~/.cache/brainweb
           key: brainweb-subject0-fuzzy
 
+      # A release is built as `stable`, the URL a reader should land on, and
+      # archived under its tag as well; the canonical links of both copies
+      # point at `stable`.
+      - name: Name this version
+        id: version
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            echo "dir=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+            echo "canonical=stable" >> "$GITHUB_OUTPUT"
+          else
+            echo "dir=latest" >> "$GITHUB_OUTPUT"
+            echo "canonical=latest" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build Sphinx HTML with the examples executed
+        env:
+          BARTORCH_DOCS_RELEASE: ${{ steps.version.outputs.dir }}
+          BARTORCH_DOCS_VERSION: ${{ steps.version.outputs.canonical }}
         run: ./scripts/build_docs.sh --execute
+
+      # Sphinx caches parsed documents in the output directory unless told
+      # otherwise, and the cache is far larger than the pages.  Publishing
+      # commits whatever is there to a branch that is never pruned.
+      - name: Check that the site is only the site
+        run: |
+          if [ -e docs/_build/html/.doctrees ]; then
+            echo "::error::The doctree cache is inside the built site and would be published." >&2
+            exit 1
+          fi
 
       - name: Upload the executed documentation
         uses: actions/upload-artifact@v4
@@ -143,19 +188,11 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      # The same HTML again, in the layout Pages deploys from.  Uploaded on
-      # pull requests too, so that a change which breaks the packaging step
-      # says so on the pull request rather than on main.
-      - name: Package the site for Pages
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: docs/_build/html/
-
   # A version tag: the manual goes to the release the tag made, as
   # bartorch-docs.pdf beside the wheels.
   release-pdf:
     name: Attach the PDF manual to the release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.ref_type == 'tag'
     needs: [gallery]
     runs-on: ubuntu-latest
     permissions:
@@ -169,20 +206,47 @@ jobs:
         with:
           files: manual/bartorch-docs.pdf
 
-  # Only from `main`, and only on a push: a pull request builds the site and
-  # says whether it would deploy, but does not publish it.
-  deploy:
-    name: Publish to GitHub Pages
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  # From `main` and from a version tag: the executed site goes into its
+  # directory of the gh-pages branch.  A pull request builds the site but
+  # publishes nothing.
+  publish:
+    name: Publish to the gh-pages branch
+    if: >-
+      github.event_name != 'pull_request' &&
+      (github.ref == 'refs/heads/main' || github.ref_type == 'tag')
     needs: [build-docs, gallery]
     runs-on: ubuntu-latest
     permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      contents: write # pushes the built site to gh-pages
     steps:
-      - name: Deploy
-        id: deployment
-        uses: actions/deploy-pages@v4
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: sphinx-html-executed
+          path: ${{ runner.temp }}/html
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then dir="$GITHUB_REF_NAME"; else dir=latest; fi
+          site="$RUNNER_TEMP/pages"
+          remote="https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY"
+          # The branch does not exist before the first publish.
+          if ! git clone --depth 1 --branch gh-pages "$remote" "$site"; then
+            git init -b gh-pages "$site"
+            git -C "$site" remote add origin "$remote"
+          fi
+
+          # Only this version's directory is replaced; a release refreshes
+          # stable only when it is the newest, and the root and the switcher's
+          # list are rewritten from what the site then holds.
+          python scripts/publish_docs.py "$RUNNER_TEMP/html" "$dir" "$site"
+
+          git -C "$site" add -A
+          git -C "$site" -c user.name='github-actions[bot]' \
+            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -m "Documentation for $dir from $GITHUB_SHA" \
+            || { echo "No documentation change to publish."; exit 0; }
+          git -C "$site" push origin gh-pages

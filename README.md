@@ -58,32 +58,34 @@ image = bt.pics(kspace, maps, regularizers=priors.Wavelet((-1, -2), 0.005), solv
 ```
 
 The same reconstruction can be assembled from an encoding operator and a
-solver; [Interfaces and execution](https://mcencini.github.io/bartorch/explanation/execution-model.html)
+solver; [Interfaces and execution](https://mcencini.github.io/bartorch/latest/explanation/execution-model.html)
 describes which interface fits which task.
 
 ## Documentation
 
 <https://mcencini.github.io/bartorch/> has the
-[user guide](https://mcencini.github.io/bartorch/guides/user/index.html)
-(installation, supported platforms, data layout), conceptual
-[explanations](https://mcencini.github.io/bartorch/explanation/index.html),
-executed [examples](https://mcencini.github.io/bartorch/examples/index.html),
-the [API reference](https://mcencini.github.io/bartorch/api/index.html) and the
-[developer guide](https://mcencini.github.io/bartorch/guides/developer/index.html).
+[user guide](https://mcencini.github.io/bartorch/latest/guides/user/index.html)
+(installation, supported platforms, data layout), the
+[developer guide](https://mcencini.github.io/bartorch/latest/guides/developer/index.html),
+conceptual [explanations](https://mcencini.github.io/bartorch/latest/explanation/index.html),
+executed [examples](https://mcencini.github.io/bartorch/latest/examples/index.html)
+and the [API reference](https://mcencini.github.io/bartorch/latest/api/index.html),
+with a version switcher between the development version and the releases.
 
 ## Citation
 
 bartorch has no publication or archival DOI.  Work that uses it should cite
 BART and the methods it applied (ESPIRiT, compressed sensing, nonlinear
 inversion, ...), and report the bartorch version or commit and the pinned
-BART revision; [Contributors and citation](https://mcencini.github.io/bartorch/misc/contributors.html)
+BART revision; [Contributors and citation](https://mcencini.github.io/bartorch/latest/misc/contributors.html)
 gives the references and what else a reproducible report records.
 
 ## License
 
 bartorch is MIT-licensed.  The embedded BART (BSD-3-Clause) and the vendored
 pocketfft (BSD-3-Clause) and BlocksRuntime (MIT or NCSA) keep their own licenses; see
-[License and third-party notices](https://mcencini.github.io/bartorch/misc/license.html).
+[License and third-party notices](https://mcencini.github.io/bartorch/latest/misc/license.html).
 bartorch is an independent project, not affiliated with or endorsed by the BART
-developers or the PyTorch Foundation.  PyTorch, the PyTorch logo and any
+developers, the PyTorch Foundation or The Linux Foundation.  The logo combines
+BART's mark with the PyTorch logo's flame; PyTorch, the PyTorch logo and any
 related marks are trademarks of The Linux Foundation.

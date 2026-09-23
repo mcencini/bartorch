@@ -6,7 +6,7 @@
 /* The landing page is the repository README, whose logo already names the
    project; the heading above it names the page in the sidebar and is not
    printed a second time. */
-section#bartorch > h1 { display: none; }
+section#homepage > h1 { display: none; }
 
 /* The logo and the architecture figure come in a light and a dark variant,
    each drawn on a transparent canvas for its background, so the theme's dark

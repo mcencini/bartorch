@@ -75,8 +75,10 @@ if [ "${clean}" = 1 ]; then
            "${ROOT}/docs/sg_execution_times.rst"
 fi
 
+# The doctree cache is kept beside the output rather than inside it, so the
+# directory the workflow publishes is the site and nothing else.
 # shellcheck disable=SC2086
-"${PYTHON}" -m sphinx -b html ${strict} "${ROOT}/docs" "${OUT}"
+"${PYTHON}" -m sphinx -b html ${strict} -d "${ROOT}/docs/_build/doctrees" "${ROOT}/docs" "${OUT}"
 
 echo
 echo "build_docs.sh: ${OUT}/index.html"

@@ -54,6 +54,7 @@ would otherwise have been linked against.
 | `scripts/macos_openmp.py` | `bartorch._macos_openmp` by hand: `diagnose` reads, `patch` rewrites and re-signs, `verify` proves it. The substitution does it for itself on first use, so this is for seeing what it found and for an environment where it could not. |
 | `scripts/build_docs.sh` | Builds the reference the way the workflow does. |
 | `scripts/build_docs_pdf.sh` | Builds the documentation as one PDF, `bartorch-docs.pdf`. |
+| `scripts/publish_docs.py` | Places a built site into the `gh-pages` branch as one version -- `latest` for `main`, the tag for a release, copied to `stable` when it is the newest -- and rewrites the root redirect and the `versions.json` the version switcher reads. |
 | `scripts/make_artwork.py` | Draws the logo, the mark and the explanation figures under `docs/_static/`. |
 | `scripts/check_device.py` | Everything a card can answer that a host cannot, in dependency order. |
 | `cmake/embed.cmake` | Writes a file's bytes into a C array, for the LTO-IR the CUDA build links. |
@@ -1166,16 +1167,17 @@ When auditing or refactoring documentation, explicitly check for conversational 
 
 After substantial documentation work, build the documentation, run relevant documentation tests/examples, and inspect the rendered output.
 
-The documentation is in six sections, each with a landing page whose table
-lists its pages, and a page belongs to whichever it is:
+The documentation is in six sections, in this order in the sidebar, each with
+a landing page whose table lists its pages, and a page belongs to whichever it
+is:
 
 | Section | Directory | What is in it |
 | --- | --- | --- |
 | User guide | `docs/guides/user/` | Prerequisites, installation, data conventions, issues, security |
+| Developer guide | `docs/guides/developer/` | Building, layout, workflow, style, terminology, documentation, pull requests |
 | Explanation | `docs/explanation/` | The concepts: execution model, inverse problems, encoding, non-Cartesian sampling, nonlinear models, differentiation |
 | Examples | `docs/examples/` | The gallery: executable scripts rendered by sphinx-gallery |
 | API reference | `docs/api/` | One page per public module, listing its objects in tables |
-| Developer guide | `docs/guides/developer/` | Building, layout, workflow, style, terminology, documentation, pull requests |
 | Misc | `docs/misc/` | License, related projects, citation |
 
 The API pages carry human-written tables whose first column is an `{obj}`
@@ -1203,7 +1205,11 @@ footnotes and listed in a *References* section at the bottom of the page.
 `./scripts/build_docs.sh` renders the example pages without running them, which
 needs no compiled library; `--execute` runs them, which needs one and the
 packages `docs/examples/README.rst` names. The docs workflow does both, and
-publishes the executed build.  `./scripts/build_docs_pdf.sh` renders the same
+publishes the executed build into the `gh-pages` branch, which Pages serves:
+one directory per version, `latest` from `main` and `vX.Y.Z` and `stable`
+from a release tag, with the version switcher reading `versions.json` beside
+them.  Links from the README into the site name a version directory.
+`./scripts/build_docs_pdf.sh` renders the same
 sources as one PDF, which the release workflow attaches to a release as
 `bartorch-docs.pdf`.  `scripts/make_artwork.py` draws the logo, the mark and
 the explanation figures under `docs/_static/`.

@@ -1,6 +1,6 @@
 # Contributing to bartorch
 
-The [developer guide](https://mcencini.github.io/bartorch/guides/developer/index.html)
+The [developer guide](https://mcencini.github.io/bartorch/latest/guides/developer/index.html)
 documents the toolchain, the editable installation, the repository layout, the
 coding and documentation conventions, the pre-commit hooks and the pull-request
 procedure.  A development setup is:

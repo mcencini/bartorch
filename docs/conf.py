@@ -4,7 +4,6 @@ Importing ``bartorch`` needs torch but not the compiled library, so rendering
 needs no native build.
 """
 
-import importlib.metadata
 import os
 import re
 import sys
@@ -23,14 +22,25 @@ import api_objects  # noqa: E402
 project = "bartorch"
 author = "bartorch contributors"
 copyright = "2024–2026, bartorch contributors"
-# From the installed package, because the version is the git tag now and
-# `pyproject.toml` no longer carries it.  Rendering from a checkout with
-# nothing installed is the ordinary case here, so it is not an error.
-try:
-    release = importlib.metadata.version("bartorch")
-except importlib.metadata.PackageNotFoundError:
-    release = "0.0.0.dev0"
-version = release
+#: Where the site is served from: GitHub Pages, from the gh-pages branch, with
+#: one directory per published version.
+PAGES_URL = "https://mcencini.github.io/bartorch"
+
+#: The published version this build is, as the docs workflow names it:
+#: ``latest`` for main and the tag for a release.  The version switcher marks
+#: it, and the theme warns on a page whose version is not the newest release.
+#: A build outside the workflow is ``latest``.
+DOCS_RELEASE = os.environ.get("BARTORCH_DOCS_RELEASE", "latest")
+
+#: The directory a reader should be sent to for this build's pages:
+#: ``stable`` for the newest release, which is also archived under its tag,
+#: and ``latest`` for main.  The canonical links point there.
+DOCS_VERSION = os.environ.get("BARTORCH_DOCS_VERSION", "latest")
+
+# The theme compares `release` with the version `versions.json` marks
+# preferred to decide whether to warn that a page is not the current release,
+# so a release build carries its tag, and `latest` warns.
+version = release = DOCS_RELEASE
 
 extensions = [
     "sphinx.ext.autodoc",
@@ -144,7 +154,29 @@ html_theme_options = {
         "image_dark": "_static/bartorch-mark-dark.svg",
         "alt_text": "bartorch",
     },
+    # The list of published versions, written beside them by
+    # scripts/publish_docs.py and fetched by the page when it loads, so a
+    # build served from anywhere else shows no switcher.  The theme's check of
+    # the list at build time is off: the list exists only once a version has
+    # been published.
+    "switcher": {
+        "json_url": f"{PAGES_URL}/versions.json",
+        "version_match": DOCS_RELEASE,
+    },
+    "check_switcher": False,
+    "show_version_warning_banner": True,
 }
+#: The theme's own sidebar, with the version switcher under the logo.
+html_sidebars = {
+    "**": [
+        "navbar-logo.html",
+        "icon-links.html",
+        "version-switcher.html",
+        "search-button-field.html",
+        "sbt-sidebar-nav.html",
+    ]
+}
+html_baseurl = f"{PAGES_URL}/{DOCS_VERSION}/"
 html_static_path = ["_static"]
 html_css_files = ["custom.css"]
 html_favicon = "_static/bartorch-mark.svg"
@@ -278,8 +310,12 @@ def _public_bases(_app, _name, _obj, _options, bases):
 
 #: The README is the repository's front page and the documentation's.  On
 #: GitHub and PyPI its figures are fetched from ``main`` and its links point at
-#: the published site; here they become this build's static files and pages.
-_SITE_PAGE = re.compile(r"https://mcencini\.github\.io/bartorch/([^\s)\"'<>#]+)\.html")
+#: a published version of the site; here they become this build's static files
+#: and pages, so each version's landing page links within that version.
+_SITE_PAGE = re.compile(
+    r"https://mcencini\.github\.io/bartorch/(?:latest|stable|v\d+\.\d+\.\d+)/"
+    r"([^\s)\"'<>#]+)\.html"
+)
 _RAW_STATIC = re.compile(r"https://raw\.githubusercontent\.com/mcencini/bartorch/main/docs/_static/")
 _PICTURE = re.compile(
     r"<picture>\s*<source[^>]*srcset=\"(?P<dark>[^\"]+)\"[^>]*>\s*"

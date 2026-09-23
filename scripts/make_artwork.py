@@ -2,7 +2,8 @@
 
     python scripts/make_artwork.py
 
-The logo is BART's own mark followed by the word ``torch``.
+The logo is BART's own mark followed by the PyTorch flame and the word
+``torch``.
 
 * The BART mark -- the letters and the two corner brackets -- is read from
   ``external/bart/src/geom/logo.c``, the outline ``bart phantom -B`` draws.
@@ -11,17 +12,19 @@ The logo is BART's own mark followed by the word ``torch``.
   it in ``docs/misc/license.md``.  Each segment there is a cubic Hermite spline
   per coordinate, converted to a Bezier curve with the same matrix BART's
   ``cspline2bezier`` uses.
+* The flame is the PyTorch logo, reproduced unaltered in shape and colour
+  from ``assets/images/logo-icon.svg`` of github.com/pytorch/pytorch.github.io
+  and only scaled.  PyTorch, the PyTorch logo and any related marks are
+  trademarks of The Linux Foundation; ``docs/misc/license.md`` attributes it.
 * ``torch`` is set in DejaVu Sans Bold, the font matplotlib ships, compressed
   horizontally and converted to outlines, so the SVG needs no font.  It is not
-  the PyTorch wordmark, and the PyTorch flame is not used: the PyTorch
-  Foundation's marks are for referring to its projects, not for inclusion in
-  another project's logo.
+  the PyTorch wordmark.
 
 Nothing here implies endorsement by the BART developers or the PyTorch
 Foundation; ``docs/misc/license.md`` says so where the logo is shown.
 
 Four images are written, each in a light and a dark variant: the horizontal
-logo, the compact mark -- the two brackets around ``bt`` -- used in the sidebar
+logo, the compact mark -- BART's brackets around the flame -- used in the sidebar
 and as the favicon, the architecture figure the README and
 ``docs/explanation/execution-model.md`` show, and the encoding-form figure of
 ``docs/explanation/encoding.md``.  The figures' text is SVG text in the
@@ -90,11 +93,6 @@ def bart_mark() -> str:
     return _outlines(0, len(CONTOURS))
 
 
-def brackets() -> str:
-    """The two corner brackets alone, the last two outlines of ``logo.c``."""
-    return _outlines(len(CONTOURS) - 2, len(CONTOURS))
-
-
 def word(text: str, height: float, x: float, baseline: float) -> tuple[str, float]:
     """Outlines of ``text`` with ascenders ``height`` tall, and the right edge they reach."""
     font = FontProperties(
@@ -127,9 +125,45 @@ def word(text: str, height: float, x: float, baseline: float) -> tuple[str, floa
     return " ".join(commands), right
 
 
-def _svg(width: float, height: float, paths: list[tuple[str, str]], label: str, margin=8.0) -> str:
+#: The PyTorch logo's flame, as ``logo-icon.svg`` draws it: its path, the
+#: circle beside it, their colour and the box they are drawn in.
+FLAME_PATH = (
+    "M77.6,1099.6l-8.1,8.1c13.3,13.3,13.3,34.7,0,47.8c-13.3,13.3-34.7,13.3-47.8,0"
+    "c-13.3-13.3-13.3-34.7,0-47.8l0,0l21.1-21.1l3-3l0,0v-15.9l-31.8,31.8"
+    "c-17.7,17.7-17.7,46.3,0,64c17.7,17.7,46.3,17.7,63.7,0"
+    "C95.3,1145.8,95.3,1117.4,77.6,1099.6z"
+)
+FLAME_CIRCLE = (61.7, 1091.8, 5.9)
+FLAME_COLOUR = "#EE4C2C"
+FLAME_BOX = (0.6, 1067.9, 90.3, 109.1)
+
+
+def flame(x: float, top: float, height: float) -> tuple[str, float]:
+    """The flame scaled to ``height`` with its box's corner at ``(x, top)``; and its right edge."""
+    left, upper, width, tall = FLAME_BOX
+    scale = height / tall
+    cx, cy, r = FLAME_CIRCLE
+    element = (
+        f'  <g transform="translate({x:.2f} {top:.2f}) scale({scale:.5f}) '
+        f'translate({-left} {-upper})" fill="{FLAME_COLOUR}">\n'
+        f'    <path d="{FLAME_PATH}"/>\n'
+        f'    <circle cx="{cx}" cy="{cy}" r="{r}"/>\n'
+        "  </g>"
+    )
+    return element, x + width * scale
+
+
+def _svg(
+    width: float,
+    height: float,
+    paths: list[tuple[str, str]],
+    label: str,
+    margin=8.0,
+    extra: tuple[str, ...] = (),
+) -> str:
     body = "\n".join(
-        f'  <path fill="{colour}" fill-rule="evenodd" d="{data}"/>' for colour, data in paths
+        [f'  <path fill="{colour}" fill-rule="evenodd" d="{data}"/>' for colour, data in paths]
+        + list(extra)
     )
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-label="{label}" '
@@ -144,32 +178,47 @@ CAP, BASELINE = 136.4, 180.0
 
 
 def logo(theme: str) -> str:
-    """The horizontal logo: BART's mark, then ``torch``."""
+    """The horizontal logo: BART's mark, the PyTorch flame, then ``torch``."""
+    # The flame stands on BART's baseline and reaches a little above its
+    # capitals, as the dot above it rises past a letter.
+    height = 1.08 * CAP
+    element, right = flame(398.0, BASELINE - height, height)
     # Lowercase letters of this font look larger than BART's condensed capitals
     # at the same height, so the ascenders stop a little short of the caps.
-    letters, right = word("torch", 0.93 * CAP, 404.0, BASELINE)
+    letters, right = word("torch", 0.93 * CAP, right + 12.0, BASELINE)
     width = right + 4.0
     return _svg(
         width,
         224.0,
         [(INK[theme], bart_mark()), (ACCENT[theme], letters)],
         "bartorch",
+        extra=(element,),
     )
 
 
 def mark(theme: str) -> str:
-    """The compact mark: BART's brackets around ``bt``."""
-    # The brackets span 8..375 horizontally and 6..220 vertically in logo.c;
-    # ``bt`` is centred between them and fills most of their height.
-    height, baseline = 1.2 * CAP, 196.0
-    letters, right = word("bt", height, 0.0, baseline)
-    shift = (8.24 + 374.88 - right) / 2.0
-    letters, _ = word("bt", height, shift, baseline)
+    """The compact mark: BART's two brackets around the PyTorch flame.
+
+    The brackets keep their shapes; the lower one is moved in so that the
+    pair frames a square, which is what a favicon has room for.
+    """
+    # In logo.c the upper bracket spans x 8.24..82.8 and y 6.0..90.9, the lower
+    # one x 300.3..374.9 and y 135.4..220.2.
+    side = 220.2 - 6.0
+    shift = 374.88 - (8.24 + side)
+    height = 0.72 * side
+    width = height * FLAME_BOX[2] / FLAME_BOX[3]
+    element, _ = flame(8.24 + (side - width) / 2.0, 6.0 + (side - height) / 2.0, height)
+    lower = (
+        f'  <path fill="{INK[theme]}" fill-rule="evenodd" transform="translate({-shift:.2f} 0)" '
+        f'd="{_outlines(len(CONTOURS) - 1, len(CONTOURS))}"/>'
+    )
     return _svg(
-        383.0,
+        side + 2 * 8.24,
         224.0,
-        [(INK[theme], brackets()), (ACCENT[theme], letters)],
+        [(INK[theme], _outlines(len(CONTOURS) - 2, len(CONTOURS) - 1))],
         "bartorch",
+        extra=(lower, element),
     )
 
 

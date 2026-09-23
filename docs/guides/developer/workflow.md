@@ -32,7 +32,15 @@ regenerates both before the suite, and `tests/test_abi.py` and
 `tests/test_catalogue.py` fail when the checked-in files differ from what the
 generators write.  The logo, the compact mark, the architecture figure and the
 encoding figure in `docs/_static/` are written by
-`python scripts/make_artwork.py`.
+`python scripts/make_artwork.py`; the logo's sources and their terms are listed
+in {doc}`../../misc/license`.
+
+The documentation is published by the docs workflow into the `gh-pages`
+branch, one directory per version: `latest` from `main`, and `vX.Y.Z` from a
+release tag, which `scripts/publish_docs.py` also copies to `stable` when it is
+the newest release.  The site root redirects to `stable`, or to `latest`
+before the first release, and the version switcher reads `versions.json`
+beside the directories.
 
 The documentation's own build products -- `docs/generated/`,
 `docs/api_objects.rst`, `docs/auto_examples/` and the PDF manual -- are not

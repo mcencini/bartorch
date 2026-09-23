@@ -24,10 +24,10 @@ from pathlib import Path
 #: The six sections, by the document their landing page is, in reading order.
 SECTIONS = (
     ("User guide", "guides/user/index"),
+    ("Developer guide", "guides/developer/index"),
     ("Explanation", "explanation/index"),
     ("Examples", "examples/index"),
     ("API reference", "api/index"),
-    ("Developer guide", "guides/developer/index"),
     ("Misc", "misc/index"),
     ("API objects", "api_objects"),
 )
@@ -35,7 +35,8 @@ SECTIONS = (
 #: What a printed page does not need: the theme's navigation, the figures meant
 #: for a dark background, and the controls that only work in a browser.
 PRINT_CSS = """
-#jb-print-docs-body, section#bartorch-documentation > h1,
+#jb-print-docs-body, section#bartorch-documentation > h1, #bd-header-version-warning,
+.version-switcher__container,
 .bd-header, .bd-sidebar-primary, .bd-sidebar-secondary, .header-article,
 .bd-footer, .bd-footer-article, .bd-footer-content, .prev-next-area,
 .skip-link, .pst-async-banner-revealer, #pst-scroll-pixel-helper,
