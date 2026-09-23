@@ -1,7 +1,7 @@
 # Repository layout
 
-Code written for bartorch is under `src/`; code from other projects is under
-`external/`.
+Code written for bartorch is under `src/`, with its tests under `tests/` and
+its scripts under `scripts/`; code from other projects is under `external/`.
 
 | Path | Contents |
 | --- | --- |
@@ -9,8 +9,8 @@ Code written for bartorch is under `src/`; code from other projects is under
 | `external/pocketfft/`, `external/blocksruntime/` | Vendored FFT and Blocks runtime, with their licenses |
 | `src/csrc/include/bartorch.h` | The C ABI, the only header the Python side sees |
 | `src/csrc/abi/` | Command execution, the in-memory CFL registry, CUDA stream ordering |
-| `src/csrc/ops/` | Operators, the encoding executor and the solve BART's `pics` runs |
-| `src/csrc/substitute/` | What runs in BART's place: the FINUFFT NUFFT, point spread functions, the FFT and BLAS/LAPACK tables |
+| `src/csrc/ops/` | Operators, the encoding executor, and the configuration of BART's iterative solve as `pics` sets it up |
+| `src/csrc/substitute/` | Components compiled in place of BART's: the FINUFFT NUFFT, point spread functions, the FFT and BLAS/LAPACK tables |
 | `src/bartorch/` | The Python package; private modules begin with an underscore |
 | `src/bartorch/_abi.py`, `_catalogue.py` | Generated from the header and from BART's command declarations |
 | `scripts/` | Scripts run by hand: tests, lint, documentation, generators, device checks, artwork |
@@ -18,6 +18,7 @@ Code written for bartorch is under `src/`; code from other projects is under
 | `tests/` | The test suite |
 | `docs/` | Documentation sources, the example gallery under `docs/examples/`, and the Sphinx configuration |
 | `docs/design/` | Design records for maintainers, excluded from the built documentation |
+| `attic/prototype/` | An earlier pybind11 extension, kept for reference and not built |
 
 The compiled library uses no Python or PyTorch C API.  Python passes data
 pointers and reversed dimension vectors through ctypes, which is why one wheel

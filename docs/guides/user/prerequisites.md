@@ -17,7 +17,7 @@
 | Linux x86-64, glibc 2.28 or later | Wheel | CPU build on PyPI; CUDA build attached to the GitHub release of each version |
 | macOS 11 or later on Apple silicon | Wheel | CPU only; see {ref}`macos-openmp` |
 | Linux aarch64 | Source distribution | BART is compiled on installation; FINUFFT publishes no wheel for this platform and is built from source as well |
-| macOS on Intel | Source distribution | BART is compiled on installation; recent FINUFFT releases are also built from source |
+| macOS on Intel | Source distribution | BART is compiled on installation; FINUFFT releases after 2.4.0 have no wheel for this platform and are built from source as well |
 | Windows | Not supported | BART does not build on Windows; WSL2 provides a Linux environment |
 
 A source installation needs the toolchain listed under {ref}`source-builds`.

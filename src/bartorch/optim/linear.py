@@ -939,8 +939,7 @@ class ADMM(_Solver):
     rho : float, default=0.5
         Penalty parameter; BART's default is 0.5.
     cg_maxiter : int, default=10
-        Conjugate-gradient iterations per step; BART's default is 10, and
-        default.
+        Conjugate-gradient iterations per x-update; BART's default is 10.
     hogwild : bool, default=False
         BART's ``hogwild`` setting, which doubles ``rho`` after
         ten steps, then twenty, then forty.  Not combinable with

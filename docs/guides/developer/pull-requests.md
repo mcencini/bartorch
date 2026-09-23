@@ -14,5 +14,5 @@ template:
 CI runs the test matrix (Linux with clang and GCC 14, macOS, and a CUDA build
 without a device), the lint and spelling checks, and two documentation builds:
 the reference without the compiled library, and the executed gallery, which is
-published from `main`.  A pull request is merged when CI passes and a
+published from `main` and from release tags.  A pull request is merged when CI passes and a
 maintainer has approved it.

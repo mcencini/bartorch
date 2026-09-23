@@ -1,4 +1,4 @@
-# Questions and discussions
+# Questions and proposals
 
 GitHub Discussions is not enabled for the repository.  Usage questions and
 proposals are filed on the

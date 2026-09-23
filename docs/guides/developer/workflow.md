@@ -62,7 +62,9 @@ adjoint identity.  Comparing two entry points into the same BART
 implementation establishes nothing about its correctness.  Tests are pytest
 functions whose names state the property tested.
 
-To update a topic branch with upstream changes:
+## Updating a topic branch
+
+A topic branch is updated with upstream changes by:
 
 ```bash
 git fetch upstream

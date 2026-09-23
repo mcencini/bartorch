@@ -5,13 +5,14 @@
 Report a vulnerability privately through GitHub's private vulnerability
 reporting: the **Report a vulnerability** button under the repository's
 [Security](https://github.com/mcencini/bartorch/security) tab.  Do not open a
-public issue for it.  If the button is not available, open an issue asking the
-maintainers for a private contact, without describing the vulnerability.
+public issue for it.  If the button is not available, contact a maintainer
+through the contact details on their GitHub profile, without describing the
+vulnerability in a public place.
 
 A report states the affected version or commit, the operating system,
 architecture and device, the smallest input that reproduces the behaviour, its
 observed impact, and any known mitigation.  The maintainers acknowledge the
-report and communicate their assessment and the remediation through the
+report and communicate their assessment and any remediation through the
 private advisory.  Disclosure follows the release of a fix or an
 agreed date, and reporters are credited unless they ask not to be.
 

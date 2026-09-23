@@ -16,14 +16,14 @@ included: `bartorch.fft(x, axes=(-2, -1))`.  No argument takes a BART bitmask
 or dimension number, and a set of indices that are not axes, such as coil
 channels or parameter maps, is also a tuple of indices.  Regularization is
 given as {mod}`bartorch.priors` terms rather than as `-R` strings:
-`pics(kspace, maps, regularizers=priors.Wavelet((-1, -2), 0.005))`.  A command
-that reads no array, such as `seq`, counts axes from the last one and accepts
-negative axes only.
+`pics(kspace, maps, regularizers=priors.Wavelet((-1, -2), 0.005))`.  An axis
+argument whose array is not given to the call counts from the last axis and
+accepts negative indices only.
 
 ## Commands
 
-The functions of {mod}`bartorch.tools` and the `bartorch` namespace keep BART's
-dimension order.  BART's coil dimension is its dimension 3 and sets of
+The functions of {mod}`bartorch.tools` and the `bartorch` namespace assign
+axes as BART does, in reversed order.  BART's coil dimension is its dimension 3 and sets of
 sensitivity maps its dimension 4, so the corresponding singleton axes are kept
 in inputs and outputs; returned shapes are those BART produces, with trailing
 BART singletons (leading tensor axes) removed.  Array inputs are converted to
@@ -61,8 +61,10 @@ encodes for every coil and batch item.
 
 Trajectories hold `kx, ky, kz` in grid units, the k-space coordinate in units
 of $1/\mathrm{FOV}$ of the image being encoded: a fully sampled readout of $N$
-samples spans $-N/2$ to $N/2$.  A trajectory always has three components;
-a `kz` that is zero throughout makes the transform two-dimensional.
+samples spans $-N/2$ to $N/2$.  A trajectory given to a command has three
+components, and a `kz` that is zero throughout makes the transform
+two-dimensional; the operators of {mod}`bartorch.linop` also accept two
+components, `kx, ky`.
 {func}`bartorch.tools.traj` generates trajectories in these units.
 
 ## Fourier transform conventions

@@ -1,5 +1,14 @@
 # Differentiation through reconstruction
 
+```{admonition} TL;DR
+:class: tldr
+
+- The backward pass of a linear operator is its adjoint, $A^H g$, and that of a nonlinear operator is $DF_x^H g$.
+- Conjugate gradients are differentiated implicitly, at constant memory; the proximal iterations and ADMM are unrolled, with memory linear in the iteration count.
+- BART's proximal operators have no backward pass: {class}`~bartorch.priors.ImplicitPrior` replaces one with a differentiable denoiser, and {func}`~bartorch.priors.frozen` holds one fixed.
+- {class}`~bartorch.learning.Unrolled` applies a fixed number of iteration blocks, differentiated end to end, per iteration, or with checkpointing; {class}`~bartorch.optim.FixedPoint` differentiates at a fixed point with constant memory.
+```
+
 A reconstruction written with operators and solvers can be part of a larger
 PyTorch computation: a loss on the reconstructed image can be differentiated
 with respect to the data, to learned parameters of the iteration, or to the
@@ -56,7 +65,7 @@ BART's proximal operators have no backward pass.
 {meth}`Regularizer.prox <bartorch.priors.Regularizer.prox>` raises an error
 for an input that requires a gradient rather than contribute a wrong one, so a
 solver whose term is a BART regularizer cannot be differentiated through that
-term.  Two objects change this:
+term.  The following objects permit differentiation:
 
 | Object | Effect |
 | --- | --- |
@@ -71,7 +80,7 @@ contribute no gradient.
 
 {class}`~bartorch.learning.Unrolled` applies an iteration block a fixed number
 of times.  With all parameters frozen it reproduces the corresponding solver;
-calling `requires_grad_()` on a step size, a penalty weight or a denoiser's
+calling `requires_grad_()` on a step size, a regularization weight or a denoiser's
 parameters makes it a trainable network, such as MoDL.[^modl]
 
 | Setting | Recorded graph | Memory | Gradient |
@@ -96,9 +105,9 @@ equilibrium model.[^deq][^gilton]  The vector–Jacobian product solves
 $w = J^H w + g$, with $J$ the Jacobian of one step at $z^\star$, by the
 fixed-point iteration $w \leftarrow J^H w + g$, which converges when the
 spectral radius of $J$ is below one.  Memory is that of a single step,
-independent of the iteration count.  A step that is not the same map at every
-iteration has no fixed point and is refused: FISTA's momentum, a moving ADMM
-penalty, adaptive or decaying primal-dual steps.
+independent of the iteration count.  An iteration that does not apply the same
+map $\Phi$ at every step is not a fixed-point iteration and is refused: FISTA's
+momentum, a moving ADMM penalty, adaptive or decaying primal-dual steps.
 
 ## References
 

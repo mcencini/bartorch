@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(DOCS))
 
 import api_objects  # noqa: E402
+import colab  # noqa: E402
 
 project = "bartorch"
 author = "bartorch contributors"
@@ -372,6 +373,17 @@ def _object_pages_in_the_manual(_app, doctree) -> None:
         node.replace_self(node.children)
 
 
+def _colab_badge(_app, docname, source) -> None:
+    """Put the Open in Colab badge under an example page's title."""
+    source[0] = colab.with_badge(source[0], docname, DOCS_RELEASE)
+
+
+def _colab_notebooks(app, exception) -> None:
+    """Write the Colab copies of the gallery's notebooks into the built site."""
+    if exception is None and app.builder.name == "html" and not PDF_MANUAL:
+        colab.write(Path(app.srcdir), Path(app.outdir), DOCS_RELEASE)
+
+
 def _write_api_object_index(app) -> None:
     """Write the page the API stubs are generated from, ahead of autosummary."""
     api_objects.write(app.srcdir)
@@ -385,6 +397,8 @@ def setup(app):
     app.connect("include-read", _included_readme)
     app.connect("source-read", _landing_page_in_the_manual)
     app.connect("doctree-read", _object_pages_in_the_manual)
+    app.connect("source-read", _colab_badge)
+    app.connect("build-finished", _colab_notebooks)
     # Ahead of autosummary's own handler, which reads the sources it writes
     # stubs for: a page written after it would be read a build late.
     app.connect("builder-inited", _write_api_object_index, priority=100)

@@ -1,5 +1,14 @@
 # Nonlinear forward models
 
+```{admonition} TL;DR
+:class: tldr
+
+- Joint estimation of the image and the coil sensitivities (`nlinv`) and model-based parameter estimation (`moba`) have forward operators that are nonlinear in the unknowns.
+- Both are solved by iteratively regularized Gauss-Newton: each step solves a linearized least-squares problem with a Tikhonov term whose weight decreases geometrically, and the number of steps acts as a regularization parameter.
+- `nlinv` resolves the ambiguity between image and sensitivities with a Sobolev weighting of the coils; the data term of a signal model is nonconvex in its parameters, so the result depends on the starting point.
+- A model-based reconstruction estimates parameter maps directly; a subspace reconstruction keeps the forward model linear and fits the parameters afterwards.
+```
+
 {doc}`inverse-problems` assumes a known, linear forward operator.  Two common
 MRI reconstructions do not satisfy that assumption: the coil sensitivities can
 be unknowns alongside the image, and the image can be a function of physical
@@ -32,8 +41,8 @@ $$
 with $e$ the contrast index.  The unknowns are the parameter maps.  This is
 **model-based reconstruction**, BART's `moba`.[^block][^sumpf][^wang]
 
-A solver needs three things from $F$: its value $F(x)$, its derivative at a
-point as a linear operator $DF_x$, and the adjoint $DF_x^H$.  A
+A Gauss-Newton solver requires the value $F(x)$, the derivative $DF_x$ at a
+point as a linear operator, and its adjoint $DF_x^H$.  A
 {class}`~bartorch.nlop.NonlinearOperator` provides the three, and
 `F.linearize(x)` returns $DF_x$ as a {class}`~bartorch.linop.LinearOperator`.
 
@@ -89,14 +98,14 @@ root sum of squares of the estimated sensitivities.
 linear encoding, which leaves the regularization of the coils to the caller.
 
 Signal models have no such symmetry — the model fixes the meaning of each
-map — but they are nonconvex in $\theta$, so the result depends on the
+map — but the data term is nonconvex in $\theta$, so the result depends on the
 starting point.  The models of {mod}`bartorch.nlop` impose bounds by solving
 for a transformed variable, so that every iterate stays within the bounds;
 {meth}`~bartorch.nlop.SignalModel.initial` builds a starting point from
 parameter values and {meth}`~bartorch.nlop.SignalModel.split` converts a
 solution back to named maps in physical units.
 
-## Three routes to parameter maps
+## Approaches to parameter mapping
 
 | Approach | Unknown | Forward model | Cross-contrast information in the reconstruction | Problem | Output |
 | --- | --- | --- | --- | --- | --- |

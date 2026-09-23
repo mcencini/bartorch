@@ -217,10 +217,11 @@ image = (signal * torch.exp(0.8j * (grid_x**2 - 0.5 * grid_y**2))).to(torch.comp
 #
 # A trajectory is ``(*encoding, shots, samples, 3)`` in grid units: the
 # coordinates of every sample, in units of the k-space cell of the image it
-# encodes, so a readout of ``SIZE`` samples runs from :math:`-N/2` to
-# :math:`N/2`. The third component is :math:`k_z`, zero throughout for a
-# two-dimensional trajectory, and whether it is used decides whether the
-# transform is two- or three-dimensional.
+# encodes, so a readout of ``SIZE`` samples runs from :math:`-n/2` to
+# :math:`n/2` for an image of :math:`n` voxels along the readout. The third
+# component is :math:`k_z`, zero throughout for a two-dimensional trajectory,
+# and whether it is used determines whether the transform is two- or
+# three-dimensional.
 #
 # Successive spokes are separated either by :math:`\pi` over their number,
 # which tiles k-space uniformly for one frame, or by the golden angle, which
@@ -298,11 +299,11 @@ print(f"largest relative difference from the explicit sum: {difference:.1e}")
 # Density compensation
 # --------------------
 #
-# The adjoint is not the inverse. A radial trajectory samples the centre of
-# k-space once per spoke and its periphery once per spoke per ring, so summing
-# the samples onto the grid weights low frequencies by the number of spokes.
-# The weight that undoes it is the inverse sampling density [#pipe]_, which for
-# radial sampling is the distance from the centre.
+# The adjoint is not the inverse. Every spoke passes through the centre of
+# k-space, so the radial sampling density falls as :math:`1/\lvert k \rvert`
+# and the adjoint overweights low frequencies. The weight that compensates for
+# it is the inverse sampling density [#pipe]_, which for radial sampling is
+# proportional to the distance from the centre.
 
 radius = torch.linalg.norm(golden.real[..., :2], dim=-1, keepdim=True)
 weights = radius.clamp(min=0.25).to(torch.complex64)
@@ -322,10 +323,11 @@ plt.show()
 
 # %%
 #
-# The uncompensated adjoint is the image convolved with the sampling density,
-# which is concentrated at the centre of k-space and therefore low-pass. The
-# compensated one resolves the tissue boundaries, and what it cannot recover is
-# the k-space the trajectory never reaches: a radial acquisition samples a disc,
+# The uncompensated adjoint is the image convolved with the point spread
+# function, the inverse Fourier transform of the sampling density; the density
+# is concentrated at the centre of k-space, so the result is blurred. The
+# compensated adjoint resolves the tissue boundaries. Neither recovers the
+# k-space the trajectory does not reach: a radial acquisition samples a disc,
 # so the frequencies in the corners of the Cartesian grid are missing whatever
 # the weights are.
 #
@@ -357,9 +359,7 @@ print(f"relative difference      {float((toeplitz - pair).abs().max() / pair.abs
 
 # %%
 #
-# The two agree to a small multiple of the transform's tolerance.  The
-# difference decreases as the tolerance is tightened, which an incorrect point
-# spread function would not do.
+# The two agree to a small multiple of the transform's tolerance.
 #
 # :func:`bartorch.tools.psf` computes that function on its own. Its extent is
 # the aliasing the trajectory produces: for a fully sampled radial trajectory

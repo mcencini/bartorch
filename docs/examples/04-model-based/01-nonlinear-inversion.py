@@ -4,11 +4,13 @@ Nonlinear inversion
 ====================
 
 Estimating the image and the coil sensitivities together, from undersampled
-data that has no calibration region to estimate them separately from.
+data whose fully sampled central region is too small for a separate
+calibration.
 
-ESPIRiT [#espirit]_ reads the sensitivities off a fully sampled neighbourhood of the centre
-of k-space and hands them to a linear reconstruction. Where the acquisition
-provides no such neighbourhood, the sensitivities are unknowns like the image,
+ESPIRiT [#espirit]_ estimates the sensitivities from a fully sampled region at
+the centre of k-space, and a linear reconstruction then uses them as known.
+Where the acquisition provides no such region, the sensitivities are unknowns
+like the image,
 and the forward model
 
 .. math::
@@ -18,9 +20,8 @@ and the forward model
 is bilinear rather than linear: it is a product of two unknowns. Nonlinear
 inversion (``nlinv``) [#nlinv]_ solves it by iteratively regularized
 Gauss-Newton [#bakushinsky]_, and
-the smoothness of the sensitivities -- the one thing that makes the
-factorization identifiable -- enters as a weighting inside the model rather
-than as a penalty beside it.
+the smoothness of the sensitivities, which constrains the factorization,
+enters as a weighting inside the model rather than as a penalty beside it.
 
 The phantom and the coil sensitivities are built as in
 :doc:`../01-basics/01-from-kspace-to-image`; the cell that does it is hidden on
@@ -244,10 +245,10 @@ print(f"{float(lines.mean()):.0%} of the phase encodes, {CALIBRATION} of them at
 
 # %%
 #
-# Six central lines are enough to locate the centre of k-space and not enough
-# for a calibration matrix: :func:`bartorch.tools.ecalib` given a calibration
-# region this size returns sensitivities that are mostly noise, and a linear
-# reconstruction built on them is worse than no reconstruction.
+# Six central lines locate the centre of k-space. With ESPIRiT's default
+# kernel of six points, a calibration region of six lines leaves a single
+# kernel position along the phase-encoding axis, too few rows for the
+# calibration matrix of :func:`bartorch.tools.ecalib`.
 #
 # The application
 # ---------------
@@ -258,7 +259,7 @@ print(f"{float(lines.mean()):.0%} of the phase encodes, {CALIBRATION} of them at
 # regularization parameter rather than a convergence threshold: the
 # regularization weight is halved after every step, so stopping early leaves a
 # smoother image and running longer eventually lets the noise in. Eight steps
-# is BART's default and twelve is what this undersampling wants.
+# is BART's default; twelve are used here.
 
 STEPS = 12
 
@@ -299,9 +300,11 @@ plt.show()
 # :math:`S = \mathcal{F}^{-1}[(1 + a|k|^2)^{-b/2} \hat{s}]`. A step in the
 # unknown is therefore a smooth change in the map by construction, and the
 # joint problem needs no separate penalty on the coils. The pair is determined
-# only up to a scale, since multiplying the maps by a constant and dividing the
-# image by it changes nothing the data sees, which is why the two rows above
-# are drawn on their own scales and why a nonlinear inversion is reported after
+# only up to a common factor: multiplying every map by a nonzero function
+# :math:`\gamma(r)` and dividing the image by it leaves the data unchanged
+# (:doc:`../../explanation/nonlinear`). The smoothness weighting restricts
+# :math:`\gamma` to smooth functions, which is why the two rows above are drawn
+# on their own scales and why a nonlinear inversion is reported after
 # normalizing by the root sum of squares of the maps. Outside the object
 # neither factor is determined at all -- their product is zero for any pair --
 # so what is drawn there follows from the initialization and the weighting.
@@ -357,9 +360,10 @@ print(f"NRMSE {bt.nrmse(image.abs(), combined.abs(), scaled=True):.3f}")
 # problem can go to a solver from :mod:`bartorch.optim` instead of the
 # conjugate gradients inside the library (``inner=optim.CG()`` is the same
 # method written out, and a regularized solver makes the step a regularized
-# one), the loop can be unrolled as :class:`bartorch.nlop.IRGNMBlock`, and the
-# whole thing differentiates: a Gauss-Newton step is differentiable by the
-# data, by the iterate, by the regularization centre and by :math:`\alpha`.
+# one), the loop can be unrolled as :class:`bartorch.nlop.IRGNMBlock`, and a
+# Gauss-Newton step is differentiable with respect to the data, the iterate,
+# the regularization centre and :math:`\alpha`
+# (:doc:`../../explanation/differentiation`).
 #
 # Reconstructing parameter maps rather than an image, by putting a signal model
 # in front of the same encoding, is :doc:`02-quantitative-models`.

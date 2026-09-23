@@ -8,9 +8,9 @@ k-space to a coil-combined image.
 
 The acquisition is simulated from a BrainWeb tissue segmentation and the eight
 channels of BART's head coil model, sampled at a third of the Nyquist rate
-along the phase-encode direction. The reconstruction that follows is the one a
-scanner pipeline performs: channel compression, sensitivity calibration by
-ESPIRiT, and a regularized least-squares fit of the SENSE model
+along the phase-encode direction. The reconstruction consists of channel
+compression, sensitivity calibration by ESPIRiT, and a regularized
+least-squares fit of the SENSE model
 
 .. math::
 
@@ -147,8 +147,8 @@ from bartorch import priors
 # -------
 #
 # BrainWeb [#brainweb]_ publishes a segmentation rather than an image: one membership map
-# per tissue class, which a table of relaxation times and proton densities
-# turns into whatever contrast the experiment would have produced. The volume
+# per tissue class, from which a table of relaxation times and proton
+# densities gives the signal of a chosen acquisition. The volume
 # ``brainweb-dl`` returns is indexed ``(inferior-superior, posterior-anterior,
 # left-right)``, so its first axis selects an axial slice, and an image is
 # drawn from its first row down, so flipping it puts anterior at the top.
@@ -170,8 +170,8 @@ fractions = np.flipud(get_mri(sub_id=0, contrast="fuzzy")[SLICE])[..., list(TISS
 #
 # The slice is cropped to a square field of view around the head and resampled
 # to the matrix reconstructed here. The crop leaves a margin, as a real field
-# of view does: a head that filled it would have nowhere for the aliasing of an
-# undersampled acquisition to fold into.
+# of view does: the aliased copies of an undersampled acquisition then fall
+# partly outside the head.
 
 MARGIN = 0.25
 
@@ -346,8 +346,8 @@ maps = bt.ecalib(compressed, maps=1, calib_size=CALIBRATION, crop=0.8)
 # [#sense]_; an :math:`\ell_1` penalty on the wavelet coefficients is the
 # compressed-sensing reconstruction [#lustig]_ of the same data, solved by
 # FISTA [#beck]_. Both are compared against
-# the root sum of squares of the zero-filled channel images, which inverts
-# nothing.
+# the root sum of squares of the zero-filled channel images, which uses no
+# model of the encoding.
 
 channel_images = bartorch.ifft(compressed[:, 0], axes=(-2, -1), unitary=True)
 gridded = bartorch.rss(channel_images, axes=(0,))
@@ -366,8 +366,9 @@ wavelet = bt.pics(
 # The sensitivities ESPIRiT estimates and the ones the acquisition was
 # simulated with differ by a phase that varies from voxel to voxel, so the
 # reconstructed image does too, and the comparison is between magnitudes.
-# :func:`bartorch.tools.nrmse` with ``scaled=True`` divides out the one degree of
-# freedom a SENSE reconstruction leaves undetermined, the global scale.
+# ``pics`` returns the image in the units of the data it scaled, so
+# :func:`bartorch.tools.nrmse` is called with ``scaled=True``, which fits a
+# global factor before comparing.
 
 for name, estimate in (
     ("root sum of squares", gridded),
@@ -403,12 +404,11 @@ plt.show()
 
 # %%
 #
-# The root sum of squares carries the aliasing the missing phase encodes
-# produce, since it inverts nothing. The Tikhonov fit inverts the sampling
-# operator but has no reason to prefer one image among those that fit the data
-# equally well, and a variable-density random pattern leaves many: what it
-# leaves behind is the incoherent residue of that choice. The wavelet penalty
-# is that reason, and removes it.
+# The root sum of squares carries the aliasing of the missing phase encodes.
+# The Tikhonov-regularized SENSE fit removes the coherent aliasing but leaves
+# noise amplification and incoherent residual artefacts of the variable-density
+# random sampling.  The wavelet :math:`\ell_1` penalty reduces both, which the
+# NRMSE printed above quantifies.
 #
 # How much it removes depends on its weight, which is chosen here and not
 # estimated: a larger one removes more noise and more texture with it.

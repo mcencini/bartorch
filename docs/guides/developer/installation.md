@@ -18,7 +18,14 @@ CC=clang CXX=clang++ python -m pip install -e '.[dev]'
 ```
 
 compiles the library through scikit-build-core into `build/<wheel tag>/` and
-installs the package in editable mode.  With CUDA:
+installs the package in editable mode, with pytest, numpydoc and ruff.  The
+pre-commit hooks, the spelling check and the documentation build need
+
+```bash
+python -m pip install pre-commit 'codespell[toml]' -r docs/requirements.txt
+```
+
+With CUDA:
 
 ```bash
 python -m pip install -e '.[dev,cufinufft]' \

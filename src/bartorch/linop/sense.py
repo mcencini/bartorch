@@ -331,10 +331,10 @@ class NoncartesianSense(_SensitivityBatch, LinearOperator):
 
     Examples
     --------
-    >>> traj = bartorch.tools.traj(readout=128, spokes=64, radial=True, golden=True)
+    >>> traj = bartorch.tools.traj(readout=64, spokes=64, radial=True, golden=True)
     >>> A = NoncartesianSense(maps, (64, 64), traj=traj)        # maps (4, 64, 64)
     >>> A.oshape                                                # (coils, spokes, readout)
-    (4, 64, 128)
+    (4, 64, 64)
     >>> A.plan.normal                                           # A^H A as a convolution
     'kernel'
     >>> x = bartorch.optim.CG(lambda_=0.01, maxiter=20)(kspace, A)

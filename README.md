@@ -18,10 +18,12 @@ bartorch embeds BART, the Berkeley Advanced Reconstruction Toolbox, in the
 Python process and calls it on PyTorch tensors in host or CUDA device memory.
 BART's commands are Python functions; its linear and nonlinear operators are
 composable Python objects; its iterative algorithms are solver classes and
-single-step modules.  Applying an operator or a solver to a tensor that
+iteration blocks.  Applying an operator or a solver to a tensor that
 requires a gradient records it for PyTorch autograd.  The arithmetic is BART's
-except where a backend is substituted: FINUFFT and cuFINUFFT compute every
-non-uniform Fourier transform.
+except where bartorch substitutes a component: FINUFFT and cuFINUFFT compute
+every non-uniform Fourier transform, the FFT and BLAS/LAPACK routines come from
+MKL, PyTorch's linked library or SciPy, and the MRI encoding operators run on
+bartorch's own executor built from BART's operators.
 
 ## Features
 

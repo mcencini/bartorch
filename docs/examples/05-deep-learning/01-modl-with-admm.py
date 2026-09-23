@@ -35,8 +35,8 @@ The iteration itself is BART's. :class:`bartorch.optim.ADMMBlock` implements
 ``admm.c``'s step, including the conjugate-gradient x-update that MoDL's own
 implementation writes out, and :class:`bartorch.learning.Unrolled` applies it
 repeatedly. The network supplies the proximal step, through
-:class:`bartorch.priors.ImplicitPrior`, and :math:`\rho`, which is a
-:class:`torch.nn.Parameter`.
+:class:`bartorch.priors.ImplicitPrior`; the penalty parameter :math:`\rho` is a
+parameter of the block and is trained with the network's weights.
 
 """
 
@@ -102,7 +102,7 @@ SLICES = 32  # axial slices taken from the volume
 ITERATIONS = 5  # unrolled steps, MoDL's K
 EPOCHS = 15
 
-torch.manual_seed(0)
+_ = torch.manual_seed(0)
 
 # %%
 #
@@ -113,8 +113,8 @@ torch.manual_seed(0)
 # :math:`T_1`-weighted spin-echo image as in
 # :doc:`../01-basics/01-from-kspace-to-image` and given a smooth phase, so that
 # no step below depends on the image being real. The slices are split into
-# training and validation sets by position rather than at random, so that a
-# validation slice is not adjacent to a training slice.
+# training and validation sets by position rather than at random: the first
+# twenty-four slices train and the last eight validate.
 #
 # One subject, twenty-four slices and a single sampling pattern constitute a
 # phantom. The weights obtained below are not expected to generalize, and the
@@ -186,11 +186,10 @@ print(f"{len(train_images)} slices to train on, {len(valid_images)} to validate 
 # -----------
 #
 # Eight channels of BART's analytical head coil, and a variable-density random
-# undersampling of the phase encodes with a fully sampled k-space centre: the
-# one-dimensional Cartesian sampling MoDL is posed over. The pattern is the
-# same for every slice, so a single operator serves the whole dataset. Where
-# the sampling varies between items, an operator is constructed per item: its
-# sensitivities and pattern are not batch axes of it.
+# undersampling of the phase encodes with a fully sampled k-space centre. The
+# pattern is shared by every slice, so a single operator serves the whole
+# dataset; a pattern that differs between items requires one operator per
+# item.
 
 ACCELERATION = 4
 CENTRE = 8  # phase encodes always acquired
@@ -245,7 +244,7 @@ def measure(images, generator=None):
 # maps -- are transformed consistently. Here each subject holds one image, and
 # the transform is a flip and a rotation of at most eight degrees, which
 # preserve the tissue statistics the denoiser is trained on while varying the
-# anatomy.
+# orientation.
 
 augmentation = torchio.Compose(
     [
@@ -417,8 +416,7 @@ for name, estimate in rows.items():
 # The table is not a comparison of methods. Fifteen epochs over twenty-four
 # slices of one subject, set against a wavelet penalty of fifty iterations with
 # a manually chosen weight, supports no conclusion about either on measured
-# data; the observation available here is that five learned iterations reach
-# the range of fifty hand-specified ones. A quantitative comparison would
+# data. A quantitative comparison would
 # require many subjects, validation on subjects excluded from training, and a
 # fixed reconstruction time.
 
@@ -448,7 +446,8 @@ plt.show()
 # activation, once per iteration.
 #
 # :class:`~bartorch.learning.Unrolled` provides two alternatives, neither of
-# which alters the value the network computes:
+# which changes the forward value
+# (:doc:`../../explanation/differentiation`):
 #
 # * ``detach=True`` starts each iteration from a detached state, so that the
 #   graph spans one iteration. With a loss on each image yielded by
@@ -479,10 +478,10 @@ print(f"greedy: rho {float(greedy_block.rho.detach()):.3f}")
 
 # %%
 #
-# Checkpointing yields the same gradient as recording the whole stack,
-# establishing that the choice is one of memory and not of model. The gradient
-# shown is that of ``rho``, which propagates through every iteration and
-# through the conjugate-gradient solve of each x-update.
+# The gradient of ``rho`` with checkpointing is compared below with the
+# gradient recorded over the whole stack. ``rho`` enters every iteration and
+# the conjugate-gradient solve of each x-update, so its gradient propagates
+# through all of them.
 
 x, y, start = measure(valid_images[:1])
 made = []

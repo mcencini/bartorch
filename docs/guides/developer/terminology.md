@@ -20,6 +20,7 @@ derivations are in {doc}`../../explanation/index`; this page fixes the terms.
 | Term | Meaning |
 | --- | --- |
 | Trajectory | The k-space coordinates `kx, ky, kz` of every sample, in grid units ($1/\mathrm{FOV}$). |
+| Non-uniform FFT (NUFFT) | The discrete Fourier transform between a Cartesian image grid and samples at arbitrary k-space positions, computed approximately to a tolerance; not "gridding", which names one algorithm for it. |
 | Sampling pattern | A binary mask on the Cartesian grid, one where a sample was acquired. |
 | Density weights | A diagonal in k-space applied to the samples of a non-Cartesian transform, on the forward pass and conjugated on the adjoint. |
 | Subspace basis | A matrix `(coeffs, frames)` mapping coefficients to the frames of a signal series. |

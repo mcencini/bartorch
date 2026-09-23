@@ -4,8 +4,8 @@ Dynamic golden-angle radial MRI
 ================================
 
 A continuously acquired golden-angle radial scan reconstructed as a time
-series, with a temporal regularizer in place of the temporal resolution the
-undersampling destroys.
+series, with a temporal regularizer compensating for the undersampling of each
+frame.
 
 The acquisition is one uninterrupted train of spokes, each rotated from the
 last by the golden angle [#winkelmann]_. Frames are cut out of it afterwards: any block of
@@ -155,8 +155,8 @@ SPOKES = 13  # per frame
 # it: a gamma-variate enhancement curve applied to each tissue class in
 # proportion to its vascularity, strongest in grey matter, weaker in white
 # matter and absent in cerebrospinal fluid. The series is therefore piecewise
-# smooth in time and identical in space from frame to frame, which is the
-# structure the reconstruction will exploit.
+# smooth in time with a spatial structure that is the same in every frame, which
+# is the structure the temporal penalty uses.
 
 CLASSES = {"grey matter": ("GM", 0.8), "white matter": ("WM", 0.25)}
 
@@ -243,9 +243,9 @@ for label, weight in CLASSES.values():
 #
 # ``FRAMES * SPOKES`` spokes are generated as one golden-angle trajectory and
 # then reshaped, so that the first axis indexes frames and the second the shots
-# within a frame. A trajectory with an encoding axis is one transform over all
-# of its samples rather than one transform per frame, so a single plan serves
-# the whole series.
+# within a frame. The image varies along the frame axis, so each frame has its
+# own non-uniform FFT and normal kernel inside the one operator, applied under
+# the same coil loop.
 
 trajectory = bt.traj(readout=SIZE, spokes=FRAMES * SPOKES, radial=True, golden=True)
 trajectory = trajectory.reshape(FRAMES, SPOKES, SIZE, 3)
@@ -265,8 +265,8 @@ print(A.plan)
 
 # %%
 #
-# ``plan.items`` is the number of frames the encoding carries, and the
-# transform is planned once for all of them.
+# ``plan.items`` is the number of frames the encoding carries, each with its
+# own transform.
 #
 # Reconstruction
 # --------------
@@ -308,8 +308,8 @@ plt.show()
 
 # %%
 #
-# What the reconstruction is for is the curve, not the frame: the quantity a
-# perfusion study reports is the signal in a region as a function of time. The
+# The quantity a perfusion study reports is the signal in a region as a
+# function of time, so the reconstructions are compared on that curve. The
 # region here is the grey matter, where the enhancement was applied.
 
 region = memberships[CLASS["GM"]] > 0.6
@@ -346,9 +346,8 @@ plt.show()
 # radial acquisition are spread over the image rather than concentrated where
 # the signal is, but carries the frame-to-frame variation of the streak pattern
 # into it. The regularized reconstruction is smoother in time by construction,
-# which is a bias as much as it is a denoiser: of everything in the series, a
-# change confined to one frame is the least likely to survive a temporal total
-# variation penalty.
+# which reduces noise and also biases the curve: a change confined to one frame
+# is attenuated by a temporal total variation penalty more than any other.
 
 # %%
 #

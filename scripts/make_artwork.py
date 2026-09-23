@@ -2,8 +2,8 @@
 
     python scripts/make_artwork.py
 
-The logo is BART's own mark followed by the PyTorch flame and the word
-``torch``.
+The logo is BART's own mark followed by the letters ``orch``, whose ``o`` is the
+PyTorch flame; the ``t`` of bartorch is the last letter of BART's mark.
 
 * The BART mark -- the letters and the two corner brackets -- is read from
   ``external/bart/src/geom/logo.c``, the outline ``bart phantom -B`` draws.
@@ -16,7 +16,7 @@ The logo is BART's own mark followed by the PyTorch flame and the word
   from ``assets/images/logo-icon.svg`` of github.com/pytorch/pytorch.github.io
   and only scaled.  PyTorch, the PyTorch logo and any related marks are
   trademarks of The Linux Foundation; ``docs/misc/license.md`` attributes it.
-* ``torch`` is set in DejaVu Sans Bold, the font matplotlib ships, compressed
+* ``rch`` is set in DejaVu Sans Bold, the font matplotlib ships, compressed
   horizontally and converted to outlines, so the SVG needs no font.  It is not
   the PyTorch wordmark.
 
@@ -177,20 +177,42 @@ def _svg(
 CAP, BASELINE = 136.4, 180.0
 
 
+def _extents(text: str, height: float) -> tuple[float, float, float, float]:
+    """Ink box ``(x0, x1, y0, y1)`` of ``text`` as :func:`word` sizes it, y upwards, uncondensed."""
+    font = FontProperties(
+        fname=str(Path(matplotlib.get_data_path()) / "fonts" / "ttf" / "DejaVuSans-Bold.ttf")
+    )
+    size = height / TextPath((0, 0), "h", size=1.0, prop=font).get_extents().y1
+    box = TextPath((0, 0), text, size=size, prop=font).get_extents()
+    return box.x0, box.x1, box.y0, box.y1
+
+
 def logo(theme: str) -> str:
-    """The horizontal logo: BART's mark, the PyTorch flame, then ``torch``."""
-    # The flame stands on BART's baseline and reaches a little above its
-    # capitals, as the dot above it rises past a letter.
-    height = 1.08 * CAP
-    element, right = flame(398.0, BASELINE - height, height)
+    """The horizontal logo: BART's mark, then ``orch`` with the PyTorch flame as its ``o``.
+
+    The ``t`` of ``bartorch`` is BART's own, so the letters after the mark are
+    ``orch`` and the name reads once.
+    """
     # Lowercase letters of this font look larger than BART's condensed capitals
     # at the same height, so the ascenders stop a little short of the caps.
-    letters, right = word("torch", 0.93 * CAP, right + 12.0, BASELINE)
+    height = 0.93 * CAP
+    # The font's own spacing between the o and the r, read off the word it sets.
+    o_left, o_right, o_bottom, o_top = _extents("o", height)
+    _, or_ink, _, _ = _extents("or", height)
+    r_left, r_right, _, _ = _extents("r", height)
+    after = CONDENSE * (or_ink - (r_right - r_left) - (o_right - o_left))
+    # The flame's ring is as tall as the o and stands where the o does; its
+    # box is the ring's diameter wide and the flame's tip taller.  BART's lower
+    # bracket reaches x = 374.9 at the o's height, so the ring starts clear of it.
+    ring = o_top - o_bottom
+    flame_height = ring * FLAME_BOX[3] / FLAME_BOX[2]
+    element, flame_right = flame(398.0, BASELINE - o_bottom - flame_height, flame_height)
+    rest, right = word("rch", height, flame_right + after, BASELINE)
     width = right + 4.0
     return _svg(
         width,
         224.0,
-        [(INK[theme], bart_mark()), (ACCENT[theme], letters)],
+        [(INK[theme], bart_mark()), (ACCENT[theme], rest)],
         "bartorch",
         extra=(element,),
     )

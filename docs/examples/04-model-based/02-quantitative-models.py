@@ -9,8 +9,8 @@ signal model inside the forward operator and fitting the k-space directly.
 
 The two-step route solves an ill-posed reconstruction eight times over, once
 per echo, and then fits a model to the answers. Each reconstruction is
-undersampled on its own and nothing in it knows that the eight images are
-related. The model-based route puts that relation in the forward operator,
+undersampled on its own, and none of the eight uses the relation between the
+echo images. The model-based route puts that relation in the forward operator,
 
 .. math::
 
@@ -240,8 +240,8 @@ contrasts = (amplitude[None] * torch.exp(-ECHO_TIMES[:, None, None] / t2[None]))
 # Acquisition
 # -----------
 #
-# Each echo is sampled at a quarter of the phase encodes, with its own draw, so
-# no two echoes are missing the same part of k-space. The echoes are a batch of
+# Each echo is sampled at a quarter of the phase encodes, with its own random
+# draw, so the sets of missing phase encodes differ between echoes. The echoes are a batch of
 # the encoding rather than an axis inside it: the sensitivities are shared, the
 # transform is the same, and only the pattern differs, so the operator is the
 # Cartesian SENSE encoding of :doc:`../01-basics/02-operators-and-solvers` with
@@ -294,7 +294,8 @@ print(f"unknowns {M.names}: {M.ishapes[0]} -> {M.oshapes[0]}")
 # The first reconstructs the echo images by conjugate gradients and fits the
 # model to them. The second composes the model with the encoding and fits the
 # k-space. Both are the same Gauss-Newton loop with the same number of steps,
-# and they differ only in what stands between the unknowns and the data.
+# and they differ only in the forward operator that maps the unknowns to the
+# data.
 
 STEPS = 20
 
@@ -311,7 +312,7 @@ print(f"model inside the operator: {time.perf_counter() - start_time:5.1f} s")
 #
 # ``E @ M`` composes a linear operator with a nonlinear one; the derivative of
 # the composition at a point is the encoding applied to the derivative of the
-# model -- exactly what a Gauss-Newton step asks of the composition.
+# model, which is the derivative a Gauss-Newton step requires.
 
 estimates = {
     name: M.split(fit)["T2"]
@@ -348,15 +349,17 @@ plt.show()
 
 # %%
 #
-# The echo images carry the aliasing each echo's own sampling leaves, and the
-# fit that follows has no way to tell that apart from decay: the two-step
-# :math:`T_2` map is the noisier of the two and biased upward on this data.
-# Fitting the k-space constrains the three maps with all eight echoes at once;
-# the model, the solver and the number of steps are the same in both routes.
+# The echo images carry the residual aliasing of each echo's sampling, and the
+# voxel-wise fit that follows cannot separate it from signal decay, so it
+# propagates into the two-step :math:`T_2` map. Fitting the k-space constrains
+# the three maps with all eight echoes at once; the model, the solver and the
+# number of steps are the same in both routes, and the printed errors compare
+# the two maps with the phantom. The explanation of the model-based approach is
+# :doc:`../../explanation/nonlinear`.
 # The maps are drawn with the navia colormap [#fuderer]_.
 #
 # What this route also makes available is regularization of the maps rather
-# than of the images, since the maps are what the solver holds; BART's own
+# than of the images, since the maps are the solver's unknowns; BART's own
 # ``moba`` is :func:`bartorch.tools.moba`, and applies its penalties there.
 
 # %%

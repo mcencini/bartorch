@@ -15,9 +15,10 @@ reconstruction is run twice: once through :func:`bartorch.tools.pics` and once
 through the operator and a solver, the route an encoding BART has no
 application for would take.
 
-The measured data here are simulated by the same transform the reconstruction
-inverts, so the experiment reports what undersampling and noise cost, not what
-a model error costs.
+The measured data are simulated with the same transform the reconstruction
+uses — an inverse crime — so the experiment measures the effect of
+undersampling, noise and the estimated sensitivities, not that of a mismatch
+between the forward model and the measurement.
 
 The phantom and the coil sensitivities are built as in
 :doc:`../01-basics/01-from-kspace-to-image`; the cell that does it is hidden on
@@ -222,10 +223,10 @@ sensitivities = sensitivities / bartorch.rss(sensitivities, axes=(0,), keepdim=T
 # -----------
 #
 # Sixty-four golden-angle spokes across a 192 matrix, which is a fifth of the
-# number radial sampling would need. The encoding operator that simulates the
-# measurement is the one the reconstruction will use:
-# :class:`bartorch.linop.NoncartesianSense` maps an image to the samples of
-# every channel along the trajectory.
+# number radial sampling would need. The measurement is simulated with
+# :class:`bartorch.linop.NoncartesianSense`, which maps an image to the samples
+# of every channel along the trajectory; the reconstruction uses the same
+# operator over the estimated sensitivities.
 
 trajectory = bt.traj(readout=SIZE, spokes=SPOKES, radial=True, golden=True)
 
@@ -246,8 +247,7 @@ print(E.plan)
 # -----------------------
 #
 # ESPIRiT reads its calibration matrix from a Cartesian neighbourhood, so on
-# non-Cartesian data it needs the centre of k-space gridded first, and at this
-# undersampling the gridded centre is already aliased.
+# non-Cartesian data it needs the centre of k-space gridded first.
 # :func:`bartorch.tools.ncalib` instead estimates the sensitivities from the
 # samples as they were measured, by nonlinear inversion [#nlinv]_ at low
 # resolution.
@@ -256,8 +256,8 @@ print(E.plan)
 # a SENSE fit recovers is the image :math:`x` for which :math:`Sx` explains the
 # data, so maps whose root sum of squares varies across the field of view leave
 # its reciprocal in the image as a smooth shading. ESPIRiT normalizes its maps
-# by construction; a nonlinear inversion does not, and the flag is where that
-# is asked for.
+# by construction; a nonlinear inversion does not, and ``N=True`` requests the
+# normalization.
 
 maps = bt.ncalib(measured[..., None], t=trajectory, N=True)
 
@@ -268,9 +268,9 @@ maps = bt.ncalib(measured[..., None], t=trajectory, N=True)
 #
 # The reference reconstruction is the density-compensated adjoint: weight each
 # sample by its distance from the centre of k-space, map the samples onto the
-# grid, and combine the channels by the root sum of squares. It inverts
-# nothing, so the undersampling shows up in it as the streaks the point spread
-# function of a radial trajectory predicts.
+# grid, and combine the channels by the root sum of squares. It uses no model
+# of the encoding, so the undersampling appears in it as the streaks the point
+# spread function of a radial trajectory predicts.
 
 weights = torch.linalg.norm(trajectory.real[..., :2], dim=-1, keepdim=True)
 weights = weights.clamp(min=0.25).to(torch.complex64)
@@ -298,10 +298,10 @@ print(f"pics: {time.perf_counter() - start:.2f} s")
 
 # %%
 #
-# The same solve through the operator. What the application does around its
-# iteration is the data scaling, which off a grid is estimated from the spread
-# of the adjoint reconstruction and therefore needs the operator;
-# :func:`bartorch.optim.data_scaling` takes it. The encoding is the operator
+# The same solve through the operator. Besides the iteration, the application
+# scales the data; off a grid the scaling is estimated from the adjoint
+# reconstruction and therefore needs the operator, which
+# :func:`bartorch.optim.data_scaling` takes. The encoding is the operator
 # built above, now over the estimated sensitivities rather than the true ones.
 
 A = linop.NoncartesianSense(maps[:, 0], (SIZE, SIZE), traj=trajectory)
@@ -311,7 +311,8 @@ start = time.perf_counter()
 assembled = optim.ADMM(term, maxiter=50)(data, A)
 print(f"operator and solver: {time.perf_counter() - start:.2f} s")
 
-print(f"identical to pics: {torch.equal(assembled.squeeze(), reconstruction.squeeze())}")
+difference = (assembled.squeeze() - reconstruction.squeeze()).abs().max()
+print(f"relative difference from pics: {float(difference / reconstruction.abs().max()):.1e}")
 
 # %%
 #
@@ -333,10 +334,9 @@ print(f"relative difference {float((pair - assembled).abs().max() / assembled.ab
 
 # %%
 #
-# The difference printed above is that of the two normal operators carried
-# through fifty iterations. What separates them is the cost: the convolution
-# is one multiplication on a doubled grid, the pair is two transforms over
-# every sample of every channel.
+# The two differ in cost: the convolution is an FFT, a pointwise
+# multiplication and an inverse FFT on the doubled grid, the pair two
+# non-uniform transforms over every sample of every channel.
 
 # %%
 

@@ -2,8 +2,8 @@
 
 bartorch is distributed under the MIT license below.  The components it
 embeds or vendors keep their own licenses, which the MIT license does not
-replace; their notices are distributed with the source and, from this
-version on, in each wheel's `.dist-info/licenses/` directory.
+replace; their notices are distributed with the source and in each wheel's
+`.dist-info/licenses/` directory.
 
 ```{literalinclude} ../../LICENSE
 :language: text
@@ -41,7 +41,7 @@ The bartorch logo and mark combine three elements, which
 | --- | --- | --- |
 | The BART mark: the letters and the corner brackets | The outline in BART's `src/geom/logo.c` | BSD-3-Clause, BART's license above |
 | The flame | The PyTorch logo, `assets/images/logo-icon.svg` of [pytorch/pytorch.github.io](https://github.com/pytorch/pytorch.github.io), reproduced unaltered in shape and colour and only scaled | A trademark of The Linux Foundation |
-| The word `torch` | Glyph outlines of DejaVu Sans Bold | Bitstream Vera license; DejaVu's changes are in the public domain |
+| The letters `rch` | Glyph outlines of DejaVu Sans Bold | Bitstream Vera license; DejaVu's changes are in the public domain |
 
 PyTorch, the PyTorch logo and any related marks are trademarks of The Linux
 Foundation.  bartorch is an independent project and is not affiliated with or

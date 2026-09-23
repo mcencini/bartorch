@@ -9,6 +9,7 @@ procedure.  A development setup is:
 git clone --recurse-submodules https://github.com/YOUR-USERNAME/bartorch.git
 cd bartorch
 CC=clang CXX=clang++ python -m pip install -e '.[dev]'
+python -m pip install pre-commit 'codespell[toml]' -r docs/requirements.txt
 pre-commit install
 ```
 

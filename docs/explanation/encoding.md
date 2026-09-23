@@ -1,5 +1,14 @@
 # The MRI encoding operator
 
+```{admonition} TL;DR
+:class: tldr
+
+- The SENSE forward model is $A = PFS$; coil sensitivities make an undersampled acquisition solvable within the limits of the coil geometry.
+- Every encoding bartorch builds is one expression, $y = \sum_a O \cdot T(I \cdot x_a)$: an image-side factor, a transform (FFT, NUFFT or wave), a k-space-side factor and a contraction, applied by one executor a slab of coils at a time.
+- Compositions written with `@` and `+` are matched against that form when first used; `A.plan` reports the result, including a fallback to a chain of operators.
+- The normal operator $A^H A$ is applied through a kernel — the sampling pattern on a grid, a point spread function on a doubled grid off it — or, where no kernel exists, as the forward operator followed by the adjoint.
+```
+
 The forward operator of an MRI reconstruction maps an object to the signal the
 experiment would have measured.  This page derives it for parallel imaging,
 states the single expression bartorch represents every encoding with, and
@@ -10,8 +19,9 @@ its normal operator is applied.
 
 A receive coil measures the transverse magnetization of the object, weighted
 by the coil's spatial sensitivity and integrated against the phase imposed by
-the gradients.  With $x(r)$ the object, $S_c(r)$ the sensitivity of coil $c$
-and $k_j$ the k-space position of sample $j$,
+the gradients.  With $x(r)$ the object at position $r$, $S_c(r)$ the
+sensitivity of coil $c$ and $k_j$ the k-space position of sample $j$, in cycles
+per unit length,
 
 $$
 y_{c,j} = \int S_c(r)\, x(r)\, e^{-2\pi i\, k_j \cdot r}\, \mathrm{d}r .
@@ -27,8 +37,9 @@ the **SENSE** forward model:[^pruessmann1999] $S$ maps an image to one coil
 image per channel, $F$ is the Fourier transform of each coil image, and $P$
 selects the acquired samples.
 
-With $R$-fold Cartesian undersampling, each measured sample of each coil sees
-the superposition of $R$ voxels that alias onto one another.  For $C$ coils the
+With $R$-fold Cartesian undersampling, each voxel of a coil image obtained by
+the inverse FFT of the undersampled data is the superposition of $R$ object
+voxels separated by $\mathrm{FOV}/R$.  For $C$ coils the
 aliased voxels satisfy $C$ equations in $R$ unknowns; they are determined when
 $C \ge R$ and the sensitivity vectors of the aliased voxels are linearly
 independent, and the conditioning of this small system — the g-factor — sets
@@ -46,10 +57,10 @@ samples, and {doc}`nonlinear` treats their estimation jointly with the image.
 
 Wave-encoded, subspace-constrained, off-resonance-corrected and simultaneous
 multislice acquisitions each modify $PFS$.  bartorch represents all of them by
-one expression: for coil $c$, encoding frame $t$ and sample $k$,
+one expression: for coil $c$, encoding frame $t$ and sample $j$,
 
 $$
-y[c, t, k] = \sum_a O[a, t](k)\; T_t\!\left( I[c, a, t](r)\, x[a](r) \right)\!(k).
+y[c, t, j] = \sum_a O[a, t](j)\; T_t\!\left( I[c, a, t](r)\, x[a](r) \right)\!(j).
 $$
 
 ```{image} ../_static/encoding.svg
@@ -86,7 +97,7 @@ an operator.  The first operation that needs the built operator — an
 application, `.H`, a solve, or reading `.plan` — passes the whole description
 to a planner, which matches it against the encoding form.  Where it matches,
 the composition is built as one encoding (**lowering**); a time-segmented
-field correction written term by term is therefore built into the same
+off-resonance correction written term by term is therefore built into the same
 operator {func}`~bartorch.linop.FieldCorrected` gives.  Where it does not
 match — for example, a spatial weight that differs between sets of
 sensitivities, which the form cannot carry because the sets are contracted
@@ -108,8 +119,9 @@ built:
 
 ## The normal operator
 
-Iterative solvers apply $A^H A$ once per iteration.  For the encoding form it
-is applied in one of three ways, which `plan.normal` names.
+CG and the proximal-gradient methods apply $A^H A$ once per iteration, and ADMM
+once per iteration of its inner solve.  For the encoding form it is applied in
+one of three ways, which `plan.normal` names.
 
 **Cartesian sampling** (`"kernel"`).  With a binary pattern $P$,
 $A^H A = S^H F^H P F S$: for each coil, multiplication by $S_c$, an FFT,
@@ -121,50 +133,44 @@ once when the operator is built rather than summed over frames at every
 iteration.
 
 **Non-Cartesian sampling** (`"kernel"`).  The normal operator of the transform
-alone, $T = \mathrm{NUFFT}^H W^H W\, \mathrm{NUFFT}$, is a discrete
-convolution on the image grid,[^fessler2005]
+alone, $Q = \mathrm{NUFFT}^H W^H W\, \mathrm{NUFFT}$, is a convolution with the
+point spread function of the weighted trajectory, evaluated exactly on a grid
+doubled in each dimension ({doc}`non-cartesian`).[^fessler2005]  The full SENSE
+normal operator is
 
 $$
-(Tx)(r) = \sum_{r'} h(r - r')\, x(r'), \qquad
-h(r) = \frac{1}{N}\sum_j \lvert w_j \rvert^2 e^{2\pi i\, k_j \cdot r},
-$$
-
-with $h$ the point spread function of the weighted trajectory ($k_j$ in grid
-units and $r$ in units of the field of view, as in {doc}`non-cartesian`).  Because $r - r'$
-spans twice the image extent in each dimension, the convolution is evaluated
-exactly as a multiplication in the Fourier domain of a grid doubled in each
-dimension, by the transfer function $\hat h$ (the Fourier transform of $h$ on
-that grid).  The full SENSE normal operator is
-
-$$
-A^H A = \sum_c \overline{S_c}\; T\; S_c ,
+A^H A = \sum_c \overline{S_c}\; Q\; S_c ,
 $$
 
 which is not translation invariant: the sensitivities vary in space, so only
-the transform's normal $T$ is a convolution.  It is applied coil by coil as
+the transform's normal $Q$ is a convolution.  It is applied coil by coil as
 multiplication by $S_c$, zero-padding to the doubled grid, an FFT,
 multiplication by $\hat h$, an inverse FFT, cropping, and multiplication by
 $\overline{S_c}$.  With a subspace basis, $\hat h$ becomes a kernel over pairs
-of coefficients, as in the Cartesian case.  {doc}`non-cartesian` describes how
-$\hat h$ is computed.
+of coefficients, as in the Cartesian case.
 
-**No closed form** (`"applications"`).  A contraction over terms, such as the
-segments of a field correction, has no single kernel: $A^H A$ is applied as the
-forward operator followed by the adjoint.  `"transform"` names the case with no
+**Forward and adjoint** (`"applications"`).  bartorch builds no kernel for a
+contraction over terms — the segments of an off-resonance correction, the
+slices of a simultaneous multislice acquisition — for a slice phase, for a
+wave pattern that varies along the readout, or when `toeplitz=False`; $A^H A$
+is then applied as the forward operator followed by the adjoint.  `"transform"` names the case with no
 k-space factor, where the transform's own normal operator is the whole of it.
 
 ## Encoding axes and batch axes
 
 | Axis | Definition | Examples | Cost |
 | --- | --- | --- | --- |
-| Encoding axis | Indexed by the trajectory or the sampling pattern; its samples belong to one transform, and a subspace basis contracts it | Frames, echoes, cardiac phases | Joins the samples of one transform |
+| Encoding axis | Indexed by the trajectory or the sampling pattern | Frames, echoes, cardiac phases | Joins the samples of one transform when the image does not vary along it; one transform per item when it does |
 | Batch axis | Not indexed by the trajectory; items share the trajectory and are encoded independently | Slices, averages, repetitions | One transform plan for all items, applied to each |
 
-A trajectory that varies across frames is still one transform: every sample
-it indexes belongs to one point set, so the frames join the shots and the
-readout samples rather than requiring one transform per frame.  An image that
-varies along an axis the trajectory indexes would require one transform per
-item; the operator refuses that configuration with an error.
+Where a subspace basis contracts an encoding axis, the image carries
+coefficients rather than frames, and every sample the trajectory indexes
+belongs to one point set: the frames join the shots and the readout samples in
+one transform.  Where the image itself varies along the axis — a dynamic
+series of frames — each item has its own transform and normal kernel inside the
+one operator, applied under the same coil loop, and `plan.items` reports their
+number.  Under BART's own commands the non-uniform FFT substitution refuses an
+image that varies along a trajectory axis, with the reason.
 
 ## References
 

@@ -19,9 +19,9 @@ reports the software versions:
   BART asks that the articles corresponding to the methods used be cited as
   well; its `doc/references.txt` lists them.
 - **Methods**: the publications of the reconstruction methods used, for example
-  SENSE, ESPIRiT, compressed sensing or nonlinear inversion; the references at
-  the end of each {doc}`explanation page <../explanation/index>` and example
-  give them.
+  SENSE, ESPIRiT, compressed sensing or nonlinear inversion; the References
+  sections of the {doc}`explanation pages <../explanation/index>` and examples
+  list them.
 - **Non-uniform FFT**, for non-Cartesian data: Barnett AH, Magland J,
   af Klinteberg L. A parallel nonuniform fast Fourier transform library based
   on an "exponential of semicircle" kernel. *SIAM J Sci Comput*

@@ -1,5 +1,15 @@
 # Inverse problems and their solvers
 
+```{admonition} TL;DR
+:class: tldr
+
+- The data are $y = Ax + \varepsilon$; every algorithm here needs only applications of $A$ and $A^H$, or of $A^H A$.
+- Undersampled parallel imaging is ill-conditioned or rank deficient: least squares amplifies noise, and the iteration count of conjugate gradients acts as a regularization parameter.
+- A regularized estimate adds $\lambda R(x)$; a term $g(Gx)$ is applied through the proximal operator of $g$ and the transform $G$.
+- IST and FISTA take one term with $G = I$; ADMM and the primal-dual method take several terms with any $G$; CG takes quadratic terms.
+- The weight $\lambda$ is chosen for data divided by {func}`~bartorch.optim.data_scaling`, as in BART's reconstructions.
+```
+
 An MRI reconstruction estimates an image from measurements that determine it
 incompletely or unstably.  This page states the estimation problem, the
 properties of the forward operator that make it difficult, the regularized
@@ -22,7 +32,8 @@ noise.  After prewhitening, the noise of MRI data is modelled as complex
 Gaussian with independent, identically distributed entries.  For fixed coil
 sensitivities $A$ is linear, and it is applied without being formed as a
 matrix: for a $256^2$ image and eight coils the matrix would have about
-$4\times 10^9$ entries, while an application costs eight FFTs.
+$3.4\times 10^{10}$ entries for eight fully sampled coils, while an
+application costs eight FFTs.
 
 The **adjoint** $A^H$ is defined by
 $\langle Ax, y\rangle = \langle x, A^H y\rangle$ for all $x$ and $y$; for a
@@ -49,7 +60,8 @@ $$
 x^\dagger = \sum_{\sigma_i > 0} \frac{u_i^H y}{\sigma_i} \, v_i .
 $$
 
-Two properties of $A$ decide whether $x^\dagger$ is useful.
+Two properties of $A$ determine whether $x^\dagger$ is unique and stable against
+noise.
 
 | Property | Condition | Consequence |
 | --- | --- | --- |
@@ -159,7 +171,7 @@ the algorithm has to treat $G$ separately.
 
 | Algorithm | Problem and splitting | Transform $G$ | Per iteration | Convergence conditions |
 | --- | --- | --- | --- | --- |
-| CG | Quadratic: $\min \lVert Ax - y\rVert^2 + \lambda\lVert x\rVert^2 + \sum_i w_i\lVert G_i x - b_i\rVert^2$ | Any, inside the quadratic terms | One application of the normal operator | Positive semidefinite normal operator |
+| CG | Quadratic: $\min \tfrac12\lVert Ax - y\rVert^2 + \tfrac{\lambda}{2}\lVert x\rVert^2 + \sum_i \tfrac{w_i}{2}\lVert G_i x - b_i\rVert^2$ | Any, inside the quadratic terms | One application of the normal operator | Positive semidefinite normal operator |
 | IST (proximal gradient) | $f + g$: $x \leftarrow \operatorname{prox}_{\tau\lambda g}\!\left(x - \tau \nabla f(x)\right)$ | $I$ only | One normal operator, one proximal operator | Convex $f$ and $g$, $0 < \tau \le 1/L$; objective error $O(1/k)$ |
 | FISTA | As IST, with Nesterov momentum | $I$ only | As IST | As IST; objective error $O(1/k^2)$[^beck] |
 | ADMM | $f(x) + \sum_j g_j(z_j)$ subject to $z_j = G_j x$ | Any | A CG solve with $A^H A + \rho \sum_j G_j^H G_j$, one proximal operator per term, a dual update | Convex terms, any $\rho > 0$[^boyd] |
@@ -169,8 +181,8 @@ the algorithm has to treat $G$ separately.
 **Proximal gradient and FISTA.**  Each iteration takes a gradient step on the
 data term and a proximal step on the regularization.  The step size must not
 exceed $1/L$.  BART's default step size, used by {class}`~bartorch.optim.IST`,
-{class}`~bartorch.optim.FISTA` and {class}`~bartorch.optim.PRIDU`, is $0.95$ in
-absolute units.  This satisfies the bound for Cartesian SENSE with a unitary
+{class}`~bartorch.optim.FISTA` and {class}`~bartorch.optim.PRIDU`, is $0.95$,
+not scaled by $1/L$.  This satisfies the bound for Cartesian SENSE with a unitary
 FFT, a binary sampling pattern and sensitivities normalized to unit root sum
 of squares over the coils, where $\lVert A \rVert \le 1$.  For other encodings,
 non-Cartesian ones in particular, `eigen=True` divides the step by
@@ -187,7 +199,8 @@ $\rho$.
 
 **The primal-dual method** alternates proximal steps on the primal and the
 dual variables and applies $G_j$ and $G_j^H$ directly, with no inner solve; it
-usually needs more iterations than ADMM for the same accuracy.
+needs no inner solve; the iteration count to a given accuracy depends on the
+problem and on $\sigma$ and $\tau$.
 
 ## Data scaling and the regularization weight
 
@@ -196,14 +209,11 @@ $c^2$: for a term homogeneous of degree one, such as an $\ell_1$ norm or total
 variation, the minimizer then scales by $c$ only if $\lambda$ scales by $c$ as
 well.  BART's reconstructions therefore divide the data by an estimate of its
 scale before iterating, and a weight is chosen for normalized data.
-{func}`bartorch.optim.data_scaling` is that estimate.  For a Cartesian
-acquisition it is computed from a central calibration region of k-space: the
-root-sum-of-squares image of that region, corrected for its size, and the 90th
-percentile of its voxel magnitudes — or their maximum, when the maximum exceeds
-the 90th percentile by at least twice the difference between the 90th
-percentile and the median.  For a non-Cartesian acquisition the
-same statistic is taken of $\lvert A^H y \rvert$.  `pics` returns the
-reconstruction of the scaled data without scaling it back.
+{func}`bartorch.optim.data_scaling` is that estimate: an order statistic of the
+magnitudes of a low-resolution image from the central region of k-space, or of
+$\lvert A^H y \rvert$ for a non-Cartesian acquisition; its documentation states
+the rule.  `pics` returns the reconstruction of the scaled data without scaling
+it back.
 
 ## Representation in bartorch
 

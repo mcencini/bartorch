@@ -1202,6 +1202,15 @@ it off the page and in the downloadable script and notebook. Anything a reader
 would type themselves stays visible.  Literature is cited with numbered
 footnotes and listed in a *References* section at the bottom of the page.
 
+Every explanation page opens with a TL;DR admonition (```` ```{admonition} TL;DR ````
+with `:class: tldr`) directly under its title, stating only what the page
+establishes; landing pages, API pages and examples have none, and
+`tests/test_docs.py` holds it.  Every example page carries an *Open in Colab*
+badge under its title, inserted at build time by `docs/colab.py`, which also
+writes a copy of each gallery notebook into the built site under `_colab/`
+with a note and a `%pip install` cell in front; the notebook the page offers
+for download is left as sphinx-gallery writes it.
+
 `./scripts/build_docs.sh` renders the example pages without running them, which
 needs no compiled library; `--execute` runs them, which needs one and the
 packages `docs/examples/README.rst` names. The docs workflow does both, and

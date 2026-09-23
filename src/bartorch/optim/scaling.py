@@ -51,6 +51,14 @@ def data_scaling(
 
     Notes
     -----
+    Without ``A`` the estimate is BART's ``estimate_scaling``: the
+    root-sum-of-squares image of the fully sampled central region of k-space,
+    at most 32 samples along each axis, corrected for the region's size, and the
+    90th percentile of its voxel magnitudes -- or their maximum, when the
+    maximum exceeds the 90th percentile by at least twice the difference
+    between the 90th percentile and the median.  With ``A`` the same rule is
+    applied to the magnitudes of ``A^H y``.
+
     The solution of a solve on scaled data is scaled by the same factor, and
     is conventionally left so rather than divided back.
 

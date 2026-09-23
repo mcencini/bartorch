@@ -54,6 +54,7 @@ Where no wheel exists, pip builds the source distribution, which needs:
 | C and C++ compiler | clang, or GCC 14 or later; BART's nested functions are compiled as clang Blocks or as GCC heap trampolines, and older GCC is rejected at configuration |
 | CMake | 3.18 or later |
 | OpenMP | The compiler's OpenMP runtime, for example `libomp-dev` with clang on Debian and Ubuntu; without it BART runs single-threaded |
+| FINUFFT | Where FINUFFT has no wheel either, pip builds it from its source distribution, which needs CMake, ninja, a C++ compiler and network access to fetch FFTW |
 
 The compiler is selected with `CC` and `CXX`:
 
@@ -96,7 +97,7 @@ a CUDA device.  BART's own gridding implementation is not used.
 | Transform | Backend | Requirement | When unavailable |
 | --- | --- | --- | --- |
 | Host tensors | FINUFFT | Installed as a dependency | The transform raises an error |
-| CUDA tensors | cuFINUFFT | The `cufinufft` extra | On a machine with a CUDA device and a CUDA build of bartorch, the substitution is not installed and every non-uniform transform, on the host as well, raises an error until cuFINUFFT is installed |
+| CUDA tensors | cuFINUFFT | The `cufinufft` extra | On a machine with a CUDA device and a CUDA build of bartorch, the FINUFFT backend is not enabled and every non-uniform transform, on the host as well, raises an error until cuFINUFFT is installed |
 | A configuration FINUFFT cannot serve | None | None | The transform raises {class}`~bartorch.BartError` with the reason |
 
 {doc}`../../explanation/non-cartesian` describes the transform, its tolerance
@@ -128,11 +129,6 @@ was found and what would be done, `patch` applies the modification, and
 recommended: it lets two copies of the runtime run in one process, a
 configuration the LLVM OpenMP runtime does not support.
 
-## Windows and WSL2
-
-BART does not build on Windows, and bartorch has no Windows build.  Under WSL2,
-bartorch is installed as on Linux.
-
 ## Command-line interface
 
 Installation provides the `bartorch` command, which accepts the command lines
@@ -143,6 +139,6 @@ bartorch pics -l1 -r0.01 -i30 kspace sensitivities image
 bartorch --list
 ```
 
-A script written for `bart` runs with the command name replaced, or with
-`alias bart=bartorch`; {doc}`../../api/cli` describes which commands run as
-{mod}`bartorch.apps` pipelines.
+A script written for `bart` runs with the command name replaced, or with a
+`bart` symbolic link to `bartorch` earlier on the `PATH`; {doc}`../../api/cli`
+describes which commands run as {mod}`bartorch.apps` pipelines.
