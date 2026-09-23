@@ -328,6 +328,16 @@ class NoncartesianSense(_SensitivityBatch, LinearOperator):
     With the operator on a card its operands may stay on the host: the image
     crosses once each way per application, the samples and a kernel bank a slab
     at a time, and between applications the card holds the operator alone.
+
+    Examples
+    --------
+    >>> traj = bartorch.tools.traj(readout=128, spokes=64, radial=True, golden=True)
+    >>> A = NoncartesianSense(maps, (64, 64), traj=traj)        # maps (4, 64, 64)
+    >>> A.oshape                                                # (coils, spokes, readout)
+    (4, 64, 128)
+    >>> A.plan.normal                                           # A^H A as a convolution
+    'kernel'
+    >>> x = bartorch.optim.CG(lambda_=0.01, maxiter=20)(kspace, A)
     """
 
     #: Whether a trajectory is required.  The Cartesian encoding is the same

@@ -1,4 +1,4 @@
-"""Write the bartorch logo, its compact mark and the architecture figure into ``docs/_static``.
+"""Write the bartorch logo, its compact mark and two explanation figures into ``docs/_static``.
 
     python scripts/make_artwork.py
 
@@ -20,11 +20,12 @@ The logo is BART's own mark followed by the word ``torch``.
 Nothing here implies endorsement by the BART developers or the PyTorch
 Foundation; ``docs/misc/license.md`` says so where the logo is shown.
 
-Three figures are written, each in a light and a dark variant: the horizontal
+Four images are written, each in a light and a dark variant: the horizontal
 logo, the compact mark -- the two brackets around ``bt`` -- used in the sidebar
-and as the favicon, and the architecture figure the README and
-``docs/explanation/execution-model.md`` show.  The figure's text is SVG text in
-the reader's sans-serif font; no font is embedded.
+and as the favicon, the architecture figure the README and
+``docs/explanation/execution-model.md`` show, and the encoding-form figure of
+``docs/explanation/encoding.md``.  The figures' text is SVG text in the
+reader's sans-serif font; no font is embedded.
 """
 
 from __future__ import annotations
@@ -95,7 +96,7 @@ def brackets() -> str:
 
 
 def word(text: str, height: float, x: float, baseline: float) -> tuple[str, float]:
-    """Outlines of ``text`` whose ascenders are ``height`` tall; returns the path and its right edge."""
+    """Outlines of ``text`` with ascenders ``height`` tall, and the right edge they reach."""
     font = FontProperties(
         fname=str(Path(matplotlib.get_data_path()) / "fonts" / "ttf" / "DejaVuSans-Bold.ttf")
     )
@@ -132,7 +133,8 @@ def _svg(width: float, height: float, paths: list[tuple[str, str]], label: str, 
     )
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-label="{label}" '
-        f'viewBox="{-margin:.0f} {-margin:.0f} {width + 2 * margin:.0f} {height + 2 * margin:.0f}">\n'
+        f'viewBox="{-margin:.0f} {-margin:.0f} '
+        f'{width + 2 * margin:.0f} {height + 2 * margin:.0f}">\n'
         f"  <title>{label}</title>\n{body}\n</svg>\n"
     )
 
@@ -211,22 +213,48 @@ def architecture(theme: str) -> str:
     rows = [
         _box(0, 0, width, 44, theme, "PyTorch tensors, on the CPU or a CUDA device"),
         _box(
-            left, 66, half, 108, theme, "Command-style interface",
-            ("bartorch.tools: BART commands", "bartorch.fft, fwt, ...: array functions",
-             "bartorch CLI: the bart command line"),
+            left,
+            66,
+            half,
+            108,
+            theme,
+            "Command-style interface",
+            (
+                "bartorch.tools: BART commands",
+                "bartorch.fft, fwt, ...: array functions",
+                "bartorch CLI: the bart command line",
+            ),
         ),
         _box(
-            right, 66, half, 108, theme, "Composable interface",
-            ("linop, nlop: linear and nonlinear operators", "optim, priors: solvers, regularizers",
-             "apps, learning, interop: pipelines, adapters"),
+            right,
+            66,
+            half,
+            108,
+            theme,
+            "Composable interface",
+            (
+                "linop, nlop: linear and nonlinear operators",
+                "optim, priors: solvers, regularizers",
+                "apps, learning, interop: pipelines, adapters",
+            ),
         ),
         _box(0, 196, width, 44, theme, "ctypes  \u2192  bartorch C ABI (libbartorch)"),
         _box(
-            0, 262, width, 66, theme, "Embedded BART",
+            0,
+            262,
+            width,
+            66,
+            theme,
+            "Embedded BART",
             ("commands, linear and nonlinear operators, iterative algorithms",),
         ),
         _box(
-            0, 350, width, 88, theme, "Substituted backends",
+            0,
+            350,
+            width,
+            88,
+            theme,
+            "Substituted backends",
             (
                 "FINUFFT, cuFINUFFT: non-uniform Fourier transforms",
                 "BLAS, LAPACK: MKL, PyTorch or SciPy  \u00b7  FFT: MKL or pocketfft",

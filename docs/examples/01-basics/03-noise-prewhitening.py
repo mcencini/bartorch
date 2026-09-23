@@ -352,9 +352,8 @@ def snr_map(replicas):
 
 for name, replicas in (("as measured", plain), ("prewhitened", prewhitened)):
     values = snr_map(replicas)[white_matter]
-    print(
-        f"{name:>12}  white-matter SNR {float(values.mean()):6.1f} (median {float(values.median()):.1f})"
-    )
+    mean, median = float(values.mean()), float(values.median())
+    print(f"{name:>12}  white-matter SNR {mean:6.1f} (median {median:.1f})")
 
 gain = snr_map(prewhitened) / snr_map(plain)
 print(f"SNR ratio, prewhitened over as measured: {float(gain[white_matter].median()):.2f} (median)")

@@ -6,6 +6,8 @@ repos:
     rev: 0.7.1
     hooks:
       - id: nbstripout
+        # The archived demos keep their outputs: they are a record, not built.
+        exclude: ^attic/
 
   - repo: https://github.com/codespell-project/codespell
     rev: v2.4.3

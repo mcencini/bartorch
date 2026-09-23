@@ -56,6 +56,16 @@ exclude_patterns = [
     ".DS_Store",
 ]
 
+#: Set by ``scripts/build_docs_pdf.sh``.  The manual is built from ``manual.md``,
+#: which places the landing page and the six sections side by side and adds
+#: the page of every API object: the site reaches those from the API tables
+#: rather than from the navigation, and a printed page has no links to follow.
+PDF_MANUAL = os.environ.get("BARTORCH_DOCS_PDF") == "1"
+if PDF_MANUAL:
+    root_doc = "manual"
+else:
+    exclude_patterns.append("manual.md")
+
 myst_enable_extensions = ["colon_fence", "deflist", "dollarmath"]
 myst_heading_anchors = 3
 # References are footnotes, collected under each page's closing "References"
@@ -299,6 +309,30 @@ def _included_readme(_app, relative_path, parent_docname, content):
         content[0] = _readme_for_docs(content[0])
 
 
+_TOCTREE = re.compile(r"```\{toctree\}.*?```\n?", re.S)
+
+
+def _landing_page_in_the_manual(_app, docname, source):
+    """The landing page without its toctree, when ``manual.md`` holds the sections."""
+    if PDF_MANUAL and docname == "index":
+        source[0] = _TOCTREE.sub("", source[0])
+
+
+def _object_pages_in_the_manual(_app, doctree) -> None:
+    """Unwrap autosummary's toctrees, for the PDF only.
+
+    The single-page builder inlines each object's page where the toctree
+    naming it stands, and the HTML writer skips everything inside the node
+    autosummary wraps its toctree in.
+    """
+    if not PDF_MANUAL:
+        return
+    from sphinx.ext.autosummary import autosummary_toc
+
+    for node in list(doctree.findall(autosummary_toc)):
+        node.replace_self(node.children)
+
+
 def _write_api_object_index(app) -> None:
     """Write the page the API stubs are generated from, ahead of autosummary."""
     api_objects.write(app.srcdir)
@@ -310,6 +344,8 @@ def setup(app):
     app.connect("autodoc-process-signature", _compact_signature)
     app.connect("autodoc-process-bases", _public_bases)
     app.connect("include-read", _included_readme)
+    app.connect("source-read", _landing_page_in_the_manual)
+    app.connect("doctree-read", _object_pages_in_the_manual)
     # Ahead of autosummary's own handler, which reads the sources it writes
     # stubs for: a page written after it would be read a build late.
     app.connect("builder-inited", _write_api_object_index, priority=100)

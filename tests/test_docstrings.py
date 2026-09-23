@@ -165,3 +165,14 @@ def test_a_wrong_default_is_found():
     assert any("step" in p and "optional" in p for p in problems)
     assert any("name" in p and "None" in p for p in problems)
     assert not any(p.startswith("f: x") for p in problems)
+
+
+def test_barts_laid_out_help_is_kept_verbatim():
+    """A command's help lists its conventions and dimensions line by line, and
+    a docstring joining those lines into one paragraph makes the lists
+    unreadable; prose is joined and the lists are a literal block."""
+    tools = pytest.importorskip("bartorch.tools")
+    doc = numpydoc.NumpyDocString(tools.wave.__doc__)
+    assert doc["Summary"] == ["Perform a wave-caipi reconstruction."]
+    assert "::" in tools.wave.__doc__
+    assert "\n      * (sx, sy, sz) - Spatial dimensions.\n" in tools.wave.__doc__

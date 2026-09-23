@@ -44,6 +44,15 @@ class Regularizer(abc.ABC):
         Axes along which the term acts jointly.
     count : int
         Entries an NIHT term keeps; zero for every other term.
+
+    Examples
+    --------
+    >>> term = priors.Wavelet((-1, -2), 0.01)
+    >>> z = term.prox(x, 0.5)                    # BART's proximal operator, step 0.5
+    >>> term.transform_is_identity((64, 64))     # G = I: every proximal solver takes it
+    True
+    >>> priors.TotalVariation((-1, -2), 0.01).transform_is_identity((64, 64))
+    False
     """
 
     kind: str = ""

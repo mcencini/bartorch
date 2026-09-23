@@ -11,6 +11,7 @@ from __future__ import annotations
 import dataclasses
 import inspect
 import keyword
+import re
 from typing import Any
 
 import torch
@@ -338,9 +339,37 @@ def _signal_whole_echo_trains(flags: dict) -> None:
 _PRECONDITIONS = {"signal": _signal_whole_echo_trains}
 
 
+def _laid_out(line: str) -> bool:
+    """Whether a line of BART's help is part of a list, a table or an example."""
+    return line[:1] in (" ", "*", "-") or line.startswith("bart ")
+
+
+def _help(text: str) -> list[str]:
+    """BART's help as reStructuredText.
+
+    Prose is joined into paragraphs; what BART lays out by hand -- the lists of
+    conventions and dimensions, the example command lines -- is kept verbatim.
+    """
+    out: list[str] = []
+    for block in re.split(r"\n\s*\n", text.strip()):
+        rows = block.expandtabs(4).splitlines()
+        first = next((i for i, row in enumerate(rows) if _laid_out(row)), len(rows))
+        if first:
+            out += [" ".join(row.strip() for row in rows[:first]), ""]
+        if first < len(rows):
+            out += ["::", ""] + [f"    {row}" if row.strip() else "" for row in rows[first:]]
+            out.append("")
+    return out
+
+
+def summary(command: Command) -> str:
+    """The first paragraph of BART's help, on one line."""
+    return " ".join(re.split(r"\n\s*\n", command.help.strip())[0].split())
+
+
 def _docstring(command: Command, parameters: list[inspect.Parameter]) -> str:
     """BART's own help, as numpydoc."""
-    lines = [command.help.strip(), "", f"Runs ``bart {command.name}``.", ""]
+    lines = [*_help(command.help), f"Runs ``bart {command.name}``.", ""]
     lines += ["Parameters", "----------"]
     by_name = {p.name: p for p in parameters}
     for argument in command.arguments:

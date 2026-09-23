@@ -16,6 +16,9 @@ name: Docs
 on:
   push:
     branches: [main]
+    # A version tag builds the PDF manual and attaches it to the release.
+    # GitHub does not evaluate path filters for a tag push.
+    tags: ["v*"]
     paths:
       - "docs/**"
       - "src/**"
@@ -124,6 +127,22 @@ jobs:
           path: docs/_build/html/
           retention-days: 7
 
+      # The same sources as one PDF, printed by headless Chromium once MathJax
+      # has typeset the page.  The gallery above is reused, not run again.
+      - name: Install Chromium for the PDF manual
+        run: python -m playwright install --with-deps chromium
+
+      - name: Build the PDF manual
+        run: ./scripts/build_docs_pdf.sh --execute
+
+      - name: Upload the PDF manual
+        uses: actions/upload-artifact@v4
+        with:
+          name: bartorch-docs-pdf
+          path: docs/_build/bartorch-docs.pdf
+          if-no-files-found: error
+          retention-days: 30
+
       # The same HTML again, in the layout Pages deploys from.  Uploaded on
       # pull requests too, so that a change which breaks the packaging step
       # says so on the pull request rather than on main.
@@ -131,6 +150,24 @@ jobs:
         uses: actions/upload-pages-artifact@v3
         with:
           path: docs/_build/html/
+
+  # A version tag: the manual goes to the release the tag made, as
+  # bartorch-docs.pdf beside the wheels.
+  release-pdf:
+    name: Attach the PDF manual to the release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [gallery]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: bartorch-docs-pdf
+          path: manual
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: manual/bartorch-docs.pdf
 
   # Only from `main`, and only on a push: a pull request builds the site and
   # says whether it would deploy, but does not publish it.

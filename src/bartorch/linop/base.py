@@ -2,9 +2,9 @@
 
 The classes that combine operators are private.  Composition, addition,
 scaling and the adjoint are reached through ``@``, ``+``, ``-``, ``*`` and
-``.H``; what those return is an implementation detail, and naming it in a
-type annotation or an isinstance check would be reading into the algebra a
-structure it does not promise to keep.
+``.H``.  The concrete classes these return are private implementation details
+and must not be used in type annotations or ``isinstance`` checks; annotate
+with :class:`LinearOperator`.
 """
 
 from __future__ import annotations
@@ -87,6 +87,23 @@ class LinearOperator(Operator):
     device : torch.device or None
         Where the operator does its arithmetic, when that is not where its
         operands are.
+
+    Examples
+    --------
+    An operator defined in Python, composed with a BART operator into one:
+
+    >>> class Phase(linop.LinearOperator):
+    ...     def __init__(self, phase):
+    ...         self.phase = phase
+    ...         self.ishape = self.oshape = tuple(phase.shape)
+    ...         super().__init__()
+    ...     def forward(self, x, out=None):
+    ...         return x * self.phase
+    ...     def adjoint(self, y, out=None):
+    ...         return y * self.phase.conj()
+    >>> A = linop.FFT((64, 64), axes=(-1, -2)) @ Phase(torch.exp(1j * torch.rand(64, 64)))
+    >>> y = A(x)        # recorded for autograd when x requires a gradient
+    >>> z = A.H(y)      # the adjoint; A.gram() is the normal operator A^H A
     """
 
     #: Whether BART's closed-form pseudo-inverse for this operator has been

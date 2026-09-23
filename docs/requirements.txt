@@ -20,3 +20,6 @@ matplotlib>=3.7
 # The perceptually uniform colormaps the relaxometry examples are drawn with:
 # lipari for T1 and navia for T2, as Fuderer et al. recommend.
 cmap>=0.6
+# The PDF manual: scripts/build_docs_pdf.sh prints the single-page build with
+# headless Chromium, which `python -m playwright install chromium` provides.
+playwright>=1.42

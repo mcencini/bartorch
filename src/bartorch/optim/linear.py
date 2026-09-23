@@ -769,7 +769,8 @@ class IST(_Solver):
     Parameters
     ----------
     regularizers : Regularizer or ImplicitPrior, default=None
-        Exactly one term.
+        Exactly one term, whose transform is the identity: the iteration
+        applies its proximal operator to the image.
     maxiter : int, default=30
     step : float, default=0.95
         Step size.
@@ -845,7 +846,8 @@ class FISTA(IST):
     Parameters
     ----------
     regularizers : Regularizer or ImplicitPrior, default=None
-        Exactly one term.
+        Exactly one term, whose transform is the identity: the iteration
+        applies its proximal operator to the image.
     maxiter : int, default=30
     step : float, default=0.95
         Step size.
@@ -865,6 +867,20 @@ class FISTA(IST):
         ``M(A^H A + lambda) x = M A^H y``.  Must be positive definite --
         BART composes it without symmetrizing.  BART's own reconstructions
         pass none.
+
+    Examples
+    --------
+    >>> fista = optim.FISTA(priors.Wavelet((-1, -2), 0.01), maxiter=50)
+    >>> x = fista(kspace, A)
+    >>> x = fista(kspace, A, x0=x)                # warm start
+
+    A term over a transform is refused, since the iteration is not given the
+    transform:
+
+    >>> optim.FISTA(priors.TotalVariation((-1, -2), 0.01))(kspace, A)
+    Traceback (most recent call last):
+        ...
+    ValueError: FISTA applies the proximal operator to the image, ...
     """
 
     _algorithm = "fista"
@@ -972,6 +988,13 @@ class ADMM(_Solver):
     ``italgo_config`` has no way to pass ``alpha``, ``mu``, ``tau_max``, the
     tolerances, the biases or ``cg_maxiter_first``, so BART's own loop cannot
     be given them.
+
+    Examples
+    --------
+    Several terms, each split off with its own transform:
+
+    >>> terms = [priors.TotalVariation((-1, -2), 0.005), priors.L1(0.001)]
+    >>> x = optim.ADMM(terms, maxiter=30)(kspace, A)
     """
 
     _algorithm = "admm"

@@ -94,6 +94,8 @@ mkl = [
 cufinufft = ["cufinufft>=2.3"]
 dev = [
     "pytest>=7",
+    # tests/test_docstrings.py reads the docstrings as the reference does.
+    "numpydoc>=1.6",
     "ruff",
 ]
 # Kept the same as docs/requirements.txt.  Rendering imports the package from

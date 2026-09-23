@@ -10,9 +10,9 @@ maintainers for a private contact, without describing the vulnerability.
 
 A report states the affected version or commit, the operating system,
 architecture and device, the smallest input that reproduces the behaviour, its
-observed impact, and any known mitigation.  The maintainers acknowledge a
-report within seven days and communicate their assessment and the remediation
-through the private advisory.  Disclosure follows the release of a fix or an
+observed impact, and any known mitigation.  The maintainers acknowledge the
+report and communicate their assessment and the remediation through the
+private advisory.  Disclosure follows the release of a fix or an
 agreed date, and reporters are credited unless they ask not to be.
 
 Vulnerabilities in the embedded BART, FINUFFT, PyTorch or another dependency

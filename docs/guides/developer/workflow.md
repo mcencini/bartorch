@@ -18,6 +18,7 @@ branch.
    | Any code | `./scripts/run_tests.sh`, or a subset of the suite during development |
    | C, CUDA or the ABI | The full suite; `python scripts/check_device.py` on a machine with a CUDA device |
    | Documentation | `./scripts/build_docs.sh`, and `./scripts/build_docs.sh --execute` for changed examples |
+   | The PDF manual | `./scripts/build_docs_pdf.sh`, after `python -m playwright install chromium` |
 
 4. Commit, push to the fork, and open a pull request as described in
    {doc}`pull-requests`.
@@ -29,8 +30,13 @@ branch.
 command declarations by `python scripts/gen_catalogue.py`.  `run_tests.sh`
 regenerates both before the suite, and `tests/test_abi.py` and
 `tests/test_catalogue.py` fail when the checked-in files differ from what the
-generators write.  The logo, the compact mark and the architecture figure in
-`docs/_static/` are written by `python scripts/make_artwork.py`.
+generators write.  The logo, the compact mark, the architecture figure and the
+encoding figure in `docs/_static/` are written by
+`python scripts/make_artwork.py`.
+
+The documentation's own build products -- `docs/generated/`,
+`docs/api_objects.rst`, `docs/auto_examples/` and the PDF manual -- are not
+tracked; `./scripts/build_docs.sh --clean` removes them.
 
 ## Updating the BART submodule
 

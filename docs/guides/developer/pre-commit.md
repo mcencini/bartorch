@@ -4,7 +4,7 @@
 
 | Hook | Check | CI counterpart |
 | --- | --- | --- |
-| `nbstripout` | Removes outputs from Jupyter notebooks | None |
+| `nbstripout` | Removes outputs from Jupyter notebooks, except the archived ones under `attic/` | None |
 | `codespell` | Spelling, configured by `[tool.codespell]` in `pyproject.toml` | The Typos workflow |
 | `ruff` | Lint rules, applying automatic fixes, on `src/`, `tests/` and `docs/examples/` | The Lint workflow (`./scripts/lint.sh`) |
 | `ruff-format` | Formatting, on the same paths | The Lint workflow |

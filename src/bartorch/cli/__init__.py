@@ -19,6 +19,7 @@ from __future__ import annotations
 import os
 import sys
 
+from bartorch import _call
 from bartorch._catalogue import BART_VERSION, COMMANDS
 from bartorch._dispatch import run_command
 from bartorch._options import HELP_FLAGS, describe, options_by_name
@@ -48,7 +49,7 @@ def _listing() -> str:
     names = _commands()
     width = max(len(name) for name in names) + 2
     for name in names:
-        lines.append(f"    {name:<{width}}{COMMANDS[name].help.strip()}")
+        lines.append(f"    {name:<{width}}{_call.summary(COMMANDS[name])}")
     return "\n".join(lines) + "\n"
 
 

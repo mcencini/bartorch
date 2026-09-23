@@ -341,7 +341,7 @@ class ISTBlock(nn.Module):
         """The run's state: the start, and ``A^H y`` kept for every step."""
         from bartorch.optim.linear import maxeigen
 
-        _refuse_transform(self.prior, A.ishape, type(self).__name__)
+        _refuse_transform(self.prior, A.ishape, type(self).__name__.removesuffix("Block"))
         y, x = _begin(y, A, x0)
         self.prior.rewind(A.ishape)
         adjoint = _adjoint(A, y, _preconditioner(self.precond, A.ishape))
