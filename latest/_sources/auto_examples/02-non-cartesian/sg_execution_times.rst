@@ -6,7 +6,7 @@
 
 Computation times
 =================
-**00:10.425** total execution time for 2 files **from auto_examples/02-non-cartesian**:
+**00:10.229** total execution time for 2 files **from auto_examples/02-non-cartesian**:
 
 .. container::
 
@@ -33,8 +33,8 @@ Computation times
      - Time
      - Mem (MB)
    * - :ref:`sphx_glr_auto_examples_02-non-cartesian_02-radial-sense.py` (``02-radial-sense.py``)
-     - 00:09.245
+     - 00:09.073
      - 0.0
    * - :ref:`sphx_glr_auto_examples_02-non-cartesian_01-trajectories-and-transforms.py` (``01-trajectories-and-transforms.py``)
-     - 00:01.180
+     - 00:01.157
      - 0.0

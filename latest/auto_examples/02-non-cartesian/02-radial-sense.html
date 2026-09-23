@@ -599,7 +599,7 @@ non-Cartesian SENSE model <a class="footnote-reference brackets" href="#pruessma
 </span><span class="p">)</span><span class="w">
 </span><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="s2">pics: </span><span class="si">{</span><span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">(</span><span class="p">)</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">start</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> s</span><span class="s2">&quot;</span><span class="p">)</span><span class="w">
 </span></pre></div></div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>pics: 2.80 s
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>pics: 2.73 s
 </pre></div>
 </div>
 <p>The same solve through the operator. Besides the iteration, the application
@@ -617,7 +617,7 @@ built above, now over the estimated sensitivities rather than the true ones.</p>
 </span><span class="n">difference</span> <span class="o">=</span> <span class="p">(</span><span class="n">assembled</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="p">)</span> <span class="o">-</span> <span class="n">reconstruction</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="p">)</span><span class="p">)</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="p">)</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="p">)</span><span class="w">
 </span><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="s2">relative difference from pics: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><span class="n">difference</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">reconstruction</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="p">)</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="p">)</span><span class="p">)</span><span class="si">:</span><span class="s2">.1e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span><span class="w">
 </span></pre></div></div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>operator and solver: 3.07 s
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>operator and solver: 3.06 s
 relative difference from pics: 0.0e+00
 </pre></div>
 </div>
@@ -636,7 +636,7 @@ iterations carry that difference into the reconstructions.</p>
 </span><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="s2">without the Toeplitz normal: </span><span class="si">{</span><span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">(</span><span class="p">)</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">start</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> s</span><span class="s2">&quot;</span><span class="p">)</span><span class="w">
 </span><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="s2">relative difference </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><span class="p">(</span><span class="n">pair</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">assembled</span><span class="p">)</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="p">)</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="p">)</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">assembled</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="p">)</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="p">)</span><span class="p">)</span><span class="si">:</span><span class="s2">.1e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span><span class="w">
 </span></pre></div></div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>without the Toeplitz normal: 1.48 s
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>without the Toeplitz normal: 1.44 s
 relative difference 2.5e-02
 </pre></div>
 </div>
@@ -679,7 +679,7 @@ encoding with arbitrary k-space trajectories. <em>Magn Reson Med</em>
 46(4):638-651 (2001). <a class="reference external" href="https://doi.org/10.1002/mrm.1241">https://doi.org/10.1002/mrm.1241</a></p>
 </aside>
 </aside>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 9.245 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 9.073 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-auto-examples-02-non-cartesian-02-radial-sense-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../../_downloads/72690241dfa7d0a916152801917da92e/02-radial-sense.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">02-radial-sense.ipynb</span></code></a></p>

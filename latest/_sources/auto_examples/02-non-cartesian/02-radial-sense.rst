@@ -209,7 +209,7 @@ non-Cartesian SENSE model [#pruessmann2001]_, and ADMM is the algorithm
 
  .. code-block:: none
 
-    pics: 2.80 s
+    pics: 2.73 s
 
 
 
@@ -245,7 +245,7 @@ built above, now over the estimated sensitivities rather than the true ones.
 
  .. code-block:: none
 
-    operator and solver: 3.07 s
+    operator and solver: 3.06 s
     relative difference from pics: 0.0e+00
 
 
@@ -282,7 +282,7 @@ iterations carry that difference into the reconstructions.
 
  .. code-block:: none
 
-    without the Toeplitz normal: 1.48 s
+    without the Toeplitz normal: 1.44 s
     relative difference 2.5e-02
 
 
@@ -359,7 +359,7 @@ References
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 9.245 seconds)
+   **Total running time of the script:** (0 minutes 9.073 seconds)
 
 
 .. _sphx_glr_download_auto_examples_02-non-cartesian_02-radial-sense.py:

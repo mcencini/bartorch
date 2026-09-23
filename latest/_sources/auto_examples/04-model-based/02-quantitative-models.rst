@@ -216,8 +216,8 @@ data.
 
     /opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/site-packages/torch/jit/_script.py:1491: FutureWarning: `torch.jit.script` is deprecated. Please switch to `torch.compile` or `torch.export`.
       warnings.warn(
-    reconstruct, then fit:   13.1 s
-    model inside the operator:  32.6 s
+    reconstruct, then fit:   13.4 s
+    model inside the operator:  32.5 s
 
 
 
@@ -322,7 +322,7 @@ References
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 46.681 seconds)
+   **Total running time of the script:** (0 minutes 46.909 seconds)
 
 
 .. _sphx_glr_download_auto_examples_04-model-based_02-quantitative-models.py:

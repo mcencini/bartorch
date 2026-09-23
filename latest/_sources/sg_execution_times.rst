@@ -6,7 +6,7 @@
 
 Computation times
 =================
-**06:40.341** total execution time for 10 files **from all galleries**:
+**06:39.388** total execution time for 10 files **from all galleries**:
 
 .. container::
 
@@ -33,32 +33,32 @@ Computation times
      - Time
      - Mem (MB)
    * - :ref:`sphx_glr_auto_examples_05-deep-learning_01-modl-with-admm.py` (``examples/05-deep-learning/01-modl-with-admm.py``)
-     - 04:42.938
+     - 04:42.270
      - 0.0
    * - :ref:`sphx_glr_auto_examples_04-model-based_02-quantitative-models.py` (``examples/04-model-based/02-quantitative-models.py``)
-     - 00:46.681
+     - 00:46.909
      - 0.0
    * - :ref:`sphx_glr_auto_examples_03-applications_02-subspace-t1-mapping.py` (``examples/03-applications/02-subspace-t1-mapping.py``)
-     - 00:26.836
+     - 00:26.782
      - 0.0
    * - :ref:`sphx_glr_auto_examples_03-applications_01-dynamic-golden-angle.py` (``examples/03-applications/01-dynamic-golden-angle.py``)
-     - 00:11.121
+     - 00:10.963
      - 0.0
    * - :ref:`sphx_glr_auto_examples_01-basics_03-noise-prewhitening.py` (``examples/01-basics/03-noise-prewhitening.py``)
-     - 00:09.724
+     - 00:09.285
      - 0.0
    * - :ref:`sphx_glr_auto_examples_02-non-cartesian_02-radial-sense.py` (``examples/02-non-cartesian/02-radial-sense.py``)
-     - 00:09.245
+     - 00:09.073
      - 0.0
    * - :ref:`sphx_glr_auto_examples_04-model-based_01-nonlinear-inversion.py` (``examples/04-model-based/01-nonlinear-inversion.py``)
-     - 00:04.560
+     - 00:04.547
      - 0.0
    * - :ref:`sphx_glr_auto_examples_01-basics_02-operators-and-solvers.py` (``examples/01-basics/02-operators-and-solvers.py``)
-     - 00:04.430
+     - 00:04.466
      - 0.0
    * - :ref:`sphx_glr_auto_examples_01-basics_01-from-kspace-to-image.py` (``examples/01-basics/01-from-kspace-to-image.py``)
-     - 00:03.626
+     - 00:03.938
      - 0.0
    * - :ref:`sphx_glr_auto_examples_02-non-cartesian_01-trajectories-and-transforms.py` (``examples/02-non-cartesian/01-trajectories-and-transforms.py``)
-     - 00:01.180
+     - 00:01.157
      - 0.0

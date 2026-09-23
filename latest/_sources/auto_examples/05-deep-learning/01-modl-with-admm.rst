@@ -410,7 +410,7 @@ reconstruction that produced it.
     /opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/site-packages/lightning/pytorch/trainer/connectors/data_connector.py:434: The 'val_dataloader' does not have many workers which may be a bottleneck. Consider increasing the value of the `num_workers` argument` to `num_workers=3` in the `DataLoader` to improve performance.
     /opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/site-packages/lightning/pytorch/trainer/connectors/data_connector.py:434: The 'train_dataloader' does not have many workers which may be a bottleneck. Consider increasing the value of the `num_workers` argument` to `num_workers=3` in the `DataLoader` to improve performance.
     `Trainer.fit` stopped: `max_epochs=15` reached.
-    Epoch 14/14 ━━━━━━━━━━━━━━━━━ 12/12 0:00:15 • 0:00:00 0.75it/s loss: 0.000 psnr:
+    Epoch 14/14 ━━━━━━━━━━━━━━━━━ 12/12 0:00:15 • 0:00:00 0.77it/s loss: 0.000 psnr:
                                                                    32.696 ssim:     
                                                                    0.885            
     rho ended at 0.027
@@ -640,7 +640,7 @@ References
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (4 minutes 42.938 seconds)
+   **Total running time of the script:** (4 minutes 42.270 seconds)
 
 
 .. _sphx_glr_download_auto_examples_05-deep-learning_01-modl-with-admm.py:
