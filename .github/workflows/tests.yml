@@ -22,6 +22,8 @@ jobs:
           - os: ubuntu-latest
             python-version: "3.12"
             cc: clang
+            # One job measures coverage for Codecov; the rest only test.
+            coverage: true
           - os: ubuntu-latest
             python-version: "3.12"
             cc: gcc-14
@@ -30,6 +32,10 @@ jobs:
             python-version: "3.12"
             cc: clang
     runs-on: ${{ matrix.os }}
+    # Codecov takes the upload on GitHub's OIDC token, so no secret is needed.
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
       - uses: actions/checkout@v4
@@ -53,7 +59,7 @@ jobs:
 
       - name: Install torch (CPU) and the build backend
         run: |
-          pip install scikit-build-core setuptools-scm numpy scipy pytest numpydoc
+          pip install scikit-build-core setuptools-scm numpy scipy pytest pytest-cov numpydoc
           pip install torch --index-url https://download.pytorch.org/whl/cpu
 
       # deepinv pulls in torchvision, whose compiled operators are built
@@ -120,7 +126,17 @@ jobs:
         run: python scripts/macos_openmp.py verify
 
       - name: Run the test suite
-        run: pytest tests/ -v
+        run: pytest tests/ -v ${{ matrix.coverage && '--cov --cov-report=xml' || '' }}
+
+      # A rejected upload is a broken report, not a passing build: without
+      # this the step is green whatever Codecov answers, and the badge goes
+      # stale with nothing to say so.
+      - uses: codecov/codecov-action@v5
+        if: matrix.coverage
+        with:
+          use_oidc: true
+          fail_ci_if_error: true
+          files: coverage.xml
 
   # The runners have no GPU, so the CUDA build is checked as far as a machine
   # without a card allows: it compiles, links, loads, and runs the host suite.

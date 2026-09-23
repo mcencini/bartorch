@@ -158,6 +158,12 @@ exclude = ["src/bartorch/_abi.py", "src/bartorch/_catalogue.py"]
 # A help string BART wrote can be longer than any line length on its own.
 "src/bartorch/_catalogue.py" = ["E501"]
 
+[tool.coverage.run]
+# The package, measured where the editable install imports it from; relative
+# paths are what Codecov matches against the repository.
+source = ["bartorch"]
+relative_files = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 

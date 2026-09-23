@@ -24,6 +24,7 @@ extra again would show up as seventeen failing tests and no explanation.
 """
 
 import platform
+import subprocess
 import sys
 from pathlib import Path
 
@@ -143,3 +144,19 @@ def test_a_missing_finufft_is_reported_as_the_broken_install_it_is():
     said = _finufft.required_but_missing()
     assert "dependency" in said
     assert "bartorch[finufft]" not in said, "there is no such extra to point anyone at"
+
+
+def test_asking_whether_finufft_is_installed_does_not_load_it():
+    """The macOS repair has to come before FINUFFT's library is loaded.
+
+    Importing ``finufft`` loads the library, and with it the OpenMP runtime its
+    macOS wheel carries, so a check that imported it would leave two runtimes
+    in the first interpreter after an install whatever the repair then did.
+    """
+    code = (
+        "import sys\n"
+        "from bartorch import _finufft\n"
+        "assert _finufft.available()\n"
+        "assert 'finufft' not in sys.modules, 'available() imported finufft'\n"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True)
