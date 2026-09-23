@@ -22,12 +22,17 @@ Shape = tuple[int, ...]
 
 
 def available() -> bool:
-    """Whether the ``finufft`` package is installed."""
-    try:
-        import finufft  # noqa: F401
-    except ImportError:
-        return False
-    return True
+    """Whether the ``finufft`` package is installed.
+
+    Found rather than imported: importing ``finufft`` loads its library, and
+    with it the OpenMP runtime the macOS wheel carries, before
+    ``_macos_openmp.ensure()`` has pointed that library at torch's copy.  The
+    repair would then only take effect in the next interpreter, and this one
+    would refuse every non-Cartesian transform.
+    """
+    import importlib.util
+
+    return importlib.util.find_spec("finufft") is not None
 
 
 def required_but_missing() -> str:
