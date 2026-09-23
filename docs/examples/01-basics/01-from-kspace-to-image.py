@@ -8,9 +8,9 @@ k-space to a coil-combined image.
 
 The acquisition is simulated from a BrainWeb tissue segmentation and the eight
 channels of BART's head coil model, sampled at a third of the Nyquist rate
-along the phase-encode direction. The reconstruction that follows is the one a
-scanner pipeline performs: channel compression, sensitivity calibration by
-ESPIRiT, and a regularized least-squares fit of the SENSE model
+along the phase-encode direction. The reconstruction consists of channel
+compression, sensitivity calibration by ESPIRiT, and a regularized
+least-squares fit of the SENSE model
 
 .. math::
 
@@ -146,9 +146,9 @@ from bartorch import priors
 # Phantom
 # -------
 #
-# BrainWeb publishes a segmentation rather than an image: one membership map
-# per tissue class, which a table of relaxation times and proton densities
-# turns into whatever contrast the experiment would have produced. The volume
+# BrainWeb [#brainweb]_ publishes a segmentation rather than an image: one membership map
+# per tissue class, from which a table of relaxation times and proton
+# densities gives the signal of a chosen acquisition. The volume
 # ``brainweb-dl`` returns is indexed ``(inferior-superior, posterior-anterior,
 # left-right)``, so its first axis selects an axial slice, and an image is
 # drawn from its first row down, so flipping it puts anterior at the top.
@@ -170,8 +170,8 @@ fractions = np.flipud(get_mri(sub_id=0, contrast="fuzzy")[SLICE])[..., list(TISS
 #
 # The slice is cropped to a square field of view around the head and resampled
 # to the matrix reconstructed here. The crop leaves a margin, as a real field
-# of view does: a head that filled it would have nowhere for the aliasing of an
-# undersampled acquisition to fold into.
+# of view does: the aliased copies of an undersampled acquisition then fall
+# partly outside the head.
 
 MARGIN = 0.25
 
@@ -268,9 +268,9 @@ plt.show()
 
 # %%
 #
-# The relaxation maps are drawn with the perceptually uniform colormaps the
-# relaxometry community settled on -- lipari for :math:`T_1`, navia for
-# :math:`T_2` -- so that the two are never read as each other, and with a
+# The relaxation maps are drawn with the perceptually uniform colormaps
+# recommended for relaxometry [#fuderer]_ -- lipari for :math:`T_1`, navia for
+# :math:`T_2` -- so that one is not read as the other, and with a
 # window that stops short of cerebrospinal fluid, which is far enough from the
 # rest to take the whole scale. The sensitivities are complex, and are drawn
 # the way a sensitivity is read: a cyclic colormap for the phase, brightness
@@ -314,7 +314,7 @@ print(f"{float(lines.mean()):.0%} of the phase encodes acquired")
 # Eight channels carry less independent information than eight images: the
 # sensitivities overlap, and the singular value spectrum of the calibration
 # matrix falls off. :func:`bartorch.tools.cc` returns the matrix that projects
-# the channels onto their leading singular vectors, and
+# the channels onto their leading singular vectors [#huangcc]_, and
 # :func:`bartorch.tools.ccapply` applies it. Everything downstream --
 # calibration, the encoding operator, every iteration -- then costs six
 # channels rather than eight.
@@ -329,7 +329,7 @@ compressed = bt.ccapply(measured, matrix, p=VIRTUAL)
 # Sensitivity calibration
 # -----------------------
 #
-# ESPIRiT estimates the sensitivities as the leading eigenvector, per voxel, of
+# ESPIRiT [#espirit]_ estimates the sensitivities as the leading eigenvector, per voxel, of
 # an operator built from the calibration region. ``crop`` discards the voxels
 # whose eigenvalue falls below it, and so keeps the maps from being
 # extrapolated into the background.
@@ -342,11 +342,12 @@ maps = bt.ecalib(compressed, maps=1, calib_size=CALIBRATION, crop=0.8)
 # --------------
 #
 # :func:`bartorch.tools.pics` solves the regularized least-squares problem. A
-# Tikhonov weight alone gives the conjugate-gradient SENSE reconstruction; an
-# :math:`\ell_1` penalty on the wavelet coefficients is the compressed-sensing
-# reconstruction of the same data, solved by FISTA. Both are compared against
-# the root sum of squares of the zero-filled channel images, which inverts
-# nothing.
+# Tikhonov weight alone gives the conjugate-gradient SENSE reconstruction
+# [#sense]_; an :math:`\ell_1` penalty on the wavelet coefficients is the
+# compressed-sensing reconstruction [#lustig]_ of the same data, solved by
+# FISTA [#beck]_. Both are compared against
+# the root sum of squares of the zero-filled channel images, which uses no
+# model of the encoding.
 
 channel_images = bartorch.ifft(compressed[:, 0], axes=(-2, -1), unitary=True)
 gridded = bartorch.rss(channel_images, axes=(0,))
@@ -365,8 +366,9 @@ wavelet = bt.pics(
 # The sensitivities ESPIRiT estimates and the ones the acquisition was
 # simulated with differ by a phase that varies from voxel to voxel, so the
 # reconstructed image does too, and the comparison is between magnitudes.
-# :func:`bartorch.tools.nrmse` with ``scaled=True`` divides out the one degree of
-# freedom a SENSE reconstruction leaves undetermined, the global scale.
+# ``pics`` returns the image in the units of the data it scaled, so
+# :func:`bartorch.tools.nrmse` is called with ``scaled=True``, which fits a
+# global factor before comparing.
 
 for name, estimate in (
     ("root sum of squares", gridded),
@@ -402,12 +404,11 @@ plt.show()
 
 # %%
 #
-# The root sum of squares carries the aliasing the missing phase encodes
-# produce, since it inverts nothing. The Tikhonov fit inverts the sampling
-# operator but has no reason to prefer one image among those that fit the data
-# equally well, and a variable-density random pattern leaves many: what it
-# leaves behind is the incoherent residue of that choice. The wavelet penalty
-# is that reason, and removes it.
+# The root sum of squares carries the aliasing of the missing phase encodes.
+# The Tikhonov-regularized SENSE fit removes the coherent aliasing but leaves
+# noise amplification and incoherent residual artefacts of the variable-density
+# random sampling.  The wavelet :math:`\ell_1` penalty reduces both, which the
+# NRMSE printed above quantifies.
 #
 # How much it removes depends on its weight, which is chosen here and not
 # estimated: a larger one removes more noise and more texture with it.
@@ -415,3 +416,39 @@ plt.show()
 # The same reconstruction written as an encoding operator and a solver, rather
 # than as a call to a BART application, is the subject of
 # :doc:`02-operators-and-solvers`.
+
+# %%
+#
+# References
+# ----------
+#
+# .. [#brainweb] Collins DL, Zijdenbos AP, Kollokian V, Sled JG, Kabani NJ, Holmes CJ,
+#    Evans AC. Design and construction of a realistic digital brain phantom.
+#    *IEEE Trans Med Imaging* 17(3):463-468 (1998).
+#    https://doi.org/10.1109/42.712135
+#
+# .. [#fuderer] Fuderer M, Wichtmann B, Crameri F, de Souza NM, Baeßler B, Gulani V,
+#    et al. Color-map recommendation for MR relaxometry maps. *Magn Reson Med*
+#    93(2):490-506 (2025). https://doi.org/10.1002/mrm.30290
+#
+# .. [#huangcc] Huang F, Vijayakumar S, Li Y, Hertel S, Duensing GR. A software channel
+#    compression technique for faster reconstruction with many channels.
+#    *Magn Reson Imaging* 26(1):133-141 (2008).
+#    https://doi.org/10.1016/j.mri.2007.04.010
+#
+# .. [#espirit] Uecker M, Lai P, Murphy MJ, Virtue P, Elad M, Pauly JM, Vasanawala SS,
+#    Lustig M. ESPIRiT -- an eigenvalue approach to autocalibrating parallel
+#    MRI: where SENSE meets GRAPPA. *Magn Reson Med* 71(3):990-1001 (2014).
+#    https://doi.org/10.1002/mrm.24751
+#
+# .. [#sense] Pruessmann KP, Weiger M, Scheidegger MB, Boesiger P. SENSE: sensitivity
+#    encoding for fast MRI. *Magn Reson Med* 42(5):952-962 (1999).
+#    https://doi.org/10.1002/(SICI)1522-2594(199911)42:5%3C952::AID-MRM16%3E3.0.CO;2-S
+#
+# .. [#lustig] Lustig M, Donoho D, Pauly JM. Sparse MRI: the application of compressed
+#    sensing for rapid MR imaging. *Magn Reson Med* 58(6):1182-1195 (2007).
+#    https://doi.org/10.1002/mrm.21391
+#
+# .. [#beck] Beck A, Teboulle M. A fast iterative shrinkage-thresholding algorithm for
+#    linear inverse problems. *SIAM J Imaging Sci* 2(1):183-202 (2009).
+#    https://doi.org/10.1137/080716542

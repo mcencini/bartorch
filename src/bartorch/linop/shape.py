@@ -492,9 +492,9 @@ class Roll(LinearOperator):
         The shape it maps to itself, C order.
     shift : int
         How far to move, towards higher indices when positive.
-    axis : int
+    axis : int, default=-1
         Which axis to move along.
-    mode : str
+    mode : str, default='wrap'
         ``"wrap"``, ``"constant"``, ``"symmetric"`` or ``"reflect"``.
     """
 
@@ -525,10 +525,12 @@ class Pad(LinearOperator):
     ----------
     shape : tuple of int
         The domain, C order.
-    before, after : sequence of int
-        How much to add at each end of each axis.  A single number applies to
+    before : int or sequence of int
+        How much to add at the start of each axis.  A single number applies to
         every axis.
-    mode : str
+    after : int or sequence of int, default=None
+        How much to add at the end of each axis; ``None`` adds ``before``.
+    mode : str, default='constant'
         ``"constant"`` for zeros, or ``"wrap"``, ``"symmetric"`` or
         ``"reflect"`` to carry values in from the array itself.
     """

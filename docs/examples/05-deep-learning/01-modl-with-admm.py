@@ -7,7 +7,7 @@ An unrolled network for undersampled Cartesian SENSE: a convolutional denoiser
 in the proximal step of BART's alternating-direction iteration, trained end to
 end against fully sampled images.
 
-MoDL writes a reconstruction as an alternation between a learned denoiser and a
+MoDL [#modl]_ writes a reconstruction as an alternation between a learned denoiser and a
 data-consistency step, and trains the denoiser through it. As published the
 alternation is half-quadratic splitting, which is
 
@@ -17,8 +17,8 @@ alternation is half-quadratic splitting, which is
    x^{k+1} &= \arg\min_x \; \|A x - y\|_2^2 + \lambda \|x - z^{k}\|_2^2,
 
 the second line a conjugate-gradient solve of :math:`(A^H A + \lambda) x = A^H
-y + \lambda z^{k}`. The alternating direction method of multipliers is the
-same splitting with a dual variable :math:`u` carried along:
+y + \lambda z^{k}`. The alternating direction method of multipliers
+[#boyd]_ is the same splitting with a dual variable :math:`u` carried along:
 
 .. math::
 
@@ -35,15 +35,9 @@ The iteration itself is BART's. :class:`bartorch.optim.ADMMBlock` implements
 ``admm.c``'s step, including the conjugate-gradient x-update that MoDL's own
 implementation writes out, and :class:`bartorch.learning.Unrolled` applies it
 repeatedly. The network supplies the proximal step, through
-:class:`bartorch.priors.ImplicitPrior`, and :math:`\rho`, which is a
-:class:`torch.nn.Parameter`.
+:class:`bartorch.priors.ImplicitPrior`; the penalty parameter :math:`\rho` is a
+parameter of the block and is trained with the network's weights.
 
-Aggarwal HK, Mani MP, Jacob M. *MoDL: model-based deep learning architecture
-for inverse problems.* IEEE Trans Med Imaging 38(2):394-405 (2019).
-
-Boyd S, Parikh N, Chu E, Peleato B, Eckstein J. *Distributed optimization and
-statistical learning via the alternating direction method of multipliers.*
-Found Trends Mach Learn 3(1):1-122 (2011).
 """
 
 # %%
@@ -108,7 +102,7 @@ SLICES = 32  # axial slices taken from the volume
 ITERATIONS = 5  # unrolled steps, MoDL's K
 EPOCHS = 15
 
-torch.manual_seed(0)
+_ = torch.manual_seed(0)
 
 # %%
 #
@@ -119,8 +113,8 @@ torch.manual_seed(0)
 # :math:`T_1`-weighted spin-echo image as in
 # :doc:`../01-basics/01-from-kspace-to-image` and given a smooth phase, so that
 # no step below depends on the image being real. The slices are split into
-# training and validation sets by position rather than at random, so that a
-# validation slice is not adjacent to a training slice.
+# training and validation sets by position rather than at random: the first
+# twenty-four slices train and the last eight validate.
 #
 # One subject, twenty-four slices and a single sampling pattern constitute a
 # phantom. The weights obtained below are not expected to generalize, and the
@@ -192,11 +186,10 @@ print(f"{len(train_images)} slices to train on, {len(valid_images)} to validate 
 # -----------
 #
 # Eight channels of BART's analytical head coil, and a variable-density random
-# undersampling of the phase encodes with a fully sampled k-space centre: the
-# one-dimensional Cartesian sampling MoDL is posed over. The pattern is the
-# same for every slice, so a single operator serves the whole dataset. Where
-# the sampling varies between items, an operator is constructed per item: its
-# sensitivities and pattern are not batch axes of it.
+# undersampling of the phase encodes with a fully sampled k-space centre. The
+# pattern is shared by every slice, so a single operator serves the whole
+# dataset; a pattern that differs between items requires one operator per
+# item.
 
 ACCELERATION = 4
 CENTRE = 8  # phase encodes always acquired
@@ -251,7 +244,7 @@ def measure(images, generator=None):
 # maps -- are transformed consistently. Here each subject holds one image, and
 # the transform is a flip and a rotation of at most eight degrees, which
 # preserve the tissue statistics the denoiser is trained on while varying the
-# anatomy.
+# orientation.
 
 augmentation = torchio.Compose(
     [
@@ -290,7 +283,7 @@ valid_loader = DataLoader(
 #
 # Four objects:
 #
-# * ``deepinv``'s ``DnCNN``, a residual convolutional denoiser of the family
+# * ``deepinv``'s ``DnCNN`` [#dncnn]_, a residual convolutional denoiser of the family
 #   MoDL's own five-layer network belongs to. It is an ``nn.Module`` operating
 #   on real images.
 # * :class:`bartorch.learning.Denoiser`, which converts between that layout and
@@ -423,8 +416,7 @@ for name, estimate in rows.items():
 # The table is not a comparison of methods. Fifteen epochs over twenty-four
 # slices of one subject, set against a wavelet penalty of fifty iterations with
 # a manually chosen weight, supports no conclusion about either on measured
-# data; the observation available here is that five learned iterations reach
-# the range of fifty hand-specified ones. A quantitative comparison would
+# data. A quantitative comparison would
 # require many subjects, validation on subjects excluded from training, and a
 # fixed reconstruction time.
 
@@ -454,7 +446,8 @@ plt.show()
 # activation, once per iteration.
 #
 # :class:`~bartorch.learning.Unrolled` provides two alternatives, neither of
-# which alters the value the network computes:
+# which changes the forward value
+# (:doc:`../../explanation/differentiation`):
 #
 # * ``detach=True`` starts each iteration from a detached state, so that the
 #   graph spans one iteration. With a loss on each image yielded by
@@ -466,11 +459,7 @@ plt.show()
 #
 # Pretraining the denoiser in isolation, then greedy per-iteration training,
 # then end-to-end fine-tuning with checkpointing, is the staged schedule
-# reported for a fully three-dimensional unrolled reconstruction.
-#
-# Urman Y, Nishimura M, Abraham DR, Cao X, Setsompop K. *Fully 3D unrolled
-# magnetic resonance fingerprinting reconstruction via staged pretraining and
-# implicit gridding.* Magn Reson Med 96(5):2516-2529 (2026).
+# reported for a fully three-dimensional unrolled reconstruction [#urman]_.
 
 greedy, greedy_block = modl()
 greedy.detach = True
@@ -489,10 +478,10 @@ print(f"greedy: rho {float(greedy_block.rho.detach()):.3f}")
 
 # %%
 #
-# Checkpointing yields the same gradient as recording the whole stack,
-# establishing that the choice is one of memory and not of model. The gradient
-# shown is that of ``rho``, which propagates through every iteration and
-# through the conjugate-gradient solve of each x-update.
+# The gradient of ``rho`` with checkpointing is compared below with the
+# gradient recorded over the whole stack. ``rho`` enters every iteration and
+# the conjugate-gradient solve of each x-update, so its gradient propagates
+# through all of them.
 
 x, y, start = measure(valid_images[:1])
 made = []
@@ -511,5 +500,32 @@ print(f"rho's gradient: {made[0]:.6g} recorded, {made[1]:.6g} recomputed")
 # A third alternative is not to unroll. :class:`bartorch.optim.FixedPoint`
 # drives the block to its fixed point and differentiates there by solving the
 # adjoint fixed-point equation, so that its memory is that of a single step
-# irrespective of the iteration count. This is a deep-equilibrium model, of
+# irrespective of the iteration count. This is a deep-equilibrium model [#deq]_, of
 # which the stack above is the truncated form.
+
+# %%
+#
+# References
+# ----------
+#
+# .. [#modl] Aggarwal HK, Mani MP, Jacob M. MoDL: model-based deep learning
+#    architecture for inverse problems. *IEEE Trans Med Imaging* 38(2):394-405
+#    (2019). https://doi.org/10.1109/TMI.2018.2865356
+#
+# .. [#boyd] Boyd S, Parikh N, Chu E, Peleato B, Eckstein J. Distributed optimization
+#    and statistical learning via the alternating direction method of
+#    multipliers. *Found Trends Mach Learn* 3(1):1-122 (2011).
+#    https://doi.org/10.1561/2200000016
+#
+# .. [#dncnn] Zhang K, Zuo W, Chen Y, Meng D, Zhang L. Beyond a Gaussian denoiser:
+#    residual learning of deep CNN for image denoising. *IEEE Trans Image
+#    Process* 26(7):3142-3155 (2017). https://doi.org/10.1109/TIP.2017.2662206
+#
+# .. [#urman] Urman Y, Nishimura M, Abraham DR, Cao X, Setsompop K. Fully 3D unrolled
+#    magnetic resonance fingerprinting reconstruction via staged pretraining and
+#    implicit gridding. *Magn Reson Med* 96(5):2516-2529 (2026).
+#    https://doi.org/10.1002/mrm.70500
+#
+# .. [#deq] Bai S, Kolter JZ, Koltun V. Deep equilibrium models. *Advances in Neural
+#    Information Processing Systems* 32:688-699 (2019).
+#    https://arxiv.org/abs/1909.01377

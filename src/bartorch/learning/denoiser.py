@@ -45,15 +45,15 @@ class Denoiser(nn.Module):
         Called as ``net(planes)``, or as ``net(planes, sigma)`` when a
         ``sigma`` is supplied to :meth:`forward`, on a real tensor of shape
         ``(n, channels, *spatial)``.
-    spatial : int
+    spatial : int, default=2
         Number of trailing image axes the network operates on: 2 for a
         network trained on slices, 3 for one trained on volumes.
-    channels : int
+    channels : int, default=1
         Number of input channels the network expects.  A grayscale network
         takes 1 and an RGB network 3, both operating on one plane at a time;
         2 is a network taking the real and imaginary planes jointly, as
         MoDL's does.
-    parts : {"channels", "separate", "magnitude"}, optional
+    parts : {"channels", "separate", "magnitude"}, default=None
         Representation of the complex values as real planes.  ``"channels"``
         assigns the real and imaginary parts to the network's two input
         channels.  ``"separate"`` applies the network to each part
@@ -61,7 +61,7 @@ class Denoiser(nn.Module):
         ``"magnitude"`` applies it to the modulus and restores the original
         phase, leaving the phase unaltered.  Defaults to ``"channels"`` for a
         two-channel network and ``"separate"`` otherwise.
-    normalize : bool
+    normalize : bool, default=True
         Whether each image is scaled to unit peak modulus around the call.
         The noise level of a network trained on images in the unit range is
         not interpretable without this scaling.
@@ -133,7 +133,7 @@ class Denoiser(nn.Module):
             Complex or real, of shape ``(batch, *rest, *spatial)``.  The
             leading axis is the batch over which each scale is measured; a
             tensor of exactly ``spatial`` axes is a single image.
-        sigma : float or torch.Tensor, optional
+        sigma : float or torch.Tensor, default=None
             Passed to the network as its second argument when supplied, and
             omitted from the call otherwise.
         """

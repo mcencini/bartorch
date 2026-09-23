@@ -62,25 +62,25 @@ def mobafit(
         The signal model, built on the acquisition that produced ``images``
         -- :func:`~bartorch.nlop.MultiEcho`, :func:`~bartorch.nlop.InversionRecovery`
         or :func:`~bartorch.nlop.Bloch` -- on the voxel shape of ``images``.
-    iterations : int
+    iterations : int, default=20
         Gauss-Newton steps.  The command takes five over its own scaled
         coefficients; twenty are what a bounded parameterisation needs.
-    cg_maxiter : int
+    cg_maxiter : int, default=50
         Conjugate-gradient steps per linearized problem.
-    inner : solver, optional
+    inner : solver, default=None
         A configured solver from :mod:`bartorch.optim` for the linearized
         problem, whose regularizers then penalize the maps.  The default is
         plain conjugate gradients, which is what the command solves with.
-    alpha : float
+    alpha : float, default=1.0
         Initial Tikhonov weight on the Gauss-Newton step.
-    alpha_min : float
+    alpha_min : float, default=0.0
         What that weight decays towards.
-    redu : float
+    redu : float, default=2.0
         Factor the weight is divided by after each step.
-    magnitude : bool
+    magnitude : bool, default=False
         Fit the magnitude of the model to the data rather than the signal
         itself, which is BART's ``-a``.
-    start : torch.Tensor, optional
+    start : torch.Tensor, default=None
         Maps to start from, of the model's input shape.  Built from
         ``**values`` when it is not given.
     **values

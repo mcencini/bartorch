@@ -91,7 +91,7 @@ def maps_to_kernels(
         Sensitivities ``([sets,] coils, *spatial)``.
     size : int or tuple of int
         Kernel size per spatial axis, or one size for all.
-    ndim : int, optional
+    ndim : int, default=None
         Number of spatial axes, for a single ``size`` over a bank with sets.
         By default the length of ``size``, or every axis after the first.
 
@@ -140,7 +140,7 @@ def resize(input: torch.Tensor, oshape: tuple[int, ...], *, anchor: str = "cente
     ----------
     oshape : tuple of int
         Full output shape, one size per axis of ``input``.
-    anchor : {"center", "front", "start"}
+    anchor : {"center", "front", "start"}, default='center'
         What is kept in place.  ``"center"`` keeps index ``n // 2``
         at ``m // 2``; ``"front"`` keeps the last element and crops or
         pads at the beginning; ``"start"`` keeps the first element and crops or
@@ -236,7 +236,7 @@ def median_filter(
 
     Parameters
     ----------
-    geometric : bool
+    geometric : bool, default=False
         Take the geometric median of the complex values in the plane, by ten
         Weiszfeld iterations from zero.  Otherwise the element of median
         magnitude, or the mean of the two for an even length.
@@ -283,7 +283,7 @@ def mip(
 
     Parameters
     ----------
-    magnitude : bool
+    magnitude : bool, default=False
         Project the magnitude instead of the real part.
     """
     flags = axes_flags(axes, input.ndim)
@@ -304,7 +304,7 @@ def unwrap(input: torch.Tensor, axis: int, *, bound: float = math.pi) -> torch.T
 
     Parameters
     ----------
-    bound : float
+    bound : float, default=pi
         Half the period.
     """
     dim = _bart_dim(axis, input.ndim)

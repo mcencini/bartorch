@@ -23,7 +23,7 @@ from bartorch.nlop.basic import (
     RootSumOfSquares,
     SmoothAbs,
     Sqrt,
-    Sum,
+    SumOfSquares,
     Weighted,
 )
 from bartorch.nlop.callback import TorchOperator
@@ -67,7 +67,7 @@ __all__ = [
     "SignalModel",
     "SmoothAbs",
     "Sqrt",
-    "Sum",
+    "SumOfSquares",
     "TorchOperator",
     "Weighted",
 ]

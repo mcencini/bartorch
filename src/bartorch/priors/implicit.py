@@ -45,10 +45,10 @@ class ImplicitPrior(nn.Module):
         image's shape or, with a ``transform``, the codomain of :math:`G`.
         :class:`bartorch.learning.Denoiser` adapts a network operating on real
         planes to this interface.
-    sigma : float, optional
+    sigma : float, default=None
         The noise level the denoiser is asked for, in the units its own
         convention states.
-    transform : LinearOperator, optional
+    transform : LinearOperator, default=None
         :math:`G`, mapping the image to the domain the denoiser is applied on.
         Only the iterations given a term's transform use it; see
         :meth:`bartorch.priors.Regularizer.transform_is_identity`.

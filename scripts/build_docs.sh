@@ -69,13 +69,16 @@ if [ "${clean}" = 1 ]; then
     # something that has since been renamed would survive an ordinary rebuild
     # and be linked from nothing.
     rm -rf "${ROOT}/docs/_build" \
-           "${ROOT}/docs/api/generated" \
+           "${ROOT}/docs/generated" \
+           "${ROOT}/docs/api_objects.rst" \
            "${ROOT}/docs/auto_examples" \
            "${ROOT}/docs/sg_execution_times.rst"
 fi
 
+# The doctree cache is kept beside the output rather than inside it, so the
+# directory the workflow publishes is the site and nothing else.
 # shellcheck disable=SC2086
-"${PYTHON}" -m sphinx -b html ${strict} "${ROOT}/docs" "${OUT}"
+"${PYTHON}" -m sphinx -b html ${strict} -d "${ROOT}/docs/_build/doctrees" "${ROOT}/docs" "${OUT}"
 
 echo
 echo "build_docs.sh: ${OUT}/index.html"

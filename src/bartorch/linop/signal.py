@@ -85,11 +85,11 @@ class Convolve(LinearOperator):
         The domain, C order.
     axes : int or tuple of int
         Which axes to convolve along.
-    mode : str
+    mode : str, default='same'
         How the ends are treated, under numpy's names: ``"wrap"`` (circular),
         ``"same"`` (the input's size, truncated), ``"valid"`` (only where the
         kernel fits) or ``"full"`` (extended).
-    direction : str, optional
+    direction : str, default=None
         ``"symmetric"``, ``"causal"`` or ``"anticausal"``.  BART only plans a
         ``"valid"`` or ``"full"`` convolution as a causal one, so leaving this
         out picks causal for those two and symmetric for the others rather

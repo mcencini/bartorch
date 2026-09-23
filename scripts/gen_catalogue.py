@@ -95,10 +95,17 @@ def unescape(body: str) -> str:
     return re.sub(r"\\(.)", lambda m: ESCAPES.get(m.group(1), m.group(1)), body)
 
 
-def joined_string(text: str) -> str:
-    """Adjacent C string literals, which the compiler concatenates into one."""
+def joined_string(text: str, lines: bool = False) -> str:
+    """Adjacent C string literals, which the compiler concatenates into one.
+
+    With ``lines`` the line breaks are kept, as a command's help lays out its
+    lists and examples with them; an option's help is one line either way.
+    """
     parts = re.findall(r'"((?:[^"\\]|\\.)*)"', text)
-    return "".join(unescape(part) for part in parts).strip()
+    if not lines:
+        return "".join(unescape(part) for part in parts).strip()
+    body = "\n".join(unescape(piece) for piece in "".join(parts).split("\\n"))
+    return "\n".join(line.rstrip() for line in body.strip().splitlines())
 
 
 def split_arguments(text: str) -> list[str]:
@@ -284,7 +291,7 @@ def read_command(name: str, source: Path) -> dict:
 
     return {
         "name": name,
-        "help": joined_string(helped.group(1)) if helped else "",
+        "help": joined_string(helped.group(1), lines=True) if helped else "",
         "arguments": arguments,
         "options": options,
         "unread": unread,

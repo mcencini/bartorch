@@ -110,6 +110,21 @@ def test_an_l2_term_is_the_weight_once(_whole_coil_operator):
         apps.pics(kspace, maps, regularizers=[priors.L2(0.1), priors.L2(0.2)])
 
 
+@pytest.mark.parametrize(
+    "term", [priors.FourierL1((-1, -2), 0.01), priors.Laplace((-1, -2), 0.01)], ids=repr
+)
+def test_a_first_term_over_a_transform_is_not_thresholded_on_the_image(term, _whole_coil_operator):
+    """The application chooses FISTA for these and hands it no transform
+    (``trafos_cond`` in pics.c), so the tool thresholds the image itself.  The
+    app refuses that choice and takes the term under ADMM, which applies it."""
+    kspace, maps = _cartesian()
+    with pytest.raises(ValueError, match="solver='admm'"):
+        apps.pics(kspace, maps, regularizers=term)
+    tool = bt.pics(kspace, maps, maxiter=20, regularizers=term, solver="admm").squeeze()
+    ours = apps.pics(kspace, maps, maxiter=20, regularizers=term, solver="admm").squeeze()
+    assert torch.equal(ours, tool)
+
+
 def test_an_unknown_solver_is_refused():
     kspace, maps = _cartesian()
     with pytest.raises(ValueError, match="solver must be one of"):

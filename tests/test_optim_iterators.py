@@ -187,24 +187,42 @@ def _solver_agrees(solver, ours, theirs):
         assert torch.equal(ours, theirs)
 
 
-@pytest.mark.parametrize(
-    "make",
-    [
-        lambda term, **kw: optim.IST(term, maxiter=12, step=0.7, **kw),
-        lambda term, **kw: optim.FISTA(term, maxiter=12, step=0.7, **kw),
-        lambda term, **kw: optim.FISTA(term, maxiter=12, step=0.7, hogwild=True, **kw),
-        lambda term, **kw: optim.FISTA(term, maxiter=12, step=0.7, pqr=(1.0, 1.0, 2.0), **kw),
-        lambda term, **kw: optim.PRIDU(term, maxiter=12, step=0.95, **kw),
-        lambda term, **kw: optim.PRIDU(term, maxiter=12, step=0.95, adaptive_step=True, **kw),
-        lambda term, **kw: optim.PRIDU(term, maxiter=12, step=0.95, sigma_tau_ratio=3.0, **kw),
-    ],
-    ids=["ist", "fista", "fista hogwild", "fista pqr", "pridu", "pridu adaptive", "pridu ratio"],
-)
-@pytest.mark.parametrize(
-    "term",
-    [priors.L1(0.05), priors.Wavelet((-1, -2), 0.02), priors.Laplace((-1, -2), 0.02)],
-    ids=["l1", "wavelet", "laplace"],
-)
+_THRESHOLDING = {
+    "ist": lambda term, **kw: optim.IST(term, maxiter=12, step=0.7, **kw),
+    "fista": lambda term, **kw: optim.FISTA(term, maxiter=12, step=0.7, **kw),
+    "fista hogwild": lambda term, **kw: optim.FISTA(term, maxiter=12, step=0.7, hogwild=True, **kw),
+    "fista pqr": lambda term, **kw: optim.FISTA(
+        term, maxiter=12, step=0.7, pqr=(1.0, 1.0, 2.0), **kw
+    ),
+}
+_PRIMAL_DUAL = {
+    "pridu": lambda term, **kw: optim.PRIDU(term, maxiter=12, step=0.95, **kw),
+    "pridu adaptive": lambda term, **kw: optim.PRIDU(
+        term, maxiter=12, step=0.95, adaptive_step=True, **kw
+    ),
+    "pridu ratio": lambda term, **kw: optim.PRIDU(
+        term, maxiter=12, step=0.95, sigma_tau_ratio=3.0, **kw
+    ),
+}
+#: Terms over the image, which every proximal iteration takes, and a term over
+#: a transform, which only the primal-dual one is given the transform of.
+_ON_THE_IMAGE = {"l1": priors.L1(0.05), "wavelet": priors.Wavelet((-1, -2), 0.02)}
+_OVER_A_TRANSFORM = {"laplace": priors.Laplace((-1, -2), 0.02)}
+
+
+def _solver_cases():
+    cases = []
+    for solvers, terms in (
+        ({**_THRESHOLDING, **_PRIMAL_DUAL}, _ON_THE_IMAGE),
+        (_PRIMAL_DUAL, _OVER_A_TRANSFORM),
+    ):
+        for solver, make in solvers.items():
+            for name, term in terms.items():
+                cases.append(pytest.param(make, term, id=f"{solver}-{name}"))
+    return cases
+
+
+@pytest.mark.parametrize(("make", "term"), _solver_cases())
 @pytest.mark.parametrize("weight", [0.0, 0.1], ids=["no weight", "a quadratic weight"])
 def test_the_public_solvers_are_the_library_they_replaced(make, term, weight):
     """`__call__` runs the iteration here; `_in_library` runs BART's."""
@@ -216,6 +234,58 @@ def test_the_public_solvers_are_the_library_they_replaced(make, term, weight):
     solver = make(term, cclambda=weight)
 
     _solver_agrees(solver, solver(y, A), solver._in_library(y, A))
+
+
+@pytest.mark.parametrize("solver", [optim.IST, optim.FISTA], ids=["ist", "fista"])
+@pytest.mark.parametrize(
+    "term",
+    [
+        priors.FourierL1((-1, -2), 0.05),
+        priors.Laplace((-1, -2), 0.02),
+        priors.ImaginaryL1(0.05),
+        priors.TotalVariation((-1, -2), 0.01),
+    ],
+    ids=repr,
+)
+def test_the_thresholding_iterations_refuse_a_term_over_a_transform(solver, term):
+    """`pics` hands `iter2_ist` and `iter2_fista` the proximal operators and no
+    transforms, so a term over a transform would be thresholded on the image
+    itself -- the Fourier coefficients' threshold applied to the pixels -- and
+    total variation's proximal operator does not take the image's shape at
+    all, which BART asserts.  Both routes refuse before either happens."""
+    A = linop.FFT(SHAPE, axes=(-1, -2))
+    y = A(_rand(*SHAPE))
+    with pytest.raises(ValueError, match="penalizes a transform"):
+        solver(term, maxiter=3)(y, A)
+    with pytest.raises(ValueError, match="penalizes a transform"):
+        solver(term, maxiter=3)._in_library(y, A)
+    block = optim.FISTABlock(term) if solver is optim.FISTA else optim.ISTBlock(term)
+    with pytest.raises(ValueError, match="penalizes a transform"):
+        block.start(y, A)
+
+
+def test_a_fourier_l1_term_thresholds_the_fourier_coefficients():
+    """Denoising, ``A = I``: the minimizer of ``1/2 ||x - y||^2 + lambda ||F x||_1``
+    is ``y`` with its Fourier coefficients soft-thresholded.  BART's ``F`` is
+    the unnormalized transform, so on unitary coefficients the threshold is
+    ``lambda sqrt(N)``.  ADMM, which is given the transform, reaches it."""
+    torch.manual_seed(0)
+    n = 16
+    shape = (1, n, n)
+    F = linop.FFT(shape, axes=(-1, -2))
+    coefficients = 0.05 * _rand(*shape)
+    coefficients[0, 3, 4] += 5.0
+    coefficients[0, 10, 2] += 3.0j
+    y = F.adjoint(coefficients)
+    weight = 0.01
+
+    got = optim.ADMM(priors.FourierL1((-1, -2), weight), maxiter=1000)(y, linop.Identity(shape))
+
+    threshold = weight * n
+    c = F(y)
+    shrunk = torch.where(c.abs() > threshold, (1 - threshold / c.abs()) * c, torch.zeros(()))
+    expected = F.adjoint(shrunk)
+    assert torch.linalg.vector_norm(got - expected) < 1e-4 * torch.linalg.vector_norm(y)
 
 
 def test_the_proximal_iterations_take_one_term():

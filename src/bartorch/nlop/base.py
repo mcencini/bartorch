@@ -144,6 +144,15 @@ class NonlinearOperator(Operator):
         The shape of each input and of each output, C order.
     ishape, oshape : tuple of int
         Domain and codomain, for an operator with one input and one output.
+
+    Examples
+    --------
+    >>> M = nlop.MultiEcho([10.0, 20.0, 40.0], (64, 64))    # echo times in ms
+    >>> theta = M.initial(T2=80.0)
+    >>> M(theta).shape
+    torch.Size([3, 64, 64])
+    >>> D = M.linearize(theta)            # the derivative at theta, a LinearOperator
+    >>> E = linop.FFT(M.oshape, axes=(-1, -2)) @ M    # still a NonlinearOperator
     """
 
     _free_name = "bartorch_nlop_free"

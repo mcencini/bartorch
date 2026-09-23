@@ -28,7 +28,7 @@ __all__ = [
     "RootSumOfSquares",
     "SmoothAbs",
     "Sqrt",
-    "Sum",
+    "SumOfSquares",
     "Weighted",
 ]
 
@@ -130,7 +130,7 @@ class SmoothAbs(_Elementwise):
     ----------
     shape : tuple of int
         The shape it maps, C order.
-    eps : float
+    eps : float, default=1e-12
         What keeps the derivative finite at zero.
     """
 
@@ -270,8 +270,8 @@ class _Reduction(NonlinearOperator):
         return f"{type(self).__name__}({self._shape}, axes={self.axes})"
 
 
-class Sum(_Reduction):
-    """``sum(|x|^2)`` along ``axes``.  BART's ``zss``."""
+class SumOfSquares(_Reduction):
+    """``sum(|x|^2)`` along ``axes``, BART's ``zss``."""
 
     _fn = "bartorch_nlop_zss"
 
@@ -320,7 +320,7 @@ class RootSumOfSquares(_Reduction):
         """``nlop_zrss_reg_create``: the sum of squares, offset where asked, rooted."""
         from bartorch.nlop.base import _chain
 
-        made = Sum(self._shape, self.axes)
+        made = SumOfSquares(self._shape, self.axes)
         if self.eps:
             made = _chain(made, Add(self._out, self.eps))
         return _chain(made, Sqrt(self._out))

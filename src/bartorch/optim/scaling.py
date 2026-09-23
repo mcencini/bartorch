@@ -32,15 +32,15 @@ def data_scaling(
         their own axis in BART's layout rather than the squeezed layout an
         operator takes, because the estimate is read off the k-space centre and
         a misplaced coil axis moves it.
-    A : LinearOperator, optional
+    A : LinearOperator, default=None
         The encoding.  With one, the estimate used for a non-Cartesian
         acquisition: the spread of ``|A^H y|`` from its order statistics.
         Without one, the k-space-centre estimate of
         :func:`bartorch.tools.estscaling`, used for a Cartesian acquisition.
-    percentile : float, optional
+    percentile : float, default=None
         Take this percentile of the sorted magnitudes instead of BART's
         rule.
-    compat : bool
+    compat : bool, default=False
         Take the median, as BART's older estimate did.  Only with ``A``.
 
     Returns
@@ -51,6 +51,14 @@ def data_scaling(
 
     Notes
     -----
+    Without ``A`` the estimate is BART's ``estimate_scaling``: the
+    root-sum-of-squares image of the fully sampled central region of k-space,
+    at most 32 samples along each axis, corrected for the region's size, and the
+    90th percentile of its voxel magnitudes -- or their maximum, when the
+    maximum exceeds the 90th percentile by at least twice the difference
+    between the 90th percentile and the median.  With ``A`` the same rule is
+    applied to the magnitudes of ``A^H y``.
+
     The solution of a solve on scaled data is scaled by the same factor, and
     is conventionally left so rather than divided back.
 

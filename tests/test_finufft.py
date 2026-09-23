@@ -28,8 +28,8 @@ def _no_substitution_to_test() -> str:
     once and loudly.  Installed but unable to take BART's place is a platform:
     macOS loads torch's OpenMP runtime and the FINUFFT wheel's own, and LLVM's
     runtime ends the process rather than run beside itself -- so the
-    substitution declines, BART's gridder answers, and a test of the
-    substitution has no subject.
+    substitution declines, every non-uniform transform is refused, and a test
+    of the substitution has no subject.
     """
     if not _finufft.available():
         return "finufft is not installed, and it is a dependency: see test_dependencies.py"
@@ -1999,3 +1999,22 @@ def test_encoding_axes_behind_a_batch_are_transformed_a_batch_item_at_a_time():
     torch.testing.assert_close(A(x), torch.stack([one(x[c]) for c in range(coils)]))
     torch.testing.assert_close(A.adjoint(y), torch.stack([one.adjoint(y[c]) for c in range(coils)]))
     assert _inner(A(x), y) == pytest.approx(_inner(x, A.adjoint(y)), rel=1e-3)
+
+
+@pytest.mark.skipif(not _finufft.available(), reason="finufft is not installed")
+def test_a_failed_install_is_reported_as_the_refusal_it_leads_to(monkeypatch, caplog):
+    """A substitution that could not be installed leaves the gridder closed, so
+    what follows is a refusal; the warning says that, not that BART's gridder
+    answers instead."""
+
+    def fails(enable=True, **kwargs):
+        raise RuntimeError("two OpenMP runtimes are loaded")
+
+    monkeypatch.setattr(_finufft, "_installed", False)
+    monkeypatch.setattr(_finufft, "use_in_tools", fails)
+    with caplog.at_level("WARNING", logger="bartorch._finufft"):
+        _finufft.install_once()
+    (record,) = caplog.records
+    assert "refused" in record.getMessage()
+    assert "gridder" not in record.getMessage()
+    assert "two OpenMP runtimes" in record.getMessage()

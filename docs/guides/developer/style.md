@@ -1,14 +1,28 @@
-# Style
+# Coding style
+
+## Python
 
 Python follows the repository's ruff configuration: 100-column lines,
-formatter-managed layout and sorted imports.  Use descriptive names and public
-type hints.  Keep tensor shapes, devices, normalization, mutation and ownership
-explicit at native boundaries.  Use plain C in the exported ABI, follow the
-existing local conventions, and keep upstream BART unchanged.
+formatter-managed layout, sorted imports and the `E`, `F`, `W` and `I` rule
+sets, applied to `src/`, `tests/` and the gallery examples.  Public functions
+carry type hints.  Shapes, devices, normalization, mutation and ownership are
+explicit at the native boundary.
 
 A wrapper around a BART command calls BART; it does not reimplement BART's
-computation in torch.  Torch is for reshaping and marshalling around the call.
+computation in PyTorch, which is used for reshaping and marshalling around the
+call.  The exceptions are listed in `AGENTS.md`: the substitutions that are
+faster than BART, and signal simulation, which is TorchSim's.
 
-Documentation and docstrings follow {doc}`documentation`, which is the
-editorial policy for this project.  Pages are Markdown (MyST).  Document
-implemented behaviour, and separate proposed methods from available APIs.
+## C
+
+The exported ABI in `src/csrc/include/bartorch.h` is plain C: no complex types
+and no variable-length arrays.  Local conventions of each file are followed,
+and BART's own sources are not modified.
+
+## Docstrings
+
+Docstrings are NumPy style and follow {doc}`documentation`.  Every documented
+parameter with a default states it in its type line, as
+`maxiter : int, default=30`, matching the signature; `tests/test_docstrings.py`
+checks this for every public object.  Write for a reader of the code as it is:
+no descriptions of what the code used to do.

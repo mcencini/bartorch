@@ -89,22 +89,26 @@ class IRGNMBlock(nn.Module):
 
     Parameters
     ----------
-    alpha : float
+    alpha : float, default=1.0
         Initial Tikhonov weight.
-    alpha_min : float
+    alpha_min : float, default=0.0
         What the weight decays towards.
-    alpha_min0 : float
+    alpha_min0 : float, default=0.0
         Floor the decayed weight is never taken below; second form only.
-    redu : float
+    redu : float, default=2.0
         Factor the weight is divided by after each step.
-    cg_maxiter, cg_tol, cg_lambda : int, float, float
-        The first form's conjugate gradients: ``iter_conjgrad_conf``'s
-        ``maxiter``, ``tol`` and ``l2lambda``.  A nonzero ``tol`` is refused
-        by BART once the step is differentiated.
-    inner : solver, optional
+    cg_maxiter : int, default=30
+        The first form's conjugate-gradient iterations, ``iter_conjgrad_conf``'s
+        ``maxiter``.
+    cg_tol : float, default=0.0
+        Its tolerance, ``iter_conjgrad_conf``'s ``tol``.  A nonzero ``tol`` is
+        refused by BART once the step is differentiated.
+    cg_lambda : float, default=0.0
+        Its Tikhonov weight, ``iter_conjgrad_conf``'s ``l2lambda``.
+    inner : solver, default=None
         A configured solver from :mod:`bartorch.optim` for the linearized
         problem; its regularizers are ``R``.
-    fuse : bool
+    fuse : bool, default=True
         Lower a coil composition so that its encoding is applied once as its
         normal operator; see :meth:`plan`.
 
@@ -284,27 +288,27 @@ class IRGNM:
 
     Parameters
     ----------
-    iterations : int
+    iterations : int, default=8
         Gauss-Newton steps.
-    alpha : float
+    alpha : float, default=1.0
         Initial Tikhonov weight.
-    alpha_min : float
+    alpha_min : float, default=0.0
         What the weight decays towards.
-    alpha_min0 : float
+    alpha_min0 : float, default=0.0
         A floor the decayed weight is never taken below.  Only the second
         form has it; BART's ``irgnm`` does not.
-    redu : float
+    redu : float, default=2.0
         Factor the weight is divided by after each step.
-    cg_maxiter : int
+    cg_maxiter : int, default=30
         Conjugate-gradient iterations per step, for the built-in solver.
-    cg_tol : float
+    cg_tol : float, default=0.0
         Conjugate-gradient tolerance per step, for the built-in solver.
-    inner : solver or None
+    inner : solver or None, default=None
         A configured solver from :mod:`bartorch.optim` for the linearized
         problem, whose regularizers become the ``R`` above.  ``None`` runs
         BART's first form, with the inverse inside the library, as ``nlinv``
         does.
-    fuse : bool
+    fuse : bool, default=True
         Lower a coil composition so that its encoding is applied once as its
         normal operator.
 
@@ -391,9 +395,9 @@ class IRGNM:
         F : NonlinearOperator or LinearOperator
             The forward model, with a bundle; a linear one is converted with
             :meth:`~bartorch.linop.LinearOperator.to_nonlinear`.
-        x0 : torch.Tensor or tuple of torch.Tensor, optional
+        x0 : torch.Tensor or tuple of torch.Tensor, default=None
             Starting point; see :meth:`IRGNMBlock.start`.
-        xref : torch.Tensor or tuple of torch.Tensor, optional
+        xref : torch.Tensor or tuple of torch.Tensor, default=None
             Regularization centre.  Without one the steps are regularized
             towards zero, as BART does.
 
@@ -492,12 +496,12 @@ def irgnm(y: torch.Tensor, F, *, x0=None, xref=None, inner=None, **settings):
         Data of ``F.oshapes[0]``.
     F : NonlinearOperator
         The forward model.
-    x0 : tensor or tuple of tensor, optional
+    x0 : tensor or tuple of tensor, default=None
         Starting iterate; without one the model's own initial value is used.
-    xref : tensor or tuple of tensor, optional
+    xref : tensor or tuple of tensor, default=None
         Regularization centre the steps are pulled towards; without one they
         are regularized towards zero.
-    inner : solver, optional
+    inner : solver, default=None
         Solver for the linearized problem, from :mod:`bartorch.optim`.  Without
         one it is solved by conjugate gradients inside the library.
     **settings

@@ -114,19 +114,19 @@ def pocsense(
     sensitivities : torch.Tensor
         Coil sensitivities, normalized, as :func:`~bartorch.tools.ecalib`
         produces them.
-    maxiter : int, optional
+    maxiter : int, default=None
         Sweeps of the projections; BART's default is fifty.
-    alpha : float
+    alpha : float, default=0.0
         Regularization weight.  Zero leaves the sparsity projection out
         entirely, as the application does, and the sweep is then the two
         projections onto the data and onto the coils.
-    wavelet : bool
+    wavelet : bool, default=False
         Threshold the wavelet coefficients of the coil images rather than
         shrinking the samples towards zero, which is ``pocsense -l 1``.
-    robust : float, optional
+    robust : float, default=None
         Soft-threshold the residual at a measured position by this much
         rather than discarding it, which is the application's ``-o``.
-    scaling : float, optional
+    scaling : float, default=None
         The data scaling to divide by; estimated when it is not given, and
         the answer is put back into the data's units either way.
 

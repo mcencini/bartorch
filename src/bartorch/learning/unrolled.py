@@ -85,22 +85,26 @@ class Unrolled(nn.Module):
     block : nn.Module or sequence of nn.Module
         One of :mod:`bartorch.optim`'s iteration blocks, or a sequence of
         them, one per iteration.
-    iterations : int, optional
+    iterations : int, default=None
         Number of applications of a single shared block.  Omitted for a
         sequence, whose length gives the count.
-    detach : bool
+    detach : bool, default=False
         Whether each iteration starts from a detached state.
-    checkpoint : bool
+    checkpoint : bool, default=False
         Whether the interior of an iteration is recomputed during the backward
         pass rather than stored.
 
     Notes
     -----
-    Checkpointing recomputes a step, so a term drawing its own random shifts,
-    such as a wavelet threshold with random cycle spinning, draws again on
-    recomputation and the recorded gradient no longer corresponds to the
-    forward pass.  Checkpointing is therefore restricted to stacks whose steps
-    are deterministic, which a denoiser's are.
+    Checkpointing recomputes a step, and the gradient is correct only if the
+    recomputation reproduces it.  PyTorch's random state is restored for the
+    recomputation, so dropout in a denoiser is reproduced.  A BART term that
+    draws random shifts from BART's own generator, such as
+    :class:`~bartorch.priors.Wavelet` or
+    :class:`~bartorch.priors.LocallyLowRank` with ``randshift=True``, draws
+    new shifts, and the gradient then does not correspond to the forward
+    pass.  This is not checked: ``checkpoint=True`` is valid only for steps
+    that are deterministic or draw from PyTorch's generator.
 
     Examples
     --------
@@ -169,7 +173,7 @@ class Unrolled(nn.Module):
             Measured data, with or without a leading batch axis.
         A : LinearOperator
             Encoding operator, shared by every item of a batch.
-        x0 : torch.Tensor, optional
+        x0 : torch.Tensor, default=None
             Starting point of the iteration; zero by default, as in BART.
         """
         image = None

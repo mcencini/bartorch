@@ -6,8 +6,8 @@ Operators and solvers
 The same reconstruction written as an encoding operator and a solver rather
 than as a call to a BART application.
 
-:func:`bartorch.tools.pics` assembles three things and hands them to BART's
-iteration: the encoding operator, the regularization terms, and the algorithm.
+:func:`bartorch.tools.pics` builds three objects and runs BART's iteration
+with them: the encoding operator, the regularization terms, and the algorithm.
 :mod:`bartorch.linop` and :mod:`bartorch.optim` expose those three separately,
 for the reconstructions BART has no application for: an encoding with an extra
 factor in it, a solver reached from an outer loop, an operator defined in
@@ -243,14 +243,14 @@ maps = bt.ecalib(kspace, maps=1, calib_size=CALIBRATION, crop=0.8)
 # :func:`bartorch.linop.CartesianSense` is :math:`A = P F S` as one operator.
 # It takes the sensitivities, the shape of the image it maps from, and the
 # sampling pattern; the shape of the k-space it maps to follows from those.
-# :func:`bartorch.tools.pattern` reads the pattern off the measured data, which
-# is where a prospectively undersampled acquisition gets it from.
+# :func:`bartorch.tools.pattern` reads the pattern off the measured data, as
+# for a prospectively undersampled acquisition.
 #
 # ``modulated=True`` selects BART's uncentred sample convention, which its
 # applications iterate in; the default is the centred convention that
 # :func:`bartorch.fft` produces. The two differ by a modulation of the samples
-# and give the same image, so the choice matters only when the operator has to
-# meet data that is already in one of them, as it does below.
+# and give the same image, so the choice matters only when the operator is
+# applied to data already in one of them, as it is below.
 
 pattern = bt.pattern(kspace)
 A = linop.CartesianSense(maps.squeeze(1), (SIZE, SIZE), pattern.squeeze(), modulated=True)
@@ -327,7 +327,7 @@ print(f"largest eigenvalue of A^H A: {optim.maxeigen(A.gram()):.3f}")
 
 # %%
 #
-# An operator defined in Python joins the algebra through
+# An operator defined in Python is composed with BART's through
 # :meth:`~bartorch.linop.LinearOperator.from_callbacks`, which BART applies as
 # a callback. Here it is a spatially varying phase, as an off-resonance or an
 # eddy-current phase would be, placed between the image and the encoding.
@@ -346,9 +346,11 @@ print(f"{composed.ishape} -> {composed.oshape}, fused: {composed.plan.fused}")
 #
 # Applying an operator to a tensor that requires a gradient records the
 # application for autograd. The gradient torch propagates back through
-# :math:`y = Ax` is :math:`A^H g` rather than :math:`A^T g`, which is the
-# convention torch uses for complex tensors and the reason a real-valued check
-# would not distinguish the two.
+# :math:`y = Ax` is :math:`A^H g` rather than :math:`A^T g`, the conjugate
+# Wirtinger convention torch uses for complex tensors.  For a real :math:`A`,
+# :math:`A^H = A^T`, so only a complex check distinguishes the two;
+# :doc:`../../explanation/differentiation` describes the backward passes of
+# the solvers.
 
 variable = data.new_zeros(A.ishape).requires_grad_(True)
 residual = A(variable) - data
@@ -372,8 +374,8 @@ plt.show()
 # %%
 #
 # The adjoint of the encoding is not its inverse: :math:`A^H y` is the coil
-# combination of the zero-filled k-space, and carries the aliasing the sampling
-# operator left. What the solver adds is the inversion.
+# combination of the zero-filled k-space, and carries the aliasing of the
+# undersampling, which the solve removes.
 #
 # The regularization terms are the subject of :mod:`bartorch.priors`, and the
 # iterations of :mod:`bartorch.optim`;

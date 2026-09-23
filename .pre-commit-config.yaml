@@ -1,20 +1,25 @@
+# Local hooks mirroring what CI checks: ./scripts/lint.sh runs the same ruff
+# rules over the same paths, and the lint and typos workflows run both tools.
+# codespell takes its configuration from [tool.codespell] in pyproject.toml.
 repos:
   - repo: https://github.com/kynan/nbstripout
     rev: 0.7.1
     hooks:
       - id: nbstripout
+        # The archived demos keep their outputs: they are a record, not built.
+        exclude: ^attic/
 
   - repo: https://github.com/codespell-project/codespell
-    rev: v2.3.0
+    rev: v2.4.3
     hooks:
       - id: codespell
-        args:
-          - --skip=attic/,.git/,bart/,*.ipynb,pyproject.toml
-          - --ignore-words-list=ist,te,reconet,pyramide
+        additional_dependencies: ["tomli; python_version < '3.11'"]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.4.4
+    rev: v0.16.8
     hooks:
       - id: ruff
         args: [--fix]
+        files: ^(src|tests|docs/examples)/
       - id: ruff-format
+        files: ^(src|tests|docs/examples)/

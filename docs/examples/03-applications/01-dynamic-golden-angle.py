@@ -4,11 +4,11 @@ Dynamic golden-angle radial MRI
 ================================
 
 A continuously acquired golden-angle radial scan reconstructed as a time
-series, with a temporal regularizer in place of the temporal resolution the
-undersampling destroys.
+series, with a temporal regularizer compensating for the undersampling of each
+frame.
 
 The acquisition is one uninterrupted train of spokes, each rotated from the
-last by the golden angle. Frames are cut out of it afterwards: any block of
+last by the golden angle [#winkelmann]_. Frames are cut out of it afterwards: any block of
 consecutive spokes covers k-space approximately uniformly, so the frame
 duration is a reconstruction parameter rather than an acquisition parameter.
 Thirteen spokes across a 128 matrix is fifteenfold undersampled, and no frame
@@ -22,11 +22,6 @@ well as shots, and the sensitivities are shared across all of them.
 The phantom and the coil sensitivities are built as in
 :doc:`../01-basics/01-from-kspace-to-image`; the cell that does it is hidden on
 this page and present in the script this page can be downloaded as.
-
-Feng L, Grimm R, Block KT, Chandarana H, Kim S, Xu J, Axel L, Sodickson DK,
-Otazo R. *Golden-angle radial sparse parallel MRI: combination of compressed
-sensing, parallel imaging, and golden-angle radial sampling for fast and
-flexible dynamic volumetric MRI.* Magn Reson Med 72(3):707-717 (2014).
 """
 
 # %%
@@ -160,8 +155,8 @@ SPOKES = 13  # per frame
 # it: a gamma-variate enhancement curve applied to each tissue class in
 # proportion to its vascularity, strongest in grey matter, weaker in white
 # matter and absent in cerebrospinal fluid. The series is therefore piecewise
-# smooth in time and identical in space from frame to frame, which is the
-# structure the reconstruction will exploit.
+# smooth in time with a spatial structure that is the same in every frame, which
+# is the structure the temporal penalty uses.
 
 CLASSES = {"grey matter": ("GM", 0.8), "white matter": ("WM", 0.25)}
 
@@ -248,9 +243,9 @@ for label, weight in CLASSES.values():
 #
 # ``FRAMES * SPOKES`` spokes are generated as one golden-angle trajectory and
 # then reshaped, so that the first axis indexes frames and the second the shots
-# within a frame. A trajectory with an encoding axis is one transform over all
-# of its samples rather than one transform per frame, so a single plan serves
-# the whole series.
+# within a frame. The image varies along the frame axis, so each frame has its
+# own non-uniform FFT and normal kernel inside the one operator, applied under
+# the same coil loop.
 
 trajectory = bt.traj(readout=SIZE, spokes=FRAMES * SPOKES, radial=True, golden=True)
 trajectory = trajectory.reshape(FRAMES, SPOKES, SIZE, 3)
@@ -270,8 +265,8 @@ print(A.plan)
 
 # %%
 #
-# ``plan.items`` is the number of frames the encoding carries, and the
-# transform is planned once for all of them.
+# ``plan.items`` is the number of frames the encoding carries, each with its
+# own transform.
 #
 # Reconstruction
 # --------------
@@ -281,7 +276,7 @@ print(A.plan)
 # samples, which is the gridding reconstruction of thirteen spokes per frame.
 # The second solves the whole series at once under a total variation penalty
 # along the frame axis, which states that the signal is constant in time except
-# at a few instants -- the reconstruction GRASP performs.
+# at a few instants -- the reconstruction GRASP performs [#feng]_.
 
 weights = torch.linalg.norm(trajectory.real[..., :2], dim=-1).clamp(min=0.25)
 gridded = A.H(measured * weights.to(torch.complex64))
@@ -313,8 +308,8 @@ plt.show()
 
 # %%
 #
-# What the reconstruction is for is the curve, not the frame: the quantity a
-# perfusion study reports is the signal in a region as a function of time. The
+# The quantity a perfusion study reports is the signal in a region as a
+# function of time, so the reconstructions are compared on that curve. The
 # region here is the grey matter, where the enhancement was applied.
 
 region = memberships[CLASS["GM"]] > 0.6
@@ -351,6 +346,21 @@ plt.show()
 # radial acquisition are spread over the image rather than concentrated where
 # the signal is, but carries the frame-to-frame variation of the streak pattern
 # into it. The regularized reconstruction is smoother in time by construction,
-# which is a bias as much as it is a denoiser: of everything in the series, a
-# change confined to one frame is the least likely to survive a temporal total
-# variation penalty.
+# which reduces noise and also biases the curve: a change confined to one frame
+# is attenuated by a temporal total variation penalty more than any other.
+
+# %%
+#
+# References
+# ----------
+#
+# .. [#winkelmann] Winkelmann S, Schaeffter T, Koehler T, Eggers H, Doessel O. An optimal
+#    radial profile order based on the Golden Ratio for time-resolved MRI.
+#    *IEEE Trans Med Imaging* 26(1):68-76 (2007).
+#    https://doi.org/10.1109/TMI.2006.885337
+#
+# .. [#feng] Feng L, Grimm R, Block KT, Chandarana H, Kim S, Xu J, Axel L, Sodickson DK,
+#    Otazo R. Golden-angle radial sparse parallel MRI: combination of
+#    compressed sensing, parallel imaging, and golden-angle radial sampling for
+#    fast and flexible dynamic volumetric MRI. *Magn Reson Med* 72(3):707-717
+#    (2014). https://doi.org/10.1002/mrm.24980

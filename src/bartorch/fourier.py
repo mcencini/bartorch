@@ -27,12 +27,12 @@ def fft(
     input : torch.Tensor
     axes : int or tuple of int
         Axes to transform, as indices into ``input.shape``.
-    inverse : bool
+    inverse : bool, default=False
         Transform with the positive exponent.
-    unitary : bool
+    unitary : bool, default=False
         Scale by one over the square root of the transformed size;
         otherwise unnormalized.
-    uncentred : bool
+    uncentred : bool, default=False
         Keep the zero frequency at index zero rather than at ``n // 2``.
 
     Examples
@@ -99,9 +99,9 @@ def nufft(
     traj : torch.Tensor
         Trajectory ``(..., samples, 3)`` in grid units, ``kx, ky, kz``, as
         :func:`bartorch.tools.traj` produces.
-    weights : torch.Tensor, optional
+    weights : torch.Tensor, default=None
         Diagonal in k-space applied to the samples.
-    basis : torch.Tensor, optional
+    basis : torch.Tensor, default=None
         Temporal subspace basis, coefficients then frames, in BART's axis
         order: ``(coeffs, frames, 1, 1, 1, 1, 1)``.
     **extra
@@ -134,13 +134,13 @@ def nufft_adjoint(
     traj : torch.Tensor
         Trajectory ``(..., samples, 3)`` in grid units, ``kx, ky, kz``, as
         :func:`bartorch.tools.traj` produces.
-    image_shape : tuple of int, optional
+    image_shape : tuple of int, default=None
         Spatial shape of the image, C order ``(z, y, x)`` or ``(y, x)``.  By
         default BART estimates it from the trajectory.
-    weights : torch.Tensor, optional
+    weights : torch.Tensor, default=None
         Diagonal in k-space applied to the samples; its conjugate is applied
         here.
-    basis : torch.Tensor, optional
+    basis : torch.Tensor, default=None
         Temporal subspace basis, coefficients then frames, in BART's axis
         order: ``(coeffs, frames, 1, 1, 1, 1, 1)``.
     **extra

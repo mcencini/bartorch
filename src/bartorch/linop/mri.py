@@ -854,42 +854,42 @@ def CartesianSense(  # noqa: N802  (it is a constructor)
     image_shape : tuple of int
         The image, ``(*batches, [batch,] [sets,] [coeffs,] [z,] y, x)``.  The
         samples are ``(*batches, coils, [frames,] [z,] y, x)``.
-    pattern : tensor, optional
+    pattern : tensor, default=None
         Binary sampling mask, one at acquired positions and zero elsewhere,
         broadcast over one coil's samples ``([frames,] [z,] y, x)`` -- so
         ``(y, 1)`` undersamples a phase encode for every coil and batch item.
-    positions : tensor, optional
+    positions : tensor, default=None
         Instead of a pattern, the acquired phase encodes as integer indices
         ``([frames,] shots, d)``: ``(y,)`` in 2D, ``(z, y)`` in 3D,
         ``-1`` for padding where frames sample different numbers.  The samples
         are then ``(*batches, coils, [frames,] shots, readout)``, the whole
         readout along each phase encode, and nothing the size of the
         phase-encode plane is held for them.
-    readout : {"kspace", "image"}
+    readout : {"kspace", "image"}, default='kspace'
         With positions, whether the samples are in k-space along the readout
         or already transformed back along it (hybrid space).  Either way the
         volume is not transformed along the readout: the samples are.
-    basis : tensor, optional
+    basis : tensor, default=None
         Temporal subspace basis ``(coeffs, frames)``.
-    toeplitz : bool
+    toeplitz : bool, default=True
         Apply the normal in closed form rather than as the forward and
         adjoint applications; see the notes.
-    kernels : bool
+    kernels : bool, default=False
         Read ``sensitivities`` as k-space kernels rather than maps.
-    coil_batch : int
+    coil_batch : int, default=1
         Coils applied at once; 0 applies every coil together.
-    modulated : bool
+    modulated : bool, default=False
         Answer in BART's uncentred sample convention rather than the centred
         one.  The two differ by an ``fftmod`` on the sample axes; the centred
         convention is the default and is the one :func:`bartorch.fft` produces.
-    device : device, optional
+    device : device, default=None
         Where the operator is built and does its arithmetic.
-    ndim : int, optional
+    ndim : int, default=None
         Number of spatial axes, where the sensitivities and the image do not
         determine it.
-    kspace_shape : tuple of int, optional
+    kspace_shape : tuple of int, default=None
         Sample shape, where it is not the default above.
-    fold_maps : bool
+    fold_maps : bool, default=True
         Apply the sensitivities inside the normal's transform where the
         arrangement allows it.
 
@@ -1016,55 +1016,55 @@ def WaveSense(  # noqa: N802  (it is a constructor)
     readout : int
         Length of the oversampled readout, ``wx`` in BART's sources.  At least
         the readout the image has.
-    pattern : tensor, optional
+    pattern : tensor, default=None
         Binary sampling mask, one at acquired positions and zero elsewhere,
         broadcast over one coil's samples ``([frames,] [z,] y, readout)``.
-    centred : bool
+    centred : bool, default=False
         Centre the two transforms, making them unitary.  The default follows
         BART's ``wave``, which leaves them uncentred and unnormalized;
         ``wshfl`` centres them for its calibration path.
-    psf : tensor, optional
+    psf : tensor, default=None
         The point-spread function on the oversampled grid, broadcast over one
         coil's samples ``([z,] y, readout)``; the same for every frame.  Give
         it or the gradient wave below.
-    max_grad, max_slew : float
+    max_grad, max_slew : float, default=None
         The largest gradient amplitude in G/cm and slew rate in G/cm/s the
         wave may use.  The wave takes the larger amplitude either allows.
-    cycles : int
+    cycles : int, default=None
         Sine cycles over the readout.
-    adc : float
+    adc : float, default=None
         Readout duration in milliseconds, on a 10 µs gradient raster.
-    resolution : float or tuple of float
+    resolution : float or tuple of float, default=None
         Voxel size in cm along the phase encodes, one value or ``(z, y)``.
-    offset : float or tuple of float
+    offset : float or tuple of float, default=0.0
         How far the field of view's centre is from the isocentre along the
         phase encodes, in cm, one value or ``(z, y)``.
-    delay : float or tuple of float
+    delay : float or tuple of float, default=0.0
         How much later than nominal each wave runs, in milliseconds, one value
         or ``(z, y)``.
-    scale : float or tuple of float
+    scale : float or tuple of float, default=1.0
         How much stronger than nominal each wave is, one value or ``(z, y)``.
-    positions : tensor, optional
+    positions : tensor, default=None
         Instead of a pattern, the acquired phase encodes, as for
         :func:`CartesianSense`: ``([frames,] shots, d)`` with ``(y,)`` in 2D,
         ``(z, y)`` in 3D and ``-1`` for padding.  The samples are then
         ``(*batches, coils, [frames,] shots, readout)``, the oversampled
         readout along each.
-    basis : tensor, optional
+    basis : tensor, default=None
         Temporal subspace basis ``(coeffs, frames)``.
-    toeplitz : bool
+    toeplitz : bool, default=True
         Apply the normal in closed form rather than as the forward and
         adjoint applications: one coefficient-by-coefficient kernel between the
         phase-encode transforms, with the point spread function on either side.
         A pattern varying along the readout has no such form and keeps the two
         applications.
-    kernels : bool
+    kernels : bool, default=False
         Read ``sensitivities`` as k-space kernels rather than maps.
-    coil_batch : int
+    coil_batch : int, default=1
         Coils applied at once; 0 applies every coil together.
-    device : device, optional
+    device : device, default=None
         Where the operator is built and does its arithmetic.
-    ndim : int, optional
+    ndim : int, default=None
         Number of spatial axes, where the sensitivities and the image do not
         determine it: a bank of four kernel axes is either three behind the
         coils or two behind sets and coils.
@@ -1158,23 +1158,23 @@ def FieldCorrected(  # noqa: N802  (it is a constructor)
     ----------
     encoding : LinearOperator
         The encoding without off-resonance.
-    field_map : tensor
+    field_map : tensor, default=None
         Off-resonance in Hz, broadcastable to the encoding's domain.
-    readout_time : tensor
+    readout_time : tensor, default=None
         When each sample is taken, in seconds, broadcastable to the encoding's
         codomain.  Reciprocal units to ``field_map``.
-    mask : tensor, optional
+    mask : tensor, default=None
         Where the field map is meaningful; everywhere by default.  The fit
         weights the histogram by it, so a mask excluding air concentrates the
         segments on tissue.  A field map with a single value under the mask is
         rejected: there is nothing to segment, and the correction reduces to a
         single phase.
-    segments : int
+    segments : int, default=-1
         How many terms the sum has.  ``-1`` lets ``mri-nufft`` choose from the
         spread of the field map and the readout length.
-    method : str
+    method : str, default='svd'
         ``"svd"``, ``"mti"`` or ``"mfi"``, ``mri-nufft``'s three factorizations.
-    coefficients : tuple of tensor, optional
+    coefficients : tuple of tensor, default=None
         ``(b, c)`` already computed, of shapes ``(L, *codomain)`` and
         ``(L, *domain)`` up to broadcasting.  Given these, nothing is fitted
         and ``field_map`` is not needed.

@@ -1,27 +1,35 @@
-# Issue reports
+# Reporting issues
 
-Search the [issue tracker](https://github.com/mcencini/bartorch/issues) for the
-error and function name before opening a report.  Include:
+Bugs, documentation defects and feature requests are filed on the
+[issue tracker](https://github.com/mcencini/bartorch/issues/new/choose), whose
+forms ask for the information below.  Search the existing issues for the error
+message and the function name first.
 
-- expected and observed results, with the complete traceback;
-- a minimal script using a synthetic phantom or a random tensor with a fixed
-  seed;
-- input shapes, dtype, device, axis and trajectory conventions, and
-  reconstruction options, including regularization and transform
-  normalization;
-- OS, Python, PyTorch and bartorch versions, the installation command, and
-  `bartorch.build_info()`.  For source builds, the repository and BART commits
-  (`git rev-parse HEAD` and `git -C external/bart rev-parse HEAD`);
-- for CUDA: GPU model, driver, `torch.version.cuda`, and both availability
-  checks.  For non-Cartesian transforms: FINUFFT and cuFINUFFT versions.
+A bug report contains:
 
-If import or loading the library fails, report that error directly;
-diagnostics that need the library may fail too.  For numerical discrepancies,
-include a reference calculation and the relative error.  For performance
-reports, give warm-up, synchronization, thread count, problem size and peak
-memory alongside timing.
+- the observed and the expected behaviour, with the complete traceback;
+- a minimal script on synthetic data — {func}`bartorch.tools.phantom`, or a
+  random tensor with a fixed seed — rather than acquired data;
+- the shapes, dtypes and devices of the inputs, the axis and trajectory
+  conventions assumed, and the options used, including regularization terms
+  and Fourier-transform normalization;
+- the bartorch version (`bartorch.__version__`) or commit, the output of
+  {func}`bartorch.build_info` and {func}`bartorch.bart_version`, the Python and
+  PyTorch versions, the operating system and the installation command;
+- for a source build, the repository and BART commits:
+  `git rev-parse HEAD` and `git -C external/bart rev-parse HEAD`;
+- on a CUDA device, the GPU model, the driver version, `torch.version.cuda`,
+  and the values of `torch.cuda.is_available()` and
+  {func}`bartorch.cuda_available`;
+- for non-Cartesian problems, the FINUFFT and cuFINUFFT versions.
 
-Share only data you are entitled to publish; a synthetic reproduction is
-usually easier to investigate.  Remove patient identifiers, credentials and
-private paths from logs.  Report documentation issues with the page URL, the
-unclear passage, and the command that failed if there is one.
+If importing bartorch or loading its library fails, report that error; the
+diagnostic functions above need the library.  A numerical discrepancy report
+states the reference it was compared with — an independent implementation, an
+explicit sum, a closed form — and the relative error observed.  A performance
+report states the problem size, the thread count, whether the timing includes
+warm-up and device synchronization, and the peak memory.
+
+Share only data you may publish.  Remove patient identifiers, credentials and
+private paths from logs.  Report a security vulnerability privately, as
+described in {doc}`security`, not as an issue.

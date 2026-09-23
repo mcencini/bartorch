@@ -65,44 +65,49 @@ def pics(
         Under-sampled k-space, C order.
     sensitivities : torch.Tensor
         Coil sensitivities, as :func:`ecalib` or :func:`caldir` produce them.
-    regularizers : Regularizer or iterable of Regularizer, optional
+    regularizers : Regularizer or iterable of Regularizer, default=None
         :mod:`bartorch.priors` terms (``-R``).  Their axes index ``kspace``'s
         shape, negative ones counting from the last axis.  A setting ``pics``
         takes once for every term -- ``randshift``, ``family``, a
         :class:`~bartorch.priors.LocallyLowRank` ``block`` -- has to agree
         across the terms.
-    l2 : float, optional
+    l2 : float, default=None
         Plain Tikhonov weight (``-r``).
-    solver : {'ist', 'fista', 'admm', 'pridu', 'eulermaruyama'}, optional
-        ``None`` lets ``pics`` choose from the regularizers.
-    maxiter : int, optional
+    solver : {'ist', 'fista', 'admm', 'pridu', 'eulermaruyama'}, default=None
+        ``None`` lets ``pics`` choose from the regularizers.  ``pics`` passes
+        IST and FISTA no transform, and chooses FISTA when the first term is
+        :class:`~bartorch.priors.FourierL1` or
+        :class:`~bartorch.priors.Laplace`; the proximal operator is then
+        applied to the image itself.  :func:`bartorch.apps.pics` and the
+        solvers of :mod:`bartorch.optim` refuse that combination.
+    maxiter : int, default=None
         Iterations (``-i``).
-    step : float, optional
+    step : float, default=None
         Step size (``-s``).
-    admm_rho : float, optional
+    admm_rho : float, default=None
         ADMM penalty (``-u``); setting it selects ADMM unless ``solver`` says
         otherwise.
-    cg_maxiter : int, optional
+    cg_maxiter : int, default=None
         Inner conjugate-gradient steps for ADMM (``-C``).
-    traj : tensor, optional
+    traj : tensor, default=None
         Non-Cartesian trajectory (``-t``), in grid units.
-    pattern : tensor, optional
+    pattern : tensor, default=None
         Sampling pattern or weights (``-p``).
-    basis : tensor, optional
+    basis : tensor, default=None
         Subspace basis over frames and coefficients (``-B``).
-    initial : tensor, optional
+    initial : tensor, default=None
         Warm start (``-W``).
-    psf : tensor, optional
+    psf : tensor, default=None
         A point spread function computed elsewhere (``--psf_import``), the
         route by which a normal operator built outside BART is supplied.
-    toeplitz : bool, optional
+    toeplitz : bool, default=None
         ``False`` passes ``--no-toeplitz``; ``None`` leaves BART's default.
-    lowmem : bool
+    lowmem : bool, default=False
         Hold one set of frequencies of the point spread function at a time
         (``--lowmem``).
-    real : bool
+    real : bool, default=False
         Constrain the image to be real (``-c``).
-    eigen_step : bool
+    eigen_step : bool, default=False
         Scale the step size by the largest eigenvalue (``-e``).
     **extra
         Further BART ``pics`` options, by name.  One that picks dimensions
@@ -193,29 +198,29 @@ def nlinv(
     ----------
     kspace : torch.Tensor
         Under-sampled k-space, C order.
-    maxiter : int, optional
+    maxiter : int, default=None
         Gauss-Newton steps (``-i``).
-    maps : int, optional
+    maps : int, default=None
         How many sets of sensitivities to estimate (``-m``).
-    traj : tensor, optional
+    traj : tensor, default=None
         Non-Cartesian trajectory (``-t``).
-    pattern : tensor, optional
+    pattern : tensor, default=None
         Sampling pattern (``-p``).
-    basis : tensor, optional
+    basis : tensor, default=None
         Subspace basis (``-B``).
-    initial : tensor, optional
+    initial : tensor, default=None
         Warm start (``-I``).
-    alpha : float, optional
+    alpha : float, default=None
         The ``a`` of the Sobolev coil weighting ``(1 + a |k|^2)^(-b/2)``
         (``-a``), not the first step's regularization weight -- that is
         ``nlinv --alpha``, reachable through ``**extra``.
-    real : bool
+    real : bool, default=False
         Constrain the image to be real (``-c``).
-    normalize : bool
+    normalize : bool, default=True
         Divide the image by the root sum of squares of the sensitivities, as
         ``nlinv`` does unless told not to.  BART spells this the
         other way round, as ``-N`` for "do not normalize".
-    return_sensitivities : bool
+    return_sensitivities : bool, default=False
         Also return the sensitivities, which BART writes as a second array.
     **extra
         Further BART ``nlinv`` options, by name.  ``s``, the axes the

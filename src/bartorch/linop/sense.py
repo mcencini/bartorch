@@ -274,45 +274,45 @@ class NoncartesianSense(_SensitivityBatch, LinearOperator):
         batches, then the axis the sensitivities vary along and their sets,
         then the trajectory's encoding axes -- with a basis, its coefficients
         in place of the last -- then the spatial axes.
-    traj : tensor
+    traj : tensor, default=None
         Trajectory ``(*encoding, shots, samples, ndim)`` in grid units,
         ``kx, ky`` or ``kx, ky, kz``, as :func:`bartorch.tools.traj` produces.
         It carries no batch axis, being shared across the batch.
-    kspace_shape : tuple of int, optional
+    kspace_shape : tuple of int, default=None
         Sample shape; by default ``(*batches, coils, *encoding, shots,
         samples)``, and on a grid ``(*batches, coils, *encoding, [z,] y, x)``.
-    kernels : bool
+    kernels : bool, default=False
         Read ``sensitivities`` as k-space kernels rather than maps.  The
         operator then applies the maps band-limited to the kernel;
         :func:`bartorch.maps_to_kernels` and :func:`bartorch.kernels_to_maps`
         convert between the two.
-    toeplitz : bool
+    toeplitz : bool, default=True
         Apply the normal in closed form rather than as the forward and
         adjoint applications: a convolution with a point spread function.
-    modulated : bool
+    modulated : bool, default=False
         On a grid, answer in BART's uncentred sample convention rather than the
         centred one.  The two differ by an ``fftmod`` on the sample axes; the
         centred convention is the default and is the one :func:`bartorch.fft`
         produces.  Rejected off a grid, where there is only one convention, and
         with ``kernels``, the modulation belonging to the whole grid.
-    weights : tensor, optional
+    weights : tensor, default=None
         Diagonal in k-space, broadcast over ``(*encoding, shots, samples)``,
         applied on the forward pass and conjugated on the adjoint.
-    basis : tensor, optional
+    basis : tensor, default=None
         Temporal subspace basis ``(coeffs, frames)`` over the last encoding
         axis.
-    device : device, optional
+    device : device, default=None
         Where the operator is built and does its arithmetic; by default where
         the trajectory is, or the sensitivities on a grid.
-    coil_batch : int
+    coil_batch : int, default=1
         Coils applied at once; 0 applies every coil together.  A batch that
         does not divide the coils is reduced to one that does.  It changes
         residency and speed, not the result.
-    fold_maps : bool
+    fold_maps : bool, default=True
         Apply the sensitivities inside the normal's transform, saving two coil
         images per slab.  Takes effect only where the transform works one
         coefficient at a time.
-    ndim : int, optional
+    ndim : int, default=None
         Number of spatial axes, where the sensitivities and the image do not
         determine it; off a grid the trajectory does.
 
@@ -328,6 +328,16 @@ class NoncartesianSense(_SensitivityBatch, LinearOperator):
     With the operator on a card its operands may stay on the host: the image
     crosses once each way per application, the samples and a kernel bank a slab
     at a time, and between applications the card holds the operator alone.
+
+    Examples
+    --------
+    >>> traj = bartorch.tools.traj(readout=64, spokes=64, radial=True, golden=True)
+    >>> A = NoncartesianSense(maps, (64, 64), traj=traj)        # maps (4, 64, 64)
+    >>> A.oshape                                                # (coils, spokes, readout)
+    (4, 64, 64)
+    >>> A.plan.normal                                           # A^H A as a convolution
+    'kernel'
+    >>> x = bartorch.optim.CG(lambda_=0.01, maxiter=20)(kspace, A)
     """
 
     #: Whether a trajectory is required.  The Cartesian encoding is the same

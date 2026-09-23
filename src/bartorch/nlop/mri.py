@@ -97,47 +97,47 @@ class NonlinearSense(NonlinearOperator):
     image_shape : tuple of int
         Coil-image shape, ``(coils, *spatial)``, C order -- the same shape the
         linear encodings take.  The image itself is this with one coil.
-    pattern : tensor, optional
+    pattern : tensor, default=None
         Binary sampling mask, one at acquired positions and zero elsewhere,
         on a grid.  Without one the acquisition is treated as fully sampled.
-    trajectory : tensor, optional
+    trajectory : tensor, default=None
         Trajectory ``(..., samples, 3)`` in grid units, ``kx, ky, kz``, as
         :func:`bartorch.tools.traj` produces.  Giving one selects the
         non-Cartesian model.
-    kspace_shape : tuple of int, optional
+    kspace_shape : tuple of int, default=None
         Sample shape.  Off the grid it defaults to the trajectory's with the
         image's coil axes in front, as the NUFFT's does; on the grid it is the
         coil-image shape.
-    coil_shape, coefficient_shape : tuple of int, optional
+    coil_shape, coefficient_shape : tuple of int, default=None
         Where the sensitivities live and where their coefficients do; both
         default to the coil-image shape.
-    weights : tensor, optional
+    weights : tensor, default=None
         Diagonal in k-space applied to the samples, off the grid; its
         conjugate is applied on the adjoint.
-    basis : tensor, optional
+    basis : tensor, default=None
         Temporal subspace basis ``(coeffs, frames)`` over the last encoding
         axis, off the grid.  The Cartesian model does not take one.
-    mask : tensor, optional
+    mask : tensor, default=None
         A support the image is restricted to.
-    sobolev : tuple of float
+    sobolev : tuple of float, default=(220.0, 32.0)
         ``(a, b)`` of the coil weighting ``c (1 + a |k|^2)^(-b/2)``; BART's
         ``220, 32``.
-    c : float
+    c : float, default=1.0
         The scale on that weighting, BART's ``1``.
-    real : bool
+    real : bool, default=False
         Constrain the image to be real.
-    sos : bool
+    sos : bool, default=False
         BART's sum-of-squares variant of the coil weighting.
-    oversampling_coils : float, optional
+    oversampling_coils : float, default=None
         Fit the coils on a finer grid than the image.  By default whichever
         ``nlinv`` uses: two off the grid, one on it.
-    oversampled_coils : bool
+    oversampled_coils : bool, default=False
         Return them on that grid rather than on the image's.
-    toeplitz : bool
+    toeplitz : bool, default=True
         Apply the normal in closed form rather than as the forward and
         adjoint applications: a convolution with a point spread function, off
         the grid.
-    optimized : bool
+    optimized : bool, default=False
         BART's ``noir2_noncart_optimized_create``, off the grid.
 
     Examples
@@ -462,11 +462,11 @@ def CoilSense(  # noqa: N802  (it is a constructor)
     ----------
     encoding : LinearOperator
         From coil images to data.  Its domain is the coil-image shape.
-    image_shape : tuple of int, optional
+    image_shape : tuple of int, default=None
         Where the image lives; by default the encoding's domain with one coil.
-    coil_shape : tuple of int, optional
+    coil_shape : tuple of int, default=None
         Where the sensitivities live; by default the encoding's domain.
-    items : bool
+    items : bool, default=False
         The encoding's leading axis holds independent items, each with its own
         image and coils; the coils are the next axis.  A Gauss-Newton step then
         applies the model to every item at once and solves each item's inner

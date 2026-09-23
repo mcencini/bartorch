@@ -9,16 +9,16 @@ signal model inside the forward operator and fitting the k-space directly.
 
 The two-step route solves an ill-posed reconstruction eight times over, once
 per echo, and then fits a model to the answers. Each reconstruction is
-undersampled on its own and nothing in it knows that the eight images are
-related. The model-based route puts that relation in the forward operator,
+undersampled on its own, and none of the eight uses the relation between the
+echo images. The model-based route puts that relation in the forward operator,
 
 .. math::
 
    y_{c,e} = P_e F \\, (S_c \\cdot M_e(\\theta)),
 
 where :math:`M` is the signal model and :math:`\\theta` the parameter maps, and
-solves for :math:`\\theta` directly. The unknowns then number three maps rather
-than eight images, and every echo constrains all of them.
+solves for :math:`\\theta` directly [#sumpf]_ [#wang]_. The unknowns then number
+three maps rather than eight images, and every echo constrains all of them.
 
 The model here is :class:`bartorch.nlop.MultiEcho`, a TorchSim simulator as a
 BART nonlinear operator; the solver is the Gauss-Newton loop of
@@ -27,10 +27,6 @@ BART nonlinear operator; the solver is the Gauss-Newton loop of
 The phantom and the coil sensitivities are built as in
 :doc:`../01-basics/01-from-kspace-to-image`; the cell that does it is hidden on
 this page and present in the script this page can be downloaded as.
-
-Wang X, Tan Z, Scholand N, Roeloffs V, Uecker M. *Physics-based reconstruction
-methods for magnetic resonance imaging.* Phil Trans R Soc A 379:20200196
-(2021).
 """
 
 # %%
@@ -244,8 +240,8 @@ contrasts = (amplitude[None] * torch.exp(-ECHO_TIMES[:, None, None] / t2[None]))
 # Acquisition
 # -----------
 #
-# Each echo is sampled at a quarter of the phase encodes, with its own draw, so
-# no two echoes are missing the same part of k-space. The echoes are a batch of
+# Each echo is sampled at a quarter of the phase encodes, with its own random
+# draw, so the sets of missing phase encodes differ between echoes. The echoes are a batch of
 # the encoding rather than an axis inside it: the sensitivities are shared, the
 # transform is the same, and only the pattern differs, so the operator is the
 # Cartesian SENSE encoding of :doc:`../01-basics/02-operators-and-solvers` with
@@ -298,7 +294,8 @@ print(f"unknowns {M.names}: {M.ishapes[0]} -> {M.oshapes[0]}")
 # The first reconstructs the echo images by conjugate gradients and fits the
 # model to them. The second composes the model with the encoding and fits the
 # k-space. Both are the same Gauss-Newton loop with the same number of steps,
-# and they differ only in what stands between the unknowns and the data.
+# and they differ only in the forward operator that maps the unknowns to the
+# data.
 
 STEPS = 20
 
@@ -315,7 +312,7 @@ print(f"model inside the operator: {time.perf_counter() - start_time:5.1f} s")
 #
 # ``E @ M`` composes a linear operator with a nonlinear one; the derivative of
 # the composition at a point is the encoding applied to the derivative of the
-# model -- exactly what a Gauss-Newton step asks of the composition.
+# model, which is the derivative a Gauss-Newton step requires.
 
 estimates = {
     name: M.split(fit)["T2"]
@@ -352,13 +349,33 @@ plt.show()
 
 # %%
 #
-# The echo images carry the aliasing each echo's own sampling leaves, and the
-# fit that follows has no way to tell that apart from decay: the two-step
-# :math:`T_2` map is the noisier of the two and biased upward on this data.
-# Fitting the k-space constrains the three maps with all eight echoes at once,
-# which is the whole of the difference -- the model, the solver and the number
-# of steps are the same.
+# The echo images carry the residual aliasing of each echo's sampling, and the
+# voxel-wise fit that follows cannot separate it from signal decay, so it
+# propagates into the two-step :math:`T_2` map. Fitting the k-space constrains
+# the three maps with all eight echoes at once; the model, the solver and the
+# number of steps are the same in both routes, and the printed errors compare
+# the two maps with the phantom. The explanation of the model-based approach is
+# :doc:`../../explanation/nonlinear`.
+# The maps are drawn with the navia colormap [#fuderer]_.
 #
 # What this route also makes available is regularization of the maps rather
-# than of the images, since the maps are what the solver holds; BART's own
+# than of the images, since the maps are the solver's unknowns; BART's own
 # ``moba`` is :func:`bartorch.tools.moba`, and applies its penalties there.
+
+# %%
+#
+# References
+# ----------
+#
+# .. [#sumpf] Sumpf TJ, Uecker M, Boretius S, Frahm J. Model-based nonlinear inverse
+#    reconstruction for T2 mapping using highly undersampled spin-echo MRI.
+#    *J Magn Reson Imaging* 34(2):420-428 (2011).
+#    https://doi.org/10.1002/jmri.22634
+#
+# .. [#wang] Wang X, Tan Z, Scholand N, Roeloffs V, Uecker M. Physics-based
+#    reconstruction methods for magnetic resonance imaging. *Phil Trans R Soc A*
+#    379(2200):20200196 (2021). https://doi.org/10.1098/rsta.2020.0196
+#
+# .. [#fuderer] Fuderer M, Wichtmann B, Crameri F, de Souza NM, Baeßler B, Gulani V,
+#    et al. Color-map recommendation for MR relaxometry maps. *Magn Reson Med*
+#    93(2):490-506 (2025). https://doi.org/10.1002/mrm.30290

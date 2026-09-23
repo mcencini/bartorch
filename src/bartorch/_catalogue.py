@@ -305,7 +305,7 @@ COMMANDS: dict[str, Command] = {
     ),
     'caldir': Command(
         name='caldir',
-        help='Estimates coil sensitivities from the k-space center using a direct method (McKenzie et al.). The size of the fully-sampled calibration region is automatically determined but limited by {cal_size} (e.g. in the readout direction).',
+        help='Estimates coil sensitivities from the k-space center using\na direct method (McKenzie et al.). The size of the fully-sampled\ncalibration region is automatically determined but limited by\n{cal_size} (e.g. in the readout direction).',
         arguments=(
             Argument('cal_size', 'INT', True),
             Argument('input', 'INFILE', True),
@@ -645,7 +645,7 @@ COMMANDS: dict[str, Command] = {
     ),
     'ecalib': Command(
         name='ecalib',
-        help='Estimate coil sensitivities using ESPIRiT calibration. Optionally outputs the eigenvalue maps.',
+        help='Estimate coil sensitivities using ESPIRiT calibration.\nOptionally outputs the eigenvalue maps.',
         arguments=(
             Argument('kspace', 'INFILE', True),
             Argument('sensitivities', 'OUTFILE', True),
@@ -700,7 +700,7 @@ COMMANDS: dict[str, Command] = {
     ),
     'ecaltwo': Command(
         name='ecaltwo',
-        help='Second part of ESPIRiT calibration. Optionally outputs the eigenvalue maps.',
+        help='Second part of ESPIRiT calibration.\nOptionally outputs the eigenvalue maps.',
         arguments=(
             Argument('x', 'LONG', True),
             Argument('y', 'LONG', True),
@@ -770,7 +770,7 @@ COMMANDS: dict[str, Command] = {
     ),
     'estdims': Command(
         name='estdims',
-        help='Estimate image dimension from non-Cartesian trajectory. Assume trajectory scaled to -DIM/2 to DIM/2 (ie dk=1/FOV=1)',
+        help='Estimate image dimension from non-Cartesian trajectory.\nAssume trajectory scaled to -DIM/2 to DIM/2 (ie dk=1/FOV=1)',
         arguments=(
             Argument('traj', 'INFILE', True),
         ),
@@ -941,7 +941,7 @@ COMMANDS: dict[str, Command] = {
     ),
     'fmac': Command(
         name='fmac',
-        help='Multiply <input1> and <input2> and accumulate in <output>. If <input2> is not specified, assume all-ones.',
+        help='Multiply <input1> and <input2> and accumulate in <output>.\nIf <input2> is not specified, assume all-ones.',
         arguments=(
             Argument('input1', 'INFILE', True),
             Argument('input2', 'INFILE', False),
@@ -1170,7 +1170,7 @@ COMMANDS: dict[str, Command] = {
     ),
     'itsense': Command(
         name='itsense',
-        help='A simplified implementation of iterative sense reconstruction with l2-regularization.',
+        help='A simplified implementation of iterative sense reconstruction\nwith l2-regularization.',
         arguments=(
             Argument('alpha', 'FLOAT', True),
             Argument('sensitivities', 'INFILE', True),
@@ -1181,7 +1181,7 @@ COMMANDS: dict[str, Command] = {
     ),
     'join': Command(
         name='join',
-        help='Join input files along {dimensions}. All other dimensions must have the same size.   Example 1: join 0 slice_001 slice_002 slice_003 full_data   Example 2: join 0 `seq -f "slice_%%03g" 0 255` full_data',
+        help='Join input files along {dimensions}. All other dimensions must have the same size.\n  Example 1: join 0 slice_001 slice_002 slice_003 full_data\n  Example 2: join 0 `seq -f "slice_%%03g" 0 255` full_data',
         arguments=(
             Argument('dimension', 'INT', True),
             Argument('input', 'TUPLE', True),
@@ -1323,7 +1323,7 @@ COMMANDS: dict[str, Command] = {
     ),
     'mnist': Command(
         name='mnist',
-        help='Trains or applies a MNIST network. This network is to demonstrate how a neural network can be implemented in BART.',
+        help='Trains or applies a MNIST network.\nThis network is to demonstrate how a neural network can be implemented in BART.',
         arguments=(
             Argument('input', 'INFILE', True),
             Argument('weights', 'INOUTFILE', True),
@@ -1698,7 +1698,7 @@ COMMANDS: dict[str, Command] = {
     ),
     'multicfl': Command(
         name='multicfl',
-        help="Combine/Split multiple cfl files to one multi-cfl file. In normal usage, the last argument is the combined multi-cfl, with '-s', the first argument is the multi-cfl that is split up",
+        help="Combine/Split multiple cfl files to one multi-cfl file.\nIn normal usage, the last argument is the combined multi-cfl,\nwith '-s', the first argument is the multi-cfl that is split up",
         arguments=(
             Argument('cfl', 'TUPLE', True),
         ),
@@ -1754,7 +1754,7 @@ COMMANDS: dict[str, Command] = {
     ),
     'nlinv': Command(
         name='nlinv',
-        help='Jointly estimate image and sensitivities with nonlinear inversion using {iter} iteration steps. Optionally outputs the sensitivities.',
+        help='Jointly estimate image and sensitivities with nonlinear\ninversion using {iter} iteration steps. Optionally outputs\nthe sensitivities.',
         arguments=(
             Argument('kspace', 'INFILE', True),
             Argument('output', 'OUTFILE', True),
@@ -2011,7 +2011,7 @@ COMMANDS: dict[str, Command] = {
     ),
     'nrmse': Command(
         name='nrmse',
-        help='Output normalized root mean square error (NRMSE), i.e. norm(input - ref) / norm(ref)',
+        help='Output normalized root mean square error (NRMSE),\ni.e. norm(input - ref) / norm(ref)',
         arguments=(
             Argument('reference', 'INFILE', True),
             Argument('input', 'INFILE', True),
@@ -2625,7 +2625,7 @@ COMMANDS: dict[str, Command] = {
     ),
     'rtnlinv': Command(
         name='rtnlinv',
-        help='Jointly estimate a time-series of images and sensitivities with nonlinear inversion using {iter} iteration steps. Optionally outputs the sensitivities.',
+        help='Jointly estimate a time-series of images and sensitivities with nonlinear\ninversion using {iter} iteration steps. Optionally outputs\nthe sensitivities.',
         arguments=(
             Argument('kspace', 'INFILE', True),
             Argument('output', 'OUTFILE', True),
@@ -2664,7 +2664,7 @@ COMMANDS: dict[str, Command] = {
     ),
     'sake': Command(
         name='sake',
-        help='Use SAKE algorithm to recover a full k-space from undersampled data using low-rank matrix completion.',
+        help='Use SAKE algorithm to recover a full k-space from undersampled\ndata using low-rank matrix completion.',
         arguments=(
             Argument('kspace', 'INFILE', True),
             Argument('output', 'OUTFILE', True),
@@ -3321,7 +3321,7 @@ COMMANDS: dict[str, Command] = {
     ),
     'toimg': Command(
         name='toimg',
-        help='Create magnitude images as png or proto-dicom. The first two non-singleton dimensions will be used for the image, and the other dimensions will be looped over.',
+        help='Create magnitude images as png or proto-dicom.\nThe first two non-singleton dimensions will\nbe used for the image, and the other dimensions\nwill be looped over.',
         arguments=(
             Argument('input', 'INFILE', True),
             Argument('output prefix', 'OUTFILE', True),
@@ -3498,7 +3498,7 @@ COMMANDS: dict[str, Command] = {
     ),
     'version': Command(
         name='version',
-        help="Print BART version. The version string is of the form TAG or TAG-COMMITS-SHA as produced by 'git describe'. It specifies the last release (TAG), and (if git is used) the number of commits (COMMITS) since this release and the abbreviated hash of the last commit (SHA). If there are local changes '-dirty' is added at the end.",
+        help="Print BART version. The version string is of the form\nTAG or TAG-COMMITS-SHA as produced by 'git describe'. It\nspecifies the last release (TAG), and (if git is used)\nthe number of commits (COMMITS) since this release and\nthe abbreviated hash of the last commit (SHA). If there\nare local changes '-dirty' is added at the end.",
         options=(
             Option('t', '', 'STRING', 'version', 'Check minimum version'),
             Option('V', '', 'SET', '', 'Output verbose info'),
@@ -3520,7 +3520,7 @@ COMMANDS: dict[str, Command] = {
     ),
     'wave': Command(
         name='wave',
-        help="Perform a wave-caipi reconstruction.  Conventions:   * (sx, sy, sz) - Spatial dimensions.   * wx           - Extended FOV in READ_DIM due to                    wave's voxel spreading.   * (nc, md)     - Number of channels and ESPIRiT's                     extended-SENSE model operator                    dimensions (or # of maps). Expected dimensions:   * maps    - ( sx, sy, sz, nc, md)   * wave    - ( wx, sy, sz,  1,  1)   * kspace  - ( wx, sy, sz, nc,  1)   * output  - ( sx, sy, sz,  1, md)",
+        help="Perform a wave-caipi reconstruction.\n\nConventions:\n  * (sx, sy, sz) - Spatial dimensions.\n  * wx           - Extended FOV in READ_DIM due to\n                   wave's voxel spreading.\n  * (nc, md)     - Number of channels and ESPIRiT's\n                   extended-SENSE model operator\n                   dimensions (or # of maps).\nExpected dimensions:\n  * maps    - ( sx, sy, sz, nc, md)\n  * wave    - ( wx, sy, sz,  1,  1)\n  * kspace  - ( wx, sy, sz, nc,  1)\n  * output  - ( sx, sy, sz,  1, md)",
         arguments=(
             Argument('maps', 'INFILE', True),
             Argument('wave', 'INFILE', True),
@@ -3579,7 +3579,7 @@ COMMANDS: dict[str, Command] = {
     ),
     'wavepsf': Command(
         name='wavepsf',
-        help='Generate a wave PSF in hybrid space. - Assumes the first dimension is the readout dimension. - Only generates a 2 dimensional PSF. - Use reshape and fmac to generate a 3D PSF.  3D PSF Example: bart wavepsf\t\t-x 768 -y 128 -r 0.1 -a 3000 -t 0.00001 -g 0.8 -s 17000 -n 6 wY bart wavepsf -c -x 768 -y 128 -r 0.1 -a 3000 -t 0.00001 -g 0.8 -s 17000 -n 6 wZ bart reshape 7 wZ 768 1 128 wZ wZ bart fmac wY wZ wYZ',
+        help='Generate a wave PSF in hybrid space.\n- Assumes the first dimension is the readout dimension.\n- Only generates a 2 dimensional PSF.\n- Use reshape and fmac to generate a 3D PSF.\n\n3D PSF Example:\nbart wavepsf\t\t-x 768 -y 128 -r 0.1 -a 3000 -t 0.00001 -g 0.8 -s 17000 -n 6 wY\nbart wavepsf -c -x 768 -y 128 -r 0.1 -a 3000 -t 0.00001 -g 0.8 -s 17000 -n 6 wZ\nbart reshape 7 wZ 768 1 128 wZ wZ\nbart fmac wY wZ wYZ',
         arguments=(
             Argument('output', 'OUTFILE', True),
         ),
@@ -3597,7 +3597,7 @@ COMMANDS: dict[str, Command] = {
     ),
     'whiten': Command(
         name='whiten',
-        help='Apply multi-channel noise pre-whitening on <input> using noise data <ndata>. Optionally output whitening matrix and noise covariance matrix',
+        help='Apply multi-channel noise pre-whitening on <input> using noise data <ndata>.\nOptionally output whitening matrix and noise covariance matrix',
         arguments=(
             Argument('input', 'INFILE', True),
             Argument('ndata', 'INFILE', True),
@@ -3631,7 +3631,7 @@ COMMANDS: dict[str, Command] = {
     ),
     'wshfl': Command(
         name='wshfl',
-        help="Perform a wave-shuffling reconstruction.  Conventions:   * (sx, sy, sz) - Spatial dimensions.   * wx           - Extended FOV in READ_DIM due to                    wave's voxel spreading.   * (nc, md)     - Number of channels and ESPIRiT's                     extended-SENSE model operator                    dimensions (or # of maps).   * (tf, tk)     - Turbo-factor and the rank                    of the temporal basis used in                    shuffling.   * ntr          - Number of TRs, or the number of                    (ky, kz) points acquired of one                    echo image.   * n            - Total number of (ky, kz) points                    acquired. This is equal to the                    product of ntr and tf.  Descriptions:   * reorder is an (n by 3) index matrix such that     [ky, kz, t] = reorder(i, :) represents the     (ky, kz) kspace position of the readout line     acquired at echo number (t), and 0 <= ky < sy,     0 <= kz < sz, 0 <= t < tf).   * table is a (wx by nc by n) matrix such that     table(:, :, k) represents the kth multichannel     kspace line.  Expected dimensions:   * maps    - (   sx, sy, sz, nc, md,  1,  1)   * wave    - (   wx, sy, sz,  1,  1,  1,  1)   * phi     - (    1,  1,  1,  1,  1, tf, tk)   * output  - (   sx, sy, sz,  1, md,  1, tk)   * reorder - (    n,  3,  1,  1,  1,  1,  1)   * table   - (   wx, nc,  n,  1,  1,  1,  1)",
+        help="Perform a wave-shuffling reconstruction.\n\nConventions:\n  * (sx, sy, sz) - Spatial dimensions.\n  * wx           - Extended FOV in READ_DIM due to\n                   wave's voxel spreading.\n  * (nc, md)     - Number of channels and ESPIRiT's\n                   extended-SENSE model operator\n                   dimensions (or # of maps).\n  * (tf, tk)     - Turbo-factor and the rank\n                   of the temporal basis used in\n                   shuffling.\n  * ntr          - Number of TRs, or the number of\n                   (ky, kz) points acquired of one\n                   echo image.\n  * n            - Total number of (ky, kz) points\n                   acquired. This is equal to the\n                   product of ntr and tf.\n\nDescriptions:\n  * reorder is an (n by 3) index matrix such that\n    [ky, kz, t] = reorder(i, :) represents the\n    (ky, kz) kspace position of the readout line\n    acquired at echo number (t), and 0 <= ky < sy,\n    0 <= kz < sz, 0 <= t < tf).\n  * table is a (wx by nc by n) matrix such that\n    table(:, :, k) represents the kth multichannel\n    kspace line.\n\nExpected dimensions:\n  * maps    - (   sx, sy, sz, nc, md,  1,  1)\n  * wave    - (   wx, sy, sz,  1,  1,  1,  1)\n  * phi     - (    1,  1,  1,  1,  1, tf, tk)\n  * output  - (   sx, sy, sz,  1, md,  1, tk)\n  * reorder - (    n,  3,  1,  1,  1,  1,  1)\n  * table   - (   wx, nc,  n,  1,  1,  1,  1)",
         arguments=(
             Argument('maps', 'INFILE', True),
             Argument('wave', 'INFILE', True),

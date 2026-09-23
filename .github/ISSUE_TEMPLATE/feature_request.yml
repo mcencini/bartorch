@@ -1,0 +1,25 @@
+name: Feature request
+description: A new command wrapper, operator, solver, or other interface.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Reconstruction problem
+      description: The problem to be solved, and why the current interface does not serve it.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed interface
+      description: >-
+        Signature and semantics, including shapes and conventions; the BART command,
+        operator or algorithm it corresponds to, if any.
+    validations:
+      required: true
+  - type: textarea
+    id: references
+    attributes:
+      label: References
+      description: Papers or implementations defining the method.

@@ -1,110 +1,144 @@
 # Installation
 
-## PyTorch first
+## PyTorch installation
 
-Use the [PyTorch installation selector](https://pytorch.org/get-started/locally/)
-to install the CPU or CUDA build you want in your active Python environment.
-Then install bartorch into that same environment:
+Install the PyTorch build for the target device first, with the command the
+[PyTorch installation selector](https://pytorch.org/get-started/locally/)
+gives for the CPU or for a CUDA version.  bartorch requires PyTorch 2.2 or
+later; installing bartorch into an environment without PyTorch installs the
+default build from PyPI.
+
+## bartorch installation
 
 ```bash
 python -m pip install bartorch
 ```
 
-The metadata requires Python 3.10+, PyTorch 2.1+, NumPy 1.24+ and SciPy 1.10+.
-A wheel includes the embedded BART library; wheel users need neither a
-separate BART executable nor a C compiler.
+This installs the wheel for the platform where one exists (see
+{doc}`prerequisites`) together with NumPy, SciPy, FINUFFT, TorchSim and
+MRI-NUFFT.  A wheel contains the compiled library with BART embedded; no BART
+installation and no compiler are needed.  Optional components are installed as
+extras:
 
-:::{note}
-This checkout is pre-alpha.  The command above is the intended release install
-path, not a claim that wheels for every platform are published.  If pip cannot
-find a suitable distribution, use the {doc}`../developer/toolchain` source
-installation.  A source archive needs the developer toolchain too.
-:::
+```bash
+python -m pip install 'bartorch[mkl]'        # Linux x86-64: MKL for BLAS, LAPACK and FFT
+python -m pip install 'bartorch[cufinufft]'  # non-uniform FFTs of CUDA tensors
+python -m pip install 'bartorch[deepinv]'    # bartorch.interop.to_deepinv
+```
 
-## Checking the installation
+The installation is checked by building a phantom:
 
 ```python
-import torch
 import bartorch
 import bartorch.tools as bt
 
-print(torch.__version__)
-print(bartorch.__version__)
-print(bartorch.bart_version())
+print(bartorch.__version__, bartorch.bart_version())
 print(bartorch.build_info())
-image = bt.phantom([32, 32])
+print(bartorch.backend_sources())
+image = bt.phantom(32)
 print(image.shape, image.dtype, image.device)
 ```
 
-## Devices and non-Cartesian transforms
+{func}`bartorch.build_info` reports the compiler, the OpenMP and CUDA
+configuration of the library, and {func}`bartorch.backend_sources` the library
+serving each BLAS and LAPACK routine and the FFT: MKL when the `mkl` extra is
+installed, otherwise the routines PyTorch links, and SciPy's for the rest.
 
-CUDA needs both a CUDA-capable PyTorch and a bartorch library built with CUDA;
-`torch.cuda.is_available()` and `bartorch.cuda_available()` check each.  Move
-input tensors with `tensor.to("cuda")`.  Some commands stage work through host
-memory, so tensor placement alone does not guarantee every step runs on the
-card.  CPU and CUDA are the device paths; Apple MPS is not supported.
+(source-builds)=
+## Source builds
 
-FINUFFT computes every non-Cartesian transform.  It is a dependency rather
-than an extra, so `pip install bartorch` brings it.  cuFINUFFT serves a
-transform on a card and is an extra:
+Where no wheel exists, pip builds the source distribution, which needs:
+
+| Tool | Requirement |
+| --- | --- |
+| C and C++ compiler | clang, or GCC 14 or later; BART's nested functions are compiled as clang Blocks or as GCC heap trampolines, and older GCC is rejected at configuration |
+| CMake | 3.18 or later |
+| OpenMP | The compiler's OpenMP runtime, for example `libomp-dev` with clang on Debian and Ubuntu; without it BART runs single-threaded |
+| FINUFFT | Where FINUFFT has no wheel either, pip builds it from its source distribution, which needs CMake, ninja, a C++ compiler and network access to fetch FFTW |
+
+The compiler is selected with `CC` and `CXX`:
 
 ```bash
-python -m pip install 'bartorch[cufinufft]'
+CC=clang CXX=clang++ python -m pip install bartorch --no-binary bartorch
 ```
 
-Wheels are published for Linux x86_64 and macOS on Apple silicon, the
-platforms FINUFFT ships wheels for too.  Elsewhere -- Linux on aarch64, an
-Intel Mac -- `pip install bartorch` builds from the source distribution and
-builds FINUFFT alongside it, which needs CMake, ninja and a C++ compiler.
+A checkout of the repository is built as described in the
+{doc}`developer guide <../developer/installation>`.
 
-The substitution installs itself on first use.  A transform it cannot serve
-raises an error naming the reason rather than falling back to BART's own
-gridder.  The `mkl` extra is optional; the Cartesian examples do not need it.
+## CUDA
 
-## Platforms
+CUDA support requires a CUDA build of both PyTorch and bartorch;
+`torch.cuda.is_available()` and {func}`bartorch.cuda_available` report each.
+The PyPI wheel is the CPU build.  The CUDA build of each version, a Linux
+x86-64 wheel with the same file name, is attached to the
+[GitHub release](https://github.com/mcencini/bartorch/releases) of that
+version:
 
-Linux is the platform bartorch is developed and measured on, and the one the
-CUDA path is written for.
+```bash
+python -m pip install https://github.com/mcencini/bartorch/releases/download/<tag>/<wheel>
+```
 
-**macOS repairs itself, once.**  torch and the FINUFFT wheel each carry an
-OpenMP runtime, and LLVM's runtime ends the process rather than run beside a
-second copy of itself (`OMP: Error #15`).  So the first time bartorch needs a
-non-Cartesian transform it points FINUFFT's library at the copy torch carries
--- the same runtime at the same version, so one is loaded instead of two --
-and re-signs it.  Nothing is asked of you, and a library already pointed there
-is left alone.
+It contains device code for compute capabilities 7.5, 8.0, 8.6, 8.9 and 9.0
+and links the CUDA 12 runtime, cuFFT and cuBLAS dynamically, which a CUDA 12
+build of PyTorch provides.  A source build with CUDA passes
+`-C cmake.define.BARTORCH_CUDA=ON` to pip and needs the CUDA toolkit with `nvcc`.
 
-It rewrites a file inside the `finufft` package, so `pip install -U finufft`
-undoes it; the next run puts it back.  Where it cannot -- a read-only
-`site-packages`, no Xcode command line tools, a `finufft` and a `torch` whose
-runtimes are not the same one -- the non-Cartesian transforms are refused with
-the reason rather than computed by BART's own gridder, which would be an
-answer an order further from the transform and several times slower with
-nothing to say so.  `scripts/macos_openmp.py diagnose` then says what it
-found, and `patch` retries it by hand.
+Operators and commands run on the device that holds their tensor arguments.
+Operators work on device memory directly; some commands allocate host
+temporaries internally and are given host copies of their inputs, with their
+results returned on the device.
 
-`KMP_DUPLICATE_LIB_OK=TRUE` is the other thing people reach for, and bartorch
-neither sets nor suggests it: it tells one runtime to tolerate a second live
-copy, which its own authors document as unsafe -- a later crash, or a silently
-wrong answer -- whereas pointing the two at one copy leaves a single runtime.  The
-same collision is
-[open upstream in mri-nufft](https://github.com/mind-inria/mri-nufft/issues/333).
+## Non-Cartesian backends
 
-**Windows is not a target.**  BART does not build on it; WSL2 is a Linux
-install like any other.
+Every non-uniform Fourier transform, in the commands and in the operators, is
+computed by FINUFFT for tensors in host memory and by cuFINUFFT for tensors on
+a CUDA device.  BART's own gridding implementation is not used.
 
-## The `bartorch` command
+| Transform | Backend | Requirement | When unavailable |
+| --- | --- | --- | --- |
+| Host tensors | FINUFFT | Installed as a dependency | The transform raises an error |
+| CUDA tensors | cuFINUFFT | The `cufinufft` extra | On a machine with a CUDA device and a CUDA build of bartorch, the FINUFFT backend is not enabled and every non-uniform transform, on the host as well, raises an error until cuFINUFFT is installed |
+| A configuration FINUFFT cannot serve | None | None | The transform raises {class}`~bartorch.BartError` with the reason |
 
-Installing the package puts a `bartorch` command on the path, and it takes the
-arguments `bart` takes:
+{doc}`../../explanation/non-cartesian` describes the transform, its tolerance
+and the configurations that are refused.
+
+(macos-openmp)=
+## macOS OpenMP compatibility
+
+The PyTorch and FINUFFT wheels for macOS each contain a copy of the LLVM
+OpenMP runtime (`torch/lib/libomp.dylib` and `finufft/.dylibs/libomp.dylib`).
+The runtime terminates the process when a second copy initializes
+(`OMP: Error #15`).
+
+The first time a process needs a non-uniform transform, before it loads
+FINUFFT's library, bartorch changes the OpenMP load command of
+`libfinufft.dylib` to PyTorch's copy with `install_name_tool`, re-signs the
+library with an ad hoc signature (`codesign`), and checks that the load command
+changed.  One runtime is then loaded and shared by PyTorch and FINUFFT.
+
+| Condition | Behaviour |
+| --- | --- |
+| Both copies are LLVM's `libomp` with compatible versions, the Xcode Command Line Tools are installed, and the `finufft` package directory is writable | The library is modified once; later processes find it already modified |
+| Any of these does not hold | The library is not modified, and non-uniform transforms raise an error stating the reason; importing bartorch and all other functions are unaffected |
+| `finufft` is reinstalled or upgraded | The original library is restored and the modification is repeated at the next non-uniform transform |
+
+In a source checkout, `python scripts/macos_openmp.py diagnose` reports what
+was found and what would be done, `patch` applies the modification, and
+`verify` checks the result.  `KMP_DUPLICATE_LIB_OK=TRUE` is neither set nor
+recommended: it lets two copies of the runtime run in one process, a
+configuration the LLVM OpenMP runtime does not support.
+
+## Command-line interface
+
+Installation provides the `bartorch` command, which accepts the command lines
+of BART's `bart` executable and operates on CFL files:
 
 ```sh
 bartorch pics -l1 -r0.01 -i30 kspace sensitivities image
 bartorch --list
 ```
 
-A script that calls `bart` runs against it with the name changed, or with
-`alias bart=bartorch`, and needs no BART installation of its own.
-{doc}`../../api/cli` says what runs where.
-
-Next: {doc}`conventions`.
+A script written for `bart` runs with the command name replaced, or with a
+`bart` symbolic link to `bartorch` earlier on the `PATH`; {doc}`../../api/cli`
+describes which commands run as {mod}`bartorch.apps` pipelines.

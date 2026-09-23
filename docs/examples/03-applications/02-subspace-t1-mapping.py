@@ -9,15 +9,16 @@ reconstructed into the coefficients of a signal subspace and fitted for
 
 A single spoke does not determine a frame. What makes the series recoverable is
 that the frames are not arbitrary: every voxel follows an inversion-recovery
-curve, and the curves of every plausible :math:`T_1` span a subspace of
-dimension four or so. Writing the unknown series as :math:`x_t = \\sum_a
-\\Phi_{at} c_a` turns four hundred images into four coefficient maps, and the
+curve, and the curves of every plausible :math:`T_1` lie close to a subspace
+of low dimension, four here. A subspace-constrained reconstruction [#tamir]_
+writes the unknown series as :math:`x_t = \\sum_a \\Phi_{at} \\alpha_a`, which
+turns four hundred images into four coefficient maps, and the
 basis :math:`\\Phi` enters the encoding on the k-space side, after the
 transform and before the samples:
 
 .. math::
 
-   y[c, t] = \\sum_a \\Phi_{at} \\, \\mathrm{NUFFT}_t \\!\\left( S_c \\, c_a \\right).
+   y[c, t] = \\sum_a \\Phi_{at} \\, \\mathrm{NUFFT}_t \\!\\left( S_c \\, \\alpha_a \\right).
 
 The subspace is estimated from a simulated dictionary, which is also what the
 parameter fit matches against.
@@ -25,10 +26,6 @@ parameter fit matches against.
 The phantom and the coil sensitivities are built as in
 :doc:`../01-basics/01-from-kspace-to-image`; the cell that does it is hidden on
 this page and present in the script this page can be downloaded as.
-
-Tamir JI, Uecker M, Chen W, Lai P, Alley MT, Vasanawala SS, Lustig M. *T2
-shuffling: sharp, multicontrast, volumetric fast spin-echo imaging.* Magn Reson
-Med 77(1):180-195 (2017).
 """
 
 # %%
@@ -186,11 +183,10 @@ print(f"dictionary {tuple(dictionary.shape)}, basis {tuple(basis.shape)}")
 # %%
 #
 # The singular values of the dictionary say how many coefficients a
-# reconstruction has to carry. The rank chosen here is where they fall below a
-# hundredth of the first, which is a modelling decision rather than a
-# measurement: too few coefficients bias the recovered curves toward the
-# dictionary, too many spend the undersampling factor the subspace was meant to
-# buy.
+# reconstruction has to carry. The rank used here, four, is marked by the
+# dashed line; it is a modelling decision rather than a measurement: too few
+# coefficients bias the recovered curves toward the span of the basis, and too
+# many increase the number of unknowns the undersampled data must determine.
 
 # sphinx_gallery_start_ignore
 spectrum = torch.linalg.svdvals(dictionary.T.to(torch.complex64))
@@ -319,17 +315,14 @@ print(A.plan)
 #
 # ``plan.contraction`` reports the subspace and its rank, and the normal
 # operator is a point spread function over the basis as well as the
-# trajectory, so a subspace reconstruction costs per iteration what a plain one
-# costs.
+# trajectory, so an iteration does not transform the four hundred frames.
 #
-# The penalty is locally low rank: the coefficient maps are stacked into a
-# matrix per block of voxels, and its nuclear norm is penalized.
-# ``joint_axes`` is what makes the coefficients the columns of that matrix,
-# which is what states the thing a subspace reconstruction knows and a
-# wavelet penalty does not -- that neighbouring voxels follow the *same* few
-# curves, not that each coefficient map is separately sparse. Penalizing the
-# maps one at a time instead leaves the coefficients free to disagree with
-# each other, and the recovered curves with them.
+# The penalty is locally low rank [#llr]_: the coefficient maps are stacked
+# into a matrix per block of voxels, and its nuclear norm is penalized.
+# ``joint_axes`` makes the coefficients the columns of that matrix, so the
+# penalty favours neighbouring voxels that follow the same few curves, rather
+# than coefficient maps that are each sparse. Penalizing the maps one at a
+# time does not couple the coefficients of a voxel.
 
 data = measured / optim.data_scaling(measured[..., None], A=A)
 term = priors.LocallyLowRank(axes=(-1, -2), weight=0.005, joint_axes=(-3,), block=8)
@@ -414,21 +407,38 @@ plt.show()
 
 # %%
 #
-# The coefficient maps are not images of anything: each is the weight of one
-# singular vector of the dictionary, and only the first carries the
-# magnetization in a form an eye reads. The later ones carry what the earlier
-# ones cannot represent, which is a difference between recovery curves rather
-# than a tissue.
+# Each coefficient map is the weight of one singular vector of the
+# dictionary. The first resembles a magnetization image; the later ones encode
+# the differences between recovery curves that the earlier vectors do not
+# represent, and do not correspond to tissue contrast.
 #
 # The recovered curve is the reconstruction's, which determines it only up to a
 # global scale -- the data was normalized before the solve -- so the panel
 # beside the maps compares the two after dividing that scale out. The fit is
 # invariant to it, being a normalized inner product.
 #
-# The fitted :math:`T_1` agrees with the table in the voxels one tissue
-# dominates. It is biased where two tissues meet, because the sum of two
-# recovery curves is not a recovery curve, and it is bounded by the range the
-# dictionary covers -- a fit cannot return a value it was never offered.
+# The :math:`T_1` maps are drawn with the lipari colormap [#fuderer]_. The
+# printed table compares the fitted :math:`T_1` with the tabulated value in the
+# voxels each tissue class dominates. The fit is biased where two tissues meet,
+# because the sum of two recovery curves is not a recovery curve, and it lies
+# within the range of :math:`T_1` the dictionary covers.
 #
 # Estimating the parameters directly from k-space, without an intermediate
 # series or a subspace, is :doc:`../04-model-based/02-quantitative-models`.
+
+# %%
+#
+# References
+# ----------
+#
+# .. [#tamir] Tamir JI, Uecker M, Chen W, Lai P, Alley MT, Vasanawala SS, Lustig M. T2
+#    shuffling: sharp, multicontrast, volumetric fast spin-echo imaging.
+#    *Magn Reson Med* 77(1):180-195 (2017). https://doi.org/10.1002/mrm.26102
+#
+# .. [#llr] Zhang T, Pauly JM, Levesque IR. Accelerating parameter mapping with a
+#    locally low rank constraint. *Magn Reson Med* 73(2):655-661 (2015).
+#    https://doi.org/10.1002/mrm.25161
+#
+# .. [#fuderer] Fuderer M, Wichtmann B, Crameri F, de Souza NM, Baeßler B, Gulani V,
+#    et al. Color-map recommendation for MR relaxometry maps. *Magn Reson Med*
+#    93(2):490-506 (2025). https://doi.org/10.1002/mrm.30290

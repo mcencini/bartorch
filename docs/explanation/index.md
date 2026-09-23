@@ -1,27 +1,27 @@
 # Explanation
 
-These pages introduce the concepts the library is built on, the notation it
-uses for them, and the reasons behind the choices that are visible in its
-interface. They are not a tour of the API: {doc}`../api/index` states what each
-object does, and the {doc}`examples <../auto_examples/index>` show complete
-workflows.
+The concepts behind the interfaces, their notation, and the reasons for the
+choices visible in the API.  The pages assume linear algebra and numerical
+computing, not MRI reconstruction or convex optimization; terms from either are
+introduced where first used.  Exact interfaces are in {doc}`../api/index`, and
+complete workflows in the {doc}`examples <../examples/index>`.
 
 | Page | Question |
 | --- | --- |
-| {doc}`inverse-problems` | What is being estimated, from what, and by which algorithm? |
-| {doc}`encoding` | What does the MRI forward operator consist of, and what determines its form? |
-| {doc}`non-cartesian` | How is a transform computed off the Cartesian grid, and what does that cost? |
-| {doc}`nonlinear` | What changes when the forward operator is not linear in the unknowns? |
-
-The reader assumed here is comfortable with linear algebra and numerical
-computing, and not necessarily with MRI reconstruction or with convex
-optimization. Terms from either field are introduced where they are first used.
+| {doc}`execution-model` | Which interface fits a task, and what runs underneath it? |
+| {doc}`inverse-problems` | What is estimated, from what, and by which algorithm? |
+| {doc}`encoding` | What does the MRI forward operator consist of, and how is it represented? |
+| {doc}`non-cartesian` | How is the Fourier transform computed off the Cartesian grid, and what is its normal operator? |
+| {doc}`nonlinear` | What changes when the forward operator is nonlinear in the unknowns? |
+| {doc}`differentiation` | How do gradients pass through operators, solvers and unrolled iterations? |
 
 ```{toctree}
 :hidden:
 
+execution-model
 inverse-problems
 encoding
 non-cartesian
 nonlinear
+differentiation
 ```

@@ -223,6 +223,10 @@ The intended result is **a reproducible scientific example with concise methodol
 
 When a sentence merely describes what the next line of code does, it can usually be removed.
 
+#### Running an example in Colab
+
+Every example page carries an **Open in Colab** badge under its title; `docs/colab.py` inserts it when the page is built, so a script does not carry one itself. The badge opens a copy of the example's notebook, published with the site under `<version>/_colab/`, whose first two cells are a note and a `%pip install` of bartorch and the packages the example imports. The notebook offered for download on the page has no such cells. A section whose examples import more than the common set lists those packages in `SECTION_PACKAGES` in `docs/colab.py`.
+
 ### Explanation and concepts
 
 Explanatory documentation answers questions about concepts, theory, terminology, relationships between methods, architecture, and design rationale.
@@ -243,6 +247,8 @@ Explanatory documentation may:
 * discuss architectural or API design decisions;
 * explain numerical or scientific trade-offs;
 * connect implementations to literature or upstream software.
+
+Every explanation page opens with a **TL;DR** block directly under its title: a short list of the page's conclusions, each stated as the page states it, with no claim the page does not support. It lets a reader decide whether the page answers their question. Landing pages, API reference pages and gallery examples have none.
 
 Where possible, begin from the scientific, mathematical, or computational concept rather than from the Python class hierarchy.
 
@@ -569,6 +575,7 @@ A successful documentation build establishes that the documentation can be rende
 
 ### Explanation
 
+* Does the page open with a TL;DR that states only what the page establishes?
 * Does the page teach the underlying concept rather than narrate the API?
 * Are standard terms introduced accurately and then used consistently?
 * Are motivation, relationships, assumptions, and design choices clear?

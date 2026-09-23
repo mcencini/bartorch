@@ -22,7 +22,7 @@ def soft_thresh(
     lamda : float
         Threshold, in the units of ``input``'s magnitude.
     input : torch.Tensor
-    joint_axes : int or tuple of int
+    joint_axes : int or tuple of int, default=()
         Axes over which ``|x|`` is the Euclidean norm, so that each fibre
         along them is shrunk as one vector; empty for element-wise.
 
