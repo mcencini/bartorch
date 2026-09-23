@@ -2,3 +2,24 @@
 .bd-main .bd-content .bd-article-container { max-width: 58rem; }
 .sig { overflow-wrap: anywhere; }
 .sphx-glr-thumbcontainer { min-height: 210px; }
+
+/* The landing page is the repository README, whose logo already names the
+   project; the heading above it names the page in the sidebar and is not
+   printed a second time. */
+section#bartorch > h1 { display: none; }
+
+/* The logo and the architecture figure come in a light and a dark variant,
+   each drawn on a transparent canvas for its background, so the theme's dark
+   mode needs neither the white card nor the dimming it gives other images. */
+html[data-theme="dark"] .bd-content img.only-dark {
+  background-color: transparent;
+  filter: none;
+}
+
+/* The compact mark heads the sidebar at the height of a line of headings,
+   not at the width of the sidebar. */
+.bd-sidebar-primary .navbar-brand img.logo__image {
+  max-height: 3rem;
+  width: auto;
+}
+.bd-sidebar-primary .navbar-brand { justify-content: flex-start; }

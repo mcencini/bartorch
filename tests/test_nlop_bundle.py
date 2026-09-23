@@ -337,8 +337,8 @@ def test_a_composed_normal_is_its_own_derivative_followed_by_its_own_adjoint(nam
 DERIVED = {
     "divide": (nlop.Divide(SHAPE), None, True),
     "divide (regularised)": (nlop.Divide(SHAPE, 1e-3), None, True),
-    "sum": (nlop.Sum(SHAPE, ()), lambda x: (x.conj() * x).real.to(torch.complex64), False),
-    "sum over an axis": (nlop.Sum(SHAPE, (-1,)), None, False),
+    "sum": (nlop.SumOfSquares(SHAPE, ()), lambda x: (x.conj() * x).real.to(torch.complex64), False),
+    "sum over an axis": (nlop.SumOfSquares(SHAPE, (-1,)), None, False),
     "root sum of squares": (nlop.RootSumOfSquares(SHAPE, ()), lambda x: x.abs() + 0j, False),
     "root sum of squares (regularised)": (nlop.RootSumOfSquares(SHAPE, (-1,), 1e-3), None, False),
     "abs": (nlop.Abs(SHAPE), lambda x: x.abs() + 0j, False),

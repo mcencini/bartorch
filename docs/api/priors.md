@@ -1,152 +1,102 @@
 # Regularization and denoising
 
-`bartorch.priors`.  A regularizer specifies a regularization functional for the
-solvers in {mod}`bartorch.optim`; {doc}`../explanation/inverse-problems`
-introduces the functionals and their proximal operators.  BART builds the corresponding proximal
-operator and, where the functional acts on a transform of the image, the linear
-transform in front of it.  The denoisers are functions on images.
+`bartorch.priors` provides the regularization terms of BART's reconstructions.
+A term represents a functional $g(Gx)$: BART builds the proximal operator of
+$g$ and the linear transform $G$, and the solvers of {mod}`bartorch.optim`
+apply them.  An {obj}`~bartorch.priors.ImplicitPrior` takes the place of a term
+with a denoiser, and three functions apply BART's denoisers to an image
+directly.  {doc}`../explanation/inverse-problems` introduces functionals,
+proximal operators and the splitting that a nontrivial $G$ requires.
 
 ```{eval-rst}
 .. currentmodule:: bartorch.priors
 ```
 
-## Regularizers
+| Term | Functional $g(Gx)$ | Transform $G$ | Solvers |
+| --- | --- | --- | --- |
+| {obj}`~bartorch.priors.L1` | $\lambda\lVert x\rVert_1$ | $I$ | IST, FISTA, ADMM, PRIDU |
+| {obj}`~bartorch.priors.Wavelet` | $\lambda\lVert \Psi x\rVert_1$ | $I$; $\Psi$ is inside the proximal operator | IST, FISTA, ADMM, PRIDU |
+| {obj}`~bartorch.priors.LocallyLowRank` | $\lambda\sum_b \lVert B_b x\rVert_*$ | $I$; the blocks are inside the proximal operator | IST, FISTA, ADMM, PRIDU |
+| {obj}`~bartorch.priors.L2` | $\tfrac{\lambda}{2}\lVert x\rVert_2^2$ | $I$ | IST, FISTA, ADMM, PRIDU |
+| {obj}`~bartorch.priors.NonNegative` | Indicator of $\operatorname{Re} x \ge 0$ and $\operatorname{Im} x \ge 0$ | $I$ | IST, FISTA, ADMM, PRIDU |
+| {obj}`~bartorch.priors.TotalVariation` | $\lambda\sum_r \lVert (\nabla x)_r\rVert_2$ (isotropic) | Finite differences $\nabla$ | ADMM, PRIDU |
+| {obj}`~bartorch.priors.FourierL1` | $\lambda\lVert F x\rVert_1$ | Fourier transform $F$ | ADMM, PRIDU |
+| {obj}`~bartorch.priors.Laplace` | $\lambda\lVert L x\rVert_1$ | Laplacian $L$ | ADMM, PRIDU |
+| {obj}`~bartorch.priors.ImaginaryL1` | $\lambda\lVert \operatorname{Im} x\rVert_1$ | Imaginary part | ADMM, PRIDU |
+| {obj}`~bartorch.priors.ImaginaryL2` | $\tfrac{\lambda}{2}\lVert \operatorname{Im} x\rVert_2^2$ | Imaginary part | ADMM, PRIDU |
+| {obj}`~bartorch.priors.TotalGeneralizedVariation` | Second-order TGV | Extends the variable | ADMM, PRIDU |
+| {obj}`~bartorch.priors.InfimalConvolutionTV` | Infimal convolution of two TV terms | Extends the variable | ADMM, PRIDU |
+| {obj}`~bartorch.priors.InfimalConvolutionTGV` | Infimal convolution of two TGV terms | Extends the variable | ADMM, PRIDU |
+| {obj}`~bartorch.priors.WaveletNIHT` | Keep the $K$ largest wavelet coefficients | Wavelet transform | NIHT |
+| {obj}`~bartorch.priors.ImageNIHT` | Keep the $K$ largest image entries | $I$ | NIHT |
 
-A regularizer is a pair: a linear transform `G` and the proximal operator of a
-functional `g`, together representing `g(G x)`.  `G` is the identity for terms
-that penalize the image directly ({class}`L1`, {class}`L2`) or that carry their
-own transform inside the proximal operator ({class}`Wavelet`), and a genuine
-operator for terms such as {class}`TotalVariation`, whose functional acts on
-finite differences.
+$\lambda$ is the term's `weight`, relative to data divided by
+{func}`~bartorch.optim.data_scaling`; $\lVert\cdot\rVert_1$ of a complex array
+is the sum of the moduli, and a term's `joint_axes` group entries into an
+$\ell_2$ norm first.  Every term is also accepted by
+{func}`bartorch.tools.pics` and {func}`bartorch.apps.pics`.
 
-Only the alternating-direction and primal-dual iterations are given `G`.
-BART's `iter2_ist` takes a single term and ignores the transform array
-entirely, so {class}`~bartorch.optim.IST` and {class}`~bartorch.optim.FISTA`
-admit only terms whose transform is the identity; a term with a non-trivial
-`G` would otherwise be applied as though `G` were the identity.
+## Term classes
 
-```{eval-rst}
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
+| Object | Description |
+| --- | --- |
+| {obj}`~bartorch.priors.Regularizer` | Base class: the proximal operator and the transform of a BART term |
+| {obj}`~bartorch.priors.ImplicitPrior` | A denoiser in place of a proximal operator (plug-and-play), optionally through a transform |
+| {obj}`~bartorch.priors.frozen` | A term whose proximal step is excluded from differentiation |
 
-   Regularizer
-```
+## Sparsity-promoting terms
 
-## Differentiation
+| Object | Description |
+| --- | --- |
+| {obj}`~bartorch.priors.L1` | $\ell_1$ norm of the image |
+| {obj}`~bartorch.priors.Wavelet` | $\ell_1$ norm of the wavelet coefficients |
+| {obj}`~bartorch.priors.FourierL1` | $\ell_1$ norm of the Fourier coefficients |
+| {obj}`~bartorch.priors.TotalVariation` | Total variation |
+| {obj}`~bartorch.priors.Laplace` | $\ell_1$ norm of the Laplacian |
+| {obj}`~bartorch.priors.ImaginaryL1` | $\ell_1$ norm of the imaginary part |
 
-Proximal operators are evaluated inside BART and no backward pass is
-implemented for them, so {meth}`Regularizer.prox` raises on a tensor that
-requires a gradient rather than contributing an incorrect one: soft
-thresholding is not the identity, and differentiating as though it were zeroes
-the whole path through the regularizer.
+## Quadratic terms
 
-{class}`ImplicitPrior` substitutes a differentiable denoiser for the proximal
-operator, as plug-and-play regularization does.  {func}`frozen` detaches a
-BART term's proximal step, so that term stays fixed while the rest of the
-iteration -- including a denoiser in another term -- is differentiated.
+| Object | Description |
+| --- | --- |
+| {obj}`~bartorch.priors.L2` | Squared $\ell_2$ norm of the image (Tikhonov) |
+| {obj}`~bartorch.priors.ImaginaryL2` | Squared $\ell_2$ norm of the imaginary part |
 
-{class}`ImplicitPrior` accepts a `transform` like any other term, so that the
-denoiser may be applied on a domain other than the image: the
-alternating-direction and primal-dual iterations then split the variable at
-`G x`, and the denoiser is applied on the codomain of `G`.
-{class}`bartorch.learning.Denoiser` adapts a network operating on real planes
-to that interface.
+## Low-rank terms
 
-```{eval-rst}
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
-
-   ImplicitPrior
-   frozen
-```
-
-## Sparsity regularization
-
-```{eval-rst}
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
-
-   L1
-   Wavelet
-   FourierL1
-   TotalVariation
-   Laplace
-   ImaginaryL1
-```
-
-## Quadratic regularization
-
-```{eval-rst}
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
-
-   L2
-   ImaginaryL2
-```
-
-## Low-rank regularization
-
-```{eval-rst}
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
-
-   LocallyLowRank
-```
+| Object | Description |
+| --- | --- |
+| {obj}`~bartorch.priors.LocallyLowRank` | Nuclear norm of image blocks |
 
 ## Constraints
 
-```{eval-rst}
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
-
-   NonNegative
-```
+| Object | Description |
+| --- | --- |
+| {obj}`~bartorch.priors.NonNegative` | Projection clamping the real and imaginary parts at zero |
 
 ## Hard-thresholding terms
 
-```{eval-rst}
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
+| Object | Description |
+| --- | --- |
+| {obj}`~bartorch.priors.WaveletNIHT` | Retention of the largest wavelet coefficients |
+| {obj}`~bartorch.priors.ImageNIHT` | Retention of the largest image entries |
 
-   WaveletNIHT
-   ImageNIHT
-```
+## Terms with auxiliary variables
 
-## Regularizers with auxiliary variables
+The optimization variable is the image followed by auxiliary fields, which BART
+counts across the whole set of terms; these terms cannot be built alone, and
+the solvers return the image only.
 
-These functionals are defined by a minimization over auxiliary variables, and
-BART realizes them by extending the optimization variable with those variables
-(`ropts->svars`).  The extension is counted across the whole set of terms, so
-such a term cannot be built in isolation.  {func}`bartorch.tools.pics`,
-{class}`bartorch.optim.ADMM` and {class}`bartorch.optim.PRIDU` accept them; the
-solution vector is the image followed by the auxiliary variables, and the image
-alone is returned.
-
-```{eval-rst}
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
-
-   TotalGeneralizedVariation
-   InfimalConvolutionTV
-   InfimalConvolutionTGV
-```
+| Object | Description |
+| --- | --- |
+| {obj}`~bartorch.priors.TotalGeneralizedVariation` | Second-order total generalized variation |
+| {obj}`~bartorch.priors.InfimalConvolutionTV` | Infimal convolution of total variation |
+| {obj}`~bartorch.priors.InfimalConvolutionTGV` | Infimal convolution of total generalized variation |
 
 ## Denoisers
 
-```{eval-rst}
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
-
-   rof
-   tgv
-   nlmeans
-```
+| Object | Description |
+| --- | --- |
+| {obj}`~bartorch.priors.rof` | Total-variation (Rudin-Osher-Fatemi) denoising |
+| {obj}`~bartorch.priors.tgv` | Second-order total generalized variation denoising |
+| {obj}`~bartorch.priors.nlmeans` | Non-local means filtering |

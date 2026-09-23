@@ -396,7 +396,7 @@ def test_the_root_sum_of_squares_reduces_the_axes_it_was_given():
 
 
 def test_the_sum_of_squares_reduces_the_axes_it_was_given():
-    S = nlop.Sum((3, 4), axes=0)
+    S = nlop.SumOfSquares((3, 4), axes=0)
     assert S.oshape == (1, 4)
     x = _rand(3, 4)
     torch.testing.assert_close(

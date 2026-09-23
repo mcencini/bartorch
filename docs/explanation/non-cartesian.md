@@ -1,162 +1,152 @@
 # Sampling off the Cartesian grid
 
-A radial, spiral or otherwise non-Cartesian acquisition measures k-space at
-positions that do not fall on a grid, so the fast Fourier transform does not
-apply to it. This page states what replaces the FFT, what the replacement costs
-and what it approximates, and how a reconstruction is built on it.
+A radial, spiral or other non-Cartesian acquisition samples k-space at
+positions that are not on a grid, so its Fourier transform is not an FFT.  This
+page defines the transform bartorch computes, its accuracy and its conventions,
+the difference between the adjoint, the density-compensated adjoint and a
+reconstruction, the normal operator used by iterative solvers, and which
+backend computes what.
 
 ## The transform
 
-The data of a non-Cartesian acquisition is
+For an image $x$ of $N$ voxels and $M$ sample positions $k_j$, the forward
+transform is
 
 $$
-y_j = \frac{1}{\sqrt{N}} \sum_{r} x_r \, e^{-2\pi i \, k_j \cdot r} ,
+y_j = \frac{1}{\sqrt{N}} \sum_{m} x_m \, \exp\!\left(-2\pi i \sum_d \frac{k_{j,d}\, m_d}{n_d}\right),
 \qquad j = 1, \dots, M,
 $$
 
-a sum over the $N$ voxels of the image evaluated at $M$ arbitrary points $k_j$.
-Computed directly this costs $O(NM)$, which for a 2D acquisition of realistic
-size is minutes per application and therefore hours per reconstruction.
+with $m$ the voxel index relative to the image centre
+($m_d = -\lfloor n_d/2 \rfloor, \dots$ along each dimension $d$ of size $n_d$)
+and $k_j$ in **grid units**: multiples of $1/\mathrm{FOV}$, so that a fully
+sampled readout of $n$ samples spans $-n/2$ to $n/2$.  The adjoint has the
+positive exponent and the same $1/\sqrt{N}$ scaling.  A trajectory always has
+three components; a $k_z$ that is zero throughout makes the transform
+two-dimensional.
 
-A **non-uniform fast Fourier transform** (NUFFT) computes it to a requested
-accuracy in $O(N \log N + M)$. Every implementation of one is the same three
-operations: a spreading or an interpolation between the samples and a grid
-oversampled with respect to the image, an FFT of that grid, and a division by
-the kernel's Fourier transform, which is the **deapodization** that undoes the
-spreading. The kernel and the oversampling factor set the accuracy, and the
-classical accounts of the method are about how to choose them.
+Evaluated directly the sum costs $O(NM)$.  A **non-uniform fast Fourier
+transform** (NUFFT) computes it to a prescribed accuracy in
+$O(N \log N + M)$: the samples are spread onto a grid oversampled by a factor
+$\sigma$ with a compact kernel, the grid is transformed by an FFT, and the
+result is divided by the kernel's Fourier transform (**deapodization**); the
+adjoint performs the same steps in reverse.[^osullivan][^fessler2003][^beatty]
+The kernel width and $\sigma$ determine the accuracy.
 
-In bartorch this transform is [FINUFFT](https://finufft.readthedocs.io), and
-what a caller sees is not a kernel and an oversampling but a **tolerance**: the
-relative accuracy the transform is planned for, from which the library sizes
-its kernel. A type-2 transform (uniform to non-uniform) is the forward
-operator and a type-1 (non-uniform to uniform) is its adjoint, with the sign of
-the exponent reversed between them.
+In bartorch the transform is computed by FINUFFT,[^finufft] whose forward
+operator is its type-2 transform and whose adjoint is its type-1 transform.
+FINUFFT is planned with a relative **tolerance** $\varepsilon$, from which it
+chooses its kernel width.
 
-The default is a tolerance of $10^{-3}$ on a grid a quarter larger than the
-image. That is looser than the gridding parameters MRI reconstruction usually
-defaults to, and it is a deliberate choice: a reconstruction is limited by its
-data, the noise in which is orders of magnitude above $10^{-3}$, so accuracy
-bought in the transform is spent where it cannot be seen. Where it matters —
-a validation against an analytical reference, a comparison across
-implementations — the tolerance is a setting, and so are the oversampling
-factor and the kernel width.
+| Setting | Default | Set by |
+| --- | --- | --- |
+| Tolerance $\varepsilon$ | $10^{-3}$; $10^{-6}$ for `ncalib`, `nlinv` and `rtnlinv` | The kernel width: `width` of {class}`~bartorch.linop.NUFFT`, BART's `-w` option of the commands, converted to the tolerance that gives that width |
+| Oversampling $\sigma$ | 1.25; 2 for `ncalib`, `nlinv` and `rtnlinv` | `oversampling` of {class}`~bartorch.linop.NUFFT`, BART's `-o` option |
 
-## The adjoint is not the inverse
+The relative error of a transform is of the order of $\varepsilon$; the test
+suite compares it with the explicit sum above.  The default trades accuracy
+for speed and memory, and is intended for reconstruction, where the error of
+the transform is meant to stay small beside the errors caused by noise and
+undersampling.  A comparison with an analytical reference or between
+implementations needs a larger kernel width.  cuFINUFFT accepts $\sigma = 2$ and $\sigma = 1.25$ only.
 
-$A^H y$ for a non-Cartesian $A$ sums each sample onto the grid. Where the
-trajectory samples some regions more densely than others, the sum is weighted
-by the sampling density: for a radial trajectory, every spoke passes through
-the centre of k-space and they separate toward the periphery, so the centre is
-measured once per spoke and the periphery once per spoke per ring. The adjoint
-of such a trajectory is the image convolved with a strongly low-pass kernel.
+## Adjoint, density compensation and reconstruction
 
-**Density compensation** corrects this by weighting each sample by the
-reciprocal of the local sampling density before the adjoint is applied — the
-distance from the centre of k-space, for radial sampling. The result is the
-**gridding reconstruction**, which is a reconstruction in the sense that it
-produces an image and not in the sense that it inverts anything: it leaves
-whatever the trajectory did not sample unrecovered, and at any real
-acceleration that omission dominates the result.
+| Estimate | Definition | Property |
+| --- | --- | --- |
+| Adjoint | $\mathrm{NUFFT}^H y$ | Each sample is added onto the grid; regions sampled more densely are weighted more.  For radial sampling, which samples the k-space centre once per spoke, the result is the image convolved with a strongly low-pass kernel |
+| Density-compensated adjoint (gridding reconstruction) | $\mathrm{NUFFT}^H D y$, with $D$ a diagonal of weights $d_j \approx 1/\rho(k_j)$ | Approximately equalizes the sampling density $\rho$; for radial sampling $d_j \propto \lvert k_j \rvert$.  Unsampled regions of k-space remain missing, and undersampling appears as streaks |
+| Reconstruction | Solution of the least-squares or regularized problem with $A$ | Consistent with the measured samples; needs no density compensation, which can serve as a weighting of the data term instead[^pipe][^pruessmann2001] |
 
-An operator carries its weights itself rather than leaving them to the caller,
-because the normal operator is built over them (see below) and a chain of
-weights around a transform could not be. Weights that do not lie along k-space
-are declined, with the reason stated.
+Density weights passed to {class}`~bartorch.linop.NUFFT` or
+{class}`~bartorch.linop.NoncartesianSense` become part of the operator,
+$A = W\,\mathrm{NUFFT}\,S$: the weights are applied on the forward pass and
+their conjugate on the adjoint, and the normal operator is built over them.
+Weights that do not lie along the k-space samples are refused.
 
 ## The normal operator and the point spread function
 
-For an iterative reconstruction the quantity that matters is $A^H A$, applied
-once per iteration. For a non-Cartesian transform this operator is a
-**convolution**: it is translation invariant, because the trajectory does not
-depend on where the object is, and a translation-invariant operator is a
-multiplication in the Fourier domain.
+An iterative solver applies $A^H A$.  The transform's own normal operator,
+$T = \mathrm{NUFFT}^H W^H W\,\mathrm{NUFFT}$, is a convolution of the image with
+the **point spread function** (PSF)
 
-The array it multiplies by is the **transfer function**, computed as the
-adjoint transform of ones along the trajectory, and its inverse transform is
-the **point spread function** — the image a single point would reconstruct
-into, whose sidelobes are the streaks a radial reconstruction is known for. The
-multiplication has to happen on a grid twice the size of the image, because the
-convolution of two arrays of size $N$ has support $2N$ and computing it on the
-smaller grid would alias.
+$$
+h(m) = \frac{1}{N} \sum_j \lvert w_j \rvert^2 \exp\!\left(2\pi i \sum_d \frac{k_{j,d}\, m_d}{n_d}\right),
+$$
 
-The gain is substantial. One application of the Toeplitz normal is two FFTs on
-a doubled grid and one multiplication; the transform pair it replaces is two
-non-uniform transforms over every sample of every channel. Both are measured
-side by side in
-{doc}`../auto_examples/02-non-cartesian/01-trajectories-and-transforms`.
+whose support spans twice the image extent.  $T$ is therefore applied exactly
+as a multiplication, in the Fourier domain of a grid doubled in each dimension,
+by the **transfer function** $\hat{h}$, the FFT of $h$ on that grid: the image
+is zero-padded to the doubled grid, transformed, multiplied, transformed back
+and cropped.[^fessler2005]  With a subspace basis $h$ becomes a set of kernels
+over pairs of coefficients.  The full SENSE normal operator
+$\sum_c \overline{S_c}\, T\, S_c$ is not a convolution, because the
+sensitivities vary in space; {doc}`encoding` describes how it is applied.
 
-The cost is memory: the transfer function is an array of $2^d N$ complex
-numbers per set of coefficients, which for a 3D subspace reconstruction is the
-largest thing in the reconstruction. BART has several ways of storing it — as
-a decomposition into $2^d$ shifted copies computed one at a time, as half of a
-Hermitian array, as its real part, or compressed to the entries that are not
-negligible — and bartorch keeps all of them, because what changes is where the
-function comes from and not what is done with it afterwards.
+$h$ is computed as the adjoint NUFFT of $\lvert w_j \rvert^2$ (of ones without
+weights) onto the doubled grid, by FINUFFT, and BART stores $\hat{h}$ and
+performs the multiplication.  Its storage options remain available:
 
-## What the substitution replaces, and what it does not
+| BART `--nufft-conf` | Storage of $\hat{h}$ |
+| --- | --- |
+| default, `lowmem`, `no-precomp` | The complete complex array |
+| `decomposed-psf` | $2^d$ grids of the image size, one at a time |
+| `upper-triag-psf` | Half of the Hermitian kernel matrix of a subspace basis |
+| `real-psf` | The real part |
+| `compress-psf` | The entries within the trajectory's footprint, and their indices |
 
-BART has its own gridding implementation, and bartorch does not use it: the
-entry point BART builds every NUFFT through is answered by the FINUFFT
-substitution instead, so `nufft`, `pics`, `nlinv`, `moba` and the operators in
-{mod}`bartorch.linop` all get the same transform. What stays BART's is
-everything around it — the operator's structure, the Toeplitz machinery, the
-solvers.
+One application of this normal operator costs two FFTs of the doubled grid per
+coil and one multiplication; the alternative, a forward and an adjoint NUFFT,
+spreads and interpolates every sample of every coil.  `toeplitz=False` on an
+operator, or BART's `pics --no-toeplitz`, selects the two transforms instead.
+The two forms differ by an amount of the order of the transform's tolerance,
+as {doc}`../auto_examples/02-non-cartesian/01-trajectories-and-transforms`
+measures.
 
-The substitution declines rather than falls back. An answer computed by a
-different method, arriving with nothing to say so, is worse than no answer, so
-a transform the substitution cannot serve is an error that names its reason
-rather than a silent change of implementation. The cases are few and specific:
-weights that do not lie along k-space, and an image that varies along an axis
-the trajectory indexes, which would require a plan per item.
+## Backends and refusals
+
+Every non-uniform transform is computed by FINUFFT or cuFINUFFT; BART's own
+gridding implementation is not used, and no configuration falls back to it.
+
+| Path | Backend | Device | Requirement and behaviour when unavailable |
+| --- | --- | --- | --- |
+| Forward and adjoint transform, PSF | FINUFFT | CPU | Installed as a dependency; without it, a non-uniform transform raises an error |
+| Forward and adjoint transform, PSF | cuFINUFFT | CUDA | The `cufinufft` extra.  On a machine with a CUDA device and a CUDA build of bartorch, the substitution is not installed without it, and every non-uniform transform, on the host as well, raises an error |
+| Multiplication by $\hat h$ | BART, with the FFT of the device: MKL or pocketfft on the host, cuFFT on a CUDA device | Either | — |
+| Unsupported configuration | None | Either | {class}`~bartorch.BartError` naming the reason: weights that do not lie along k-space, an image that varies along an axis the trajectory indexes, a kernel width no tolerance produces, among others |
+
+The backend of a transform is chosen by where its arguments are, not by where
+the trajectory is: an operator holds one pair of plans per memory space and
+builds each the first time a transform is requested there.  On macOS, the
+OpenMP runtimes of the PyTorch and FINUFFT wheels must first be made one, as
+{ref}`the installation guide <macos-openmp>` describes.
 
 ## Trajectories
 
-{func}`bartorch.tools.traj` generates the trajectories BART supports, in grid
-units: the coordinate of a sample in units of the k-space cell of the image it
-encodes, so a readout of $N$ samples runs from $-N/2$ to $N/2$. The convention
-matters because a transform has to know how many cells the trajectory spans;
-radians and cycles per metre are conversions of it.
-
-{func}`~bartorch.tools.traj` offers two orderings of a radial trajectory.
-Spokes separated by $\pi/n$ tile k-space uniformly for a frame of $n$ spokes
-and for no other number.
-**Golden-angle** ordering separates successive spokes by $\pi$ times the golden
-ratio conjugate, which tiles k-space approximately uniformly for *any* number
-of consecutive spokes. A continuously acquired golden-angle scan can therefore
-be cut into frames after the fact, at a frame duration chosen when the data is
-reconstructed rather than when it is acquired, as
-{doc}`../auto_examples/03-applications/01-dynamic-golden-angle` does.
-
-## Devices
-
-Where a transform runs is decided by where its arguments are: an operator
-applied to tensors on a CUDA device plans on the device and executes there,
-through cuFINUFFT, which is an optional extra. Without that extra a transform
-BART would have run on a card stays on BART's own operator rather than quietly
-moving to the host. The k-space and the image of one reconstruction can be in
-different places, since BART hands an operator memory on either side, so an
-operator holds one plan per place and builds each the first time it is needed.
+{func}`bartorch.tools.traj` generates trajectories in grid units.  A radial
+trajectory with successive spokes separated by $\pi/n_s$ covers k-space
+uniformly for a frame of exactly $n_s$ spokes.  With **golden-angle**
+ordering, successive spokes are separated by $\pi$ times the reciprocal of
+the golden ratio, about $111.25°$, and any number of consecutive spokes covers
+k-space approximately uniformly.[^winkelmann]  A continuously acquired
+golden-angle series can therefore be divided into frames after the
+acquisition, as {doc}`../auto_examples/03-applications/01-dynamic-golden-angle`
+does.
 
 ## References
 
-O'Sullivan JD. A fast sinc function gridding algorithm for Fourier inversion in
-computer tomography. *IEEE Trans Med Imaging* 4(4):200-207 (1985).
+[^osullivan]: O'Sullivan JD. A fast sinc function gridding algorithm for Fourier inversion in computer tomography. *IEEE Trans Med Imaging* 4(4):200–207 (1985). [doi:10.1109/TMI.1985.4307723](https://doi.org/10.1109/TMI.1985.4307723)
 
-Fessler JA, Sutton BP. Nonuniform fast Fourier transforms using min-max
-interpolation. *IEEE Trans Signal Process* 51(2):560-574 (2003).
+[^fessler2003]: Fessler JA, Sutton BP. Nonuniform fast Fourier transforms using min-max interpolation. *IEEE Trans Signal Process* 51(2):560–574 (2003). [doi:10.1109/TSP.2002.807005](https://doi.org/10.1109/TSP.2002.807005)
 
-Beatty PJ, Nishimura DG, Pauly JM. Rapid gridding reconstruction with a minimal
-oversampling ratio. *IEEE Trans Med Imaging* 24(6):799-808 (2005).
+[^beatty]: Beatty PJ, Nishimura DG, Pauly JM. Rapid gridding reconstruction with a minimal oversampling ratio. *IEEE Trans Med Imaging* 24(6):799–808 (2005). [doi:10.1109/TMI.2005.848376](https://doi.org/10.1109/TMI.2005.848376)
 
-Barnett AH, Magland J, af Klinteberg L. A parallel nonuniform fast Fourier
-transform library based on an "exponential of semicircle" kernel. *SIAM J Sci
-Comput* 41(5):C479-C504 (2019).
+[^finufft]: Barnett AH, Magland J, af Klinteberg L. A parallel nonuniform fast Fourier transform library based on an "exponential of semicircle" kernel. *SIAM J Sci Comput* 41(5):C479–C504 (2019). [doi:10.1137/18M120885X](https://doi.org/10.1137/18M120885X).  For the CUDA library: Shih Y, Wright G, Andén J, Blaschke J, Barnett AH. cuFINUFFT: a load-balanced GPU library for general-purpose nonuniform FFTs. *IEEE IPDPSW* 688–697 (2021). [doi:10.1109/IPDPSW52791.2021.00105](https://doi.org/10.1109/IPDPSW52791.2021.00105)
 
-Fessler JA, Lee S, Olafsson VT, Shi HR, Noll DC. Toeplitz-based iterative image
-reconstruction for MRI with correction for magnetic field inhomogeneity. *IEEE
-Trans Signal Process* 53(9):3393-3402 (2005).
+[^pipe]: Pipe JG, Menon P. Sampling density compensation in MRI: rationale and an iterative numerical solution. *Magn Reson Med* 41(1):179–186 (1999). [doi:10.1002/(SICI)1522-2594(199901)41:1\<179::AID-MRM25\>3.0.CO;2-V](https://doi.org/10.1002/(SICI)1522-2594(199901)41:1%3C179::AID-MRM25%3E3.0.CO;2-V)
 
-Winkelmann S, Schaeffter T, Koehler T, Eggers H, Doessel O. An optimal radial
-profile order based on the golden ratio for time-resolved MRI. *IEEE Trans Med
-Imaging* 26(1):68-76 (2007).
+[^pruessmann2001]: Pruessmann KP, Weiger M, Börnert P, Boesiger P. Advances in sensitivity encoding with arbitrary k-space trajectories. *Magn Reson Med* 46(4):638–651 (2001). [doi:10.1002/mrm.1241](https://doi.org/10.1002/mrm.1241)
+
+[^fessler2005]: Fessler JA, Lee S, Olafsson VT, Shi HR, Noll DC. Toeplitz-based iterative image reconstruction for MRI with correction for magnetic field inhomogeneity. *IEEE Trans Signal Process* 53(9):3393–3402 (2005). [doi:10.1109/TSP.2005.853152](https://doi.org/10.1109/TSP.2005.853152)
+
+[^winkelmann]: Winkelmann S, Schaeffter T, Koehler T, Eggers H, Doessel O. An optimal radial profile order based on the Golden Ratio for time-resolved MRI. *IEEE Trans Med Imaging* 26(1):68–76 (2007). [doi:10.1109/TMI.2006.885337](https://doi.org/10.1109/TMI.2006.885337)

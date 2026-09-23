@@ -113,6 +113,15 @@ cmake.build-type = "Release"
 build-dir = "build/{wheel_tag}"
 wheel.packages = ["src/bartorch"]
 wheel.py-api = "py3"
+# The wheel carries BART, pocketfft and the Blocks runtime compiled in, so it
+# carries their license notices too, each under its own path in the wheel's
+# `.dist-info/licenses/`.
+wheel.license-files = [
+    "LICENSE",
+    "external/bart/LICENSE",
+    "external/pocketfft/LICENSE.md",
+    "external/blocksruntime/LICENSE.TXT",
+]
 sdist.exclude = ["attic/", "build/"]
 
 # The section has to exist for setuptools-scm to be used at all, even empty.

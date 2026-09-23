@@ -1,177 +1,97 @@
 # Optimization
 
-`bartorch.optim`.  {doc}`../explanation/inverse-problems` states the problems
-these algorithms solve and which one applies where.  A *block* is one step of a
-BART iteration as a torch module.
-A solver loops a block, reproducing BART's iteration schedule -- step sizes,
-penalty updates and stopping -- and is called as `solver(y, A, x0=None)`.  The
-functional forms, such as `optim.fista(y, A, term)`, construct a solver and call
-it in one expression.  A leading axis on `y` beyond `A`'s codomain is a batch of
-independent problems, which a solver takes one run at a time: its stopping
-rule, its adaptive steps and a term's random shifts belong to the run.
+`bartorch.optim` provides BART's iterative algorithms for linear inverse
+problems.  A solver is configured by its constructor and called as
+`solver(y, A, x0=None)`, with `y` the data and `A` a
+{obj}`~bartorch.linop.LinearOperator`; it reproduces BART's iteration,
+including its step sizes, penalty updates and stopping rules.  An iteration
+block is one step of the same iteration as a `torch.nn.Module`.  A leading
+axis of `y` beyond the codomain of `A` is a batch of independent problems.
+{doc}`../explanation/inverse-problems` states the problems and algorithms, and
+{doc}`../explanation/differentiation` the backward pass of each solver.
 
 ```{eval-rst}
 .. currentmodule:: bartorch.optim
 ```
 
+| Solver | Problem | Regularization | Backward pass |
+| --- | --- | --- | --- |
+| {obj}`~bartorch.optim.CG` | $\min_x \lVert Ax-y\rVert^2 + \lambda\lVert x\rVert^2 + \sum_i w_i \lVert G_i x - b_i\rVert^2$ | {obj}`~bartorch.optim.Tikhonov` terms | Implicit: one further conjugate-gradient solve |
+| {obj}`~bartorch.optim.IST` | $\min_x \tfrac12\lVert Ax-y\rVert^2 + g(x)$ | One term with $G = I$ | Unrolled |
+| {obj}`~bartorch.optim.FISTA` | As IST, with momentum | One term with $G = I$ | Unrolled |
+| {obj}`~bartorch.optim.ADMM` | $\min_x \tfrac12\lVert Ax-y\rVert^2 + \sum_j g_j(G_j x)$ | Any number of terms, any $G_j$ | Unrolled; each x-update implicit |
+| {obj}`~bartorch.optim.PRIDU` | As ADMM | Any number of terms, any $G_j$ | Unrolled |
+| {obj}`~bartorch.optim.NIHT` | Sparsity-constrained least squares | Hard-thresholding terms | Not runnable (BART assertion) |
+| {obj}`~bartorch.optim.POCS` | Feasibility: repeated projections | Projections and terms at unit weight | Unrolled |
+
+Terms are the objects of {mod}`bartorch.priors`; an
+{obj}`~bartorch.priors.ImplicitPrior` is accepted wherever a regularization term is.
+
 ## Linear least squares
 
-```{eval-rst}
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
-
-   CG
-   Tikhonov
-```
+| Object | Description |
+| --- | --- |
+| {obj}`~bartorch.optim.CG` | Conjugate gradients on the normal equations, with Tikhonov terms |
+| {obj}`~bartorch.optim.Tikhonov` | Quadratic penalty $w \lVert G x - b\rVert^2$ for {obj}`~bartorch.optim.CG` |
 
 ## Regularized least squares
 
-```{eval-rst}
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
+| Object | Description |
+| --- | --- |
+| {obj}`~bartorch.optim.IST` | Iterative soft thresholding (proximal gradient) |
+| {obj}`~bartorch.optim.FISTA` | Fast iterative soft thresholding (accelerated proximal gradient) |
+| {obj}`~bartorch.optim.ADMM` | Alternating direction method of multipliers |
+| {obj}`~bartorch.optim.PRIDU` | Chambolle-Pock primal-dual iteration |
+| {obj}`~bartorch.optim.NIHT` | Normalized iterative hard thresholding; raises `NotImplementedError` |
+| {obj}`~bartorch.optim.maxeigen` | Power-iteration estimate of the largest eigenvalue of $A^H A$ |
 
-   IST
-   FISTA
-   ADMM
-   PRIDU
-   NIHT
-   maxeigen
-```
+## Projection methods
 
-An {class}`~bartorch.priors.ImplicitPrior` is accepted wherever a regularizer
-is.
-
-{class}`NIHT` cannot be run.  BART's `niht` applies the normal operator in
-place, and the operator `lsqr2` supplies asserts that its arguments are not
-aliased (`iter/niht.c:85`, `iter/lsqr.c:60`), so every NIHT solve terminates in
-an assertion.
-
-## Projection onto convex sets
-
-{class}`POCS` is not a least-squares solver: it has no data term, no step size
-and no residual.  Each iteration is one sweep of a list of projections, applied
-in turn and in place, which is the whole of `italgos.c`'s `pocs`.  What the
-iterate is, and what the sets are, belong to the projections -- for
-{func}`bartorch.apps.pocsense` they are the measured samples, the range of the
-coil sensitivities and a sparsity threshold, and the iterate is coil k-space.
-
-A projection is a callable on a tensor, or a {mod}`bartorch.priors` term, which
-enters as its proximal operator at `mu = 1`.  {class}`POCSBlock` takes an
-operator argument and ignores it, so that it has the calling convention the
-other blocks have and {class}`bartorch.learning.Unrolled` can stack it.
-
-```{eval-rst}
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
-
-   POCS
-   POCSBlock
-```
+| Object | Description |
+| --- | --- |
+| {obj}`~bartorch.optim.POCS` | Projection onto convex sets, repeated sweeps |
+| {obj}`~bartorch.optim.POCSBlock` | One sweep of the projections |
 
 ## Functional interface
 
-Each solver has a function that constructs it and calls it in one expression;
+Each function constructs the corresponding solver and calls it:
 `optim.fista(y, A, term, maxiter=30)` is `optim.FISTA(term, maxiter=30)(y, A)`.
-The class form is needed where a solver object is passed as an argument, as in
-{class}`bartorch.nlop.IRGNM`'s `inner=`.
 
-```{eval-rst}
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
-
-   cg
-   ist
-   fista
-   admm
-   pridu
-   niht
-   pocs
-```
-
-{func}`pocs` takes its projections where the others take an encoding and a
-term, because that is where a projection method keeps the problem.
+| Object | Description |
+| --- | --- |
+| {obj}`~bartorch.optim.cg` | {obj}`~bartorch.optim.CG` in one call |
+| {obj}`~bartorch.optim.ist` | {obj}`~bartorch.optim.IST` in one call |
+| {obj}`~bartorch.optim.fista` | {obj}`~bartorch.optim.FISTA` in one call |
+| {obj}`~bartorch.optim.admm` | {obj}`~bartorch.optim.ADMM` in one call |
+| {obj}`~bartorch.optim.pridu` | {obj}`~bartorch.optim.PRIDU` in one call |
+| {obj}`~bartorch.optim.niht` | {obj}`~bartorch.optim.NIHT` in one call |
+| {obj}`~bartorch.optim.pocs` | {obj}`~bartorch.optim.POCS` in one call, with the projections in place of an encoding |
 
 ## Iteration blocks
 
 `state = block.start(y, A, x0)` initializes a run, `state = block(state, A)`
-takes one step, and `block.output(state, A)` returns the image.  A solver is
-these three calls in a loop, so a stack of blocks with frozen parameters
-reproduces the solver's output bit for bit.  Step sizes and penalty weights are
-`torch.nn.Parameter`s, frozen until `requires_grad_()` is called on them.
+takes one step and `block.output(state, A)` returns the image.  Step sizes and
+penalty weights are `torch.nn.Parameter` objects, frozen until
+`requires_grad_()` is called on them.
 
-```python
-blocks = nn.ModuleList(
-    optim.FISTABlock(priors.ImplicitPrior(UNet(), sigma=0.05), step=0.9) for _ in range(10)
-)
-for block in blocks:
-    block.step.requires_grad_()
+| Object | Description |
+| --- | --- |
+| {obj}`~bartorch.optim.ISTBlock` | One iterative soft-thresholding step |
+| {obj}`~bartorch.optim.FISTABlock` | One fast iterative soft-thresholding step |
+| {obj}`~bartorch.optim.ADMMBlock` | One ADMM step |
+| {obj}`~bartorch.optim.PRIDUBlock` | One primal-dual step |
 
-state = blocks[0].start(kspace, A)
-for block in blocks:
-    state = block(state, A)
-image = blocks[-1].output(state, A)
-```
+## Fixed-point methods
 
-A block over a batch applies the operator item by item, and a term that draws
-random shifts draws them per item; the scalars that drive ADMM's and PRIDU's
-adaptive steps are computed over the whole batch.
-
-The operator may be the derivative of a nonlinear operator at a point,
-`F.linearize(x)`.  The gradient then reaches `x` as well: through each
-application in IST, FISTA and PRIDU, and through the implicit x-update in ADMM.
-
-Two parts of a step are outside the graph.  BART's proximal operators have no
-implemented backward pass.  The residual norms that drive the schedule -- an
-adaptive `rho`, an adaptive step size -- are deliberately detached, so they
-control the iteration without contributing gradients.  Every other tensor
-operation in a step is recorded.
-
-```{eval-rst}
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
-
-   ISTBlock
-   FISTABlock
-   ADMMBlock
-   PRIDUBlock
-```
-
-## Differentiation through iterations
-
-The solvers produce gradients in one of two ways.  The proximal solvers
-unroll: `solver(y, A)` runs its block `maxiter` times in Python, and the whole
-iteration is recorded.  {class}`CG` instead records the solve as a single
-operation and obtains the gradient analytically -- `x = N^-1 A^H y` is linear in
-`y`, so the vector-Jacobian product is one further solve with the same normal
-operator followed by a forward application.  Over `F.linearize(x)` the solve is
-differentiated by `x` too, through one further application of the normal
-operator at `x`.  {class}`ADMM`'s x-update is a conjugate-gradient solve inside
-the unrolled iteration, and is differentiated the same way.
-
-{class}`FixedPoint` is a third route, and wraps a block rather than being a
-solver.  It drives the block to its fixed point and differentiates implicitly
-there, solving the adjoint fixed-point equation instead of unrolling, so memory
-does not grow with the iteration count -- a deep-equilibrium model.
-
-```{eval-rst}
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
-
-   FixedPoint
-```
+| Object | Description |
+| --- | --- |
+| {obj}`~bartorch.optim.FixedPoint` | An iteration block iterated to its fixed point and differentiated implicitly there (deep equilibrium) |
 
 ## Data scaling
 
-```{eval-rst}
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
+| Object | Description |
+| --- | --- |
+| {obj}`~bartorch.optim.data_scaling` | BART's estimate of the data scale by which `pics` divides the data before it iterates |
 
-   data_scaling
-```
+{doc}`../auto_examples/01-basics/02-operators-and-solvers` assembles a BART
+reconstruction from an operator, a term and a solver.

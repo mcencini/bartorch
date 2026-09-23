@@ -1,0 +1,61 @@
+name: Bug report
+description: Incorrect behaviour, a crash, or a numerical discrepancy.
+labels: ["bug"]
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - "Commands (bartorch.tools, bartorch.* functions, CLI)"
+        - "Linear operators (bartorch.linop)"
+        - "Nonlinear operators and Gauss-Newton (bartorch.nlop)"
+        - "Solvers and regularization (bartorch.optim, bartorch.priors)"
+        - "Apps, learning or interop"
+        - "Installation or build"
+        - "Other"
+    validations:
+      required: true
+  - type: textarea
+    id: behaviour
+    attributes:
+      label: Observed and expected behaviour
+      description: Include the complete traceback, or the numbers that differ.
+    validations:
+      required: true
+  - type: textarea
+    id: reproducer
+    attributes:
+      label: Minimal reproducer
+      description: >-
+        A self-contained script on synthetic data (bartorch.tools.phantom, or random
+        tensors with a fixed seed), stating input shapes, dtypes and devices.
+      render: python
+    validations:
+      required: true
+  - type: textarea
+    id: conventions
+    attributes:
+      label: Conventions and options
+      description: >-
+        Axis order and trajectory units assumed, Fourier-transform centring and
+        normalization, and the solver and regularization settings used.
+  - type: textarea
+    id: reference
+    attributes:
+      label: Numerical reference
+      description: >-
+        For a numerical discrepancy: what the result was compared with (an independent
+        implementation, an explicit sum, a closed form) and the relative error.
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: >-
+        bartorch version or commit and the output of bartorch.build_info(); for source
+        builds, the BART submodule commit; Python, PyTorch and OS; for CUDA, the GPU,
+        driver and torch.version.cuda; for non-Cartesian problems, the FINUFFT and
+        cuFINUFFT versions.
+      render: text
+    validations:
+      required: true

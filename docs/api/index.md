@@ -1,35 +1,35 @@
 # API reference
 
-| Page | Contents |
-| --- | --- |
-| {doc}`functions` | `bartorch`: Fourier and wavelet transforms, thresholding, array utilities, interpolation, settings |
-| {doc}`linop` | `bartorch.linop`: the linear operator class, composition, elementary and MRI encoding operators |
-| {doc}`priors` | `bartorch.priors`: regularization terms and denoisers |
-| {doc}`optim` | `bartorch.optim`: iterative algorithms, and the data normalization a reconstruction applies |
-| {doc}`nlop` | `bartorch.nlop`: the nonlinear operator class, composition, operators defined in Python or torch |
-| {doc}`learning` | `bartorch.learning`: adapters between neural networks and this package's images and iterations |
-| {doc}`apps` | `bartorch.apps`: BART's reconstruction pipelines, assembled from this package |
-| {doc}`tools` | `bartorch.tools`: simulation, sampling and trajectories, coil calibration, reconstruction, and the operations around one -- resampling, registration, measurement |
-| {doc}`io` | `bartorch.io`: CFL files |
-| {doc}`cli` | `bartorch.cli`: BART's command line, served by this package |
-| {doc}`interop` | `bartorch.interop`: an operator as a deepinv physics, for its samplers and its physics-based losses |
+Exact contracts of the public objects: parameters, defaults, shapes, units,
+conventions and restrictions.  Concepts are in {doc}`../explanation/index`,
+complete workflows in the {doc}`examples <../examples/index>`.
 
-The concepts these objects implement are introduced in
-{doc}`../explanation/index`, and complete workflows built from them are in the
-{doc}`examples <../auto_examples/index>`.
+| Page | Module | Contents |
+| --- | --- | --- |
+| {doc}`functions` | `bartorch` | Fourier and wavelet transforms, thresholding, array functions, runtime settings |
+| {doc}`tools` | `bartorch.tools` | BART's commands as functions: simulation, sampling, calibration, reconstruction, registration and metrics |
+| {doc}`linop` | `bartorch.linop` | Linear operators, operator algebra and MRI encoding operators |
+| {doc}`nlop` | `bartorch.nlop` | Nonlinear operators, MRI and signal models, Gauss-Newton methods |
+| {doc}`optim` | `bartorch.optim` | Iterative solvers, iteration blocks and data scaling |
+| {doc}`priors` | `bartorch.priors` | Regularization terms, plug-and-play priors and denoisers |
+| {doc}`apps` | `bartorch.apps` | BART reconstruction pipelines assembled from operators and solvers |
+| {doc}`learning` | `bartorch.learning` | Adapters for neural networks and unrolled iterations |
+| {doc}`interop` | `bartorch.interop` | DeepInverse physics adapter |
+| {doc}`io` | `bartorch.io` | CFL files |
+| {doc}`cli` | `bartorch.cli` | The `bartorch` command line |
 
 ```{toctree}
 :hidden:
 
 functions
-linop
-priors
-optim
-nlop
-learning
-apps
 tools
+linop
+nlop
+optim
+priors
+apps
+learning
+interop
 io
 cli
-interop
 ```

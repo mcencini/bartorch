@@ -349,7 +349,7 @@ def _docstring(command: Command, parameters: list[inspect.Parameter]) -> str:
         parameter = by_name.get(_identifier(argument.name))
         if parameter is None:
             continue
-        lines.append(f"{parameter.name} : {parameter.annotation}")
+        lines.append(f"{parameter.name} : {parameter.annotation}{_default(parameter)}")
         rule = TRANSLATED.get((command.name, argument.name))
         if rule is not None:
             what = rule.help
@@ -363,22 +363,31 @@ def _docstring(command: Command, parameters: list[inspect.Parameter]) -> str:
         parameter = by_name.get(keyword)
         if parameter is None or parameter.kind is not inspect.Parameter.KEYWORD_ONLY:
             continue
-        lines.append(f"{keyword} : {parameter.annotation}")
+        lines.append(f"{keyword} : {parameter.annotation}{_default(parameter)}")
         rule = TRANSLATED.get((command.name, option.flag))
         said = rule.help if rule is not None else option.help.strip() or f"BART's {option.flag}."
         lines.append(f"    {said}  (``{option.flag}``)")
     lines += ["**extra : Any", "    Further BART flags, passed through by name."]
 
-    outputs = command.outputs
+    # What `build` asks the command for: the outputs BART requires, which an
+    # optional output of the command is not.
+    returned = command.outputs[: _outputs(command)]
     lines += ["", "Returns", "-------"]
-    if not outputs:
-        lines.append("None\n    This command writes no array; its printed text is returned.")
-    elif len(outputs) == 1:
-        lines.append(f"torch.Tensor\n    {outputs[0].name}")
+    if not returned:
+        lines.append("str\n    The command's printed text; it writes no array.")
+    elif len(returned) == 1:
+        lines.append(f"torch.Tensor\n    {returned[0].name}")
     else:
-        names = ", ".join(a.name for a in outputs)
+        names = ", ".join(a.name for a in returned)
         lines.append(f"tuple of torch.Tensor\n    {names}")
     return "\n".join(lines) + "\n"
+
+
+def _default(parameter: inspect.Parameter) -> str:
+    """The ``, default=...`` a parameter's type line carries, from its signature."""
+    if parameter.default is inspect.Parameter.empty:
+        return ""
+    return f", default={parameter.default!r}"
 
 
 def build(name: str, module: str):

@@ -69,7 +69,8 @@ if [ "${clean}" = 1 ]; then
     # something that has since been renamed would survive an ordinary rebuild
     # and be linked from nothing.
     rm -rf "${ROOT}/docs/_build" \
-           "${ROOT}/docs/api/generated" \
+           "${ROOT}/docs/generated" \
+           "${ROOT}/docs/api_objects.rst" \
            "${ROOT}/docs/auto_examples" \
            "${ROOT}/docs/sg_execution_times.rst"
 fi
