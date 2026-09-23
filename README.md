@@ -1,11 +1,16 @@
 [![Tests](https://github.com/mcencini/bartorch/actions/workflows/tests.yml/badge.svg)](https://github.com/mcencini/bartorch/actions/workflows/tests.yml)
 [![Docs](https://github.com/mcencini/bartorch/actions/workflows/docs.yml/badge.svg)](https://mcencini.github.io/bartorch/)
 [![Lint](https://github.com/mcencini/bartorch/actions/workflows/lint.yml/badge.svg)](https://github.com/mcencini/bartorch/actions/workflows/lint.yml)
+[![Typos](https://github.com/mcencini/bartorch/actions/workflows/typos.yml/badge.svg)](https://github.com/mcencini/bartorch/actions/workflows/typos.yml)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![PyPI](https://img.shields.io/pypi/v/bartorch.svg)](https://pypi.org/project/bartorch/)
+[![Downloads](https://img.shields.io/pypi/dm/bartorch.svg)](https://pypistats.org/packages/bartorch)
 [![Python](https://img.shields.io/pypi/pyversions/bartorch.svg)](https://pypi.org/project/bartorch/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-%E2%89%A5%202.2-ee4c2c?logo=pytorch&logoColor=white)](https://pytorch.org/get-started/locally/)
 [![Wheels](https://img.shields.io/badge/wheels-Linux%20x86--64%20%7C%20macOS%20arm64-2f6f9f)](https://github.com/mcencini/bartorch/blob/main/.github/workflows/publish.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-2f6f9f.svg)](https://github.com/mcencini/bartorch/blob/main/LICENSE)
+[![Source](https://img.shields.io/badge/source-GitHub-181717?logo=github)](https://github.com/mcencini/bartorch)
+[![Stars](https://img.shields.io/github/stars/mcencini/bartorch?style=flat&logo=github&color=2f6f9f)](https://github.com/mcencini/bartorch/stargazers)
 
 <p align="center">
   <picture>
