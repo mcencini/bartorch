@@ -165,6 +165,9 @@ html_theme_options = {
     },
     "check_switcher": False,
     "show_version_warning_banner": True,
+    # The search field is in the sidebar; the header would otherwise carry a
+    # second one on a wide screen.
+    "navbar_persistent": [],
 }
 #: The theme's own sidebar, with the version switcher under the logo.
 html_sidebars = {
